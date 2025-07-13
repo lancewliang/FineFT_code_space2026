@@ -1,0 +1,11 @@
+ablation's contrast target
+1. EarnHFT with random sampling
+2. EarnHFT with PES
+3. FineFT without pretrain
+4. FineFT with pretrain
+
+Dataset reconstruction with smaller range of train and valid, yet must contain multiple dynamics 
+# calculation of the convergence steps
+1. the EarnHFT series must calculate the convergence steps of different dynamics sperately, and then calculate the 
+the sum of the steps
+2. For FineFT, since all the agents are trained together, it is reasonable to account the upper bond of the dynamics.
