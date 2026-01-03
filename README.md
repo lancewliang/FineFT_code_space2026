@@ -219,3 +219,12 @@ Three tsne plot for motivation part: [`python analysis/motivation_finding/create
 
 Train valid test data Visualization: [`python analysis/plot/valid_test_comparison.py`](FineFT/analysis/plot/valid_test_comparison.py).
 
+## License
+
+FineFT: Efficient and Risk-Aware Ensemble Reinforcement Learning for Futures Trading  
+© 2025 Molei Qin  
+
+This work is licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0).  
+https://creativecommons.org/licenses/by/4.0/
+
+repo DOI: 10.5281/zenodo.18139892
