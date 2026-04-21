@@ -256,7 +256,7 @@ class vae_risk_aware_routing:
         self.base_path = args.base_path
         self.dataset_name = args.dataset_name
         self.test_data_path = os.path.join(
-            self.base_path, self.dataset_name, "test.feather"
+            self.base_path, self.dataset_name, "valid.feather"
         )
         self.tech_indicator_list = np.load(
             os.path.join(self.base_path, self.dataset_name, "state_features.npy")
