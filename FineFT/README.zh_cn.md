@@ -52,6 +52,8 @@
 
 在验证数据集上调参：[`python RL/DiHFT/high_level/vae_routing_optuna.py`](RL/DiHFT/high_level/vae_routing_optuna.py)。
 
+更详细的逻辑流程说明：[`vae_routing_optuna_analysis.zh_cn.md`](../docs/vae_routing_optuna_analysis.zh_cn.md)
+
 选择合适的参数：[`python analysis/pick_agent/DiHFT_high_level_heurstic.py`](analysis/pick_agent/DiHFT_high_level_heurstic.py)
 
 在测试数据集上回测：[`python RL/DiHFT/high_level/vae_routing_final_result_macro_action.py`](RL/DiHFT/high_level/vae_routing_final_result_macro_action.py)。
