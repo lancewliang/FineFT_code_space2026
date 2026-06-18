@@ -3,13 +3,126 @@ schema: spec-driven
 # Project context is injected into OpenSpec planning artifacts.
 # Keep this concise: Superpowers receives it later through plan-ready.md.
 context: |
-  python pytorch project for trader.
+  FineFT is a Python/PyTorch research codebase for reproducing and extending the
+  paper "FineFT: Efficient and Risk-Aware Ensemble Reinforcement Learning for
+  Futures Trading". The project studies high-leverage crypto futures/perpetual
+  trading in a high-fidelity backtesting environment, with emphasis on stable
+  reinforcement-learning training, market-dynamics specialization, and risk
+  control for unseen market states.
+
+  Core architecture:
+  - data_preprocess/: Tardis raw data download, integrity checks, and futures
+    preprocessing. It converts book_snapshot_25 and derivative_ticker into
+    reward/execution inputs, derives market-state features from trades and
+    quotes, merges daily data, creates rolling features, performs feature
+    selection, scales features, and emits FineFT-ready df.feather plus
+    state_features.npy.
+  - FineFT/env/: futures trading environments and utilities. These implement
+    market-order execution against order-book depth, mark-price based valuation,
+    transaction costs, slippage/order loss, funding fees, leverage, maintenance
+    margin, liquidation-related constraints, positions, and margin-balance
+    rewards.
+  - FineFT/RL/DiHFT/: the FineFT-style three-stage pipeline. Stage I trains an
+    ensemble of value-based low-level agents using selective updates driven by
+    ensemble TD errors. Stage II backtests/filter agents under validation market
+    dynamics and trains VAEs for capability-boundary/OOD detection. Stage III
+    uses VAE reconstruction losses over rolling windows to route among filtered
+    agents and a conservative policy.
+  - FineFT/datahandler/: train/validation/test splits, market-dynamics slicing,
+    VAE dataset creation, and related dataset preparation.
+  - FineFT/RL/base/ and FineFT/RL/EarnHFT/: comparison baselines such as DQN,
+    PPO, DRA, CRP/QR-DQN variants, rule-based methods, EDQN/SUNRISE-style
+    ensembles, and hierarchical RL baselines.
+  - FineFT/analysis/ and docs/: metric calculation, agent selection, ablation
+    analysis, routing analysis, plotting, and Chinese project/paper notes.
+  - FineFT/script/ and data_preprocess/script_preprocess/: shell entry points
+    for reproducible data preparation, training, testing, ablations, and plots.
+
+  Data contracts:
+  - A usable FineFT dataset must include df.feather, state_features.npy, and
+    maintenance_margin_ratio_dict.npy for the target symbol.
+  - Reward/execution data depends on order-book depth, derivative ticker, mark
+    price, funding rate, and timestamps. Market-state features are technical
+    indicators derived from past and current market data only.
+  - Common experiment symbols are BTCUSDT, ETHUSDT, BNBUSDT, and DOTUSDT; the
+    paper uses roughly one year for training, six months for validation, and six
+    months for testing, with validation used for routing/filter tuning and test
+    data reserved for final evaluation.
+
+  Evaluation focus:
+  - Profit: total return (TR).
+  - Risk-adjusted profit: annual Sharpe ratio (ASR), annual Calmar ratio (ACR),
+    and annual Sortino ratio (ASoR).
+  - Risk: annual volatility (AVOL) and maximum drawdown (MDD).
+  - Important qualitative checks include convergence efficiency, market-dynamic
+    specialization, VAE/OOD rejection behavior, routing distribution over time,
+    and ablation comparisons against no-pretrain/no-risk variants.
 
 rules:
   specs:
-    - Reference existing specs before inventing new behavior.
-    - Every requirement must include concrete scenarios and acceptance checks.
+    - Reference the paper note, README files, docs/data, docs/train*, and any
+      existing OpenSpec artifacts before inventing behavior.
+    - State which pipeline area is affected, including data preprocessing,
+      environment,
+      Stage I selective-update training, Stage II agent filtering/VAE boundary
+      identification, Stage III risk-aware routing, baselines, analysis, or
+      documentation.
+    - Every requirement must include concrete scenarios and acceptance checks
+      with explicit inputs, outputs, target files, and expected behavior.
+    - For trading or experiment requirements, specify symbol(s), frequency,
+      date windows, train/validation/test role, leverage, transaction cost
+      assumptions, and financial metrics when relevant.
   design:
-    - Preserve project architecture patterns and explain any new dependency.
+    - Preserve the existing directory boundaries and script-driven workflow
+      unless the design explains why a boundary must change.
+    - Explain how any new algorithm, model, feature, or experiment relates to
+      FineFT's three stages or to a named baseline.
+    - Do not weaken the high-fidelity futures assumptions, including leverage,
+      funding
+      fees, mark price, order-book execution, transaction costs, slippage/order
+      loss, maintenance margin, and liquidation-related risk must remain visible
+      in environment-facing designs.
+    - Explain any new dependency, GPU/CPU expectation, and data-volume impact.
+    - Prefer small, testable modules and reusable script entry points over
+      notebook-only or one-off implementations.
+  implementation:
+    - Follow existing Python 3.10/PyTorch, pandas/numpy, shell-script, and
+      analysis patterns before introducing new framework conventions.
+    - Avoid hard-coded local absolute paths, credentials, API keys, dataset
+      roots, or exchange-specific secrets; expose them through existing script
+      variables or documented arguments.
+    - Keep generated model checkpoints, large datasets, figures, and experiment
+      outputs out of source changes unless the task explicitly asks for them.
+    - Maintain compatibility with existing script entry points under FineFT/script
+      and data_preprocess/script_preprocess when changing callable interfaces.
+  data:
+    - Protect the df.feather, state_features.npy, and
+      maintenance_margin_ratio_dict.npy contracts used by FineFT environments.
+    - Feature engineering must avoid future leakage; state features may use only
+      information available at or before the decision timestamp.
+    - Document any change to column names, timestamp alignment, target horizons,
+      frequency, scaling, feature-selection method, or missing-data handling.
+    - Data-preprocess tasks must include integrity checks or a clear reason why
+      they are not runnable for the current dataset size.
+  experiments:
+    - Use validation data for model selection, routing thresholds, risk-window
+      length, and hyperparameter tuning; reserve test data for final evaluation.
+    - Report TR, ASR, ACR, ASoR, AVOL, and MDD when comparing trading strategies,
+      unless the task is explicitly narrower.
+    - Record seeds, device assumptions, dataset window, symbol, frequency,
+      leverage, fees, and baseline configuration for reproducibility.
+    - For risk-aware routing changes, verify both profitability and risk behavior,
+      especially maximum drawdown and conservative-policy activation/OOD rejection.
+  safety:
+    - Treat all trading outputs as research backtests, not financial advice or
+      production trading recommendations.
+    - Do not make profitability guarantees; describe uncertainty, overfitting
+      risk, market-regime shift risk, and data-quality limits when relevant.
   tasks:
     - Include exact files, tests, verification commands, and rollback notes.
+    - Call out expensive steps, expected runtime/data-volume risk, and any steps
+      skipped because required raw data, GPUs, or credentials are unavailable.
+    - Prefer focused verification, including YAML/config validation for config
+      changes,
+      unit or smoke tests for environment/data code, and script-level dry runs or
+      documented command checks for training/backtesting pipelines.
