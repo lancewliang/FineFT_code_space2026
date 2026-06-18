@@ -1,0 +1,18 @@
+/sddflow brainstorming 
+目标: 当前项目只支持加密货币.我需要将这个能力扩充到支持上海期货交易所的商品期货数据. 
+- 数据格式说明在docs/上海商品交易所/商品期货数据结构.md.
+- 一些加密货币有的数据,商品期货交易所不存在的数据.
+	-生成资金费率、指数价、标记价等 不存在.  商品期货的税费是固定的.不同的品种需要可以单独配置就可以了.
+	-原始 `trades` 不存在. 商品期货只有"期货成交量统计"快照来代替.
+	-`quotes`不存在. 商品期货只有"十笔最优价位委托"快照来代替.
+-数据频率使用和项目原来一样.
+-download_operator作废了.根据规划的目录我会将文件放在里面.  
+这3个需要重新实现,并且让商品期货的特征尽量符合原项目设计.
+1. `run_derivative_ticker_downscaling`
+   降采样 `derivative_ticker`，生成资金费率、指数价、标记价等 reward/environment 相关数据。
+2. `run_orderbook_downscaling`
+   降采样 `book_snapshot_25`，生成 25 档 bid/ask 价格和数量。
+3. `run_downscale_process`
+   从原始 `trades` 和 `quotes` 生成基础 OHLCV、成交计数、quote 变化计数、一档盘口 OHLC 等。
+
+需要规划哪些特征不再有了. 并且从run_cross_section_process后续哪些特征会被作废不能生成.
