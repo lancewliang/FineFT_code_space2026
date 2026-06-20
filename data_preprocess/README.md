@@ -87,6 +87,10 @@ Here, we demonstrate how we process the base data, including:
 - Calculate feature importance based on your choice from 3 options
 - Construct the final data used in the trading environment and the names of correponding market technical indicators.
 
+### Commodity Futures
+
+Commodity futures use local five-level market snapshot CSV files instead of the download scripts. The raw directory convention is `data/原始下载/{commodity Chinese name}/{YYYY}`, and the fuel-oil dataset name is `fu`. Commodity futures keep the true five-level order book, disable funding, and estimate trades and quotes features from second-level snapshots. See [`商品期货预处理说明`](../docs/上海商品交易所/commodity_futures_preprocess.md) for directory layout, main-contract stitching, estimated features, and fee configuration.
+
 ### Downscale Reward Data
 
 Here we provide codes for directly downscaling the frequency from the original data for [`book_snapshot_25`](operator_futures/orderbook_25/down_scale_single_shot_base_other.py) and [`derivative_ticker`](operator_futures/derivative_ticker/down_scale_single_shot.py). The code runs for a single date for specific trading pair. However, `book_snapshot_25` is extremly large and might cause the programm to exceed the ram during running. To save the computional cost, we also provide code for downscaling from a finer time span instead of directly from the raw data for both [`book_snapshot_25`](operator_futures/orderbook_25/down_scale_single_shot_base_other.py) and [`derivative_ticker`](operator_futures/derivative_ticker/down_scale_single_shot_base_other.py). 

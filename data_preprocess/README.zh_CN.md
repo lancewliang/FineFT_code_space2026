@@ -79,6 +79,10 @@ FineFT 代码提供的高保真环境中使用了 2 类特征：
 - 根据你从 3 个选项中选择的方法计算特征重要性。
 - 构建交易环境中使用的最终数据，以及对应市场技术指标的名称。
 
+### 商品期货
+
+商品期货数据使用本地五档行情 CSV，不再使用下载脚本。原始目录约定为 `data/原始下载/{品种中文名}/{YYYY}`，燃料油最终 dataset 名称为 `fu`。商品期货只有真实五档盘口，funding 关闭，trades 与 quotes 特征由秒频五档行情估计生成。详细目录、主力合约拼接、estimated 特征和手续费配置见 [`商品期货预处理说明`](../docs/上海商品交易所/commodity_futures_preprocess.md)。
+
 ### 奖励数据降采样
 
 这里我们提供了可直接从原始数据降采样频率的代码，分别用于 [`book_snapshot_25`](operator_futures/orderbook_25/down_scale_single_shot_base_other.py) 和 [`derivative_ticker`](operator_futures/derivative_ticker/down_scale_single_shot.py)。该代码针对某个特定交易对的单个日期运行。不过，`book_snapshot_25` 极大，运行时可能导致程序内存超限。为了节省计算成本，我们也提供了从更细时间跨度而非直接从原始数据降采样的代码，分别用于 [`book_snapshot_25`](operator_futures/orderbook_25/down_scale_single_shot_base_other.py) 和 [`derivative_ticker`](operator_futures/derivative_ticker/down_scale_single_shot_base_other.py)。

@@ -46,7 +46,7 @@
 
 ### Task 6: 脚本入口与文档
 
-- [ ] **任务完成**（与 superpowers plan `Task 6`、`tasks.md` 对应条目同步勾选）
+- [x] **任务完成**（与 superpowers plan `Task 6`、`tasks.md` 对应条目同步勾选）
 - 目标：提供商品期货端到端脚本入口和文档，使用户按本地目录放置数据后能复现从主力连续化到 scale/save 的流程。
 - 改动文件：新增或修改 `data_preprocess/script_preprocess/future_upgraded/commodity/*.sh`、`data_preprocess/README.zh_CN.md`、`data_preprocess/README.md`、按需新增 `docs/上海商品交易所/commodity_futures_preprocess.md`。
 - 验证方式：运行脚本语法检查 `bash -n data_preprocess/script_preprocess/future_upgraded/commodity/*.sh`，并确认文档列出输入目录、输出 `fu`、废弃特征、estimated 特征和 smoke-test 命令。

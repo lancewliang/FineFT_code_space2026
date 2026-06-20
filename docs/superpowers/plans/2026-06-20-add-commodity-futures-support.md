@@ -880,7 +880,7 @@ git commit -m "feat: add commodity futures environment"
 - 修改：`data_preprocess/README.md`
 - 新增：`docs/上海商品交易所/commodity_futures_preprocess.md`
 
-- [ ] **Step 1: 新增商品期货脚本入口**
+- [x] **Step 1: 新增商品期货脚本入口**
 
 创建 `data_preprocess/script_preprocess/future_upgraded/commodity/commodity_process.sh`：
 
@@ -914,21 +914,21 @@ run_commodity_smoke_fu() {
 }
 ```
 
-- [ ] **Step 2: 检查 shell 语法**
+- [x] **Step 2: 检查 shell 语法**
 
 运行：`bash -n data_preprocess/script_preprocess/future_upgraded/commodity/commodity_process.sh`
 
 预期：无输出且退出码为 0。
 
-- [ ] **Step 3: 新增中文商品期货预处理文档**
+- [x] **Step 3: 新增中文商品期货预处理文档**
 
 创建 `docs/上海商品交易所/commodity_futures_preprocess.md`，说明本地五档 CSV 输入、`fu` 输出命名、时间归属、主力合约选择、真实 depth=5、estimated 特征、funding 关闭和燃料油手续费。
 
-- [ ] **Step 4: 更新 README**
+- [x] **Step 4: 更新 README**
 
 在 `data_preprocess/README.zh_CN.md` 和 `data_preprocess/README.md` 的数据预处理概览后补充商品期货章节，指向 `docs/上海商品交易所/commodity_futures_preprocess.md`。
 
-- [ ] **Step 5: 运行文档与脚本检查**
+- [x] **Step 5: 运行文档与脚本检查**
 
 运行：
 
@@ -940,7 +940,7 @@ rg -n "Commodity Futures|商品期货" data_preprocess/README.md data_preprocess
 
 预期：shell 语法通过，文档存在，`rg` 输出商品期货文档行。
 
-- [ ] **Step 6: 提交 Task 6**
+- [x] **Step 6: 提交 Task 6**
 
 运行：
 
@@ -951,7 +951,7 @@ git commit -m "docs: add commodity futures preprocessing entry point"
 
 预期：提交成功或由用户明确选择延后。
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 7: 验证与回归
 

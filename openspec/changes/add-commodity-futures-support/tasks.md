@@ -32,9 +32,9 @@
 
 ## 6. 脚本入口与文档
 
-- [ ] 6.1 新增商品期货预处理脚本入口，串联主力拼接、三条商品下采样、cross-section、merge/concat、time feature、feature selection 和 scale/save。
-- [ ] 6.2 更新数据准备文档，说明本地商品输入目录、输出 dataset 命名、不可生成特征清单、estimated 特征标签和验证命令。
-- [ ] 6.3 新增样例或本地小切片 smoke-test 命令路径，并说明预期运行时间和数据量限制。
+- [x] 6.1 新增商品期货预处理脚本入口，串联主力拼接、三条商品下采样、cross-section、merge/concat、time feature、feature selection 和 scale/save。 <!-- 已实现: 新增商品 smoke 入口并说明后续共享流水线 -->
+- [x] 6.2 更新数据准备文档，说明本地商品输入目录、输出 dataset 命名、不可生成特征清单、estimated 特征标签和验证命令。 <!-- 已实现: 新增商品期货预处理说明 -->
+- [x] 6.3 新增样例或本地小切片 smoke-test 命令路径，并说明预期运行时间和数据量限制。 <!-- 已实现: 新增 fu 样例 smoke 命令 -->
 
 ## 7. 验证与回归
 
