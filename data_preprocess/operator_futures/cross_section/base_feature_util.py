@@ -355,11 +355,14 @@ def process_quotes_n_feature(df: pd.DataFrame):
     return df_norm
 
 
-def process_snapshot_features(df: pd.DataFrame, topk=5):
-    ask_size_array = df[["ask{}_size".format(i) for i in range(1, 26)]].values
-    bid_size_array = df[["bid{}_size".format(i) for i in range(1, 26)]].values
-    ask_price_array = df[["ask{}_price".format(i) for i in range(1, 26)]].values
-    bid_price_array = df[["bid{}_price".format(i) for i in range(1, 26)]].values
+def process_snapshot_features(df: pd.DataFrame, topk=5, depth=25):
+    if depth < 2:
+        raise ValueError("orderbook depth must be at least 2")
+    topk = min(topk, depth)
+    ask_size_array = df[[f"ask{i}_size" for i in range(1, depth + 1)]].values
+    bid_size_array = df[[f"bid{i}_size" for i in range(1, depth + 1)]].values
+    ask_price_array = df[[f"ask{i}_price" for i in range(1, depth + 1)]].values
+    bid_price_array = df[[f"bid{i}_price" for i in range(1, depth + 1)]].values
     normalized_ask_size_array = ask_size_array / (
         np.sum(ask_size_array, axis=1).reshape(-1, 1)
     )
@@ -404,9 +407,11 @@ def process_snapshot_features(df: pd.DataFrame, topk=5):
     price_related_df["buy_sell_wap_spread"] = (
         price_related_df["buy_wap"] - price_related_df["sell_wap"]
     )
-    price_related_df["buy_spread_oe_max"] = np.abs(df["bid1_price"] - df["bid25_price"])
+    price_related_df["buy_spread_oe_max"] = np.abs(
+        df["bid1_price"] - df[f"bid{depth}_price"]
+    )
     price_related_df["sell_spread_oe_max"] = np.abs(
-        df["ask1_price"] - df["ask25_price"]
+        df["ask1_price"] - df[f"ask{depth}_price"]
     )
     topk_related_df = pd.DataFrame(
         columns=["ask_price_topk_size_{}_increments".format(i + 1) for i in range(topk)]
@@ -441,7 +446,7 @@ def process_snapshot_features(df: pd.DataFrame, topk=5):
     )
     all_normalized_size_df_list = []
 
-    for i in range(1, 26):
+    for i in range(1, depth + 1):
         single_normalized_size_df = pd.DataFrame(index=df.index)
         single_normalized_size_df["ask{}_size_n".format(i)] = (
             ask_size_array[:, i - 1] / volume_related_df["sell_volume_oe"]

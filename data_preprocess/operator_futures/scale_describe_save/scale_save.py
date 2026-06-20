@@ -70,6 +70,19 @@ parser.add_argument(
     choices=["ic", "rank_ic", "catboost"],
     help="the way of choosing features",
 )
+parser.add_argument(
+    "--market_type",
+    type=str,
+    default="crypto_futures",
+    choices=["crypto_futures", "commodity_futures"],
+    help="the market type of the preprocessed data",
+)
+parser.add_argument(
+    "--orderbook_depth",
+    type=int,
+    default=25,
+    help="the available orderbook depth",
+)
 
 
 def scale_std(df, log_base=10):
@@ -132,7 +145,15 @@ def main(args):
             "{}.feather".format(df_name),
         )
     )
-    reward_features = df.columns[:106]
+    if args.market_type == "commodity_futures":
+        from operator_futures.commodity.schema import get_reward_execution_columns
+
+        reward_features = [
+            col for col in get_reward_execution_columns(args.orderbook_depth)
+            if col in df.columns
+        ]
+    else:
+        reward_features = df.columns[:106]
     state_feature = np.load(
         os.path.join(
             args.data_path,

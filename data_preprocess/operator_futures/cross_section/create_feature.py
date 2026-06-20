@@ -49,6 +49,19 @@ parser.add_argument(
     help="the date of start",
     choices=["10s", "1min", "5min","10min", "30min", "1H", "1D"],
 )
+parser.add_argument(
+    "--market_type",
+    type=str,
+    default="crypto_futures",
+    choices=["crypto_futures", "commodity_futures"],
+    help="the market type of the preprocessed data",
+)
+parser.add_argument(
+    "--orderbook_depth",
+    type=int,
+    default=25,
+    help="the available orderbook depth",
+)
 
 
 def main(args):
@@ -78,7 +91,9 @@ def main(args):
     kline_feature.reset_index(inplace=True)
     quotes_feature = process_quotes_n_feature(base_feature)
     quotes_feature.reset_index(inplace=True)
-    snapshot_feature = process_snapshot_features(snapshot)
+    snapshot_feature = process_snapshot_features(
+        snapshot, depth=args.orderbook_depth
+    )
     snapshot_feature.index.name = "timestamp"
     snapshot_feature.reset_index(inplace=True)
 
