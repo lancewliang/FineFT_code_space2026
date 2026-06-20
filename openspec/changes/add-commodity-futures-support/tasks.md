@@ -6,7 +6,7 @@
 
 ## 2. 主力合约拼接
 
-- [ ] 2.1 实现商品期货主力合约拼接，从本地五档 CSV 读取数据，使用前一 `TradingDay` 成交量选择主力，并支持当前日 fallback。
+- [ ] 2.1 实现商品期货主力合约拼接，从 `data/原始下载/{品种中文名}/{YYYY}` 扫描本地五档 CSV，默认支持 `{MM}/{YYYYMMDD}/{合约}.csv` 层级，使用前一 `TradingDay` 成交量选择主力，并支持当前日 fallback。
 - [ ] 2.2 保留 `main_contract`、`source_contract`、`source_file` 元数据，并确保这些元数据不进入 `state_features`。
 - [ ] 2.3 新增测试覆盖 `ActionDay + UpdateTime` 时间戳、`TradingDay` 归属、fallback 选择和不复权拼接。
 

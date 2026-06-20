@@ -216,8 +216,8 @@ git commit -m "feat: add commodity futures config contract"
 
 ### Task 2: 主力合约拼接
 
-> **trace:** plan-ready.md → `### Task 2: 主力合约拼接` | tasks.md → ``- [ ] 2.1 实现商品期货主力合约拼接，从本地五档 CSV 读取数据，使用前一 `TradingDay` 成交量选择主力，并支持当前日 fallback。``
-> **sync:** tasks.md → ``- [ ] 2.1 实现商品期货主力合约拼接，从本地五档 CSV 读取数据，使用前一 `TradingDay` 成交量选择主力，并支持当前日 fallback。`` | plan-ready.md → `### Task 2: 主力合约拼接`
+> **trace:** plan-ready.md → `### Task 2: 主力合约拼接` | tasks.md → ``- [ ] 2.1 实现商品期货主力合约拼接，从 `data/原始下载/{品种中文名}/{YYYY}` 扫描本地五档 CSV，默认支持 `{MM}/{YYYYMMDD}/{合约}.csv` 层级，使用前一 `TradingDay` 成交量选择主力，并支持当前日 fallback。``
+> **sync:** tasks.md → ``- [ ] 2.1 实现商品期货主力合约拼接，从 `data/原始下载/{品种中文名}/{YYYY}` 扫描本地五档 CSV，默认支持 `{MM}/{YYYYMMDD}/{合约}.csv` 层级，使用前一 `TradingDay` 成交量选择主力，并支持当前日 fallback。`` | plan-ready.md → `### Task 2: 主力合约拼接`
 
 **文件：**
 - 新增：`data_preprocess/operator_futures/commodity/main_contract.py`
@@ -234,6 +234,7 @@ import pandas as pd
 
 from operator_futures.commodity.main_contract import (
     calculate_contract_volume,
+    iter_contract_files,
     normalize_timestamp,
     select_main_contract_for_day,
     stitch_main_contract_frames,
@@ -269,6 +270,16 @@ def test_normalize_timestamp_uses_action_day():
 def test_calculate_contract_volume_uses_cumulative_volume_delta():
     df = _frame("fu2302", "20230104", "20230103", [10, 12, 18])
     assert calculate_contract_volume(df) == 8
+
+
+def test_iter_contract_files_scans_raw_download_layout(tmp_path):
+    contract_file = tmp_path / "data" / "原始下载" / "燃料油" / "2026" / "01" / "20260105" / "fu2602.csv"
+    contract_file.parent.mkdir(parents=True)
+    contract_file.write_text("InstrumentID,TradingDay\nfu2602,20260105\n", encoding="utf-8")
+
+    files = list(iter_contract_files(tmp_path / "data" / "原始下载", "燃料油", "2026"))
+
+    assert files == [contract_file]
 
 
 def test_select_main_contract_uses_previous_day_volume():
@@ -344,6 +355,13 @@ def calculate_contract_volume(df: pd.DataFrame) -> float:
     if volume.dropna().empty:
         return 0.0
     return float(volume.max() - volume.min())
+
+
+def iter_contract_files(raw_root: Path, commodity_name: str, year: str) -> Iterable[Path]:
+    year_dir = raw_root / commodity_name / year
+    if not year_dir.exists():
+        raise FileNotFoundError(f"Commodity raw year directory does not exist: {year_dir}")
+    return iter(sorted(year_dir.glob("*/*/*.csv")))
 
 
 def _eligible_contracts(frames: Dict[str, pd.DataFrame], symbol: str) -> Dict[str, pd.DataFrame]:

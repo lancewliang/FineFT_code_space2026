@@ -19,7 +19,7 @@
 ### Task 2: 主力合约拼接
 
 - [ ] **任务完成**（与 superpowers plan `Task 2`、`tasks.md` 对应条目同步勾选）
-- 目标：将现有主力识别算法整理为可调用商品期货模块，按 `TradingDay` 选择日级主力，使用 `ActionDay + UpdateTime` 生成真实时间戳，并输出审计元数据。
+- 目标：将现有主力识别算法整理为可调用商品期货模块，从 `data/原始下载/{品种中文名}/{YYYY}` 扫描原始数据，按 `TradingDay` 选择日级主力，使用 `ActionDay + UpdateTime` 生成真实时间戳，并输出审计元数据。
 - 改动文件：新增 `data_preprocess/operator_futures/commodity/main_contract.py`；按需迁移 `openspec/specs/support_shanghai_futures/step2_extract_main_contract_data.py` 的算法；新增测试 `data_preprocess/tests/test_commodity_main_contract.py`。
 - 验证方式：运行 `python -m pytest data_preprocess/tests/test_commodity_main_contract.py -q`，覆盖前一交易日选择、当前日 fallback、夜盘时间戳和不复权拼接。
 
