@@ -38,6 +38,6 @@
 
 ## 7. 验证与回归
 
-- [ ] 7.1 运行 `fu` 样例数据的商品期货单元测试和 smoke test。
-- [ ] 7.2 运行加密货币预处理/环境 smoke test，确认现有 depth=25 行为仍可用。
-- [ ] 7.3 运行 `openspec validate add-commodity-futures-support --strict`，并记录因缺少完整原始数据或 GPU 而跳过的昂贵步骤。
+- [x] 7.1 运行 `fu` 样例数据的商品期货单元测试和 smoke test。 <!-- 已验证: 商品测试与 fu smoke 通过 -->
+- [x] 7.2 运行加密货币预处理/环境 smoke test，确认现有 depth=25 行为仍可用。 <!-- 已验证: depth=25 snapshot smoke 通过 -->
+- [x] 7.3 运行 `openspec validate add-commodity-futures-support --strict`，并记录因缺少完整原始数据或 GPU 而跳过的昂贵步骤。 <!-- 已验证: OpenSpec strict 通过并记录跳过项 -->

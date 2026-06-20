@@ -53,7 +53,7 @@
 
 ### Task 7: 验证与回归
 
-- [ ] **任务完成**（与 superpowers plan `Task 7`、`tasks.md` 对应条目同步勾选）
+- [x] **任务完成**（与 superpowers plan `Task 7`、`tasks.md` 对应条目同步勾选）
 - 目标：运行 OpenSpec、商品期货单元/烟测和加密货币回归烟测，记录受限于完整原始数据或 GPU 的跳过项。
 - 改动文件：更新 `openspec/changes/add-commodity-futures-support/tasks.md` checkbox 状态；按需新增验证记录 `openspec/changes/add-commodity-futures-support/verification.md`。
 - 验证方式：运行 `openspec validate add-commodity-futures-support --strict`、`python -m pytest data_preprocess/tests/test_commodity_config_schema.py data_preprocess/tests/test_commodity_main_contract.py data_preprocess/tests/test_commodity_downscale.py data_preprocess/tests/test_commodity_feature_pipeline.py FineFT/env/test_commodity_env.py -q`，并运行一个现有 crypto 环境 smoke test 或记录缺少数据时的跳过原因。

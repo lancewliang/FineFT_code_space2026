@@ -962,7 +962,7 @@ git commit -m "docs: add commodity futures preprocessing entry point"
 - 修改：`openspec/changes/add-commodity-futures-support/tasks.md`
 - 新增：`openspec/changes/add-commodity-futures-support/verification.md`
 
-- [ ] **Step 1: 运行所有商品期货数据测试**
+- [x] **Step 1: 运行所有商品期货数据测试**
 
 运行：
 
@@ -977,7 +977,7 @@ PYTHONPATH=data_preprocess python -m pytest \
 
 预期：商品期货数据预处理测试全部通过。
 
-- [ ] **Step 2: 运行商品环境测试**
+- [x] **Step 2: 运行商品环境测试**
 
 运行：
 
@@ -988,7 +988,7 @@ PYTHONPATH=. python -m pytest env/test_commodity_env.py -q
 
 预期：商品环境测试通过。
 
-- [ ] **Step 3: 运行商品样例 smoke 命令**
+- [x] **Step 3: 运行商品样例 smoke 命令**
 
 运行：
 
@@ -1000,7 +1000,7 @@ test -f PREPROCESS_DATASET/commodity-futures/fu/5min/sample/orderbook_5.feather
 
 预期：命令退出码为 0，且 `orderbook_5.feather` 存在。
 
-- [ ] **Step 4: 运行加密货币 depth=25 回归 smoke**
+- [x] **Step 4: 运行加密货币 depth=25 回归 smoke**
 
 运行：
 
@@ -1022,13 +1022,13 @@ PY
 
 预期：输出 `depth-25 regression smoke passed`。
 
-- [ ] **Step 5: 校验 OpenSpec**
+- [x] **Step 5: 校验 OpenSpec**
 
 运行：`openspec validate add-commodity-futures-support --strict`
 
 预期：输出 `Change 'add-commodity-futures-support' is valid`。
 
-- [ ] **Step 6: 写入验证记录**
+- [x] **Step 6: 写入验证记录**
 
 创建 `openspec/changes/add-commodity-futures-support/verification.md`：
 
@@ -1049,7 +1049,7 @@ PY
 - GPU 相关检查：本变更聚焦 CPU 预处理和环境初始化。
 ```
 
-- [ ] **Step 7: 实现完成后更新 checkbox**
+- [x] **Step 7: 实现完成后更新 checkbox**
 
 当 Task 1-7 全部完成后，同步更新以下文件的 task-level checkbox：
 
@@ -1059,7 +1059,7 @@ PY
 
 预期：所有完成任务的 task-level checkbox 为 `[x]`，本计划中已完成 step 也为 `[x]`。
 
-- [ ] **Step 8: 提交验证记录**
+- [x] **Step 8: 提交验证记录**
 
 运行：
 
@@ -1070,4 +1070,4 @@ git commit -m "test: verify commodity futures support"
 
 预期：提交成功或由用户明确选择延后。
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
