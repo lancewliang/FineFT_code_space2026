@@ -1,8 +1,11 @@
 import pandas as pd
 import numpy as np
 import sys
-import gym
-from gym import spaces
+try:
+    import gym
+    from gym import spaces
+except ImportError:
+    from env.env_class.base_env import gym, spaces
 
 sys.path.append(".")
 from env.env_class.futures_util import (

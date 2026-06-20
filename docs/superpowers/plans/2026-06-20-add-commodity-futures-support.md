@@ -26,7 +26,7 @@
 - 新增：`data_preprocess/operator_futures/commodity/schema.py`
 - 新增测试：`data_preprocess/tests/test_commodity_config_schema.py`
 
-- [ ] **Step 1: 编写失败的配置与 schema 测试**
+- [x] **Step 1: 编写失败的配置与 schema 测试**
 
 创建 `data_preprocess/tests/test_commodity_config_schema.py`：
 
@@ -91,13 +91,13 @@ def test_resample_kwargs_are_right_closed_and_right_labeled():
     assert result.loc[pd.Timestamp("2023-01-03 09:05:00")] == 2
 ```
 
-- [ ] **Step 2: 运行测试并确认失败**
+- [x] **Step 2: 运行测试并确认失败**
 
 运行：`PYTHONPATH=data_preprocess python -m pytest data_preprocess/tests/test_commodity_config_schema.py -q`
 
 预期：失败，错误包含 `ModuleNotFoundError: No module named 'operator_futures.commodity'`。
 
-- [ ] **Step 3: 新增商品期货包导出**
+- [x] **Step 3: 新增商品期货包导出**
 
 创建 `data_preprocess/operator_futures/commodity/__init__.py`：
 
@@ -114,7 +114,7 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 4: 新增商品期货配置模块**
+- [x] **Step 4: 新增商品期货配置模块**
 
 创建 `data_preprocess/operator_futures/commodity/config.py`：
 
@@ -159,7 +159,7 @@ def get_commodity_config(symbol: str) -> CommodityConfig:
     return COMMODITY_CONFIGS[normalized]
 ```
 
-- [ ] **Step 5: 新增商品期货 schema 工具**
+- [x] **Step 5: 新增商品期货 schema 工具**
 
 创建 `data_preprocess/operator_futures/commodity/schema.py`：
 
@@ -195,13 +195,13 @@ def get_reward_execution_columns(depth: int) -> List[str]:
     return ["timestamp", *build_orderbook_columns(depth), *DERIVATIVE_REFERENCE_COLUMNS]
 ```
 
-- [ ] **Step 6: 运行配置与 schema 测试并确认通过**
+- [x] **Step 6: 运行配置与 schema 测试并确认通过**
 
 运行：`PYTHONPATH=data_preprocess python -m pytest data_preprocess/tests/test_commodity_config_schema.py -q`
 
 预期：通过，4 个测试通过。
 
-- [ ] **Step 7: 提交 Task 1**
+- [x] **Step 7: 提交 Task 1**
 
 运行：
 
@@ -212,7 +212,7 @@ git commit -m "feat: add commodity futures config contract"
 
 预期：提交成功。如用户要求暂不提交，则保留文件变更并继续由用户决定。
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 2: 主力合约拼接
 
@@ -223,7 +223,7 @@ git commit -m "feat: add commodity futures config contract"
 - 新增：`data_preprocess/operator_futures/commodity/main_contract.py`
 - 新增测试：`data_preprocess/tests/test_commodity_main_contract.py`
 
-- [ ] **Step 1: 编写失败的主力合约测试**
+- [x] **Step 1: 编写失败的主力合约测试**
 
 创建 `data_preprocess/tests/test_commodity_main_contract.py`：
 
@@ -323,13 +323,13 @@ def test_stitch_main_contract_frames_keeps_metadata_and_no_back_adjustment():
     assert stitched.loc[2, "LastPrice"] == 2600
 ```
 
-- [ ] **Step 2: 运行测试并确认失败**
+- [x] **Step 2: 运行测试并确认失败**
 
 运行：`PYTHONPATH=data_preprocess python -m pytest data_preprocess/tests/test_commodity_main_contract.py -q`
 
 预期：失败，缺少 `operator_futures.commodity.main_contract`。
 
-- [ ] **Step 3: 实现主力合约模块**
+- [x] **Step 3: 实现主力合约模块**
 
 创建 `data_preprocess/operator_futures/commodity/main_contract.py`：
 
@@ -421,13 +421,13 @@ def stitch_main_contract_frames(
     return stitched.sort_values("timestamp").reset_index(drop=True)
 ```
 
-- [ ] **Step 4: 运行主力合约测试并确认通过**
+- [x] **Step 4: 运行主力合约测试并确认通过**
 
 运行：`PYTHONPATH=data_preprocess python -m pytest data_preprocess/tests/test_commodity_main_contract.py -q`
 
 预期：通过，5 个测试通过。
 
-- [ ] **Step 5: 提交 Task 2**
+- [x] **Step 5: 提交 Task 2**
 
 运行：
 
@@ -438,7 +438,7 @@ git commit -m "feat: stitch commodity main contracts"
 
 预期：提交成功或由用户明确选择延后。
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 3: 商品期货下采样
 
@@ -450,7 +450,7 @@ git commit -m "feat: stitch commodity main contracts"
 - 新增：`data_preprocess/operator_futures/commodity/downscale_single_day.py`
 - 新增测试：`data_preprocess/tests/test_commodity_downscale.py`
 
-- [ ] **Step 1: 编写失败的下采样测试**
+- [x] **Step 1: 编写失败的下采样测试**
 
 创建 `data_preprocess/tests/test_commodity_downscale.py`，测试覆盖异常最优报价、同秒取最后一条、参考价回退、真实 5 档输出、秒均价、tick rule 和空 quote 窗口报错。测试代码使用 `docs/上海商品交易所/fu2302.csv` 或构造出的最小 DataFrame，必须断言输出中不存在 `ask6_price` 与 `bid25_price`。
 
@@ -497,13 +497,13 @@ def test_empty_quote_window_fails_fast():
         downscale_quote_features(second.iloc[0:0], "5min")
 ```
 
-- [ ] **Step 2: 运行下采样测试并确认失败**
+- [x] **Step 2: 运行下采样测试并确认失败**
 
 运行：`PYTHONPATH=data_preprocess python -m pytest data_preprocess/tests/test_commodity_downscale.py -q`
 
 预期：失败，缺少 `operator_futures.commodity.downscale`。
 
-- [ ] **Step 3: 实现下采样核心模块**
+- [x] **Step 3: 实现下采样核心模块**
 
 创建 `data_preprocess/operator_futures/commodity/downscale.py`，实现以下公开函数：
 
@@ -523,7 +523,7 @@ def downscale_quote_features(second_df: pd.DataFrame, target_freq: str) -> pd.Da
 - `downscale_base_features` 使用 `Turnover.diff()/Volume.diff()`，价格不变计入 flat，不归入 buy/sell。
 - `downscale_quote_features` 使用右闭右标聚合，空窗口 fail-fast。
 
-- [ ] **Step 4: 新增单日 CLI 包装**
+- [x] **Step 4: 新增单日 CLI 包装**
 
 创建 `data_preprocess/operator_futures/commodity/downscale_single_day.py`：
 
@@ -567,19 +567,19 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 5: 运行下采样测试并确认通过**
+- [x] **Step 5: 运行下采样测试并确认通过**
 
 运行：`PYTHONPATH=data_preprocess python -m pytest data_preprocess/tests/test_commodity_downscale.py -q`
 
 预期：商品期货下采样测试全部通过。
 
-- [ ] **Step 6: 运行样例 CLI smoke test**
+- [x] **Step 6: 运行样例 CLI smoke test**
 
 运行：`PYTHONPATH=data_preprocess python -m operator_futures.commodity.downscale_single_day --input docs/上海商品交易所/fu2302.csv --output_dir /tmp/fu_downscale_smoke --symbol fu --target_freq 5min`
 
 预期：命令退出码为 0，并写出 `/tmp/fu_downscale_smoke/derivative_reference.feather`、`orderbook_5.feather`、`base_feature.feather` 和 `quote_feature.feather`。
 
-- [ ] **Step 7: 提交 Task 3**
+- [x] **Step 7: 提交 Task 3**
 
 运行：
 
@@ -590,7 +590,7 @@ git commit -m "feat: downscale commodity futures snapshots"
 
 预期：提交成功或由用户明确选择延后。
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 4: 特征管线适配
 
@@ -606,7 +606,7 @@ git commit -m "feat: downscale commodity futures snapshots"
 - 修改：`data_preprocess/operator_futures/scale_describe_save/scale_save.py`
 - 新增测试：`data_preprocess/tests/test_commodity_feature_pipeline.py`
 
-- [ ] **Step 1: 编写失败的 depth-aware 特征测试**
+- [x] **Step 1: 编写失败的 depth-aware 特征测试**
 
 创建 `data_preprocess/tests/test_commodity_feature_pipeline.py`：
 
@@ -650,13 +650,13 @@ def test_feature_selection_target_remains_price_difference():
     assert target.tolist() == [2.5, -1.5]
 ```
 
-- [ ] **Step 2: 运行测试并确认失败**
+- [x] **Step 2: 运行测试并确认失败**
 
 运行：`PYTHONPATH=data_preprocess python -m pytest data_preprocess/tests/test_commodity_feature_pipeline.py -q`
 
 预期：失败，因为 `process_snapshot_features` 尚不支持 `depth` 参数。
 
-- [ ] **Step 3: 将 snapshot 特征改为 depth-aware**
+- [x] **Step 3: 将 snapshot 特征改为 depth-aware**
 
 修改 `data_preprocess/operator_futures/cross_section/base_feature_util.py` 中的 `process_snapshot_features`：
 
@@ -671,7 +671,7 @@ def process_snapshot_features(df: pd.DataFrame, topk=5, depth=25):
 
 同时将函数内剩余硬编码 `25`、`ask25_price`、`bid25_price` 改为 `depth`、`ask{depth}_price`、`bid{depth}_price`。
 
-- [ ] **Step 4: 给 cross-section 脚本新增市场类型和深度参数**
+- [x] **Step 4: 给 cross-section 脚本新增市场类型和深度参数**
 
 修改 `data_preprocess/operator_futures/cross_section/create_feature.py`：
 
@@ -686,7 +686,7 @@ parser.add_argument("--orderbook_depth", type=int, default=25)
 snapshot_feature = process_snapshot_features(snapshot, depth=args.orderbook_depth)
 ```
 
-- [ ] **Step 5: 替换 scale/save 的前 106 列假设**
+- [x] **Step 5: 替换 scale/save 的前 106 列假设**
 
 修改 `data_preprocess/operator_futures/scale_describe_save/scale_save.py`，增加参数：
 
@@ -711,7 +711,7 @@ else:
     reward_features = df.columns[:106]
 ```
 
-- [ ] **Step 6: 保持 feature selection target 为价差**
+- [x] **Step 6: 保持 feature selection target 为价差**
 
 确认 `data_preprocess/operator_futures/feature_selection/ic_correlation.py` 保持：
 
@@ -724,13 +724,13 @@ def calculate_target(df, reward_feature, window_length):
 
 若 rank/catboost/lasso 变体重复 target 逻辑，也保持同样的价差公式。
 
-- [ ] **Step 7: 运行特征管线测试**
+- [x] **Step 7: 运行特征管线测试**
 
 运行：`PYTHONPATH=data_preprocess python -m pytest data_preprocess/tests/test_commodity_feature_pipeline.py -q`
 
 预期：通过，depth=5 特征和 target 计算测试通过。
 
-- [ ] **Step 8: 运行 depth=25 加密货币兼容 smoke test**
+- [x] **Step 8: 运行 depth=25 加密货币兼容 smoke test**
 
 运行：
 
@@ -753,7 +753,7 @@ PY
 
 预期：输出 `depth-25 regression smoke passed`。
 
-- [ ] **Step 9: 提交 Task 4**
+- [x] **Step 9: 提交 Task 4**
 
 运行：
 
@@ -764,7 +764,7 @@ git commit -m "feat: make feature pipeline commodity depth aware"
 
 预期：提交成功或由用户明确选择延后。
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 5: 商品期货环境支持
 
@@ -777,7 +777,7 @@ git commit -m "feat: make feature pipeline commodity depth aware"
 - 修改：`FineFT/env/env_class/futures_util.py`
 - 新增测试：`FineFT/env/test_commodity_env.py`
 
-- [ ] **Step 1: 编写失败的商品环境测试**
+- [x] **Step 1: 编写失败的商品环境测试**
 
 创建 `FineFT/env/test_commodity_env.py`：
 
@@ -832,31 +832,31 @@ def test_commodity_env_step_uses_configured_fees_and_no_funding():
     assert "funding_count_down_hour" not in info
 ```
 
-- [ ] **Step 2: 运行环境测试并确认失败**
+- [x] **Step 2: 运行环境测试并确认失败**
 
 运行：`cd FineFT && PYTHONPATH=. python -m pytest env/test_commodity_env.py -q`
 
 预期：失败，缺少 `env.env_initiate.commodity_initiate`。
 
-- [ ] **Step 3: 新增商品环境类**
+- [x] **Step 3: 新增商品环境类**
 
 创建 `FineFT/env/env_class/commodity_env.py`，显式传入 depth=5 数据，funding array 使用 0，返回 info 时移除 funding countdown 字段。构造函数必须保留 `buy_fee_rate` 和 `sell_fee_rate` 属性，供手续费逻辑使用。
 
-- [ ] **Step 4: 新增商品环境 initializer**
+- [x] **Step 4: 新增商品环境 initializer**
 
 创建 `FineFT/env/env_initiate/commodity_initiate.py`，读取 `ask1-5/bid1-5` 价格与数量列、`mark_price`、`timestamp` 和 state features；缺列时抛出 `ValueError`；默认 `buy_fee_rate=0.0001`、`sell_fee_rate=0.0003`。
 
-- [ ] **Step 5: 增加买卖方向手续费支持**
+- [x] **Step 5: 增加买卖方向手续费支持**
 
 修改 `FineFT/env/env_class/futures_util.py`，为 wallet-change 相关函数增加可选 `buy_fee_rate` 与 `sell_fee_rate`。当参数为 `None` 时使用原 `commission_rate`，保持加密货币路径行为不变；ask-side 成交使用买入费率，bid-side 成交使用卖出费率。
 
-- [ ] **Step 6: 运行商品环境测试**
+- [x] **Step 6: 运行商品环境测试**
 
 运行：`cd FineFT && PYTHONPATH=. python -m pytest env/test_commodity_env.py -q`
 
 预期：通过，商品环境 reset/step 测试通过，info 中不包含 funding countdown。
 
-- [ ] **Step 7: 提交 Task 5**
+- [x] **Step 7: 提交 Task 5**
 
 运行：
 
@@ -867,7 +867,7 @@ git commit -m "feat: add commodity futures environment"
 
 预期：提交成功或由用户明确选择延后。
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 6: 脚本入口与文档
 

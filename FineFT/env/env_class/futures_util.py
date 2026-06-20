@@ -27,7 +27,11 @@ def change_of_wallet(
     current_leverage,
     current_position,
     silent=True,
+    buy_fee_rate=None,
+    sell_fee_rate=None,
 ):
+    buy_fee_rate = commission_rate if buy_fee_rate is None else buy_fee_rate
+    sell_fee_rate = commission_rate if sell_fee_rate is None else sell_fee_rate
     # if current_leverage == previous_leverage:
     if current_position == previous_position:
         (
@@ -96,7 +100,7 @@ def change_of_wallet(
                     ask_prices,
                     ask_qtys,
                     long_estimated_rate,
-                    commission_rate,
+                    buy_fee_rate,
                     previous_leverage,
                     previous_position,
                     previous_initial_margine,
@@ -119,7 +123,7 @@ def change_of_wallet(
                     markprice,
                     bid_prices,
                     bid_qtys,
-                    commission_rate,
+                    sell_fee_rate,
                     previous_leverage,
                     previous_position,
                     previous_initial_margine,
@@ -166,7 +170,7 @@ def change_of_wallet(
                     bid_prices,
                     bid_qtys,
                     short_estimated_rate,
-                    commission_rate,
+                    sell_fee_rate,
                     previous_leverage,
                     previous_position,
                     previous_initial_margine,
@@ -190,7 +194,7 @@ def change_of_wallet(
                     markprice,
                     ask_prices,
                     ask_qtys,
-                    commission_rate,
+                    buy_fee_rate,
                     previous_leverage,
                     previous_position,
                     previous_initial_margine,
@@ -778,7 +782,11 @@ def calculate_avaiable_action(
     # action space setting
     leverage_choices=[1, 2, 5],
     position_choices=[-8, -6, -4, -2, 0, 2, 4, 6, 8],
+    buy_fee_rate=None,
+    sell_fee_rate=None,
 ):
+    buy_fee_rate = commission_rate if buy_fee_rate is None else buy_fee_rate
+    sell_fee_rate = commission_rate if sell_fee_rate is None else sell_fee_rate
     # TODO modify that if the margine balance equals to dilvering the liqudation, then the action is not actually avaiable
     assert leverage in leverage_choices
     if position not in position_choices:
@@ -874,7 +882,7 @@ def calculate_avaiable_action(
                     unrealized_pnL * np.abs(close_position / position)
                     + value
                     - markprice * close_position
-                    - value * commission_rate
+                    - value * sell_fee_rate
                 )
 
             else:
@@ -889,7 +897,7 @@ def calculate_avaiable_action(
                     unrealized_pnL * np.abs(close_position / position)
                     - value
                     + markprice * close_position
-                    - value * commission_rate
+                    - value * buy_fee_rate
                 )
             wallet_balance_new = wallet_balance + realized_pnL
             margine_balance_new = wallet_balance_new + unrealized_pnL_new

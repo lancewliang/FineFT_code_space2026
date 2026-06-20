@@ -1,8 +1,32 @@
 import pandas as pd
 import numpy as np
 import sys
-import gym
-from gym import spaces
+try:
+    import gym
+    from gym import spaces
+except ImportError:
+    class _FallbackEnv:
+        pass
+
+    class _FallbackDiscrete:
+        def __init__(self, n):
+            self.n = n
+
+    class _FallbackBox:
+        def __init__(self, low, high, shape):
+            self.low = low
+            self.high = high
+            self.shape = shape
+
+    class _FallbackGym:
+        Env = _FallbackEnv
+
+    class _FallbackSpaces:
+        Discrete = _FallbackDiscrete
+        Box = _FallbackBox
+
+    gym = _FallbackGym()
+    spaces = _FallbackSpaces()
 
 sys.path.append(".")
 from env.env_class.futures_util import (
@@ -50,6 +74,8 @@ class Base_Env(gym.Env):
         early_stop=0,
         # initial_personal_state
         initial_state=(1e5, 0, 0, 0, 1),
+        buy_fee_rate=None,
+        sell_fee_rate=None,
     ):
         # trading setting
         self.max_holding_number = max_holding_number
@@ -59,6 +85,8 @@ class Base_Env(gym.Env):
         self.short_estimated_rate = short_estimated_rate
         self.maintenance_margin_ratio_dict = maintenance_margin_ratio_dict
         self.commission_rate = commission_rate
+        self.buy_fee_rate = buy_fee_rate
+        self.sell_fee_rate = sell_fee_rate
         # RL setting
         self.single_side_action_num = int((position_choices - 1) / 2)
         self.action_space = spaces.Discrete(
@@ -166,6 +194,8 @@ class Base_Env(gym.Env):
                 long_estimated_rate=self.long_estimated_rate,
                 short_estimated_rate=self.short_estimated_rate,
                 commission_rate=self.commission_rate,
+                buy_fee_rate=self.buy_fee_rate,
+                sell_fee_rate=self.sell_fee_rate,
                 # before action
                 leverage=self.leverage,
                 position=self.position,
@@ -269,6 +299,8 @@ class Base_Env(gym.Env):
             current_leverage=target_leverage,
             current_position=target_position,
             silent=False,
+            buy_fee_rate=self.buy_fee_rate,
+            sell_fee_rate=self.sell_fee_rate,
         )
         self.slippage_sum += slippage
         ##history related
@@ -532,6 +564,8 @@ class Base_Env(gym.Env):
                         long_estimated_rate=self.long_estimated_rate,
                         short_estimated_rate=self.short_estimated_rate,
                         commission_rate=self.commission_rate,
+                        buy_fee_rate=self.buy_fee_rate,
+                        sell_fee_rate=self.sell_fee_rate,
                         # current action
                         leverage=self.leverage,
                         position=self.position,

@@ -3,6 +3,11 @@ import sys
 sys.path.append(".")
 import pandas as pd
 import numpy as np
+try:
+    import gym
+    from gym import spaces
+except ImportError:
+    from env.env_class.base_env import gym, spaces
 from env.env_class.base_env import Base_Env
 from env.env_class.futures_util import create_optimal_q_table
 
