@@ -7,7 +7,7 @@
 
 ## 2. 商品成交价格口径修正
 
-- [ ] 2.0 商品成交价格口径修正完成（与 `plan-ready.md` Task 2 和 superpowers plan Task 2 同步）
+- [x] 2.0 商品成交价格口径修正完成（与 `plan-ready.md` Task 2 和 superpowers plan Task 2 同步） <!-- 已实现: 商品成交均价与 vwap 除以 contract_unit，tradeval 保持原始成交额 -->
 - [ ] 2.1 修改 `data_preprocess/operator_futures/commodity/downscale.py`、`downscale_single_day.py` 和 `downscale_continuous_by_trading_day.py`，让商品成交估算通过 `symbol` 读取 `contract_unit`，并用 `second_tradeval / second_volume / contract_unit` 计算 `second_avg_price`。
 - [ ] 2.2 修改商品基础特征聚合逻辑，使 `vwap = tradeval / volume / contract_unit`，同时保持输出 `tradeval` 为原始成交额差分合计。
 - [ ] 2.3 增加或调整商品下采样测试，覆盖 `fu` 的 `contract_unit=10` 时 `Turnover=26000`、`Volume=1` 产生价格口径 `2600`，并断言 `tradeval` 未被归一化。

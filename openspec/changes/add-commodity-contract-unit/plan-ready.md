@@ -15,7 +15,7 @@
 - 验证方式：运行 `conda run -n finetf pytest data_preprocess/tests/test_commodity_config_schema.py -q`，确认配置字段和值校验通过。
 
 ### Task 2: 商品成交价格口径修正
-- [ ] **任务完成**（与 superpowers plan `Task 2`、`tasks.md` 对应条目同步勾选）
+- [x] **任务完成**（与 superpowers plan `Task 2`、`tasks.md` 对应条目同步勾选）
 - 目标：让商品成交估算读取 `contract_unit`，将 `second_avg_price` 和聚合 `vwap` 修正为价格口径，同时保持 `tradeval` 为原始成交额。
 - 改动文件：`data_preprocess/operator_futures/commodity/downscale.py`、`data_preprocess/operator_futures/commodity/downscale_single_day.py`、`data_preprocess/operator_futures/commodity/downscale_continuous_by_trading_day.py`、`data_preprocess/tests/test_commodity_downscale.py`。
 - 验证方式：运行 `conda run -n finetf pytest data_preprocess/tests/test_commodity_downscale.py -q`，确认 `fu` 的 `contract_unit=10` 时价格为 `Turnover / Volume / 10` 且 `tradeval` 未归一化。

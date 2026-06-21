@@ -68,7 +68,7 @@ def downscale_continuous_by_trading_day(
             "DOWNSCALE_ORDERBOOK_25": downscale_orderbook(
                 second, target_freq, depth=depth
             ),
-            "BASE_FEATURE": downscale_base_features(second, target_freq),
+            "BASE_FEATURE": downscale_base_features(second, target_freq, symbol),
             "COMMODITY_QUOTE_FEATURE": downscale_quote_features(second, target_freq),
         }
         for folder, frame in outputs.items():

@@ -150,7 +150,7 @@ Expected: commit succeeds with only the config and config-schema test changes st
 - Modify: `data_preprocess/operator_futures/commodity/downscale_continuous_by_trading_day.py`
 - Modify: `data_preprocess/tests/test_commodity_downscale.py`
 
-- [ ] **Step 1: Write the failing downscale test**
+- [x] **Step 1: Write the failing downscale test**
 
 In `data_preprocess/tests/test_commodity_downscale.py`, add this test after `test_derivative_reference_falls_back_to_midprice_for_invalid_lastprice`:
 
@@ -181,7 +181,7 @@ def test_base_features_use_contract_unit_for_prices_but_keep_raw_tradeval():
     assert base.item(0, "vwap") == 2600.5
 ```
 
-- [ ] **Step 2: Run the new downscale test to verify it fails**
+- [x] **Step 2: Run the new downscale test to verify it fails**
 
 Run:
 
@@ -191,7 +191,7 @@ conda activate finetf && PYTHONPATH=data_preprocess pytest data_preprocess/tests
 
 Expected: FAIL with `TypeError` because `downscale_base_features` currently accepts only `second_df` and `target_freq`, not `symbol`.
 
-- [ ] **Step 3: Read commodity config in downscale code**
+- [x] **Step 3: Read commodity config in downscale code**
 
 In `data_preprocess/operator_futures/commodity/downscale.py`, add the config import below the Polars import:
 
@@ -261,7 +261,7 @@ Replace the `vwap` expression with:
     ).select(
 ```
 
-- [ ] **Step 4: Pass `symbol` from commodity downscale entry points**
+- [x] **Step 4: Pass `symbol` from commodity downscale entry points**
 
 In `data_preprocess/operator_futures/commodity/downscale_single_day.py`, replace the base-feature call:
 
@@ -275,7 +275,7 @@ In `data_preprocess/operator_futures/commodity/downscale_continuous_by_trading_d
             "BASE_FEATURE": downscale_base_features(second, target_freq, symbol),
 ```
 
-- [ ] **Step 5: Run the new downscale test to verify it passes**
+- [x] **Step 5: Run the new downscale test to verify it passes**
 
 Run:
 
@@ -285,7 +285,7 @@ conda activate finetf && PYTHONPATH=data_preprocess pytest data_preprocess/tests
 
 Expected: PASS. The test confirms `open=2600.0`, `close=2601.0`, raw `tradeval=52010.0`, and `vwap=2600.5`.
 
-- [ ] **Step 6: Run commodity downscale regression tests**
+- [x] **Step 6: Run commodity downscale regression tests**
 
 Run:
 
@@ -295,7 +295,7 @@ conda activate finetf && PYTHONPATH=data_preprocess pytest data_preprocess/tests
 
 Expected: PASS. Existing sample-file and CLI tests still create base features successfully with `symbol=fu`.
 
-- [ ] **Step 7: Commit Task 2 changes**
+- [x] **Step 7: Commit Task 2 changes**
 
 Run:
 
@@ -306,7 +306,7 @@ git commit -m "fix: apply commodity contract unit to trade prices"
 
 Expected: commit succeeds with only downscale code and downscale tests staged.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 3: 规格与回归验证
 

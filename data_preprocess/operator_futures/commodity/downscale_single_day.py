@@ -34,7 +34,7 @@ def main() -> None:
     second = create_second_level_snapshots(raw)
     der = downscale_derivative_reference(second, args.target_freq, args.symbol)
     orderbook = downscale_orderbook(second, args.target_freq, depth=5)
-    base = downscale_base_features(second, args.target_freq)
+    base = downscale_base_features(second, args.target_freq, args.symbol)
     quote = downscale_quote_features(second, args.target_freq)
     if args.date:
         der_path = output_dir / "DOWNSCALE_DERTIC" / args.symbol / args.target_freq

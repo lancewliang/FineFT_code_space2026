@@ -218,6 +218,32 @@ def test_derivative_reference_falls_back_to_midprice_for_invalid_lastprice():
     assert derivative.item(0, "funding_rate") == 0
 
 
+def test_base_features_use_contract_unit_for_prices_but_keep_raw_tradeval():
+    second = pl.DataFrame(
+        {
+            "timestamp": [
+                datetime(2023, 1, 3, 9, 0, 0),
+                datetime(2023, 1, 3, 9, 0, 1),
+                datetime(2023, 1, 3, 9, 0, 2),
+            ],
+            "InstrumentID": ["fu2302", "fu2302", "fu2302"],
+            "BidPrice1": [2599.0, 2599.0, 2600.0],
+            "AskPrice1": [2601.0, 2601.0, 2602.0],
+            "LastPrice": [2600.0, 2600.0, 2601.0],
+            "Volume": [0, 1, 2],
+            "Turnover": [0.0, 26000.0, 52010.0],
+        }
+    )
+
+    base = downscale_base_features(second, "5min", "fu").filter(pl.col("volume") > 0)
+
+    assert base.item(0, "open") == 2600.0
+    assert base.item(0, "close") == 2601.0
+    assert base.item(0, "volume") == 2
+    assert base.item(0, "tradeval") == 52010.0
+    assert base.item(0, "vwap") == 2600.5
+
+
 def test_empty_quote_window_fails_fast():
     raw = pl.read_csv(SAMPLE_PATH).head(2)
     second = create_second_level_snapshots(raw)

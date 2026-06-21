@@ -3,6 +3,7 @@ from typing import List
 
 import polars as pl
 
+from .config import get_commodity_config
 from .main_contract import with_normalized_timestamp
 
 
@@ -206,7 +207,7 @@ def downscale_orderbook(
     )
 
 
-def _second_trade_frame(second_df: pl.DataFrame) -> pl.DataFrame:
+def _second_trade_frame(second_df: pl.DataFrame, contract_unit: float) -> pl.DataFrame:
     frame = second_df.sort("timestamp").with_columns(
         pl.col("Volume")
         .cast(pl.Float64, strict=False)
@@ -232,7 +233,7 @@ def _second_trade_frame(second_df: pl.DataFrame) -> pl.DataFrame:
 
     frame = frame.with_columns(
         pl.when(pl.col("second_volume") > 0)
-        .then(pl.col("second_tradeval") / pl.col("second_volume"))
+        .then(pl.col("second_tradeval") / pl.col("second_volume") / contract_unit)
         .otherwise(None)
         .alias("second_avg_price")
     ).with_row_index("_row_nr")
@@ -261,8 +262,13 @@ def _second_trade_frame(second_df: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def downscale_base_features(second_df: pl.DataFrame, target_freq: str) -> pl.DataFrame:
-    frame = _with_reference_price(_second_trade_frame(second_df)).with_columns(
+def downscale_base_features(
+    second_df: pl.DataFrame, target_freq: str, symbol: str = "fu"
+) -> pl.DataFrame:
+    contract_unit = get_commodity_config(symbol).contract_unit
+    frame = _with_reference_price(
+        _second_trade_frame(second_df, contract_unit)
+    ).with_columns(
         pl.when(pl.col("second_avg_price").is_not_null())
         .then(pl.col("second_avg_price"))
         .otherwise(pl.col("_reference_price"))
@@ -306,7 +312,7 @@ def downscale_base_features(second_df: pl.DataFrame, target_freq: str) -> pl.Dat
     ).drop_nulls("open")
     return grouped.with_columns(
         pl.when(pl.col("volume") > 0)
-        .then(pl.col("tradeval") / pl.col("volume"))
+        .then(pl.col("tradeval") / pl.col("volume") / contract_unit)
         .otherwise(pl.col("close"))
         .alias("vwap"),
         pl.col("awap").alias("twap"),
