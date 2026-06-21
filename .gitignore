@@ -5,3 +5,5 @@ mainifest.json
 data/
 .opencode
 **.pyc
+log_futures/
+PREPROCESS_DATASET/
