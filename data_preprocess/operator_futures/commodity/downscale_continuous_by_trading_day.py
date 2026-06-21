@@ -1,5 +1,7 @@
 import argparse
+import logging
 from pathlib import Path
+import time
 
 import pandas as pd
 
@@ -11,6 +13,16 @@ from .downscale import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
+def configure_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
+
+
 def downscale_continuous_by_trading_day(
     continuous_file: Path,
     output_root: Path,
@@ -18,8 +30,31 @@ def downscale_continuous_by_trading_day(
     symbol: str,
     depth: int = 5,
 ) -> None:
+    started_at = time.monotonic()
+    logger.info(
+        "Starting commodity continuous downscale: input=%s output_root=%s target_freq=%s symbol=%s depth=%d",
+        continuous_file,
+        output_root,
+        target_freq,
+        symbol,
+        depth,
+    )
     raw = pd.read_csv(continuous_file)
-    for trading_day, day_frame in raw.groupby(raw["TradingDay"].astype(str), sort=True):
+    grouped = raw.groupby(raw["TradingDay"].astype(str), sort=True)
+    trading_days = list(grouped)
+    logger.info(
+        "Loaded continuous commodity file: rows=%d trading_days=%d",
+        len(raw),
+        len(trading_days),
+    )
+    for index, (trading_day, day_frame) in enumerate(trading_days, start=1):
+        logger.info(
+            "Downscaling TradingDay %s (%d/%d): rows=%d",
+            trading_day,
+            index,
+            len(trading_days),
+            len(day_frame),
+        )
         second = create_second_level_snapshots(day_frame)
         outputs = {
             "DOWNSCALE_DERTIC": downscale_derivative_reference(
@@ -34,6 +69,11 @@ def downscale_continuous_by_trading_day(
             path = output_root / folder / symbol / target_freq
             path.mkdir(parents=True, exist_ok=True)
             frame.to_feather(path / f"{trading_day}.feather")
+    logger.info(
+        "Finished commodity continuous downscale: trading_days=%d elapsed_seconds=%.2f",
+        len(trading_days),
+        time.monotonic() - started_at,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -49,6 +89,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    configure_logging()
     args = parse_args()
     downscale_continuous_by_trading_day(
         continuous_file=Path(args.input),

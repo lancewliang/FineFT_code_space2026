@@ -1,9 +1,13 @@
+import logging
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
 from .config import get_commodity_config
+
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_timestamp(row: pd.Series) -> pd.Timestamp:
@@ -48,7 +52,9 @@ def iter_contract_files(
         raise FileNotFoundError(
             f"Commodity raw year directory does not exist: {year_dir}"
         )
-    return iter(sorted(year_dir.glob("*/*/*.csv")))
+    files = set(year_dir.glob("*.csv"))
+    files.update(year_dir.glob("*/*/*.csv"))
+    return iter(sorted(files))
 
 
 def _eligible_contracts(
@@ -125,7 +131,14 @@ def load_contract_frames_by_trading_day(
     raw_root: Path, commodity_name: str, year: str
 ) -> Dict[str, Dict[str, Tuple[pd.DataFrame, Path]]]:
     days: Dict[str, Dict[str, Tuple[pd.DataFrame, Path]]] = {}
-    for file_path in iter_contract_files(raw_root, commodity_name, year):
+    file_paths = list(iter_contract_files(raw_root, commodity_name, year))
+    logger.info(
+        "Loading commodity raw files: commodity=%s year=%s files=%d",
+        commodity_name,
+        year,
+        len(file_paths),
+    )
+    for file_path in file_paths:
         frame = pd.read_csv(file_path)
         if frame.empty:
             continue
@@ -142,6 +155,14 @@ def load_contract_frames_by_trading_day(
         contract = str(frame["InstrumentID"].iloc[0])
         trading_day = str(trading_days[0])
         days.setdefault(trading_day, {})[contract] = (frame, file_path)
+    contract_count = sum(len(contracts) for contracts in days.values())
+    logger.info(
+        "Loaded commodity raw files: commodity=%s year=%s trading_days=%d contracts=%d",
+        commodity_name,
+        year,
+        len(days),
+        contract_count,
+    )
     return days
 
 
@@ -162,6 +183,12 @@ def load_contract_frames_by_trading_day_for_years(
                         f"{overlap}"
                     )
             days.setdefault(trading_day, {}).update(contracts)
+    logger.info(
+        "Loaded commodity raw date range candidates: commodity=%s years=%s trading_days=%d",
+        commodity_name,
+        ",".join(str(year) for year in years),
+        len(days),
+    )
     return days
 
 
@@ -173,6 +200,12 @@ def _trading_day_in_range(trading_day: str, start_date: str, end_date: str) -> b
 def build_main_contract_continuous_frame(
     raw_root: Path, commodity_name: str, year: str, symbol: str
 ) -> pd.DataFrame:
+    logger.info(
+        "Building commodity main-contract series: symbol=%s commodity=%s year=%s",
+        symbol,
+        commodity_name,
+        year,
+    )
     days = load_contract_frames_by_trading_day(raw_root, commodity_name, year)
     selected = []
     previous_frames: Dict[str, pd.DataFrame] = {}
@@ -189,7 +222,14 @@ def build_main_contract_continuous_frame(
         copied["main_contract_selection_reason"] = reason
         selected.append((trading_day, contract, copied, source_file))
         previous_frames = current_frames
-    return stitch_main_contract_frames(selected)
+    stitched = stitch_main_contract_frames(selected)
+    logger.info(
+        "Built commodity main-contract series: symbol=%s selected_days=%d rows=%d",
+        symbol,
+        len(selected),
+        len(stitched),
+    )
+    return stitched
 
 
 def build_main_contract_continuous_frame_for_date_range(
@@ -200,6 +240,14 @@ def build_main_contract_continuous_frame_for_date_range(
     symbol: str,
 ) -> pd.DataFrame:
     years = infer_years_for_date_range(start_date, end_date)
+    logger.info(
+        "Building commodity main-contract series: symbol=%s commodity=%s start_date=%s end_date=%s years=%s",
+        symbol,
+        commodity_name,
+        start_date,
+        end_date,
+        ",".join(years),
+    )
     days = load_contract_frames_by_trading_day_for_years(
         raw_root, commodity_name, years
     )
@@ -222,4 +270,11 @@ def build_main_contract_continuous_frame_for_date_range(
         copied["main_contract_selection_reason"] = reason
         selected.append((trading_day, contract, copied, source_file))
         previous_frames = current_frames
-    return stitch_main_contract_frames(selected)
+    stitched = stitch_main_contract_frames(selected)
+    logger.info(
+        "Built commodity main-contract series: symbol=%s selected_days=%d rows=%d",
+        symbol,
+        len(selected),
+        len(stitched),
+    )
+    return stitched

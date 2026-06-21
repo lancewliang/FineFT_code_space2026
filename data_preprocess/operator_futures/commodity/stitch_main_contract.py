@@ -1,10 +1,22 @@
 import argparse
+import logging
 from pathlib import Path
+import time
 
 from .main_contract import (
     build_main_contract_continuous_frame,
     build_main_contract_continuous_frame_for_date_range,
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+def configure_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -28,9 +40,21 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    configure_logging()
     args = parse_args()
+    started_at = time.monotonic()
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
+    logger.info(
+        "Starting commodity main-contract stitch: raw_root=%s commodity=%s symbol=%s year=%s start_date=%s end_date=%s output=%s",
+        args.raw_root,
+        args.commodity_name,
+        args.symbol,
+        args.year,
+        args.start_date,
+        args.end_date,
+        output,
+    )
     if args.start_date and args.end_date:
         stitched = build_main_contract_continuous_frame_for_date_range(
             Path(args.raw_root),
@@ -44,6 +68,12 @@ def main() -> None:
             Path(args.raw_root), args.commodity_name, args.year, args.symbol
         )
     stitched.to_csv(output, index=False)
+    logger.info(
+        "Wrote stitched commodity main-contract file: output=%s rows=%d elapsed_seconds=%.2f",
+        output,
+        len(stitched),
+        time.monotonic() - started_at,
+    )
 
 
 if __name__ == "__main__":

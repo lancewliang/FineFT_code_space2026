@@ -56,7 +56,7 @@ def test_stitch_main_contract_cli_outputs_continuous_file(tmp_path):
     )
 
     output = tmp_path / "continuous" / "fu_2026.csv"
-    subprocess.run(
+    result = subprocess.run(
         [
             sys.executable,
             "-m",
@@ -74,7 +74,9 @@ def test_stitch_main_contract_cli_outputs_continuous_file(tmp_path):
         ],
         cwd=REPO_ROOT,
         env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "data_preprocess")},
+        capture_output=True,
         check=True,
+        text=True,
     )
 
     stitched = pd.read_csv(output)
@@ -86,6 +88,8 @@ def test_stitch_main_contract_cli_outputs_continuous_file(tmp_path):
         20260106,
     ]
     assert "source_file" in stitched.columns
+    assert "Starting commodity main-contract stitch" in result.stderr
+    assert "Wrote stitched commodity main-contract file" in result.stderr
 
 
 def test_stitch_main_contract_cli_accepts_date_range(tmp_path):

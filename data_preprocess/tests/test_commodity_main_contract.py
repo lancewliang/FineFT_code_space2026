@@ -72,7 +72,7 @@ def test_calculate_contract_volume_uses_cumulative_volume_delta():
 
 
 def test_iter_contract_files_scans_raw_download_layout(tmp_path):
-    contract_file = (
+    nested_file = (
         tmp_path
         / "data"
         / "原始下载"
@@ -82,14 +82,25 @@ def test_iter_contract_files_scans_raw_download_layout(tmp_path):
         / "20260105"
         / "fu2602.csv"
     )
-    contract_file.parent.mkdir(parents=True)
-    contract_file.write_text(
+    nested_file.parent.mkdir(parents=True)
+    nested_file.write_text(
         "InstrumentID,TradingDay\nfu2602,20260105\n", encoding="utf-8"
+    )
+    flat_file = (
+        tmp_path
+        / "data"
+        / "原始下载"
+        / "燃料油"
+        / "2026"
+        / "fu2602-2026-01-06.csv"
+    )
+    flat_file.write_text(
+        "InstrumentID,TradingDay\nfu2602,20260106\n", encoding="utf-8"
     )
 
     files = list(iter_contract_files(tmp_path / "data" / "原始下载", "燃料油", "2026"))
 
-    assert files == [contract_file]
+    assert files == [nested_file, flat_file]
 
 
 def test_select_main_contract_uses_previous_day_volume():
