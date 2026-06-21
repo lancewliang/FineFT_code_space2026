@@ -921,7 +921,7 @@ git add data_preprocess/operator_futures/commodity/main_contract.py data_preproc
 git commit -m "refactor: migrate commodity futures preprocessing to polars"
 ```
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 6: Validation and migration closure
 

@@ -33,7 +33,7 @@
 - 验证方式：运行 merge/scale/feature-selection 聚焦 pytest，验证输出路径、列顺序、join/shift/ffill 语义和 `market_type` 分支；对无法在当前 workspace 跑通的大文件 CLI，记录缺少输入数据而非跳过兼容断言。
 
 ### Task 5: Commodity futures Polars migration
-- [ ] **任务完成**（与 superpowers plan `Task 5`、`tasks.md` 对应条目同步勾选）
+- [x] **任务完成**（与 superpowers plan `Task 5`、`tasks.md` 对应条目同步勾选）
 - 目标：迁移 `operator_futures/commodity` 专用链路，保持主力合约选择、跨年日期范围行为、元数据列、timestamp 归一化、depth=5、LastPrice fallback、funding 兼容列、Volume/Turnover 差分、tick rule、右闭聚合、fail-fast 校验和商品 manifest 语义。
 - 改动文件：`data_preprocess/operator_futures/commodity/main_contract.py`、`data_preprocess/operator_futures/commodity/stitch_main_contract.py`、`data_preprocess/operator_futures/commodity/downscale.py`、`data_preprocess/operator_futures/commodity/downscale_single_day.py`、`data_preprocess/operator_futures/commodity/downscale_continuous_by_trading_day.py`、`data_preprocess/operator_futures/commodity/schema.py`、`data_preprocess/operator_futures/commodity/config.py`、`data_preprocess/tests/test_commodity_config_schema.py`、`data_preprocess/tests/test_commodity_downscale.py`、`data_preprocess/tests/test_commodity_feature_pipeline.py`、`data_preprocess/tests/test_commodity_main_contract.py`、`data_preprocess/tests/test_commodity_main_contract_cli.py`。
 - 验证方式：运行 `conda run -n finetf pytest data_preprocess/tests/test_commodity_config_schema.py data_preprocess/tests/test_commodity_downscale.py data_preprocess/tests/test_commodity_feature_pipeline.py data_preprocess/tests/test_commodity_main_contract.py data_preprocess/tests/test_commodity_main_contract_cli.py -q`，并确认 `docs/上海商品交易所/fu2302.csv` 样例覆盖的商品行为仍然通过。

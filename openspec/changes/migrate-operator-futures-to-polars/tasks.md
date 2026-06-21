@@ -30,7 +30,7 @@
 
 ## 5. Commodity futures Polars migration
 
-- [ ] 5.0 Commodity futures Polars migration complete（与 `plan-ready.md` Task 5 和 superpowers plan Task 5 同步）
+- [x] 5.0 Commodity futures Polars migration complete（与 `plan-ready.md` Task 5 和 superpowers plan Task 5 同步） <!-- 已实现: commodity main-contract/downscale/CLI Polars 路径完成，schema/config 与 commodity_futures 分支保持兼容 -->
 - [ ] 5.1 Migrate `data_preprocess/operator_futures/commodity/main_contract.py` and `stitch_main_contract.py` to Polars while preserving main-contract selection, date-range behavior, metadata columns, timestamp normalization, duplicate data checks, and fail-fast errors.
 - [ ] 5.2 Migrate `data_preprocess/operator_futures/commodity/downscale.py`, `downscale_single_day.py`, and `downscale_continuous_by_trading_day.py` to Polars while preserving derivative reference, depth=5 orderbook, base features, quote features, right-closed windows, ffill behavior, and validation errors.
 - [ ] 5.3 Preserve commodity `schema.py`, `config.py`, and `market_type=commodity_futures` branch behavior for reward/execution manifest, depth-aware features, funding-disabled data, and feature selection targets.
