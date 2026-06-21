@@ -390,7 +390,7 @@ git commit -m "refactor: migrate futures downscale io to polars"
 - Modify: `data_preprocess/operator_futures/time_operator/time_operator_util.py`
 - Test: `data_preprocess/tests/test_polars_feature_generation.py`
 
-- [ ] **Step 1: Add feature generation tests for Polars helper behavior**
+- [x] **Step 1: Add feature generation tests for Polars helper behavior**
 
 Create `data_preprocess/tests/test_polars_feature_generation.py` with:
 
@@ -468,13 +468,13 @@ def test_trade_feature_side_group_columns_exist():
     assert "sell_volume" in side.columns
 ```
 
-- [ ] **Step 2: Run feature tests to verify failure before migration**
+- [x] **Step 2: Run feature tests to verify failure before migration**
 
 Run: `conda run -n finetf pytest data_preprocess/tests/test_polars_feature_generation.py -q`
 
 Expected: FAIL because current feature utility functions expect pandas DataFrames.
 
-- [ ] **Step 3: Migrate quote/trade utility functions to Polars expressions**
+- [x] **Step 3: Migrate quote/trade utility functions to Polars expressions**
 
 In `data_preprocess/operator_futures/features_related/feature_util.py`, replace pandas with `import polars as pl`. Preserve public function names. Implement preprocessing helpers with Polars:
 
@@ -540,7 +540,7 @@ def create_quotes_feature(quotes: pl.DataFrame, target_freq: str) -> pl.DataFram
     )
 ```
 
-- [ ] **Step 4: Migrate base feature script IO and concatenation**
+- [x] **Step 4: Migrate base feature script IO and concatenation**
 
 In `data_preprocess/operator_futures/features_related/base_feature.py`, use `pl.read_csv`, Polars horizontal joins on `timestamp`, and `write_ipc`. Preserve `exchange` and `symbol` as the first two non-timestamp columns after reset-equivalent output:
 

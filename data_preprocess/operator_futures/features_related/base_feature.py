@@ -1,4 +1,4 @@
-import pandas as pd
+import polars as pl
 import numpy as np
 import os
 import re
@@ -61,14 +61,14 @@ def main(args):
     dates_list = os.listdir(quotes_path)
     dates_list.sort()
     date = match_strings_in_range(dates_list, args.date)
-    quotes = pd.read_csv(os.path.join(quotes_path, date), engine="python")
+    quotes = pl.read_csv(os.path.join(quotes_path, date))
     quotes = preprocess_quotes(quotes)
 
     trades_path = "{}/{}/trades".format(args.data_path, args.symbols)
     dates_list = os.listdir(trades_path)
     dates_list.sort()
     date = match_strings_in_range(dates_list, args.date)
-    trades = pd.read_csv(os.path.join(trades_path, date), engine="python")
+    trades = pl.read_csv(os.path.join(trades_path, date))
     trades = preprocess_trades(trades)
 
     # liq_path = "{}/{}/liquidations".format(args.data_path, args.symbols)
@@ -81,11 +81,11 @@ def main(args):
     target_freq = args.target_freq
     quotes_df = create_quotes_feature(quotes, target_freq)
     quotes_df_ = create_ohlc_quotes_feature(quotes, target_freq)
-    quotes_df = pd.concat([quotes_df, quotes_df_], axis=1)
+    quotes_df = quotes_df.join(quotes_df_, on="timestamp", how="left")
 
     trades_df, trades = intial_process_trades(trades, target_freq)
     buy_sell_df = side_group_trades(trades, target_freq)
-    trades_df = pd.concat([trades_df, buy_sell_df], axis=1)
+    trades_df = trades_df.join(buy_sell_df, on="timestamp", how="left")
 
     # liq_df, liq = intial_process_trades(liq, target_freq)
     # buy_sell_liq_df = side_group_trades(liq, target_freq)
@@ -93,17 +93,18 @@ def main(args):
     # liq_df.columns = [i + "_liq" for i in liq_df.columns]
 
     # indicators_df = pd.concat([trades_df, quotes_df, liq_df], axis=1)
-    indicators_df = pd.concat([trades_df, quotes_df], axis=1)
-    indicators_df["exchange"] = trades["exchange"][0]
-    indicators_df["symbol"] = trades["symbol"][0]
-    indicators_df = move_column_in_position(indicators_df, "exchange", 0)
-    indicators_df = move_column_in_position(indicators_df, "symbol", 1)
+    indicators_df = trades_df.join(quotes_df, on="timestamp", how="left")
+    indicators_df = indicators_df.with_columns(
+        pl.lit(trades.select("exchange").item(0, 0)).alias("exchange"),
+        pl.lit(trades.select("symbol").item(0, 0)).alias("symbol"),
+    )
+    indicators_df = move_column_in_position(indicators_df, "exchange", 1)
+    indicators_df = move_column_in_position(indicators_df, "symbol", 2)
 
-    indicators_df.reset_index(inplace=True)
-    indicators_df = indicators_df.ffill()
+    indicators_df = indicators_df.fill_null(strategy="forward")
     if not os.path.exists(os.path.join(args.save_path, args.symbols, args.target_freq)):
         os.makedirs(os.path.join(args.save_path, args.symbols, args.target_freq))
-    indicators_df.to_feather(
+    indicators_df.write_ipc(
         os.path.join(
             args.save_path,
             args.symbols,
