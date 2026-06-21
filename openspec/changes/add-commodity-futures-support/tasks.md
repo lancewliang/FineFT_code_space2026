@@ -41,3 +41,10 @@
 - [x] 7.1 运行 `fu` 样例数据的商品期货单元测试和 smoke test。 <!-- 已验证: 商品测试与 fu smoke 通过 -->
 - [x] 7.2 运行加密货币预处理/环境 smoke test，确认现有 depth=25 行为仍可用。 <!-- 已验证: depth=25 snapshot smoke 通过 -->
 - [x] 7.3 运行 `openspec validate add-commodity-futures-support --strict`，并记录因缺少完整原始数据或 GPU 而跳过的昂贵步骤。 <!-- 已验证: OpenSpec strict 通过并记录跳过项 -->
+
+## 8. 主流程脚本与连续下采样入口同步
+
+- [x] 8.1 新增主力连续化 CLI `operator_futures.commodity.stitch_main_contract`，将本地多合约文件拼接为连续主力原始文件。 <!-- 已实现: 新增主力连续化 CLI -->
+- [x] 8.2 新增连续主力按 `TradingDay` 下采样 CLI `operator_futures.commodity.downscale_continuous_by_trading_day`，避免在 sh 中嵌入 Python here-doc。 <!-- 已实现: 抽出连续下采样 Python 模块 -->
+- [x] 8.3 新增商品期货 main script，支持通过环境变量配置年份、日期范围、频率、symbol、品种中文名和并发数。 <!-- 已实现: 新增 commodity/main.sh -->
+- [x] 8.4 更新测试和文档，覆盖主流程脚本语法、关键函数调用和完整流程使用方式。 <!-- 已验证: 脚本测试与文档说明已补齐 -->

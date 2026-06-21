@@ -46,3 +46,11 @@ FineFT 当前默认使用 Binance 风格的加密货币期货数据输入：`boo
   期货等价环境配置或 `maintenance_margin_ratio_dict.npy`。
 - 不新增 GPU 依赖；预处理仍主要受 CPU/IO 限制。
 - 不包含 `download_operator`；商品期货原始文件由用户放入本地规划目录。
+
+## Amendments
+
+### 2026-06-21: 补齐商品期货主流程脚本文档同步
+
+- 原因：build 后追加了主力连续化 CLI、按 `TradingDay` 下采样 CLI 和商品期货 main script，需要将这些已实现入口补入 OpenSpec 任务与计划文档。
+- 摘要：文档同步覆盖 `operator_futures.commodity.stitch_main_contract`、`operator_futures.commodity.downscale_continuous_by_trading_day`、`data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh` 和 `data_preprocess/script_preprocess/future_upgraded/commodity/main.sh`。
+- 范围：不改变商品期货处理行为，仅修正 tasks、plan-ready 和详细实现计划的追踪完整性。

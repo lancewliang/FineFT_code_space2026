@@ -1071,3 +1071,42 @@ git commit -m "test: verify commodity futures support"
 预期：提交成功或由用户明确选择延后。
 
 - [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+
+### Task 8: 主流程脚本与连续下采样入口同步
+
+> **trace:** plan-ready.md → `### Task 8: 主流程脚本与连续下采样入口同步` | tasks.md → ``- [x] 8.1 新增主力连续化 CLI `operator_futures.commodity.stitch_main_contract`，将本地多合约文件拼接为连续主力原始文件。``
+> **sync:** tasks.md → ``- [x] 8.1 新增主力连续化 CLI `operator_futures.commodity.stitch_main_contract`，将本地多合约文件拼接为连续主力原始文件。`` | plan-ready.md → `### Task 8: 主流程脚本与连续下采样入口同步`
+
+**文件：**
+- 已新增：`data_preprocess/operator_futures/commodity/stitch_main_contract.py`
+- 已新增：`data_preprocess/operator_futures/commodity/downscale_continuous_by_trading_day.py`
+- 已新增：`data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh`
+- 已新增：`data_preprocess/script_preprocess/future_upgraded/commodity/main.sh`
+- 已修改：`data_preprocess/tests/test_commodity_main_contract_cli.py`
+- 已修改：`docs/上海商品交易所/commodity_futures_preprocess.md`
+
+- [x] **Step 1: 补齐主力连续化 CLI 追踪**
+
+确认 `operator_futures.commodity.stitch_main_contract` 从 `data/原始下载/{品种中文名}/{YYYY}` 扫描多合约文件，输出 `PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/{symbol}/{symbol}_{year}.csv`。
+
+- [x] **Step 2: 补齐连续主力下采样 CLI 追踪**
+
+确认 `operator_futures.commodity.downscale_continuous_by_trading_day` 按 `TradingDay` 分组生成 `DOWNSCALE_DERTIC`、`DOWNSCALE_ORDERBOOK_25` 和 `BASE_FEATURE`，且 shell 中不再嵌入 Python here-doc。
+
+- [x] **Step 3: 补齐商品期货 main script 追踪**
+
+确认 `data_preprocess/script_preprocess/future_upgraded/commodity/main.sh` 可直接执行，并通过 `YEAR`、`START_DATE`、`END_DATE`、`TARGET_FREQ`、`SYMBOL`、`COMMODITY_NAME` 和 `MAX_PROCESSES` 环境变量覆盖默认参数。
+
+- [x] **Step 4: 验证脚本与测试**
+
+运行：
+
+```bash
+PYTHONPATH=data_preprocess python -m pytest data_preprocess/tests/test_commodity_main_contract_cli.py -q
+bash -n data_preprocess/script_preprocess/future_upgraded/commodity/main.sh
+bash -n data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh
+```
+
+预期：测试通过，两个 shell 脚本语法检查通过。
+
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
