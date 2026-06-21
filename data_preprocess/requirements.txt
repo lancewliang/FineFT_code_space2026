@@ -4,6 +4,7 @@ memory_profiler==0.61.0
 nest_asyncio==1.6.0
 numpy==1.24.3
 pandas==2.0.3
+polars==1.31.0
 pyarrow==16.0.0
 scikit_learn==1.4.2
 tardis_dev==2.0.0a13
