@@ -60,6 +60,13 @@ source data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_proce
 run_commodity_full_process "$(pwd)" 2026 2026-01-01 2026-02-01 5min fu 燃料油 4
 ```
 
+也可以直接使用 main script，并通过环境变量覆盖默认参数：
+
+```bash
+YEAR=2026 START_DATE=2026-01-01 END_DATE=2026-02-01 TARGET_FREQ=5min \
+  bash data_preprocess/script_preprocess/future_upgraded/commodity/main.sh
+```
+
 该入口会先从 `data/原始下载/燃料油/2026` 扫描所有合约 CSV，按 `TradingDay` 选择每日主力合约，生成连续主力原始文件：
 
 ```text

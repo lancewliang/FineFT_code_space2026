@@ -105,3 +105,19 @@ def test_commodity_full_process_shell_exposes_expected_functions():
     assert "run_merge_process " not in text
     assert "python - <<" not in text
     assert "operator_futures.commodity.downscale_continuous_by_trading_day" in text
+
+
+def test_commodity_main_script_runs_full_process_entrypoint():
+    script = (
+        REPO_ROOT
+        / "data_preprocess/script_preprocess/future_upgraded/commodity/main.sh"
+    )
+    assert script.exists()
+    subprocess.run(["bash", "-n", str(script)], check=True)
+    text = script.read_text(encoding="utf-8")
+    assert "fu_full_process.sh" in text
+    assert "run_commodity_full_process" in text
+    assert "START_DATE" in text
+    assert "END_DATE" in text
+    assert "TARGET_FREQ" in text
+    assert "COMMODITY_NAME" in text
