@@ -12,7 +12,12 @@ class CommodityConfig:
     buy_fee_rate: float
     sell_fee_rate: float
     main_contract_months: Tuple[int, ...]
+    contract_unit: float
     use_contract_multiplier: bool
+
+    def __post_init__(self) -> None:
+        if self.contract_unit <= 0:
+            raise ValueError("contract_unit must be positive")
 
 
 COMMODITY_CONFIGS: Dict[str, CommodityConfig] = {
@@ -25,6 +30,7 @@ COMMODITY_CONFIGS: Dict[str, CommodityConfig] = {
         buy_fee_rate=0.0001,
         sell_fee_rate=0.0003,
         main_contract_months=tuple(range(1, 13)),
+        contract_unit=10,
         use_contract_multiplier=False,
     )
 }
