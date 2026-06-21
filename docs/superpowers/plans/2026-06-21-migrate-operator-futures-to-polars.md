@@ -365,14 +365,14 @@ PY
 
 Expected: exits 0.
 
-- [ ] **Step 7: Commit Task 2**
+- [x] **Step 7: Commit Task 2**
 
 ```bash
 git add data_preprocess/operator_futures/orderbook_25/down_scale_single_shot.py data_preprocess/operator_futures/orderbook_25/down_scale_single_shot_base_other.py data_preprocess/operator_futures/derivative_ticker/down_scale_single_shot.py data_preprocess/operator_futures/derivative_ticker/down_scale_single_shot_base_other.py data_preprocess/tests/test_polars_downscale_io.py
 git commit -m "refactor: migrate futures downscale io to polars"
 ```
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 3: Binance feature generation paths
 

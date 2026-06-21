@@ -7,7 +7,7 @@
 
 ## 2. Binance downscale and IO paths
 
-- [ ] 2.0 Binance downscale and IO paths complete（与 `plan-ready.md` Task 2 和 superpowers plan Task 2 同步）
+- [x] 2.0 Binance downscale and IO paths complete（与 `plan-ready.md` Task 2 和 superpowers plan Task 2 同步） <!-- 已实现: orderbook 和 derivative ticker downscale 改为 Polars IO 与窗口聚合 -->
 - [ ] 2.1 Migrate `data_preprocess/operator_futures/orderbook_25/*.py` to Polars while preserving timestamp conversion, first-in-window downsampling, forward fill, renamed depth columns, CLI behavior, and Feather output paths.
 - [ ] 2.2 Migrate `data_preprocess/operator_futures/derivative_ticker/*.py` to Polars while preserving timestamp/funding timestamp conversion, selected columns, first-in-window downsampling, forward fill, CLI behavior, and Feather output paths.
 - [ ] 2.3 Add or update focused tests/smoke checks for the migrated Binance downscale paths using existing small fixtures or minimal existing test patterns.

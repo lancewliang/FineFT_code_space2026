@@ -15,7 +15,7 @@
 - 验证方式：运行 `conda run -n finetf python -c "import polars"`、`conda run -n finetf pytest data_preprocess/tests/test_polars_compat.py -q`（若 helper 放入 `conftest.py`，则运行引用 helper 的最小测试文件），并确认 `compatibility-notes.md` 保持无未决项或记录完整未决项。
 
 ### Task 2: Binance downscale and IO paths
-- [ ] **任务完成**（与 superpowers plan `Task 2`、`tasks.md` 对应条目同步勾选）
+- [x] **任务完成**（与 superpowers plan `Task 2`、`tasks.md` 对应条目同步勾选）
 - 目标：迁移 Binance orderbook 与 derivative ticker 的 CSV/Feather 读取、时间列转换、first-in-window 降采样、列重命名、前向填充和 Feather 写出，同时保持 CLI 和输出路径不变。
 - 改动文件：`data_preprocess/operator_futures/orderbook_25/down_scale_single_shot.py`、`data_preprocess/operator_futures/orderbook_25/down_scale_single_shot_base_other.py`、`data_preprocess/operator_futures/derivative_ticker/down_scale_single_shot.py`、`data_preprocess/operator_futures/derivative_ticker/down_scale_single_shot_base_other.py`、相关 `data_preprocess/tests` 测试文件。
 - 验证方式：运行针对 downscale helper 的聚焦 pytest；如无现成 raw Binance 小样例，则运行 Python 级小 DataFrame 单元测试验证 timestamp、列名、first/ffill 语义，并记录缺少真实 raw 数据导致的 CLI smoke 限制。
