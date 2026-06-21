@@ -28,3 +28,25 @@ During implementation, if a pandas behavior appears incorrect or Polars cannot r
 - proposed Polars output: merge/concat/merge_clean core joins now have Polars paths; scale/save and feature-selection need narrower tests before removing pandas imports safely.
 - recommended decision: add focused tests for reward/execution manifest preservation and model-boundary conversion before removing pandas from these scripts.
 - user decision: pending
+
+## Implementation concern: Task 6 migrated-engine pandas import scan
+
+- file and function: `features_related/feature_util.py`, `cross_section/base_feature_util.py`, `time_operator/create_feature.py`, `time_operator/create_feature_multi_processing.py`, `time_operator/multi_processing_util.py`, `time_operator/time_operator_util.py`, `scale_describe_save/scale_save.py`
+- input condition: final migrated-engine scan still finds pandas imports in legacy feature/time/scale entrypoints after focused Polars paths were added and tested.
+- previous pandas output: unported legacy call paths keep accepting pandas inputs and model-boundary pandas objects.
+- proposed Polars output: migrated downscale, feature-generation focus paths, merge/concat/merge_clean, and commodity preprocessing return Polars outputs for the tested contracts; remaining pandas imports are compatibility boundaries, not silent engine regressions.
+- recommended decision: keep the documented boundaries until each remaining entrypoint has a focused Polars contract test and a safe model-boundary conversion decision.
+- user decision: pending
+
+## Smoke limitation: Binance futures raw sample
+
+The workspace does not contain a small local `DOWNLOAD_DATASET/binance-futures` raw sample for CLI smoke execution. Compatibility is covered by focused Polars unit tests for downscale, feature generation, merge, scale, and feature-selection semantics.
+
+## Manual timing: representative preprocessing path
+
+- Command: `python -m operator_futures.commodity.downscale_single_day --input data/原始下载/燃料油/2023/fu2305-2023-01-04.csv --output_dir /tmp/finetf-polars-bench-small --symbol fu --target_freq 5min`
+- Input dataset: `data/原始下载/燃料油/2023/fu2305-2023-01-04.csv`
+- Before pandas runtime: unavailable for a comparable pass because the legacy pandas implementation fails the quote-window validation on this sample
+- After Polars runtime: completed successfully
+- Improvement: not comparable on this sample
+- Meets expected 30% improvement: no

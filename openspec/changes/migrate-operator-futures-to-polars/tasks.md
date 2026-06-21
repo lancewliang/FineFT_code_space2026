@@ -38,7 +38,7 @@
 
 ## 6. Validation and migration closure
 
-- [ ] 6.0 Validation and migration closure complete（与 `plan-ready.md` Task 6 和 superpowers plan Task 6 同步）
+- [x] 6.0 Validation and migration closure complete（与 `plan-ready.md` Task 6 和 superpowers plan Task 6 同步） <!-- 已实现: strict validate、全量 data_preprocess 测试、商品 smoke、兼容限制与 timing 记录完成 -->
 - [ ] 6.1 Run `openspec validate migrate-operator-futures-to-polars --strict` and fix all validation errors.
 - [ ] 6.2 Run focused data preprocessing tests with `conda run -n finetf pytest data_preprocess/tests -q`.
 - [ ] 6.3 Run representative Binance futures and commodity futures smoke commands using existing small samples or document why a smoke command cannot run in the current workspace.

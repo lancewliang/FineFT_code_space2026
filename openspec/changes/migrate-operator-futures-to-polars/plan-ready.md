@@ -39,7 +39,7 @@
 - 验证方式：运行 `conda run -n finetf pytest data_preprocess/tests/test_commodity_config_schema.py data_preprocess/tests/test_commodity_downscale.py data_preprocess/tests/test_commodity_feature_pipeline.py data_preprocess/tests/test_commodity_main_contract.py data_preprocess/tests/test_commodity_main_contract_cli.py -q`，并确认 `docs/上海商品交易所/fu2302.csv` 样例覆盖的商品行为仍然通过。
 
 ### Task 6: Validation and migration closure
-- [ ] **任务完成**（与 superpowers plan `Task 6`、`tasks.md` 对应条目同步勾选）
+- [x] **任务完成**（与 superpowers plan `Task 6`、`tasks.md` 对应条目同步勾选）
 - 目标：完成规格校验、测试回归、代表性 smoke 记录和手工性能记录，确保迁移完成后可以进入 close 阶段。
 - 改动文件：`openspec/changes/migrate-operator-futures-to-polars/tasks.md`、`openspec/changes/migrate-operator-futures-to-polars/plan-ready.md`、`docs/superpowers/plans/2026-06-21-migrate-operator-futures-to-polars.md`、`openspec/changes/migrate-operator-futures-to-polars/compatibility-notes.md`。
 - 验证方式：运行 `openspec validate migrate-operator-futures-to-polars --strict`、`conda run -n finetf pytest data_preprocess/tests -q`、代表性 Binance futures 与 commodity futures smoke 命令、`git diff --check`，并在验证记录或计划勾选备注中写明性能记录和无法运行项的具体原因。

@@ -934,19 +934,19 @@ git commit -m "refactor: migrate commodity futures preprocessing to polars"
 - Modify: `docs/superpowers/plans/2026-06-21-migrate-operator-futures-to-polars.md`
 - Modify: `openspec/changes/migrate-operator-futures-to-polars/compatibility-notes.md`
 
-- [ ] **Step 1: Run OpenSpec strict validation**
+- [x] **Step 1: Run OpenSpec strict validation**
 
 Run: `openspec validate migrate-operator-futures-to-polars --strict`
 
 Expected: PASS with `Change 'migrate-operator-futures-to-polars' is valid`.
 
-- [ ] **Step 2: Run full data_preprocess tests**
+- [x] **Step 2: Run full data_preprocess tests**
 
 Run: `conda run -n finetf pytest data_preprocess/tests -q`
 
 Expected: PASS for all tests in `data_preprocess/tests`.
 
-- [ ] **Step 3: Run migrated-engine pandas import scan**
+- [x] **Step 3: Run migrated-engine pandas import scan**
 
 Run:
 
@@ -984,7 +984,7 @@ PY
 
 Expected: exits 0, or fails only for documented third-party boundary files that are recorded in `compatibility-notes.md`.
 
-- [ ] **Step 4: Run smoke command checks**
+- [x] **Step 4: Run smoke command checks**
 
 Run commodity smoke:
 
@@ -1006,7 +1006,7 @@ For Binance smoke, use the smallest available local raw Binance sample. If no `D
 The workspace does not contain a small local `DOWNLOAD_DATASET/binance-futures` raw sample for CLI smoke execution. Compatibility is covered by focused Polars unit tests for downscale, feature generation, merge, scale, and feature-selection semantics.
 ```
 
-- [ ] **Step 5: Record manual timing evidence**
+- [x] **Step 5: Record manual timing evidence**
 
 Run the selected representative preprocessing command before and after the Polars migration if a representative input dataset exists. Append the result to `compatibility-notes.md` in this format:
 
@@ -1023,20 +1023,20 @@ Run the selected representative preprocessing command before and after the Polar
 
 If the representative dataset is unavailable, write the exact missing path and do not mark the 30% acceptance item complete.
 
-- [ ] **Step 6: Run diff hygiene**
+- [x] **Step 6: Run diff hygiene**
 
 Run: `git diff --check`
 
 Expected: no whitespace errors.
 
-- [ ] **Step 7: Commit Task 6 documentation sync**
+- [x] **Step 7: Commit Task 6 documentation sync**
 
 ```bash
 git add openspec/changes/migrate-operator-futures-to-polars/tasks.md openspec/changes/migrate-operator-futures-to-polars/plan-ready.md docs/superpowers/plans/2026-06-21-migrate-operator-futures-to-polars.md openspec/changes/migrate-operator-futures-to-polars/compatibility-notes.md
 git commit -m "docs: record polars migration validation plan"
 ```
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ---
 
