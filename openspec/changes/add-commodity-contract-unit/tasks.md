@@ -15,7 +15,7 @@
 
 ## 3. 规格与回归验证
 
-- [ ] 3.0 规格与回归验证完成（与 `plan-ready.md` Task 3 和 superpowers plan Task 3 同步）
+- [x] 3.0 规格与回归验证完成（与 `plan-ready.md` Task 3 和 superpowers plan Task 3 同步） <!-- 已实现: 文档同步 contract_unit 公式并完成 OpenSpec、测试和 diff 验证 -->
 - [ ] 3.1 如有相关文档或长期规格引用“不引入 contract_multiplier”，更新为商品配置级 `contract_unit` 的新决策，避免与实现语义冲突。
 - [ ] 3.2 运行商品期货相关回归测试，确认配置、下采样和 CLI smoke 不受影响。
 - [ ] 3.3 验证：运行 `openspec validate add-commodity-contract-unit --strict`、`conda run -n finetf pytest data_preprocess/tests/test_commodity_config_schema.py data_preprocess/tests/test_commodity_downscale.py -q`、`git diff --check`。回滚时恢复规格和文档中的旧公式描述。

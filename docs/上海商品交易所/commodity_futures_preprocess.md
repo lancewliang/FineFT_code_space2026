@@ -39,7 +39,7 @@ docs/上海商品交易所/fu2302.csv
 
 - funding 关闭，环境中不产生 funding fee，也不暴露 funding countdown 状态。
 - `index_price` 和 `mark_price` 使用 `LastPrice` 生成；`LastPrice` 缺失、为 0 或越过涨跌停边界时回退到一档 midprice。
-- trades 特征由每秒累计 `Volume` 与 `Turnover` 差分估计，`second_avg_price = Turnover.diff() / Volume.diff()`。
+- trades 特征由每秒累计 `Volume` 与 `Turnover` 差分估计，`second_avg_price = Turnover.diff() / Volume.diff() / contract_unit`；`tradeval` 保留原始成交额差分。
 - 成交方向使用 tick rule：秒均价相对前值上涨为 `buy_estimated`，下跌为 `sell_estimated`，持平为 `flat`，不做方向继承。
 - quotes 特征由原始五档快照先整理为秒频最后一条，再聚合到目标频率；秒频层不 forward fill，目标窗口没有 quote 时 fail-fast。
 
@@ -49,7 +49,8 @@ docs/上海商品交易所/fu2302.csv
 
 - 买入费率：`0.0001`
 - 卖出费率：`0.0003`
-- 不引入 `contract_multiplier`
+- 合约交易单位：`10`
+- `contract_unit` 仅用于商品成交均价和 `vwap` 的价格口径修正，不用于 PnL、保证金或手续费。
 
 ## 验证命令
 

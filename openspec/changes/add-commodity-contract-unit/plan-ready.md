@@ -21,7 +21,7 @@
 - 验证方式：运行 `conda run -n finetf pytest data_preprocess/tests/test_commodity_downscale.py -q`，确认 `fu` 的 `contract_unit=10` 时价格为 `Turnover / Volume / 10` 且 `tradeval` 未归一化。
 
 ### Task 3: 规格与回归验证
-- [ ] **任务完成**（与 superpowers plan `Task 3`、`tasks.md` 对应条目同步勾选）
+- [x] **任务完成**（与 superpowers plan `Task 3`、`tasks.md` 对应条目同步勾选）
 - 目标：同步规格/文档中旧的“不引入 contract_multiplier”描述，并运行 OpenSpec、商品期货测试和 diff 检查。
 - 改动文件：`docs/上海商品交易所/commodity_futures_preprocess.md`、`openspec/changes/add-commodity-contract-unit/tasks.md`、`openspec/changes/add-commodity-contract-unit/plan-ready.md`、`docs/superpowers/plans/2026-06-21-add-commodity-contract-unit.md`。
 - 验证方式：运行 `openspec validate add-commodity-contract-unit --strict`、`conda run -n finetf pytest data_preprocess/tests/test_commodity_config_schema.py data_preprocess/tests/test_commodity_downscale.py -q`、`git diff --check`，确认规格、测试和格式检查通过。

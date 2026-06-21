@@ -319,7 +319,7 @@ Expected: commit succeeds with only downscale code and downscale tests staged.
 - Modify: `openspec/changes/add-commodity-contract-unit/plan-ready.md`
 - Modify: `docs/superpowers/plans/2026-06-21-add-commodity-contract-unit.md`
 
-- [ ] **Step 1: Update the commodity futures preprocessing doc**
+- [x] **Step 1: Update the commodity futures preprocessing doc**
 
 In `docs/上海商品交易所/commodity_futures_preprocess.md`, replace the trades-feature bullet with:
 
@@ -336,7 +336,7 @@ Replace the fee/config bullets with:
 - `contract_unit` 仅用于商品成交均价和 `vwap` 的价格口径修正，不用于 PnL、保证金或手续费。
 ```
 
-- [ ] **Step 2: Run OpenSpec strict validation**
+- [x] **Step 2: Run OpenSpec strict validation**
 
 Run:
 
@@ -346,7 +346,7 @@ openspec validate add-commodity-contract-unit --strict
 
 Expected: PASS with `Change 'add-commodity-contract-unit' is valid`.
 
-- [ ] **Step 3: Run focused commodity tests**
+- [x] **Step 3: Run focused commodity tests**
 
 Run:
 
@@ -356,7 +356,7 @@ conda activate finetf && PYTHONPATH=data_preprocess pytest data_preprocess/tests
 
 Expected: PASS. Config schema and downscale tests confirm `contract_unit=10`, price correction, and raw `tradeval` preservation.
 
-- [ ] **Step 4: Run diff formatting check**
+- [x] **Step 4: Run diff formatting check**
 
 Run:
 
@@ -366,11 +366,11 @@ git diff --check
 
 Expected: no output and exit code `0`.
 
-- [ ] **Step 5: Mark implementation task checkboxes after verification**
+- [x] **Step 5: Mark implementation task checkboxes after verification**
 
 After Steps 2-4 pass, change the task-level checkbox for Task 3 from unchecked to checked in `openspec/changes/add-commodity-contract-unit/tasks.md`, `openspec/changes/add-commodity-contract-unit/plan-ready.md`, and this plan's Task 3 `Task complete` line. Do this only after every Step in Task 3 is checked.
 
-- [ ] **Step 6: Commit Task 3 changes**
+- [x] **Step 6: Commit Task 3 changes**
 
 Run:
 
@@ -381,4 +381,4 @@ git commit -m "docs: record commodity contract unit plan"
 
 Expected: commit succeeds with docs, OpenSpec task status, plan-ready status, and plan status changes staged.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
