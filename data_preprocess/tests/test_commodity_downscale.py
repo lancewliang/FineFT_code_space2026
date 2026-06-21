@@ -80,6 +80,100 @@ def test_second_level_drops_rows_with_all_depth_prices_null():
     assert not second["timestamp"].eq(dropped_timestamp).any()
 
 
+def test_limit_down_single_sided_book_is_allowed():
+    raw = pl.read_csv(SAMPLE_PATH).head(1)
+    lower_limit = raw.item(0, "LowerLimitPrice")
+    raw = raw.with_columns(
+        [pl.lit(lower_limit).alias("LastPrice")]
+        + [
+            pl.lit(None).alias(f"BidPrice{level}")
+            for level in range(1, 6)
+        ]
+        + [
+            pl.lit(0).alias(f"BidVolume{level}")
+            for level in range(1, 6)
+        ]
+    )
+
+    validate_best_quotes(raw, "fu2302")
+
+
+def test_touched_limit_down_single_sided_book_is_allowed():
+    raw = pl.read_csv(SAMPLE_PATH).head(1)
+    lower_limit = raw.item(0, "LowerLimitPrice")
+    raw = raw.with_columns(
+        [
+            pl.lit(lower_limit + 1).alias("LastPrice"),
+            pl.lit(lower_limit).alias("LowPrice"),
+        ]
+        + [
+            pl.lit(None).alias(f"BidPrice{level}")
+            for level in range(1, 6)
+        ]
+        + [
+            pl.lit(0).alias(f"BidVolume{level}")
+            for level in range(1, 6)
+        ]
+    )
+
+    validate_best_quotes(raw, "fu2302")
+
+
+def test_limit_up_single_sided_book_is_allowed():
+    raw = pl.read_csv(SAMPLE_PATH).head(1)
+    upper_limit = raw.item(0, "UpperLimitPrice")
+    raw = raw.with_columns(
+        [pl.lit(upper_limit).alias("LastPrice")]
+        + [
+            pl.lit(None).alias(f"AskPrice{level}")
+            for level in range(1, 6)
+        ]
+        + [
+            pl.lit(0).alias(f"AskVolume{level}")
+            for level in range(1, 6)
+        ]
+    )
+
+    validate_best_quotes(raw, "fu2302")
+
+
+def test_touched_limit_up_single_sided_book_is_allowed():
+    raw = pl.read_csv(SAMPLE_PATH).head(1)
+    upper_limit = raw.item(0, "UpperLimitPrice")
+    raw = raw.with_columns(
+        [
+            pl.lit(upper_limit - 1).alias("LastPrice"),
+            pl.lit(upper_limit).alias("HighPrice"),
+        ]
+        + [
+            pl.lit(None).alias(f"AskPrice{level}")
+            for level in range(1, 6)
+        ]
+        + [
+            pl.lit(0).alias(f"AskVolume{level}")
+            for level in range(1, 6)
+        ]
+    )
+
+    validate_best_quotes(raw, "fu2302")
+
+
+def test_non_limit_single_sided_book_still_fails():
+    raw = pl.read_csv(SAMPLE_PATH).head(1).with_columns(
+        [
+            pl.lit(None).alias(f"BidPrice{level}")
+            for level in range(1, 6)
+        ]
+        + [
+            pl.lit(0).alias(f"BidVolume{level}")
+            for level in range(1, 6)
+        ]
+    )
+
+    with pytest.raises(ValueError, match="BidPrice1 is null"):
+        validate_best_quotes(raw, "fu2302")
+
+
 def test_second_level_uses_last_snapshot_per_second():
     raw = pl.read_csv(SAMPLE_PATH).head(4)
     update_time = raw.item(1, "UpdateTime")

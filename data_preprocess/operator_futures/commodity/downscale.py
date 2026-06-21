@@ -5,9 +5,11 @@ import polars as pl
 from .main_contract import with_normalized_timestamp
 
 
-DEPTH_PRICE_COLUMNS = [
-    f"{side}Price{level}" for side in ("Bid", "Ask") for level in range(1, 6)
-]
+BID_PRICE_COLUMNS = [f"BidPrice{level}" for level in range(1, 6)]
+ASK_PRICE_COLUMNS = [f"AskPrice{level}" for level in range(1, 6)]
+BID_VOLUME_COLUMNS = [f"BidVolume{level}" for level in range(1, 6)]
+ASK_VOLUME_COLUMNS = [f"AskVolume{level}" for level in range(1, 6)]
+DEPTH_PRICE_COLUMNS = BID_PRICE_COLUMNS + ASK_PRICE_COLUMNS
 
 
 def _polars_freq(target_freq: str) -> str:
@@ -36,7 +38,41 @@ def validate_best_quotes(df: pl.DataFrame, contract: str) -> None:
         pl.col("AskPrice1") <= 0,
         pl.col("BidPrice1") >= pl.col("AskPrice1"),
     )
-    invalid_rows = df.filter(invalid)
+    limit_down_single_sided = (
+        pl.col("LastPrice").is_not_null()
+        & pl.col("LowerLimitPrice").is_not_null()
+        & (
+            (pl.col("LastPrice") == pl.col("LowerLimitPrice"))
+            | (pl.col("LowPrice") == pl.col("LowerLimitPrice"))
+        )
+        & pl.all_horizontal(
+            [pl.col(column).is_null() for column in BID_PRICE_COLUMNS]
+        )
+        & pl.all_horizontal(
+            [pl.col(column).fill_null(0) == 0 for column in BID_VOLUME_COLUMNS]
+        )
+        & pl.col("AskPrice1").is_not_null()
+        & (pl.col("AskPrice1") > 0)
+    ).fill_null(False)
+    limit_up_single_sided = (
+        pl.col("LastPrice").is_not_null()
+        & pl.col("UpperLimitPrice").is_not_null()
+        & (
+            (pl.col("LastPrice") == pl.col("UpperLimitPrice"))
+            | (pl.col("HighPrice") == pl.col("UpperLimitPrice"))
+        )
+        & pl.all_horizontal(
+            [pl.col(column).is_null() for column in ASK_PRICE_COLUMNS]
+        )
+        & pl.all_horizontal(
+            [pl.col(column).fill_null(0) == 0 for column in ASK_VOLUME_COLUMNS]
+        )
+        & pl.col("BidPrice1").is_not_null()
+        & (pl.col("BidPrice1") > 0)
+    ).fill_null(False)
+    invalid_rows = df.filter(
+        invalid & ~(limit_down_single_sided | limit_up_single_sided)
+    )
     if invalid_rows.height:
         first = invalid_rows.row(0, named=True)
         bid_price = first.get("BidPrice1")
