@@ -41,8 +41,43 @@ def test_invalid_best_quote_fails_fast():
         .alias("BidPrice1")
     )
 
-    with pytest.raises(ValueError, match="BidPrice1"):
+    with pytest.raises(ValueError) as exc_info:
         validate_best_quotes(raw, "fu2302")
+
+    message = str(exc_info.value)
+    assert f"BidPrice1={ask_price}" in message
+    assert f"AskPrice1={ask_price}" in message
+    assert "reason=BidPrice1 >= AskPrice1" in message
+    assert "row={" in message
+    assert "'InstrumentID': 'fu2302'" in message
+    assert "'LastPrice':" in message
+
+
+def test_second_level_drops_rows_with_all_depth_prices_null():
+    raw = pl.read_csv(SAMPLE_PATH).head(2)
+    dropped_timestamp = datetime.strptime(
+        f"{raw.item(0, 'ActionDay')} {raw.item(0, 'UpdateTime')}",
+        "%Y%m%d %H:%M:%S.%f",
+    ).replace(microsecond=0)
+    depth_price_columns = [
+        f"{side}Price{level}"
+        for side in ("Bid", "Ask")
+        for level in range(1, 6)
+    ]
+    raw = raw.with_columns(
+        [
+            pl.when(pl.int_range(pl.len()) == 0)
+            .then(pl.lit(None))
+            .otherwise(pl.col(column))
+            .alias(column)
+            for column in depth_price_columns
+        ]
+    )
+
+    second = create_second_level_snapshots(raw)
+
+    assert second.height == 1
+    assert not second["timestamp"].eq(dropped_timestamp).any()
 
 
 def test_second_level_uses_last_snapshot_per_second():

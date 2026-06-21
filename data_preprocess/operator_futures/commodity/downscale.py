@@ -5,6 +5,11 @@ import polars as pl
 from .main_contract import with_normalized_timestamp
 
 
+DEPTH_PRICE_COLUMNS = [
+    f"{side}Price{level}" for side in ("Bid", "Ask") for level in range(1, 6)
+]
+
+
 def _polars_freq(target_freq: str) -> str:
     return target_freq.replace("min", "m")
 
@@ -34,11 +39,39 @@ def validate_best_quotes(df: pl.DataFrame, contract: str) -> None:
     invalid_rows = df.filter(invalid)
     if invalid_rows.height:
         first = invalid_rows.row(0, named=True)
+        bid_price = first.get("BidPrice1")
+        ask_price = first.get("AskPrice1")
+        reasons = []
+        if bid_price is None:
+            reasons.append("BidPrice1 is null")
+        if ask_price is None:
+            reasons.append("AskPrice1 is null")
+        if bid_price is not None and bid_price <= 0:
+            reasons.append("BidPrice1 <= 0")
+        if ask_price is not None and ask_price <= 0:
+            reasons.append("AskPrice1 <= 0")
+        if (
+            bid_price is not None
+            and ask_price is not None
+            and bid_price >= ask_price
+        ):
+            reasons.append("BidPrice1 >= AskPrice1")
         raise ValueError(
             "Invalid best quote for "
             f"{contract}: fields=['BidPrice1', 'AskPrice1'], "
-            f"TradingDay={first.get('TradingDay')}, UpdateTime={first.get('UpdateTime')}"
+            f"TradingDay={first.get('TradingDay')}, "
+            f"UpdateTime={first.get('UpdateTime')}, "
+            f"BidPrice1={bid_price}, AskPrice1={ask_price}, "
+            f"reason={'; '.join(reasons)}, "
+            f"row={first}"
         )
+
+
+def drop_empty_depth_price_rows(df: pl.DataFrame) -> pl.DataFrame:
+    empty_depth_prices = pl.all_horizontal(
+        [pl.col(column).is_null() for column in DEPTH_PRICE_COLUMNS]
+    )
+    return df.filter(~empty_depth_prices)
 
 
 def create_second_level_snapshots(df: pl.DataFrame) -> pl.DataFrame:
@@ -47,7 +80,7 @@ def create_second_level_snapshots(df: pl.DataFrame) -> pl.DataFrame:
         if "InstrumentID" in df.columns and df.height
         else "unknown"
     )
-    copied = with_normalized_timestamp(df)
+    copied = drop_empty_depth_price_rows(with_normalized_timestamp(df))
     validate_best_quotes(copied, contract)
     return (
         copied.sort("timestamp")

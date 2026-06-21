@@ -1,5 +1,6 @@
-from pathlib import Path
+import logging
 from datetime import datetime
+from pathlib import Path
 
 import polars as pl
 
@@ -198,3 +199,39 @@ def test_build_main_contract_for_date_range_keeps_previous_frames_across_years(
         "previous_trading_day_volume",
         "previous_trading_day_volume",
     ]
+
+
+def test_build_main_contract_logs_selected_file_contract_and_reason(
+    tmp_path,
+    caplog,
+):
+    raw_root = tmp_path / "data" / "原始下载"
+    expected_file = _write_contract_file(
+        raw_root, "燃料油", "2024", "01", "20240102", "fu2402", "20240101", [0, 20]
+    )
+    _write_contract_file(
+        raw_root, "燃料油", "2024", "01", "20240102", "fu2401", "20240101", [0, 2]
+    )
+
+    with caplog.at_level(
+        logging.INFO, logger="operator_futures.commodity.main_contract"
+    ):
+        build_main_contract_continuous_frame_for_date_range(
+            raw_root,
+            "燃料油",
+            "2024-01-02",
+            "2024-01-03",
+            "fu",
+        )
+
+    selected_logs = [
+        record
+        for record in caplog.records
+        if record.message.startswith("Selected commodity main-contract file:")
+    ]
+    assert len(selected_logs) == 1
+    assert "trading_day=20240102" in selected_logs[0].message
+    assert "contract=fu2402" in selected_logs[0].message
+    assert "reason=current_trading_day_fallback" in selected_logs[0].message
+    assert "file_name=fu2402.csv" in selected_logs[0].message
+    assert f"source_file={expected_file}" in selected_logs[0].message

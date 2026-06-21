@@ -104,6 +104,38 @@ def _largest_volume_contract(frames: Dict[str, pl.DataFrame]) -> Optional[str]:
     return max(positive, key=positive.get)
 
 
+def _log_selected_main_contract_file(
+    trading_day: str,
+    contract: str,
+    reason: str,
+    source_file: Path,
+    previous_day_frames: Dict[str, pl.DataFrame],
+    current_day_frames: Dict[str, pl.DataFrame],
+) -> None:
+    previous_volume = (
+        calculate_contract_volume(previous_day_frames[contract])
+        if contract in previous_day_frames
+        else None
+    )
+    current_volume = (
+        calculate_contract_volume(current_day_frames[contract])
+        if contract in current_day_frames
+        else None
+    )
+    logger.info(
+        "Selected commodity main-contract file: trading_day=%s contract=%s "
+        "reason=%s previous_day_volume=%s current_day_volume=%s "
+        "file_name=%s source_file=%s",
+        trading_day,
+        contract,
+        reason,
+        previous_volume,
+        current_volume,
+        source_file.name,
+        source_file,
+    )
+
+
 def select_main_contract_for_day(
     previous_day_frames: Dict[str, pl.DataFrame],
     current_day_frames: Dict[str, pl.DataFrame],
@@ -163,6 +195,11 @@ def load_contract_frames_by_trading_day(
     for file_path in file_paths:
         frame = pl.read_csv(file_path)
         if frame.height == 0:
+            logger.debug(
+                "Skipping empty commodity raw file: file_name=%s source_file=%s",
+                file_path.name,
+                file_path,
+            )
             continue
         required = {"InstrumentID", "TradingDay", "ActionDay", "UpdateTime"}
         missing = required.difference(frame.columns)
@@ -177,6 +214,15 @@ def load_contract_frames_by_trading_day(
         contract = str(frame.item(0, "InstrumentID"))
         trading_day = str(trading_days[0])
         days.setdefault(trading_day, {})[contract] = (frame, file_path)
+        logger.debug(
+            "Loaded commodity contract file: trading_day=%s contract=%s "
+            "rows=%d file_name=%s source_file=%s",
+            trading_day,
+            contract,
+            frame.height,
+            file_path.name,
+            file_path,
+        )
     contract_count = sum(len(contracts) for contracts in days.values())
     logger.info(
         "Loaded commodity raw files: commodity=%s year=%s trading_days=%d contracts=%d",
@@ -240,6 +286,14 @@ def build_main_contract_continuous_frame(
             previous_frames, current_frames, symbol
         )
         frame, source_file = current_items[contract]
+        _log_selected_main_contract_file(
+            trading_day,
+            contract,
+            reason,
+            source_file,
+            previous_frames,
+            current_frames,
+        )
         copied = frame.with_columns(
             pl.lit(reason).alias("main_contract_selection_reason")
         )
@@ -289,6 +343,14 @@ def build_main_contract_continuous_frame_for_date_range(
             previous_frames, current_frames, symbol
         )
         frame, source_file = current_items[contract]
+        _log_selected_main_contract_file(
+            trading_day,
+            contract,
+            reason,
+            source_file,
+            previous_frames,
+            current_frames,
+        )
         copied = frame.with_columns(
             pl.lit(reason).alias("main_contract_selection_reason")
         )
