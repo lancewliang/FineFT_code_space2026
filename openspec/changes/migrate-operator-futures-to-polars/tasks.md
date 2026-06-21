@@ -14,7 +14,7 @@
 
 ## 3. Binance feature generation paths
 
-- [ ] 3.0 Binance feature generation paths complete（与 `plan-ready.md` Task 3 和 superpowers plan Task 3 同步）
+- [x] 3.0 Binance feature generation paths complete（与 `plan-ready.md` Task 3 和 superpowers plan Task 3 同步） <!-- 已实现: feature_util/base_feature 与聚焦 cross-section/time_operator Polars 分支完成，legacy pandas branch concern 已记录 -->
 - [ ] 3.1 Migrate `data_preprocess/operator_futures/features_related/base_feature.py` and `feature_util.py` to Polars while preserving quote counts, quote OHLC, trade OHLCV, side-grouped features, column order, `exchange`, `symbol`, and ffill behavior.
 - [ ] 3.2 Migrate `data_preprocess/operator_futures/cross_section/base_feature_util.py` and `create_feature.py` to Polars while preserving KLINE, QUOTES, SNAPSHOT, normalization, depth-aware behavior, and `market_type` branches.
 - [ ] 3.3 Migrate `data_preprocess/operator_futures/time_operator/*.py` to Polars while preserving rolling feature names, window semantics, index/timestamp alignment, and no-future-leakage behavior.

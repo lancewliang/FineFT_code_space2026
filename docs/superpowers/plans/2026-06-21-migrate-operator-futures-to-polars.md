@@ -602,7 +602,7 @@ git add data_preprocess/operator_futures/features_related/base_feature.py data_p
 git commit -m "refactor: migrate futures feature generation to polars"
 ```
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 4: Merge, scale, and feature-selection paths
 

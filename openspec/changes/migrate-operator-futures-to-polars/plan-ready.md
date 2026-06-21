@@ -21,7 +21,7 @@
 - 验证方式：运行针对 downscale helper 的聚焦 pytest；如无现成 raw Binance 小样例，则运行 Python 级小 DataFrame 单元测试验证 timestamp、列名、first/ffill 语义，并记录缺少真实 raw 数据导致的 CLI smoke 限制。
 
 ### Task 3: Binance feature generation paths
-- [ ] **任务完成**（与 superpowers plan `Task 3`、`tasks.md` 对应条目同步勾选）
+- [x] **任务完成**（与 superpowers plan `Task 3`、`tasks.md` 对应条目同步勾选）
 - 目标：迁移 Binance quotes/trades 基础特征、cross-section 特征和 time_operator 滚动时间特征，保持 quote counts、OHLC、side grouped trade features、depth-aware cross-section、窗口语义、列顺序和 no-future-leakage 行为。
 - 改动文件：`data_preprocess/operator_futures/features_related/base_feature.py`、`data_preprocess/operator_futures/features_related/feature_util.py`、`data_preprocess/operator_futures/cross_section/base_feature_util.py`、`data_preprocess/operator_futures/cross_section/create_feature.py`、`data_preprocess/operator_futures/time_operator/create_feature.py`、`data_preprocess/operator_futures/time_operator/create_feature_multi_processing.py`、`data_preprocess/operator_futures/time_operator/multi_processing_util.py`、`data_preprocess/operator_futures/time_operator/time_operator_util.py`、相关 `data_preprocess/tests` 测试文件。
 - 验证方式：运行特征 helper 的聚焦 pytest，断言列名、列顺序、timestamp 对齐和 `rtol=1e-12, atol=1e-12` 数值兼容；运行 `conda run -n finetf pytest data_preprocess/tests -q` 的相关子集，确保商品已有测试未被共享分支破坏。
