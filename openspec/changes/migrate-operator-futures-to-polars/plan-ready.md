@@ -27,7 +27,7 @@
 - 验证方式：运行特征 helper 的聚焦 pytest，断言列名、列顺序、timestamp 对齐和 `rtol=1e-12, atol=1e-12` 数值兼容；运行 `conda run -n finetf pytest data_preprocess/tests -q` 的相关子集，确保商品已有测试未被共享分支破坏。
 
 ### Task 4: Merge, scale, and feature-selection paths
-- [ ] **任务完成**（与 superpowers plan `Task 4`、`tasks.md` 对应条目同步勾选）
+- [x] **任务完成**（与 superpowers plan `Task 4`、`tasks.md` 对应条目同步勾选）
 - 目标：迁移 merge/concat/merge_clean、scale/save 和核心 feature_selection 路径，保持 timestamp inner join、重复 timestamp 取 first、future feature shift、ffill、reward/execution/state feature 列选择和输出文件契约。
 - 改动文件：`data_preprocess/operator_futures/merge_concat/merge.py`、`data_preprocess/operator_futures/merge_concat/concat.py`、`data_preprocess/operator_futures/merge_all/merge_clean.py`、`data_preprocess/operator_futures/scale_describe_save/scale_save.py`、`data_preprocess/operator_futures/feature_selection/cor_util.py`、`data_preprocess/operator_futures/feature_selection/ic_correlation.py`、`data_preprocess/operator_futures/feature_selection/lasso_linear.py`、`data_preprocess/operator_futures/feature_selection/rank_ic_correlation.py`、`data_preprocess/operator_futures/feature_selection/remove_duplicates_feature.py`、`data_preprocess/operator_futures/feature_selection/catbooost.py`、相关 `data_preprocess/tests` 测试文件。
 - 验证方式：运行 merge/scale/feature-selection 聚焦 pytest，验证输出路径、列顺序、join/shift/ffill 语义和 `market_type` 分支；对无法在当前 workspace 跑通的大文件 CLI，记录缺少输入数据而非跳过兼容断言。

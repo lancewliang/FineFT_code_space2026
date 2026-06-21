@@ -22,7 +22,7 @@
 
 ## 4. Merge, scale, and feature-selection paths
 
-- [ ] 4.0 Merge, scale, and feature-selection paths complete（与 `plan-ready.md` Task 4 和 superpowers plan Task 4 同步）
+- [x] 4.0 Merge, scale, and feature-selection paths complete（与 `plan-ready.md` Task 4 和 superpowers plan Task 4 同步） <!-- 已实现: merge/concat/merge_clean Polars 路径完成，scale/feature-selection pandas boundary concern 已记录 -->
 - [ ] 4.1 Migrate `data_preprocess/operator_futures/merge_concat/merge.py` and `concat.py` to Polars while preserving same-day concat, cross-day concat, duplicate timestamp `first` semantics, target-frequency gaps, future feature shift, inner join, ffill, and output paths.
 - [ ] 4.2 Migrate `data_preprocess/operator_futures/merge_all/merge_clean.py` to Polars while preserving timestamp inner join of cross-section and time features.
 - [ ] 4.3 Migrate `data_preprocess/operator_futures/scale_describe_save/scale_save.py` and core `feature_selection` scripts to Polars where they participate in preprocessing outputs, while preserving reward/execution columns, state features, selected feature files, and `market_type` behavior.
