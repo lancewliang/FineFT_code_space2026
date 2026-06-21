@@ -804,7 +804,7 @@ git commit -m "refactor: migrate merge scale and selection paths to polars"
 - Modify: `data_preprocess/tests/test_commodity_main_contract.py`
 - Modify: `data_preprocess/tests/test_commodity_main_contract_cli.py`
 
-- [ ] **Step 1: Convert commodity tests to accept Polars outputs at public helpers**
+- [x] **Step 1: Convert commodity tests to accept Polars outputs at public helpers**
 
 Update `data_preprocess/tests/test_commodity_downscale.py` so helper calls use `pl.read_csv` and Polars assertions. Keep pandas only when reading CLI CSV output is clearer for filesystem assertions. Example conversion:
 
@@ -824,7 +824,7 @@ Run: `conda run -n finetf pytest data_preprocess/tests/test_commodity_downscale.
 
 Expected: FAIL until commodity helpers accept Polars DataFrames.
 
-- [ ] **Step 2: Migrate main-contract selection to Polars**
+- [x] **Step 2: Migrate main-contract selection to Polars**
 
 In `data_preprocess/operator_futures/commodity/main_contract.py`, replace pandas DataFrame operations with Polars. Preserve public function names. Implement timestamp normalization with a row-dict-compatible helper for tests and a vectorized Polars helper for frames:
 
@@ -847,7 +847,7 @@ def with_normalized_timestamp(frame: pl.DataFrame) -> pl.DataFrame:
 
 Use `pl.read_csv(file_path)` in loaders. Use `pl.concat(output, how="vertical")` in `stitch_main_contract_frames`. Preserve metadata columns with `with_columns(pl.lit(...).alias(...))`.
 
-- [ ] **Step 3: Migrate commodity downscale calculations to Polars**
+- [x] **Step 3: Migrate commodity downscale calculations to Polars**
 
 In `data_preprocess/operator_futures/commodity/downscale.py`, replace pandas with Polars. Preserve these public functions and return Polars DataFrames:
 
@@ -871,7 +871,7 @@ RESAMPLE_KWARGS = {"closed": "right", "label": "right"}
 
 Implement `downscale_derivative_reference`, `downscale_orderbook`, `downscale_base_features`, and `downscale_quote_features` with Polars group-window aggregations. Preserve fail-fast checks by raising `ValueError` with the same contract, timestamp, and field names currently asserted in tests.
 
-- [ ] **Step 4: Update commodity CLI modules**
+- [x] **Step 4: Update commodity CLI modules**
 
 In `downscale_single_day.py` and `downscale_continuous_by_trading_day.py`, use `pl.read_csv` and Polars write methods:
 
@@ -886,7 +886,7 @@ downscale_quote_features(second_df, args.target_freq).write_ipc(quote_output)
 
 In `stitch_main_contract.py`, write CSV output from Polars with `stitched.write_csv(args.output)`.
 
-- [ ] **Step 5: Preserve commodity schema/config and market-type branches**
+- [x] **Step 5: Preserve commodity schema/config and market-type branches**
 
 Keep `schema.py` and `config.py` public APIs unchanged. If tests currently pass pandas Series into schema helpers, update those helpers to accept Python sequences or Polars Series without changing returned column names:
 
@@ -904,7 +904,7 @@ def get_reward_execution_columns(orderbook_depth: int = 5) -> list[str]:
 
 Do not add depth 6-25 columns for commodity futures.
 
-- [ ] **Step 6: Run commodity tests**
+- [x] **Step 6: Run commodity tests**
 
 Run:
 
@@ -914,7 +914,7 @@ conda run -n finetf pytest data_preprocess/tests/test_commodity_config_schema.py
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Task 5**
+- [x] **Step 7: Commit Task 5**
 
 ```bash
 git add data_preprocess/operator_futures/commodity/main_contract.py data_preprocess/operator_futures/commodity/stitch_main_contract.py data_preprocess/operator_futures/commodity/downscale.py data_preprocess/operator_futures/commodity/downscale_single_day.py data_preprocess/operator_futures/commodity/downscale_continuous_by_trading_day.py data_preprocess/operator_futures/commodity/schema.py data_preprocess/operator_futures/commodity/config.py data_preprocess/tests/test_commodity_config_schema.py data_preprocess/tests/test_commodity_downscale.py data_preprocess/tests/test_commodity_feature_pipeline.py data_preprocess/tests/test_commodity_main_contract.py data_preprocess/tests/test_commodity_main_contract_cli.py openspec/changes/migrate-operator-futures-to-polars/compatibility-notes.md

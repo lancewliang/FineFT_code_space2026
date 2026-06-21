@@ -3,13 +3,14 @@ import logging
 from pathlib import Path
 import time
 
-import pandas as pd
+import polars as pl
 
 from .downscale import (
     create_second_level_snapshots,
     downscale_base_features,
     downscale_derivative_reference,
     downscale_orderbook,
+    downscale_quote_features,
 )
 
 
@@ -39,21 +40,25 @@ def downscale_continuous_by_trading_day(
         symbol,
         depth,
     )
-    raw = pd.read_csv(continuous_file)
-    grouped = raw.groupby(raw["TradingDay"].astype(str), sort=True)
-    trading_days = list(grouped)
+    raw = pl.read_csv(continuous_file)
+    trading_days = (
+        raw.select(pl.col("TradingDay").cast(pl.Utf8).unique().sort())
+        .to_series()
+        .to_list()
+    )
     logger.info(
         "Loaded continuous commodity file: rows=%d trading_days=%d",
-        len(raw),
+        raw.height,
         len(trading_days),
     )
-    for index, (trading_day, day_frame) in enumerate(trading_days, start=1):
+    for index, trading_day in enumerate(trading_days, start=1):
+        day_frame = raw.filter(pl.col("TradingDay").cast(pl.Utf8) == trading_day)
         logger.info(
             "Downscaling TradingDay %s (%d/%d): rows=%d",
             trading_day,
             index,
             len(trading_days),
-            len(day_frame),
+            day_frame.height,
         )
         second = create_second_level_snapshots(day_frame)
         outputs = {
@@ -64,11 +69,12 @@ def downscale_continuous_by_trading_day(
                 second, target_freq, depth=depth
             ),
             "BASE_FEATURE": downscale_base_features(second, target_freq),
+            "COMMODITY_QUOTE_FEATURE": downscale_quote_features(second, target_freq),
         }
         for folder, frame in outputs.items():
             path = output_root / folder / symbol / target_freq
             path.mkdir(parents=True, exist_ok=True)
-            frame.to_feather(path / f"{trading_day}.feather")
+            frame.write_ipc(path / f"{trading_day}.feather")
     logger.info(
         "Finished commodity continuous downscale: trading_days=%d elapsed_seconds=%.2f",
         len(trading_days),

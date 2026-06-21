@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-import pandas as pd
+import polars as pl
 
 from .downscale import (
     create_second_level_snapshots,
@@ -30,7 +30,7 @@ def main() -> None:
     args = parse_args()
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    raw = pd.read_csv(args.input)
+    raw = pl.read_csv(args.input)
     second = create_second_level_snapshots(raw)
     der = downscale_derivative_reference(second, args.target_freq, args.symbol)
     orderbook = downscale_orderbook(second, args.target_freq, depth=5)
@@ -45,15 +45,15 @@ def main() -> None:
         quote_path = output_dir / "COMMODITY_QUOTE_FEATURE" / args.symbol / args.target_freq
         for path in [der_path, orderbook_path, base_path, quote_path]:
             path.mkdir(parents=True, exist_ok=True)
-        der.to_feather(der_path / f"{args.date}.feather")
-        orderbook.to_feather(orderbook_path / f"{args.date}.feather")
-        base.to_feather(base_path / f"{args.date}.feather")
-        quote.to_feather(quote_path / f"{args.date}.feather")
+        der.write_ipc(der_path / f"{args.date}.feather")
+        orderbook.write_ipc(orderbook_path / f"{args.date}.feather")
+        base.write_ipc(base_path / f"{args.date}.feather")
+        quote.write_ipc(quote_path / f"{args.date}.feather")
     else:
-        der.to_feather(output_dir / "derivative_reference.feather")
-        orderbook.to_feather(output_dir / "orderbook_5.feather")
-        base.to_feather(output_dir / "base_feature.feather")
-        quote.to_feather(output_dir / "quote_feature.feather")
+        der.write_ipc(output_dir / "derivative_reference.feather")
+        orderbook.write_ipc(output_dir / "orderbook_5.feather")
+        base.write_ipc(output_dir / "base_feature.feather")
+        quote.write_ipc(output_dir / "quote_feature.feather")
 
 
 if __name__ == "__main__":

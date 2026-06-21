@@ -1,8 +1,9 @@
 import logging
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-import pandas as pd
+import polars as pl
 
 from .config import get_commodity_config
 
@@ -10,25 +11,42 @@ from .config import get_commodity_config
 logger = logging.getLogger(__name__)
 
 
-def normalize_timestamp(row: pd.Series) -> pd.Timestamp:
+def normalize_timestamp(row) -> datetime:
     action_day = str(row["ActionDay"])
     update_time = str(row["UpdateTime"])
-    return pd.to_datetime(f"{action_day} {update_time}", format="%Y%m%d %H:%M:%S.%f")
+    return datetime.strptime(f"{action_day} {update_time}", "%Y%m%d %H:%M:%S.%f")
 
 
-def calculate_contract_volume(df: pd.DataFrame) -> float:
-    if "Volume" not in df.columns or df.empty:
+def with_normalized_timestamp(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(
+        (
+            pl.col("ActionDay").cast(pl.Utf8)
+            + pl.lit(" ")
+            + pl.col("UpdateTime").cast(pl.Utf8)
+        )
+        .str.strptime(
+            pl.Datetime("us"),
+            format="%Y%m%d %H:%M:%S%.f",
+            strict=True,
+        )
+        .alias("timestamp")
+    )
+
+
+def calculate_contract_volume(df: pl.DataFrame) -> float:
+    if "Volume" not in df.columns or df.height == 0:
         return 0.0
 
-    volume = pd.to_numeric(df["Volume"], errors="coerce")
-    if volume.dropna().empty:
+    volume = df.select(
+        pl.col("Volume").cast(pl.Float64, strict=False).alias("Volume")
+    )["Volume"].drop_nulls()
+    if len(volume) == 0:
         return 0.0
     return float(volume.max() - volume.min())
 
 
-def _parse_date(value: str) -> pd.Timestamp:
-    parsed = pd.to_datetime(value, format="%Y-%m-%d", errors="raise")
-    return parsed.normalize()
+def _parse_date(value: str):
+    return datetime.strptime(value, "%Y-%m-%d").date()
 
 
 def infer_years_for_date_range(start_date: str, end_date: str) -> List[str]:
@@ -40,7 +58,7 @@ def infer_years_for_date_range(start_date: str, end_date: str) -> List[str]:
             f"{start_date} -> {end_date}"
         )
 
-    last_included = end - pd.Timedelta(days=1)
+    last_included = end - timedelta(days=1)
     return [str(year) for year in range(start.year, last_included.year + 1)]
 
 
@@ -58,10 +76,10 @@ def iter_contract_files(
 
 
 def _eligible_contracts(
-    frames: Dict[str, pd.DataFrame], symbol: str
-) -> Dict[str, pd.DataFrame]:
+    frames: Dict[str, pl.DataFrame], symbol: str
+) -> Dict[str, pl.DataFrame]:
     config = get_commodity_config(symbol)
-    eligible: Dict[str, pd.DataFrame] = {}
+    eligible: Dict[str, pl.DataFrame] = {}
     for contract, frame in frames.items():
         normalized = contract.lower()
         if not normalized.startswith(config.symbol):
@@ -76,7 +94,7 @@ def _eligible_contracts(
     return eligible
 
 
-def _largest_volume_contract(frames: Dict[str, pd.DataFrame]) -> Optional[str]:
+def _largest_volume_contract(frames: Dict[str, pl.DataFrame]) -> Optional[str]:
     volumes = {
         contract: calculate_contract_volume(frame) for contract, frame in frames.items()
     }
@@ -87,8 +105,8 @@ def _largest_volume_contract(frames: Dict[str, pd.DataFrame]) -> Optional[str]:
 
 
 def select_main_contract_for_day(
-    previous_day_frames: Dict[str, pd.DataFrame],
-    current_day_frames: Dict[str, pd.DataFrame],
+    previous_day_frames: Dict[str, pl.DataFrame],
+    current_day_frames: Dict[str, pl.DataFrame],
     symbol: str,
 ) -> Tuple[str, str]:
     previous_eligible = _eligible_contracts(previous_day_frames, symbol)
@@ -108,29 +126,33 @@ def select_main_contract_for_day(
 
 
 def stitch_main_contract_frames(
-    selected_frames: Iterable[Tuple[str, str, pd.DataFrame, Path]]
-) -> pd.DataFrame:
-    output: List[pd.DataFrame] = []
+    selected_frames: Iterable[Tuple[str, str, pl.DataFrame, Path]]
+) -> pl.DataFrame:
+    output: List[pl.DataFrame] = []
     for trading_day, contract, frame, source_file in selected_frames:
-        copied = frame.copy()
-        copied["timestamp"] = copied.apply(normalize_timestamp, axis=1)
-        copied["main_contract"] = contract
-        copied["source_contract"] = copied.get("InstrumentID", contract)
-        copied["source_file"] = str(source_file)
-        copied["main_contract_trading_day"] = trading_day
+        source_contract = (
+            pl.col("InstrumentID").cast(pl.Utf8)
+            if "InstrumentID" in frame.columns
+            else pl.lit(contract)
+        )
+        copied = with_normalized_timestamp(frame).with_columns(
+            pl.lit(contract).alias("main_contract"),
+            source_contract.alias("source_contract"),
+            pl.lit(str(source_file)).alias("source_file"),
+            pl.lit(trading_day).alias("main_contract_trading_day"),
+        )
         output.append(copied)
 
     if not output:
         raise ValueError("No selected main-contract frames to stitch")
 
-    stitched = pd.concat(output, ignore_index=True)
-    return stitched.sort_values("timestamp").reset_index(drop=True)
+    return pl.concat(output, how="vertical").sort("timestamp")
 
 
 def load_contract_frames_by_trading_day(
     raw_root: Path, commodity_name: str, year: str
-) -> Dict[str, Dict[str, Tuple[pd.DataFrame, Path]]]:
-    days: Dict[str, Dict[str, Tuple[pd.DataFrame, Path]]] = {}
+) -> Dict[str, Dict[str, Tuple[pl.DataFrame, Path]]]:
+    days: Dict[str, Dict[str, Tuple[pl.DataFrame, Path]]] = {}
     file_paths = list(iter_contract_files(raw_root, commodity_name, year))
     logger.info(
         "Loading commodity raw files: commodity=%s year=%s files=%d",
@@ -139,20 +161,20 @@ def load_contract_frames_by_trading_day(
         len(file_paths),
     )
     for file_path in file_paths:
-        frame = pd.read_csv(file_path)
-        if frame.empty:
+        frame = pl.read_csv(file_path)
+        if frame.height == 0:
             continue
         required = {"InstrumentID", "TradingDay", "ActionDay", "UpdateTime"}
         missing = required.difference(frame.columns)
         if missing:
             raise ValueError(f"{file_path} missing required columns: {sorted(missing)}")
 
-        trading_days = frame["TradingDay"].astype(str).unique()
+        trading_days = frame["TradingDay"].cast(pl.Utf8).unique().to_list()
         if len(trading_days) != 1:
             raise ValueError(
                 f"{file_path} contains multiple TradingDay values: {trading_days}"
             )
-        contract = str(frame["InstrumentID"].iloc[0])
+        contract = str(frame.item(0, "InstrumentID"))
         trading_day = str(trading_days[0])
         days.setdefault(trading_day, {})[contract] = (frame, file_path)
     contract_count = sum(len(contracts) for contracts in days.values())
@@ -168,8 +190,8 @@ def load_contract_frames_by_trading_day(
 
 def load_contract_frames_by_trading_day_for_years(
     raw_root: Path, commodity_name: str, years: Sequence[str]
-) -> Dict[str, Dict[str, Tuple[pd.DataFrame, Path]]]:
-    days: Dict[str, Dict[str, Tuple[pd.DataFrame, Path]]] = {}
+) -> Dict[str, Dict[str, Tuple[pl.DataFrame, Path]]]:
+    days: Dict[str, Dict[str, Tuple[pl.DataFrame, Path]]] = {}
     for year in years:
         year_days = load_contract_frames_by_trading_day(
             raw_root, commodity_name, str(year)
@@ -193,13 +215,13 @@ def load_contract_frames_by_trading_day_for_years(
 
 
 def _trading_day_in_range(trading_day: str, start_date: str, end_date: str) -> bool:
-    trading_ts = pd.to_datetime(trading_day, format="%Y%m%d", errors="raise")
+    trading_ts = datetime.strptime(trading_day, "%Y%m%d").date()
     return _parse_date(start_date) <= trading_ts < _parse_date(end_date)
 
 
 def build_main_contract_continuous_frame(
     raw_root: Path, commodity_name: str, year: str, symbol: str
-) -> pd.DataFrame:
+) -> pl.DataFrame:
     logger.info(
         "Building commodity main-contract series: symbol=%s commodity=%s year=%s",
         symbol,
@@ -208,7 +230,7 @@ def build_main_contract_continuous_frame(
     )
     days = load_contract_frames_by_trading_day(raw_root, commodity_name, year)
     selected = []
-    previous_frames: Dict[str, pd.DataFrame] = {}
+    previous_frames: Dict[str, pl.DataFrame] = {}
     for trading_day in sorted(days):
         current_items = days[trading_day]
         current_frames = {
@@ -218,8 +240,9 @@ def build_main_contract_continuous_frame(
             previous_frames, current_frames, symbol
         )
         frame, source_file = current_items[contract]
-        copied = frame.copy()
-        copied["main_contract_selection_reason"] = reason
+        copied = frame.with_columns(
+            pl.lit(reason).alias("main_contract_selection_reason")
+        )
         selected.append((trading_day, contract, copied, source_file))
         previous_frames = current_frames
     stitched = stitch_main_contract_frames(selected)
@@ -227,7 +250,7 @@ def build_main_contract_continuous_frame(
         "Built commodity main-contract series: symbol=%s selected_days=%d rows=%d",
         symbol,
         len(selected),
-        len(stitched),
+        stitched.height,
     )
     return stitched
 
@@ -238,7 +261,7 @@ def build_main_contract_continuous_frame_for_date_range(
     start_date: str,
     end_date: str,
     symbol: str,
-) -> pd.DataFrame:
+) -> pl.DataFrame:
     years = infer_years_for_date_range(start_date, end_date)
     logger.info(
         "Building commodity main-contract series: symbol=%s commodity=%s start_date=%s end_date=%s years=%s",
@@ -252,7 +275,7 @@ def build_main_contract_continuous_frame_for_date_range(
         raw_root, commodity_name, years
     )
     selected = []
-    previous_frames: Dict[str, pd.DataFrame] = {}
+    previous_frames: Dict[str, pl.DataFrame] = {}
     for trading_day in sorted(days):
         current_items = days[trading_day]
         current_frames = {
@@ -266,8 +289,9 @@ def build_main_contract_continuous_frame_for_date_range(
             previous_frames, current_frames, symbol
         )
         frame, source_file = current_items[contract]
-        copied = frame.copy()
-        copied["main_contract_selection_reason"] = reason
+        copied = frame.with_columns(
+            pl.lit(reason).alias("main_contract_selection_reason")
+        )
         selected.append((trading_day, contract, copied, source_file))
         previous_frames = current_frames
     stitched = stitch_main_contract_frames(selected)
@@ -275,6 +299,6 @@ def build_main_contract_continuous_frame_for_date_range(
         "Built commodity main-contract series: symbol=%s selected_days=%d rows=%d",
         symbol,
         len(selected),
-        len(stitched),
+        stitched.height,
     )
     return stitched

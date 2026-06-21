@@ -1,6 +1,7 @@
 from pathlib import Path
+from datetime import datetime
 
-import pandas as pd
+import polars as pl
 
 from operator_futures.commodity.main_contract import (
     build_main_contract_continuous_frame_for_date_range,
@@ -31,7 +32,7 @@ def _frame(contract: str, trading_day: str, action_day: str, volumes):
                 "AskVolume1": 1,
             }
         )
-    return pd.DataFrame(rows)
+    return pl.DataFrame(rows)
 
 
 def _write_contract_file(
@@ -46,7 +47,7 @@ def _write_contract_file(
 ) -> Path:
     path = root / commodity_name / year / month / trading_day / f"{contract}.csv"
     path.parent.mkdir(parents=True, exist_ok=True)
-    _frame(contract, trading_day, action_day, volumes).to_csv(path, index=False)
+    _frame(contract, trading_day, action_day, volumes).write_csv(path)
     return path
 
 
@@ -62,8 +63,8 @@ def test_infer_years_for_left_closed_right_open_date_range():
 
 
 def test_normalize_timestamp_uses_action_day():
-    row = pd.Series({"ActionDay": "20230103", "UpdateTime": "21:00:00.500"})
-    assert normalize_timestamp(row) == pd.Timestamp("2023-01-03 21:00:00.500")
+    row = {"ActionDay": "20230103", "UpdateTime": "21:00:00.500"}
+    assert normalize_timestamp(row) == datetime(2023, 1, 3, 21, 0, 0, 500000)
 
 
 def test_calculate_contract_volume_uses_cumulative_volume_delta():
@@ -137,21 +138,21 @@ def test_stitch_main_contract_frames_keeps_metadata_and_no_back_adjustment():
             ("20230105", "fu2303", day2, Path("fu2303.csv")),
         ]
     )
-    assert stitched["main_contract"].tolist() == [
+    assert stitched["main_contract"].to_list() == [
         "fu2302",
         "fu2302",
         "fu2303",
         "fu2303",
     ]
-    assert stitched["source_contract"].tolist() == [
+    assert stitched["source_contract"].to_list() == [
         "fu2302",
         "fu2302",
         "fu2303",
         "fu2303",
     ]
-    assert stitched["source_file"].str.endswith(".csv").all()
-    assert stitched.loc[1, "LastPrice"] == 2601
-    assert stitched.loc[2, "LastPrice"] == 2600
+    assert stitched["source_file"].str.ends_with(".csv").all()
+    assert stitched.item(1, "LastPrice") == 2601
+    assert stitched.item(2, "LastPrice") == 2600
 
 
 def test_build_main_contract_for_date_range_keeps_previous_frames_across_years(
@@ -179,19 +180,19 @@ def test_build_main_contract_for_date_range_keeps_previous_frames_across_years(
         "fu",
     )
 
-    assert stitched["main_contract_trading_day"].astype(str).tolist() == [
+    assert stitched["main_contract_trading_day"].cast(pl.Utf8).to_list() == [
         "20231229",
         "20231229",
         "20240102",
         "20240102",
     ]
-    assert stitched["main_contract"].tolist() == [
+    assert stitched["main_contract"].to_list() == [
         "fu2401",
         "fu2401",
         "fu2401",
         "fu2401",
     ]
-    assert stitched["main_contract_selection_reason"].tolist() == [
+    assert stitched["main_contract_selection_reason"].to_list() == [
         "current_trading_day_fallback",
         "current_trading_day_fallback",
         "previous_trading_day_volume",

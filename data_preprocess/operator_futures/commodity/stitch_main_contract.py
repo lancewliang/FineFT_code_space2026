@@ -67,11 +67,11 @@ def main() -> None:
         stitched = build_main_contract_continuous_frame(
             Path(args.raw_root), args.commodity_name, args.year, args.symbol
         )
-    stitched.to_csv(output, index=False)
+    stitched.write_csv(output)
     logger.info(
         "Wrote stitched commodity main-contract file: output=%s rows=%d elapsed_seconds=%.2f",
         output,
-        len(stitched),
+        stitched.height,
         time.monotonic() - started_at,
     )
 
