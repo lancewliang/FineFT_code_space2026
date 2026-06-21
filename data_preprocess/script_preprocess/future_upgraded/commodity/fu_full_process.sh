@@ -185,7 +185,9 @@ run_commodity_ic_correlation() {
         --end_date "$end_date" \
         --root_path "$root_path" \
         --data_path "PREPROCESS_DATASET/commodity-futures/ALL_FEATURE/" \
-        --save_path "PREPROCESS_DATASET/commodity-futures/IC_RESULT/"
+        --save_path "PREPROCESS_DATASET/commodity-futures/IC_RESULT/" \
+        --market_type commodity_futures \
+        --orderbook_depth 5
 }
 
 run_commodity_full_process() {

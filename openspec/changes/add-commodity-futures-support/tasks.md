@@ -1,28 +1,28 @@
 ## 1. 商品期货数据契约与配置
 
 - [x] 1.1 新增燃料油 `fu` 商品期货配置，包含 depth=5、关闭 funding、买入费率 `0.0001`、卖出费率 `0.0003`、主力月份规则和 dataset 命名。 <!-- 已实现: 新增 fu 配置 -->
-- [ ] 1.2 新增共享 schema 工具，覆盖时间戳标准化、右闭右标重采样、按深度生成盘口列名、reward/execution manifest。
-- [ ] 1.3 新增配置与 schema 单元测试，验证 `fu` 配置、5 档列名和 manifest 选择。
+- [x] 1.2 新增共享 schema 工具，覆盖时间戳标准化、右闭右标重采样、按深度生成盘口列名、reward/execution manifest。 <!-- 已实现: schema.py 提供重采样、盘口列和 reward/execution manifest -->
+- [x] 1.3 新增配置与 schema 单元测试，验证 `fu` 配置、5 档列名和 manifest 选择。 <!-- 已验证: test_commodity_config_schema.py 覆盖配置、5 档列和 manifest -->
 
 ## 2. 主力合约拼接
 
 - [x] 2.1 实现商品期货主力合约拼接，从 `data/原始下载/{品种中文名}/{YYYY}` 扫描本地五档 CSV，默认支持 `{MM}/{YYYYMMDD}/{合约}.csv` 层级，使用前一 `TradingDay` 成交量选择主力，并支持当前日 fallback。 <!-- 已实现: 新增主力合约拼接核心模块 -->
-- [ ] 2.2 保留 `main_contract`、`source_contract`、`source_file` 元数据，并确保这些元数据不进入 `state_features`。
-- [ ] 2.3 新增测试覆盖 `ActionDay + UpdateTime` 时间戳、`TradingDay` 归属、fallback 选择和不复权拼接。
+- [x] 2.2 保留 `main_contract`、`source_contract`、`source_file` 元数据，并确保这些元数据不进入 `state_features`。 <!-- 已实现: main_contract.py 拼接保留元数据，manifest/state 划分排除 reward/execution 元数据 -->
+- [x] 2.3 新增测试覆盖 `ActionDay + UpdateTime` 时间戳、`TradingDay` 归属、fallback 选择和不复权拼接。 <!-- 已验证: test_commodity_main_contract.py 覆盖时间戳、fallback 和不复权拼接 -->
 
 ## 3. 商品期货下采样
 
 - [x] 3.1 实现商品期货参考价下采样：`LastPrice` 优先生成 `mark_price/index_price`，异常时回退 midprice，输出 funding 兼容列并携带 funding disabled 语义。 <!-- 已实现: 新增商品下采样核心模块与单日 CLI -->
-- [ ] 3.2 实现商品期货真实 5 档 orderbook 下采样，并对异常最优报价 fail-fast。
-- [ ] 3.3 实现商品期货 base feature 下采样：基于秒级 `Volume`/`Turnover` 差分、tick rule 估计方向和零成交 LastPrice 处理。
-- [ ] 3.4 实现商品期货 quote feature 下采样：从秒频五档快照生成特征，秒频层不 forward fill，目标窗口无 quote 时 fail-fast。
-- [ ] 3.5 使用 `docs/上海商品交易所/fu2302.csv` 新增测试，覆盖所有商品期货下采样输出和错误路径。
+- [x] 3.2 实现商品期货真实 5 档 orderbook 下采样，并对异常最优报价 fail-fast。 <!-- 已实现: downscale_orderbook 输出真实 depth=5，validate_best_quotes 异常时报错 -->
+- [x] 3.3 实现商品期货 base feature 下采样：基于秒级 `Volume`/`Turnover` 差分、tick rule 估计方向和零成交 LastPrice 处理。 <!-- 已实现: downscale_base_features 基于秒级差分、second_avg_price 和 estimated tick rule -->
+- [x] 3.4 实现商品期货 quote feature 下采样：从秒频五档快照生成特征，秒频层不 forward fill，目标窗口无 quote 时 fail-fast。 <!-- 已实现: downscale_quote_features 基于秒频快照聚合并对空窗口 fail-fast -->
+- [x] 3.5 使用 `docs/上海商品交易所/fu2302.csv` 新增测试，覆盖所有商品期货下采样输出和错误路径。 <!-- 已验证: test_commodity_downscale.py 使用 fu2302.csv 覆盖输出和错误路径 -->
 
 ## 4. 特征管线适配
 
 - [x] 4.1 更新 cross-section 特征生成，使用可配置 orderbook depth；商品数据跳过 funding、真实逐笔、真实主动买卖和 6-25 档特征。 <!-- 已实现: depth-aware snapshot 特征与 commodity manifest 选择 -->
-- [ ] 4.2 更新 merge、concat、time feature、feature selection、scale/save，使用显式 reward/execution manifest 替代前 106 列硬编码。
-- [ ] 4.3 新增测试验证商品期货 KLINE、QUOTE、SNAPSHOT、rolling、feature-selection target 和最终 scale/save 契约。
+- [x] 4.2 更新 merge、concat、time feature、feature selection、scale/save，使用显式 reward/execution manifest 替代前 106 列硬编码。 <!-- 已实现: 商品流程串联 merge/concat/time feature，ic_correlation.py 与 scale_save.py 支持 commodity manifest -->
+- [x] 4.3 新增测试验证商品期货 KLINE、QUOTE、SNAPSHOT、rolling、feature-selection target 和最终 scale/save 契约。 <!-- 已验证: test_commodity_feature_pipeline.py 覆盖 depth=5 snapshot、manifest 和 feature-selection target -->
 
 ## 5. 商品期货环境支持
 

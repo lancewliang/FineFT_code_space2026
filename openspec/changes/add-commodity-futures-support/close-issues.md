@@ -2,9 +2,11 @@
 
 ## 2026-06-21 close 前置检查未通过
 
-### CRITICAL: `tasks.md` 仍有未完成条目
+### RESOLVED: `tasks.md` 仍有未完成条目
 
-`/sddflow close` 前置条件要求 `openspec/changes/add-commodity-futures-support/tasks.md` 所有任务条目均为 `[x]`，但当前仍有 10 个实际未勾选条目：
+`/sddflow close` 前置条件要求 `openspec/changes/add-commodity-futures-support/tasks.md` 所有任务条目均为 `[x]`。本问题在后续 `/sddflow build` 中已处理：逐条核对实现证据，补齐 `ic_correlation.py` 商品期货 manifest 逻辑，并同步勾选全部任务。
+
+原始阻塞项为以下 10 个未勾选条目：
 
 - `1.2` 新增共享 schema 工具。
 - `1.3` 新增配置与 schema 单元测试。
@@ -21,8 +23,10 @@
 
 - `plan-ready.md` 中 Task 1-8 的任务级 checkbox 已全部为 `[x]`。
 - `docs/superpowers/plans/2026-06-20-add-commodity-futures-support.md` 中实际 step checkbox 已全部为 `[x]`。
-- `tasks.md` 中仍存在上述未勾选条目，因此不能进入归档。
+- `tasks.md` 当前已无未勾选任务条目。
+- 已补充 `data_preprocess/operator_futures/feature_selection/ic_correlation.py` 的商品期货 reward/state manifest 划分，并在 `fu_full_process.sh` 中传入 `--market_type commodity_futures --orderbook_depth 5`。
+- 已运行商品期货数据测试、商品环境测试、脚本语法检查、`finetf` 编译检查和 OpenSpec 严格校验。
 
 ### 处理建议
 
-先进入 `/sddflow build`，基于已有实现与测试证据逐项核对这些条目；如果代码已经覆盖，则同步勾选 `tasks.md` 并运行验证；如果存在缺口，则补实现或补测试后再回到 `/sddflow close`。
+已处理。可以重新进入 `/sddflow close` 执行归档前验证。

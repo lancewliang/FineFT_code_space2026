@@ -84,6 +84,19 @@ parser.add_argument(
     ],  # 设置默认值为一个列表
     help="List of threshold values",
 )
+parser.add_argument(
+    "--market_type",
+    type=str,
+    default="crypto_futures",
+    choices=["crypto_futures", "commodity_futures"],
+    help="the market type of the preprocessed data",
+)
+parser.add_argument(
+    "--orderbook_depth",
+    type=int,
+    default=25,
+    help="the available orderbook depth",
+)
 
 
 def calculate_cor(column, target):
@@ -104,6 +117,19 @@ def calculate_target(df, reward_feature, window_length):
     return target
 
 
+def select_reward_state_features(df, market_type="crypto_futures", orderbook_depth=25):
+    if market_type == "commodity_futures":
+        from operator_futures.commodity.schema import get_reward_execution_columns
+
+        reward_features = [
+            col for col in get_reward_execution_columns(orderbook_depth) if col in df.columns
+        ]
+    else:
+        reward_features = list(df.columns[:106])
+    state_feature = [col for col in df.columns if col not in reward_features]
+    return reward_features, state_feature
+
+
 def main(args):
     args.data_path = os.path.join(args.root_path, args.data_path)
     args.save_path = os.path.join(args.root_path, args.save_path)
@@ -115,8 +141,9 @@ def main(args):
             "{}-{}.feather".format(args.start_date, args.end_date),
         )
     )
-    reward_features = df.columns[:106]
-    state_feature = [col for col in df.columns if col not in reward_features]
+    reward_features, state_feature = select_reward_state_features(
+        df, args.market_type, args.orderbook_depth
+    )
     df.set_index("timestamp", inplace=True)
     cpu_count = int(max(os.cpu_count() - 10, os.cpu_count() / 2))
 
@@ -185,7 +212,6 @@ def main(args):
     )
     selected_feature_names = select_feature(corre_df=df_cor, theshold=args.cor_theshold)
     state_feature = selected_feature_names
-    reward_features = reward_features.tolist()
     df.reset_index(inplace=True)
     df = df[reward_features + state_feature]
     df.to_feather(
