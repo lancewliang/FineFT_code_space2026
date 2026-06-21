@@ -224,3 +224,21 @@ def test_empty_quote_window_fails_fast():
 
     with pytest.raises(ValueError, match="no quote snapshots"):
         downscale_quote_features(second.head(0), "5min")
+
+
+def test_intermediate_empty_quote_window_fails_fast():
+    second = pl.DataFrame(
+        {
+            "timestamp": [
+                datetime(2023, 1, 3, 9, 0, 0),
+                datetime(2023, 1, 3, 9, 10, 0),
+            ],
+            "BidPrice1": [2600.0, 2601.0],
+            "AskPrice1": [2602.0, 2603.0],
+            "BidVolume1": [1.0, 1.0],
+            "AskVolume1": [1.0, 1.0],
+        }
+    )
+
+    with pytest.raises(ValueError, match="2023-01-03 09:05:00"):
+        downscale_quote_features(second, "5min")

@@ -1,3 +1,4 @@
+from datetime import timedelta
 from typing import List
 
 import polars as pl
@@ -14,6 +15,20 @@ DEPTH_PRICE_COLUMNS = BID_PRICE_COLUMNS + ASK_PRICE_COLUMNS
 
 def _polars_freq(target_freq: str) -> str:
     return target_freq.replace("min", "m")
+
+
+def _target_freq_delta(target_freq: str) -> timedelta:
+    normalized = target_freq.strip().lower()
+    for suffix, multiplier in (
+        ("min", 60),
+        ("m", 60),
+        ("s", 1),
+        ("h", 3600),
+    ):
+        if normalized.endswith(suffix):
+            value = int(normalized[: -len(suffix)])
+            return timedelta(seconds=value * multiplier)
+    raise ValueError(f"Unsupported target frequency: {target_freq}")
 
 
 def _resample(frame: pl.DataFrame, target_freq: str, aggs: List[pl.Expr]) -> pl.DataFrame:
@@ -376,6 +391,13 @@ def downscale_quote_features(second_df: pl.DataFrame, target_freq: str) -> pl.Da
         )
 
     result = _resample(quote, target_freq, aggs)
+    timestamps = result["timestamp"].to_list()
+    target_delta = _target_freq_delta(target_freq)
+    for previous, current in zip(timestamps, timestamps[1:]):
+        missing = previous + target_delta
+        if current - previous > target_delta:
+            raise ValueError(f"Target window has no quote snapshots: {missing}")
+
     empty_windows = result.filter(pl.col("nquote") == 0)
     if empty_windows.height:
         first = empty_windows.item(0, "timestamp")
