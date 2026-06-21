@@ -1,4 +1,4 @@
-import pandas as pd
+import polars as pl
 import numpy as np
 import os
 import re
@@ -53,12 +53,25 @@ parser.add_argument(
 )
 
 
-def down_scale_single_oe_snapshot(orderbook_df: pd.DataFrame, agg_freq: str):
-    orderbook_df = orderbook_df.drop(columns=["local_timestamp", "exchange"])
-    orderbook_df["timestamp"] = pd.to_datetime(orderbook_df["timestamp"] * 1000)
-    orderbook_df = orderbook_df.set_index("timestamp")
-    orderbook_df = orderbook_df.resample(agg_freq).agg(["first"])
-    return orderbook_df
+def _rename_orderbook_columns(orderbook_df: pl.DataFrame) -> pl.DataFrame:
+    new_column_names = {}
+    for i in range(25):
+        new_column_names["asks[{}].price".format(i)] = "ask{}_price".format(i + 1)
+        new_column_names["asks[{}].amount".format(i)] = "ask{}_size".format(i + 1)
+        new_column_names["bids[{}].price".format(i)] = "bid{}_price".format(i + 1)
+        new_column_names["bids[{}].amount".format(i)] = "bid{}_size".format(i + 1)
+    return orderbook_df.rename(new_column_names)
+
+
+def down_scale_single_oe_snapshot(orderbook_df: pl.DataFrame, agg_freq: str):
+    return (
+        orderbook_df.drop(["local_timestamp", "exchange"])
+        .with_columns(pl.from_epoch("timestamp", time_unit="us").alias("timestamp"))
+        .sort("timestamp")
+        .group_by_dynamic("timestamp", every=agg_freq, closed="left", label="left")
+        .agg(pl.all().first())
+        .pipe(_rename_orderbook_columns)
+    )
 
 
 @profile
@@ -70,24 +83,13 @@ def main(args):
     order_book_file.sort()
     date = match_strings_in_range(order_book_file, args.date)
 
-    single_df = pd.read_csv(os.path.join(orderbook_dir, date), engine="python")
+    single_df = pl.read_csv(os.path.join(orderbook_dir, date))
     orderbook_df = down_scale_single_oe_snapshot(single_df, args.target_freq)
     del single_df
-    orderbook_df.columns = orderbook_df.columns.droplevel(1)
-    new_column_names = {}
-    for i in range(25):
-        new_column_names["asks[{}].price".format(i)] = "ask{}_price".format(i + 1)
-        new_column_names["asks[{}].amount".format(i)] = "ask{}_size".format(i + 1)
-        new_column_names["bids[{}].price".format(i)] = "bid{}_price".format(i + 1)
-        new_column_names["bids[{}].amount".format(i)] = "bid{}_size".format(i + 1)
-
-    orderbook_df.rename(columns=new_column_names, inplace=True)
-
-    orderbook_df.reset_index(inplace=True)
-    orderbook_df = orderbook_df.ffill()
+    orderbook_df = orderbook_df.fill_null(strategy="forward")
     if not os.path.exists(os.path.join(args.save_path, args.symbols, args.target_freq)):
         os.makedirs(os.path.join(args.save_path, args.symbols, args.target_freq))
-    orderbook_df.to_feather(
+    orderbook_df.write_ipc(
         os.path.join(
             args.save_path,
             args.symbols,

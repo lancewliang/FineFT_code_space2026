@@ -1,4 +1,4 @@
-import pandas as pd
+import polars as pl
 import numpy as np
 import os
 import re
@@ -53,32 +53,28 @@ parser.add_argument(
 )
 
 
-def down_scale_single_dertick(derivative_ticker: pd.DataFrame, agg_freq: str):
-    derivative_ticker = derivative_ticker.astype(
-        {"timestamp": "datetime64[us]", "funding_timestamp": "datetime64[us]"}
+def down_scale_single_dertick(derivative_ticker: pl.DataFrame, agg_freq: str):
+    return (
+        derivative_ticker.select(
+            [
+                "timestamp",
+                "symbol",
+                "funding_timestamp",
+                "funding_rate",
+                "index_price",
+                "mark_price",
+            ]
+        )
+        .with_columns(
+            pl.from_epoch("timestamp", time_unit="us").alias("timestamp"),
+            pl.from_epoch("funding_timestamp", time_unit="us").alias(
+                "funding_timestamp"
+            ),
+        )
+        .sort("timestamp")
+        .group_by_dynamic("timestamp", every=agg_freq, closed="left", label="left")
+        .agg(pl.all().first())
     )
-    derivative_ticker = derivative_ticker[
-        [
-            "timestamp",
-            "symbol",
-            "funding_timestamp",
-            "funding_rate",
-            "index_price",
-            "mark_price",
-        ]
-    ]
-    derivative_ticker.loc[:, "timestamp"] = pd.to_datetime(
-        derivative_ticker["timestamp"], unit="us"
-    )
-    derivative_ticker.loc[:, "funding_timestamp"] = pd.to_datetime(
-        derivative_ticker["funding_timestamp"], unit="us"
-    )
-    derivative_ticker = derivative_ticker.set_index("timestamp")
-    derivative_ticker_target = derivative_ticker.resample(agg_freq).agg(["first"])
-    del derivative_ticker
-    derivative_ticker_target.columns = derivative_ticker_target.columns.droplevel(1)
-    derivative_ticker_target.reset_index(inplace=True)
-    return derivative_ticker_target
 
 
 def main(args):
@@ -90,13 +86,13 @@ def main(args):
     dates_list = os.listdir(derivative_ticker_path)
     dates_list.sort()
     date = match_strings_in_range(dates_list, args.date)
-    single_df = pd.read_csv(os.path.join(derivative_ticker_path, date), engine="python")
+    single_df = pl.read_csv(os.path.join(derivative_ticker_path, date))
     derivative_ticker_target = down_scale_single_dertick(single_df, args.target_freq)
     del single_df
-    derivative_ticker_target = derivative_ticker_target.ffill()
+    derivative_ticker_target = derivative_ticker_target.fill_null(strategy="forward")
     if not os.path.exists(os.path.join(args.save_path, args.symbols, args.target_freq)):
         os.makedirs(os.path.join(args.save_path, args.symbols, args.target_freq))
-    derivative_ticker_target.to_feather(
+    derivative_ticker_target.write_ipc(
         os.path.join(
             args.save_path,
             args.symbols,

@@ -194,7 +194,7 @@ git commit -m "test: add polars preprocessing compatibility harness"
 - Modify: `data_preprocess/operator_futures/derivative_ticker/down_scale_single_shot_base_other.py`
 - Test: `data_preprocess/tests/test_polars_downscale_io.py`
 
-- [ ] **Step 1: Add downscale compatibility tests**
+- [x] **Step 1: Add downscale compatibility tests**
 
 Create `data_preprocess/tests/test_polars_downscale_io.py` with:
 
@@ -263,13 +263,13 @@ def test_derivative_downscale_preserves_selected_columns_and_first():
     assert out["funding_rate"].to_list()[0] == 0.01
 ```
 
-- [ ] **Step 2: Run tests to verify current pandas functions reject Polars input**
+- [x] **Step 2: Run tests to verify current pandas functions reject Polars input**
 
 Run: `conda run -n finetf pytest data_preprocess/tests/test_polars_downscale_io.py -q`
 
 Expected: FAIL because current downscale functions expect pandas operations such as `.set_index()` or pandas dtype conversion.
 
-- [ ] **Step 3: Replace orderbook downscale with Polars implementation**
+- [x] **Step 3: Replace orderbook downscale with Polars implementation**
 
 In `data_preprocess/operator_futures/orderbook_25/down_scale_single_shot.py`, replace pandas import with `import polars as pl`, update the type annotation to `pl.DataFrame`, and make `down_scale_single_oe_snapshot` return a Polars DataFrame:
 
@@ -312,7 +312,7 @@ orderbook_df.write_ipc(
 
 Apply the same import, function, and IO pattern to `data_preprocess/operator_futures/orderbook_25/down_scale_single_shot_base_other.py`, using `pl.read_ipc` for existing Feather input.
 
-- [ ] **Step 4: Replace derivative ticker downscale with Polars implementation**
+- [x] **Step 4: Replace derivative ticker downscale with Polars implementation**
 
 In `data_preprocess/operator_futures/derivative_ticker/down_scale_single_shot.py`, replace pandas import with `import polars as pl` and implement:
 
@@ -340,13 +340,13 @@ def down_scale_single_dertick(derivative_ticker: pl.DataFrame, agg_freq: str) ->
 
 Update `main(args)` to use `pl.read_csv(...)` and `derivative_ticker_target.write_ipc(...)`. Apply the same pattern to `data_preprocess/operator_futures/derivative_ticker/down_scale_single_shot_base_other.py`, using `pl.read_ipc`.
 
-- [ ] **Step 5: Run downscale tests**
+- [x] **Step 5: Run downscale tests**
 
 Run: `conda run -n finetf pytest data_preprocess/tests/test_polars_downscale_io.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 6: Run migrated-engine import scan for Task 2 files**
+- [x] **Step 6: Run migrated-engine import scan for Task 2 files**
 
 Run:
 
