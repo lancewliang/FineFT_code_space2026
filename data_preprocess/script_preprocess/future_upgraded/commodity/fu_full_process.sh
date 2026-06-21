@@ -3,16 +3,18 @@ source data_preprocess/script_preprocess/future_upgraded/commodity/commodity_pro
 run_commodity_stitch_main_contract() {
     local root_path=$1
     local commodity_name=${2:-燃料油}
-    local year=${3:-2026}
-    local symbol=${4:-fu}
+    local start_date=$3
+    local end_date=$4
+    local symbol=${5:-fu}
     local output_dir="${root_path}/PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/${symbol}"
-    local output_file="${output_dir}/${symbol}_${year}.csv"
+    local output_file="${output_dir}/${symbol}_${start_date}_${end_date}.csv"
 
     mkdir -p "${output_dir}"
     PYTHONPATH="${root_path}/data_preprocess" python -m operator_futures.commodity.stitch_main_contract \
         --raw_root "${root_path}/data/原始下载" \
         --commodity_name "${commodity_name}" \
-        --year "${year}" \
+        --start_date "${start_date}" \
+        --end_date "${end_date}" \
         --symbol "${symbol}" \
         --output "${output_file}"
 }
@@ -192,16 +194,15 @@ run_commodity_ic_correlation() {
 
 run_commodity_full_process() {
     local root_path=$1
-    local year=$2
-    local start_date=$3
-    local end_date=$4
-    local target_freq=${5:-5min}
-    local symbol=${6:-fu}
-    local commodity_name=${7:-燃料油}
-    local max_processes=${8:-4}
+    local start_date=$2
+    local end_date=$3
+    local target_freq=${4:-5min}
+    local symbol=${5:-fu}
+    local commodity_name=${6:-燃料油}
+    local max_processes=${7:-4}
 
-    run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$year" "$symbol"
-    local continuous_file="${root_path}/PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/${symbol}/${symbol}_${year}.csv"
+    run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$start_date" "$end_date" "$symbol"
+    local continuous_file="${root_path}/PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/${symbol}/${symbol}_${start_date}_${end_date}.csv"
     run_commodity_downscale_continuous_by_trading_day "$root_path" "$continuous_file" "$target_freq" "$symbol"
     run_commodity_cross_section_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path"
     run_commodity_merge_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path"

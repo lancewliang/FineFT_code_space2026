@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
@@ -20,6 +20,24 @@ def calculate_contract_volume(df: pd.DataFrame) -> float:
     if volume.dropna().empty:
         return 0.0
     return float(volume.max() - volume.min())
+
+
+def _parse_date(value: str) -> pd.Timestamp:
+    parsed = pd.to_datetime(value, format="%Y-%m-%d", errors="raise")
+    return parsed.normalize()
+
+
+def infer_years_for_date_range(start_date: str, end_date: str) -> List[str]:
+    start = _parse_date(start_date)
+    end = _parse_date(end_date)
+    if end <= start:
+        raise ValueError(
+            f"end_date must be greater than start_date for left-open range: "
+            f"{start_date} -> {end_date}"
+        )
+
+    last_included = end - pd.Timedelta(days=1)
+    return [str(year) for year in range(start.year, last_included.year + 1)]
 
 
 def iter_contract_files(
@@ -127,6 +145,31 @@ def load_contract_frames_by_trading_day(
     return days
 
 
+def load_contract_frames_by_trading_day_for_years(
+    raw_root: Path, commodity_name: str, years: Sequence[str]
+) -> Dict[str, Dict[str, Tuple[pd.DataFrame, Path]]]:
+    days: Dict[str, Dict[str, Tuple[pd.DataFrame, Path]]] = {}
+    for year in years:
+        year_days = load_contract_frames_by_trading_day(
+            raw_root, commodity_name, str(year)
+        )
+        for trading_day, contracts in year_days.items():
+            if trading_day in days:
+                overlap = sorted(set(days[trading_day]).intersection(contracts))
+                if overlap:
+                    raise ValueError(
+                        f"Duplicate contract data for TradingDay {trading_day}: "
+                        f"{overlap}"
+                    )
+            days.setdefault(trading_day, {}).update(contracts)
+    return days
+
+
+def _trading_day_in_range(trading_day: str, start_date: str, end_date: str) -> bool:
+    trading_ts = pd.to_datetime(trading_day, format="%Y%m%d", errors="raise")
+    return _parse_date(start_date) <= trading_ts < _parse_date(end_date)
+
+
 def build_main_contract_continuous_frame(
     raw_root: Path, commodity_name: str, year: str, symbol: str
 ) -> pd.DataFrame:
@@ -138,6 +181,39 @@ def build_main_contract_continuous_frame(
         current_frames = {
             contract: frame for contract, (frame, _) in current_items.items()
         }
+        contract, reason = select_main_contract_for_day(
+            previous_frames, current_frames, symbol
+        )
+        frame, source_file = current_items[contract]
+        copied = frame.copy()
+        copied["main_contract_selection_reason"] = reason
+        selected.append((trading_day, contract, copied, source_file))
+        previous_frames = current_frames
+    return stitch_main_contract_frames(selected)
+
+
+def build_main_contract_continuous_frame_for_date_range(
+    raw_root: Path,
+    commodity_name: str,
+    start_date: str,
+    end_date: str,
+    symbol: str,
+) -> pd.DataFrame:
+    years = infer_years_for_date_range(start_date, end_date)
+    days = load_contract_frames_by_trading_day_for_years(
+        raw_root, commodity_name, years
+    )
+    selected = []
+    previous_frames: Dict[str, pd.DataFrame] = {}
+    for trading_day in sorted(days):
+        current_items = days[trading_day]
+        current_frames = {
+            contract: frame for contract, (frame, _) in current_items.items()
+        }
+        if not _trading_day_in_range(trading_day, start_date, end_date):
+            previous_frames = current_frames
+            continue
+
         contract, reason = select_main_contract_for_day(
             previous_frames, current_frames, symbol
         )

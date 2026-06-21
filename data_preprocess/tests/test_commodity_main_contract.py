@@ -3,7 +3,9 @@ from pathlib import Path
 import pandas as pd
 
 from operator_futures.commodity.main_contract import (
+    build_main_contract_continuous_frame_for_date_range,
     calculate_contract_volume,
+    infer_years_for_date_range,
     iter_contract_files,
     normalize_timestamp,
     select_main_contract_for_day,
@@ -30,6 +32,33 @@ def _frame(contract: str, trading_day: str, action_day: str, volumes):
             }
         )
     return pd.DataFrame(rows)
+
+
+def _write_contract_file(
+    root: Path,
+    commodity_name: str,
+    year: str,
+    month: str,
+    trading_day: str,
+    contract: str,
+    action_day: str,
+    volumes,
+) -> Path:
+    path = root / commodity_name / year / month / trading_day / f"{contract}.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _frame(contract, trading_day, action_day, volumes).to_csv(path, index=False)
+    return path
+
+
+def test_infer_years_for_left_closed_right_open_date_range():
+    assert infer_years_for_date_range("2023-01-01", "2026-03-01") == [
+        "2023",
+        "2024",
+        "2025",
+        "2026",
+    ]
+    assert infer_years_for_date_range("2023-01-01", "2024-01-01") == ["2023"]
+    assert infer_years_for_date_range("2026-02-28", "2026-03-01") == ["2026"]
 
 
 def test_normalize_timestamp_uses_action_day():
@@ -112,3 +141,48 @@ def test_stitch_main_contract_frames_keeps_metadata_and_no_back_adjustment():
     assert stitched["source_file"].str.endswith(".csv").all()
     assert stitched.loc[1, "LastPrice"] == 2601
     assert stitched.loc[2, "LastPrice"] == 2600
+
+
+def test_build_main_contract_for_date_range_keeps_previous_frames_across_years(
+    tmp_path,
+):
+    raw_root = tmp_path / "data" / "原始下载"
+    _write_contract_file(
+        raw_root, "燃料油", "2023", "12", "20231229", "fu2401", "20231228", [0, 50]
+    )
+    _write_contract_file(
+        raw_root, "燃料油", "2023", "12", "20231229", "fu2402", "20231228", [0, 10]
+    )
+    _write_contract_file(
+        raw_root, "燃料油", "2024", "01", "20240102", "fu2401", "20240101", [0, 2]
+    )
+    _write_contract_file(
+        raw_root, "燃料油", "2024", "01", "20240102", "fu2402", "20240101", [0, 20]
+    )
+
+    stitched = build_main_contract_continuous_frame_for_date_range(
+        raw_root,
+        "燃料油",
+        "2023-12-29",
+        "2024-01-03",
+        "fu",
+    )
+
+    assert stitched["main_contract_trading_day"].astype(str).tolist() == [
+        "20231229",
+        "20231229",
+        "20240102",
+        "20240102",
+    ]
+    assert stitched["main_contract"].tolist() == [
+        "fu2401",
+        "fu2401",
+        "fu2401",
+        "fu2401",
+    ]
+    assert stitched["main_contract_selection_reason"].tolist() == [
+        "current_trading_day_fallback",
+        "current_trading_day_fallback",
+        "previous_trading_day_volume",
+        "previous_trading_day_volume",
+    ]

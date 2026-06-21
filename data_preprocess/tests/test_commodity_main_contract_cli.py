@@ -88,6 +88,69 @@ def test_stitch_main_contract_cli_outputs_continuous_file(tmp_path):
     assert "source_file" in stitched.columns
 
 
+def test_stitch_main_contract_cli_accepts_date_range(tmp_path):
+    raw_root = tmp_path / "data" / "原始下载"
+    _write_contract(
+        raw_root / "燃料油" / "2023" / "12" / "20231229" / "fu2401.csv",
+        "fu2401",
+        "20231229",
+        "20231228",
+        [0, 50],
+    )
+    _write_contract(
+        raw_root / "燃料油" / "2024" / "01" / "20240102" / "fu2401.csv",
+        "fu2401",
+        "20240102",
+        "20240101",
+        [0, 2],
+    )
+    _write_contract(
+        raw_root / "燃料油" / "2024" / "01" / "20240102" / "fu2402.csv",
+        "fu2402",
+        "20240102",
+        "20240101",
+        [0, 20],
+    )
+
+    output = tmp_path / "continuous" / "fu_2023-12-29_2024-01-03.csv"
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "operator_futures.commodity.stitch_main_contract",
+            "--raw_root",
+            str(raw_root),
+            "--commodity_name",
+            "燃料油",
+            "--start_date",
+            "2023-12-29",
+            "--end_date",
+            "2024-01-03",
+            "--symbol",
+            "fu",
+            "--output",
+            str(output),
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "data_preprocess")},
+        check=True,
+    )
+
+    stitched = pd.read_csv(output)
+    assert stitched["main_contract_trading_day"].astype(str).tolist() == [
+        "20231229",
+        "20231229",
+        "20240102",
+        "20240102",
+    ]
+    assert stitched["main_contract"].tolist() == [
+        "fu2401",
+        "fu2401",
+        "fu2401",
+        "fu2401",
+    ]
+
+
 def test_commodity_full_process_shell_exposes_expected_functions():
     script = (
         REPO_ROOT
@@ -102,12 +165,15 @@ def test_commodity_full_process_shell_exposes_expected_functions():
     assert "PREPROCESS_DATASET/commodity-futures/MERGE_CONCAT" in text
     assert "--market_type commodity_futures" in text
     assert "--orderbook_depth 5" in text
+    assert "--start_date" in text
+    assert "--end_date" in text
+    assert "${symbol}_${start_date}_${end_date}.csv" in text
     assert "run_merge_process " not in text
     assert "python - <<" not in text
     assert "operator_futures.commodity.downscale_continuous_by_trading_day" in text
 
 
-def test_commodity_main_script_runs_full_process_entrypoint():
+def test_commodity_main_script_uses_date_range_full_process_entrypoint():
     script = (
         REPO_ROOT
         / "data_preprocess/script_preprocess/future_upgraded/commodity/main.sh"
@@ -121,3 +187,4 @@ def test_commodity_main_script_runs_full_process_entrypoint():
     assert "END_DATE" in text
     assert "TARGET_FREQ" in text
     assert "COMMODITY_NAME" in text
+    assert '"${YEAR}"' not in text

@@ -2,14 +2,14 @@
 set -euo pipefail
 
 ROOTPATH=${ROOTPATH:-$(pwd)}
-YEAR=${YEAR:-2026}
-START_DATE=${START_DATE:-2026-01-01}
-END_DATE=${END_DATE:-2026-02-01}
+YEAR=${YEAR:-2023}
+START_DATE=${START_DATE:-2023-01-01}
+END_DATE=${END_DATE:-2026-03-01}
 TARGET_FREQ=${TARGET_FREQ:-5min}
 SYMBOL=${SYMBOL:-fu}
 COMMODITY_NAME=${COMMODITY_NAME:-燃料油}
 MAX_PROCESSES=${MAX_PROCESSES:-4}
-
+echo "ROOTPATH: ${ROOTPATH}"
 source "${ROOTPATH}/data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
 
 LOG_DIR="${ROOTPATH}/log_futures/ticker_result/commodity"
@@ -17,7 +17,6 @@ mkdir -p "${LOG_DIR}"
 
 run_commodity_full_process \
     "${ROOTPATH}" \
-    "${YEAR}" \
     "${START_DATE}" \
     "${END_DATE}" \
     "${TARGET_FREQ}" \
