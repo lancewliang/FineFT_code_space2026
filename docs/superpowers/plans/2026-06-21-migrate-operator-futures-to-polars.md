@@ -1021,7 +1021,7 @@ Run the selected representative preprocessing command before and after the Polar
 - Meets expected 30% improvement: `<yes/no>`
 ```
 
-If the representative dataset is unavailable, write the exact missing path and do not mark the 30% acceptance item complete.
+If comparable representative timing is unavailable, write the exact missing path or failure reason. Per the 2026-06-21 amendment, a fixed 30% improvement is no longer a blocking acceptance item.
 
 - [x] **Step 6: Run diff hygiene**
 

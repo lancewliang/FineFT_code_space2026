@@ -42,4 +42,4 @@
 - [ ] 6.1 Run `openspec validate migrate-operator-futures-to-polars --strict` and fix all validation errors.
 - [ ] 6.2 Run focused data preprocessing tests with `conda run -n finetf pytest data_preprocess/tests -q`.
 - [ ] 6.3 Run representative Binance futures and commodity futures smoke commands using existing small samples or document why a smoke command cannot run in the current workspace.
-- [ ] 6.4 Record manual before/after timing notes for a representative end-to-end preprocessing path and confirm expected total runtime improvement is at least 30%, without adding a benchmark script.
+- [x] 6.4 Record manual before/after timing notes or the precise reason comparable timing is unavailable for a representative preprocessing path, without adding a benchmark script or requiring a fixed percentage improvement. <!-- 已实现: 用户确认忽略 30% 节约验证，compatibility-notes.md 已记录 timing 不可比原因 -->

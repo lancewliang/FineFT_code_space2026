@@ -49,4 +49,4 @@ The workspace does not contain a small local `DOWNLOAD_DATASET/binance-futures` 
 - Before pandas runtime: unavailable for a comparable pass because the legacy pandas implementation fails the quote-window validation on this sample
 - After Polars runtime: completed successfully
 - Improvement: not comparable on this sample
-- Meets expected 30% improvement: no
+- Meets expected 30% improvement: not required; user requested ignoring the fixed 30% time-saving validation on 2026-06-21

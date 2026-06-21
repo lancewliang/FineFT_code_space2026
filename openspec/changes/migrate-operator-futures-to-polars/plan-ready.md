@@ -40,6 +40,6 @@
 
 ### Task 6: Validation and migration closure
 - [x] **任务完成**（与 superpowers plan `Task 6`、`tasks.md` 对应条目同步勾选）
-- 目标：完成规格校验、测试回归、代表性 smoke 记录和手工性能记录，确保迁移完成后可以进入 close 阶段。
+- 目标：完成规格校验、测试回归、代表性 smoke 记录和手工性能记录或不可比原因记录，确保迁移完成后可以进入 close 阶段；固定性能提升比例不作为阻塞验收条件。
 - 改动文件：`openspec/changes/migrate-operator-futures-to-polars/tasks.md`、`openspec/changes/migrate-operator-futures-to-polars/plan-ready.md`、`docs/superpowers/plans/2026-06-21-migrate-operator-futures-to-polars.md`、`openspec/changes/migrate-operator-futures-to-polars/compatibility-notes.md`。
-- 验证方式：运行 `openspec validate migrate-operator-futures-to-polars --strict`、`conda run -n finetf pytest data_preprocess/tests -q`、代表性 Binance futures 与 commodity futures smoke 命令、`git diff --check`，并在验证记录或计划勾选备注中写明性能记录和无法运行项的具体原因。
+- 验证方式：运行 `openspec validate migrate-operator-futures-to-polars --strict`、`conda run -n finetf pytest data_preprocess/tests -q`、代表性 Binance futures 与 commodity futures smoke 命令、`git diff --check`，并在验证记录或计划勾选备注中写明性能记录、不可比原因和无法运行项的具体原因；不要求达到 30% 性能提升。

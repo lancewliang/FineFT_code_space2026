@@ -50,7 +50,7 @@ Alternatives considered:
 
 ### Decision 4: Use focused existing-sample verification
 
-The migration will rely on existing small commodity samples, existing `data_preprocess/tests`, and narrow smoke commands for Binance futures preprocessing paths. It will not add a benchmark script. Performance is verified by recording manual before/after command timings for a representative end-to-end preprocessing path.
+The migration will rely on existing small commodity samples, existing `data_preprocess/tests`, and narrow smoke commands for Binance futures preprocessing paths. It will not add a benchmark script. Performance is documented by recording manual before/after command timings, or a precise reason why comparable timing is unavailable, for a representative preprocessing path. A fixed percentage improvement is not a blocking acceptance gate for this change.
 
 Alternatives considered:
 - Add a permanent benchmark suite. This is useful long term but outside the agreed scope.

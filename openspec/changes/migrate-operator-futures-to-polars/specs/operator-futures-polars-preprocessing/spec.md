@@ -60,4 +60,4 @@ The system SHALL verify the Polars migration with existing small samples, existi
 #### Scenario: Representative preprocessing smoke paths run
 - **WHEN** maintainers run the documented smoke commands for Binance futures and commodity futures preprocessing
 - **THEN** the commands generate expected files in the existing output locations
-- **AND** manual before/after timing notes show the representative end-to-end preprocessing path is expected to be at least 30% faster
+- **AND** manual before/after timing notes, or the precise reason comparable timing is unavailable, are recorded without requiring a fixed percentage improvement

@@ -2,7 +2,7 @@
 
 ## 背景与目标
 
-`data_preprocess/operator_futures` 当前核心预处理链路大量依赖 pandas。随着数据规模增大，CSV/Feather 读写、时间窗口聚合、跨日拼接、特征合并和前向填充等步骤性能不足。目标是在不改变外部使用方式和输出结构的前提下，将该目录下核心预处理实现原地迁移到 Polars，并使端到端预处理耗时预期至少降低 30%。
+`data_preprocess/operator_futures` 当前核心预处理链路大量依赖 pandas。随着数据规模增大，CSV/Feather 读写、时间窗口聚合、跨日拼接、特征合并和前向填充等步骤性能不足。目标是在不改变外部使用方式和输出结构的前提下，将该目录下核心预处理实现原地迁移到 Polars，并记录可用的手工性能观察；性能提升比例不作为本变更的阻塞验收条件。
 
 ## 用户场景
 
@@ -40,7 +40,7 @@
 - 将 `polars` 作为必需依赖，不保留 pandas legacy 文件。
 - 输出尽量文件级兼容；浮点比较允许 `rtol=1e-12, atol=1e-12`。
 - 疑似旧 bug 或无法完全复刻的 schema/dtype 差异先进入兼容性清单，由用户逐项决定。
-- 不新增 benchmark 脚本；性能目标作为验收标准，用人工命令记录端到端耗时。
+- 不新增 benchmark 脚本；用人工命令记录可用的端到端耗时或不可比原因，性能提升比例不阻塞验收。
 
 ## 范围边界
 
@@ -77,4 +77,11 @@
 - [ ] 疑似 pandas 旧 bug 或无法完全复刻的 schema/dtype 差异已记录到兼容性清单，并等待用户逐项确认。
 - [ ] 现有 `data_preprocess/tests/test_commodity_*` 相关测试通过。
 - [ ] 基于现有小样例的最短 Binance futures 预处理链路和商品期货预处理链路能生成预期文件。
-- [ ] 人工记录一次迁移前后端到端预处理耗时，预期总耗时至少降低 30%；不新增 benchmark 脚本。
+- [ ] 人工记录一次迁移前后端到端预处理耗时或不可比原因；不新增 benchmark 脚本，且不要求达到固定性能提升比例。
+
+## Amendments
+
+### 2026-06-21: Remove fixed performance-improvement gate
+- 原因：用户明确要求忽略“30% 时间节约”验证。
+- 摘要：保留手工 timing 记录和不可比原因记录，但不再把达到 30% 性能提升作为阻塞验收条件。
+- 影响：更新 proposal、design、operator-futures-polars-preprocessing spec、tasks、plan-ready 和 superpowers plan 中的 Task 6 性能验收描述。
