@@ -1,4 +1,4 @@
-import pandas as pd
+import polars as pl
 import numpy as np
 import os
 import re
@@ -50,66 +50,68 @@ parser.add_argument(
 )
 
 
+def build_daily_feature_frames(
+    snapshot: pl.DataFrame,
+    der: pl.DataFrame,
+    base_feature: pl.DataFrame,
+    snapshot_feature: pl.DataFrame,
+    quotes_feature: pl.DataFrame,
+    kline_feature: pl.DataFrame,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    der_without_symbol = der.drop("symbol") if "symbol" in der.columns else der
+    reward_feature = (
+        snapshot.join(der_without_symbol, on="timestamp", how="left")
+        .join(snapshot_feature, on="timestamp", how="left")
+    )
+    future_feature = (
+        base_feature.join(quotes_feature, on="timestamp", how="left")
+        .join(kline_feature, on="timestamp", how="left")
+    )
+    return reward_feature, future_feature
+
+
 def main(args):
     args.data_path = os.path.join(args.root_path, args.data_path)
     args.save_path = os.path.join(args.root_path, args.save_path)
-    snapshot = pd.read_feather(
+    snapshot = pl.read_ipc(
         "{}/DOWNSCALE_ORDERBOOK_25/{}/{}/{}.feather".format(
             args.data_path, args.symbols, args.target_freq, args.date
         )
     )
-    der = pd.read_feather(
+    der = pl.read_ipc(
         "{}/DOWNSCALE_DERTIC/{}/{}/{}.feather".format(
             args.data_path, args.symbols, args.target_freq, args.date
         )
     )
-    base_feature = pd.read_feather(
+    base_feature = pl.read_ipc(
         "{}/BASE_FEATURE/{}/{}/{}.feather".format(
             args.data_path, args.symbols, args.target_freq, args.date
         )
     )
-    snapshot_feature = pd.read_feather(
+    snapshot_feature = pl.read_ipc(
         "{}/CROSS_SECTION/SNAPSHOT_FEATURE/{}/{}/{}.feather".format(
             args.data_path, args.symbols, args.target_freq, args.date
         )
     )
-    quotes_feature = pd.read_feather(
+    quotes_feature = pl.read_ipc(
         "{}/CROSS_SECTION/QUOTES_FEATURE/{}/{}/{}.feather".format(
             args.data_path, args.symbols, args.target_freq, args.date
         )
     )
-    kline_feature = pd.read_feather(
+    kline_feature = pl.read_ipc(
         "{}/CROSS_SECTION/KLINE_FEATURE/{}/{}/{}.feather".format(
             args.data_path, args.symbols, args.target_freq, args.date
         )
     )
-    snapshot.set_index("timestamp", inplace=True)
-    der.set_index("timestamp", inplace=True)
-    base_feature.set_index("timestamp", inplace=True)
-    snapshot_feature.set_index("timestamp", inplace=True)
-    quotes_feature.set_index("timestamp", inplace=True)
-    kline_feature.set_index("timestamp", inplace=True)
 
-    der.drop(columns=["symbol"], inplace=True)
-    # base_feature.drop(columns=["symbol"], inplace=True)
-    reward_feature = pd.concat(
-        [
-            snapshot,
-            der,
-            snapshot_feature,
-        ],
-        axis=1,
+    reward_feature, base_feature = build_daily_feature_frames(
+        snapshot,
+        der,
+        base_feature,
+        snapshot_feature,
+        quotes_feature,
+        kline_feature,
     )
-    reward_feature.reset_index(inplace=True)
-    base_feature = pd.concat(
-        [
-            base_feature,
-            quotes_feature,
-            kline_feature,
-        ],
-        axis=1,
-    )
-    base_feature.reset_index(inplace=True)
 
     # merged_feature = pd.concat(
     #     [
@@ -160,7 +162,7 @@ def main(args):
                 "FUTURE_FEATURE",
             )
         )
-    reward_feature.to_feather(
+    reward_feature.write_ipc(
         os.path.join(
             args.save_path,
             "MERGED_FEATURE",
@@ -170,7 +172,7 @@ def main(args):
             args.date + ".feather",
         )
     )
-    base_feature.to_feather(
+    base_feature.write_ipc(
         os.path.join(
             args.save_path,
             "MERGED_FEATURE",

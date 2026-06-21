@@ -622,7 +622,7 @@ git commit -m "refactor: migrate futures feature generation to polars"
 - Modify: `data_preprocess/operator_futures/feature_selection/catbooost.py`
 - Test: `data_preprocess/tests/test_polars_merge_contract.py`
 
-- [ ] **Step 1: Add merge contract tests**
+- [x] **Step 1: Add merge contract tests**
 
 Create `data_preprocess/tests/test_polars_merge_contract.py` with:
 
@@ -677,13 +677,13 @@ def test_build_daily_feature_frames_drops_derivative_symbol_from_reward():
     assert future.columns[:3] == ["timestamp", "symbol", "exchange"]
 ```
 
-- [ ] **Step 2: Run merge tests to verify failure before helper extraction**
+- [x] **Step 2: Run merge tests to verify failure before helper extraction**
 
 Run: `conda run -n finetf pytest data_preprocess/tests/test_polars_merge_contract.py -q`
 
 Expected: FAIL because `concat_concurrent_future_frames` and `build_daily_feature_frames` do not exist yet.
 
-- [ ] **Step 3: Extract Polars merge helpers and update daily merge IO**
+- [x] **Step 3: Extract Polars merge helpers and update daily merge IO**
 
 In `data_preprocess/operator_futures/merge_concat/merge.py`, add:
 
@@ -713,7 +713,7 @@ def build_daily_feature_frames(
 
 Replace `pd.read_feather` calls with `pl.read_ipc` and `to_feather` calls with `write_ipc`, keeping output paths unchanged.
 
-- [ ] **Step 4: Extract Polars concat helper and update cross-day concat IO**
+- [x] **Step 4: Extract Polars concat helper and update cross-day concat IO**
 
 In `data_preprocess/operator_futures/merge_concat/concat.py`, add:
 
@@ -744,7 +744,7 @@ def concat_concurrent_future_frames(
 
 Use `pl.read_ipc` for each input file, `pl.concat(..., how="vertical")` for cross-day stacking, and `write_ipc` for the output Feather path.
 
-- [ ] **Step 5: Migrate merge_clean, scale_save, and feature-selection readers**
+- [x] **Step 5: Migrate merge_clean, scale_save, and feature-selection readers**
 
 Use Polars joins and explicit selects:
 
@@ -770,13 +770,13 @@ target = df.select(target_column).to_pandas()[target_column]
 
 Record each third-party pandas boundary in a short inline comment.
 
-- [ ] **Step 6: Run merge contract tests and commodity branch tests**
+- [x] **Step 6: Run merge contract tests and commodity branch tests**
 
 Run: `conda run -n finetf pytest data_preprocess/tests/test_polars_merge_contract.py data_preprocess/tests/test_commodity_feature_pipeline.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Task 4**
+- [x] **Step 7: Commit Task 4**
 
 ```bash
 git add data_preprocess/operator_futures/merge_concat/merge.py data_preprocess/operator_futures/merge_concat/concat.py data_preprocess/operator_futures/merge_all/merge_clean.py data_preprocess/operator_futures/scale_describe_save/scale_save.py data_preprocess/operator_futures/feature_selection/cor_util.py data_preprocess/operator_futures/feature_selection/ic_correlation.py data_preprocess/operator_futures/feature_selection/lasso_linear.py data_preprocess/operator_futures/feature_selection/rank_ic_correlation.py data_preprocess/operator_futures/feature_selection/remove_duplicates_feature.py data_preprocess/operator_futures/feature_selection/catbooost.py data_preprocess/tests/test_polars_merge_contract.py openspec/changes/migrate-operator-futures-to-polars/compatibility-notes.md

@@ -1,4 +1,4 @@
-import pandas as pd
+import polars as pl
 import numpy as np
 import os
 import re
@@ -58,7 +58,30 @@ parser.add_argument(
 
 
 def read_feather_file(file):
-    return pd.read_feather(file)
+    return pl.read_ipc(file)
+
+
+def _first_by_timestamp(df: pl.DataFrame) -> pl.DataFrame:
+    return df.sort("timestamp").group_by("timestamp", maintain_order=True).first()
+
+
+def concat_concurrent_future_frames(
+    concurrent_df: pl.DataFrame, future_df: pl.DataFrame
+) -> pl.DataFrame:
+    concurrent_df = _first_by_timestamp(concurrent_df)
+    future_df = _first_by_timestamp(future_df)
+    future_df = future_df.drop(
+        [column for column in ["symbol", "exchange"] if column in future_df.columns]
+    )
+    value_columns = [column for column in future_df.columns if column != "timestamp"]
+    future_df = future_df.with_columns(
+        [pl.col(column).shift(1).alias(column) for column in value_columns]
+    ).filter(pl.all_horizontal([pl.col(column).is_not_null() for column in value_columns]))
+    return (
+        concurrent_df.join(future_df, on="timestamp", how="inner")
+        .sort("timestamp")
+        .fill_null(strategy="forward")
+    )
 
 
 def main(args):
@@ -87,33 +110,15 @@ def main(args):
     with ThreadPoolExecutor() as executor:
         future_df_list = list(executor.map(read_feather_file, future_path_files))
     # concat seperately
-    cocurrent_df = pd.concat(cocurrent_df_list, axis=0)
-    future_df = pd.concat(future_df_list, axis=0)
-    # index
-    cocurrent_df.set_index("timestamp", inplace=True)
-    future_df.set_index("timestamp", inplace=True)
-    # sort and resample
-    cocurrent_df.sort_index(inplace=True)
-    cocurrent_df = cocurrent_df.groupby(cocurrent_df.index).first()
-    cocurrent_df = cocurrent_df.resample(args.target_freq).asfreq()
-
-    future_df.sort_index(inplace=True)
-    future_df = future_df.groupby(future_df.index).first()
-    future_df = future_df.resample(args.target_freq).asfreq()
-    future_df.drop(columns=["symbol", "exchange"], inplace=True)
-    future_df = future_df.shift(+1)
-    future_df = future_df.iloc[1:]
-
-    # now merge them together
-    df = pd.concat([cocurrent_df, future_df], axis=1, join="inner")
-    df.reset_index(inplace=True)
-    df.fillna(method="ffill", inplace=True)
+    cocurrent_df = pl.concat(cocurrent_df_list, how="vertical")
+    future_df = pl.concat(future_df_list, how="vertical")
+    df = concat_concurrent_future_frames(cocurrent_df, future_df)
     save_path = "{}/CONCAT_FEATURE/{}/{}".format(
         args.save_path, args.symbols, args.target_freq
     )
     if not os.path.exists(save_path):
         os.makedirs(save_path)
-    df.to_feather(
+    df.write_ipc(
         os.path.join(save_path, "{}-{}.feather".format(args.start_date, args.end_date))
     )
 

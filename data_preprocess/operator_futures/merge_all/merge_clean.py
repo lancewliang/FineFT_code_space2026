@@ -1,4 +1,4 @@
-import pandas as pd
+import polars as pl
 import numpy as np
 import os
 import re
@@ -66,7 +66,7 @@ def main(args):
     args.data_path_1= os.path.join(args.root_path, args.data_path_1)
     args.data_path_2 = os.path.join(args.root_path, args.data_path_2)
     args.save_path = os.path.join(args.root_path, args.save_path)
-    time_feature_df = pd.read_feather(
+    time_feature_df = pl.read_ipc(
         os.path.join(
             args.data_path_2,
             args.symbols,
@@ -74,7 +74,7 @@ def main(args):
             "{}-{}.feather".format(args.start_date, args.end_date),
         )
     )
-    cross_section_df = pd.read_feather(
+    cross_section_df = pl.read_ipc(
         os.path.join(
             args.data_path_1,
             args.symbols,
@@ -82,16 +82,11 @@ def main(args):
             "{}-{}.feather".format(args.start_date, args.end_date),
         )
     )
-    time_feature_df.set_index("timestamp", inplace=True)
-    cross_section_df.set_index("timestamp", inplace=True)
-    all_feature_df = pd.concat(
-        [cross_section_df, time_feature_df], axis=1, join="inner"
-    )
-    all_feature_df.reset_index(inplace=True)
+    all_feature_df = cross_section_df.join(time_feature_df, on="timestamp", how="inner")
 
     if not os.path.exists(os.path.join(args.save_path, args.symbols, args.target_freq)):
         os.makedirs(os.path.join(args.save_path, args.symbols, args.target_freq))
-    all_feature_df.to_feather(
+    all_feature_df.write_ipc(
         os.path.join(
             args.save_path,
             args.symbols,
