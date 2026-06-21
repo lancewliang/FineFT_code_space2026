@@ -1,9 +1,9 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import List
 
 import polars as pl
 
-from .config import get_commodity_config
+from .config import TradingSession, get_commodity_config
 from .main_contract import with_normalized_timestamp
 
 
@@ -30,6 +30,30 @@ def _target_freq_delta(target_freq: str) -> timedelta:
             value = int(normalized[: -len(suffix)])
             return timedelta(seconds=value * multiplier)
     raise ValueError(f"Unsupported target frequency: {target_freq}")
+
+
+def _session_for_timestamp(
+    timestamp: datetime, sessions: tuple[TradingSession, ...]
+) -> TradingSession | None:
+    timestamp_time = timestamp.time()
+    for session in sessions:
+        if session.start <= timestamp_time <= session.end:
+            return session
+    return None
+
+
+def _same_trading_session(
+    previous: datetime,
+    current: datetime,
+    sessions: tuple[TradingSession, ...],
+) -> bool:
+    previous_session = _session_for_timestamp(previous, sessions)
+    current_session = _session_for_timestamp(current, sessions)
+    return (
+        previous_session is not None
+        and previous_session == current_session
+        and previous.date() == current.date()
+    )
 
 
 def _resample(frame: pl.DataFrame, target_freq: str, aggs: List[pl.Expr]) -> pl.DataFrame:
@@ -343,7 +367,9 @@ def _change_count_expr(column: str, direction: str | None = None) -> pl.Expr:
     return diff.ne(0).fill_null(True)
 
 
-def downscale_quote_features(second_df: pl.DataFrame, target_freq: str) -> pl.DataFrame:
+def downscale_quote_features(
+    second_df: pl.DataFrame, target_freq: str, symbol: str = "fu"
+) -> pl.DataFrame:
     if second_df.height == 0:
         raise ValueError("Target window has no quote snapshots")
 
@@ -399,13 +425,18 @@ def downscale_quote_features(second_df: pl.DataFrame, target_freq: str) -> pl.Da
     result = _resample(quote, target_freq, aggs)
     timestamps = result["timestamp"].to_list()
     target_delta = _target_freq_delta(target_freq)
+    trading_sessions = get_commodity_config(symbol).trading_sessions
     for previous, current in zip(timestamps, timestamps[1:]):
         missing = previous + target_delta
-        if current - previous > target_delta:
+        if (
+            current - previous > target_delta
+            and _same_trading_session(previous, current, trading_sessions)
+        ):
             raise ValueError(f"Target window has no quote snapshots: {missing}")
 
     empty_windows = result.filter(pl.col("nquote") == 0)
     if empty_windows.height:
         first = empty_windows.item(0, "timestamp")
-        raise ValueError(f"Target window has no quote snapshots: {first}")
+        if _session_for_timestamp(first, trading_sessions) is not None:
+            raise ValueError(f"Target window has no quote snapshots: {first}")
     return result

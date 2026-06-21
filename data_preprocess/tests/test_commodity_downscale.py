@@ -252,7 +252,29 @@ def test_empty_quote_window_fails_fast():
         downscale_quote_features(second.head(0), "5min")
 
 
-def test_intermediate_empty_quote_window_fails_fast():
+def test_cross_session_quote_gap_does_not_fail():
+    second = pl.DataFrame(
+        {
+            "timestamp": [
+                datetime(2025, 10, 31, 23, 0, 0),
+                datetime(2025, 11, 3, 9, 0, 0),
+            ],
+            "BidPrice1": [2600.0, 2601.0],
+            "AskPrice1": [2602.0, 2603.0],
+            "BidVolume1": [1.0, 1.0],
+            "AskVolume1": [1.0, 1.0],
+        }
+    )
+
+    result = downscale_quote_features(second, "5min")
+
+    assert result["timestamp"].to_list() == [
+        datetime(2025, 10, 31, 23, 0, 0),
+        datetime(2025, 11, 3, 9, 0, 0),
+    ]
+
+
+def test_intermediate_empty_quote_window_in_same_session_fails_fast():
     second = pl.DataFrame(
         {
             "timestamp": [
