@@ -24,33 +24,12 @@ run_commodity_downscale_continuous_by_trading_day() {
     local symbol=${4:-fu}
     local output_root="${root_path}/PREPROCESS_DATASET/commodity-futures"
 
-    PYTHONPATH="${root_path}/data_preprocess" python - <<PY
-from pathlib import Path
-import pandas as pd
-from operator_futures.commodity.downscale import (
-    create_second_level_snapshots,
-    downscale_base_features,
-    downscale_derivative_reference,
-    downscale_orderbook,
-)
-
-continuous_file = Path("${continuous_file}")
-output_root = Path("${output_root}")
-target_freq = "${target_freq}"
-symbol = "${symbol}"
-raw = pd.read_csv(continuous_file)
-for trading_day, day_frame in raw.groupby(raw["TradingDay"].astype(str), sort=True):
-    second = create_second_level_snapshots(day_frame)
-    outputs = {
-        "DOWNSCALE_DERTIC": downscale_derivative_reference(second, target_freq, symbol),
-        "DOWNSCALE_ORDERBOOK_25": downscale_orderbook(second, target_freq, depth=5),
-        "BASE_FEATURE": downscale_base_features(second, target_freq),
-    }
-    for folder, frame in outputs.items():
-        path = output_root / folder / symbol / target_freq
-        path.mkdir(parents=True, exist_ok=True)
-        frame.to_feather(path / f"{trading_day}.feather")
-PY
+    PYTHONPATH="${root_path}/data_preprocess" python -m operator_futures.commodity.downscale_continuous_by_trading_day \
+        --input "${continuous_file}" \
+        --output_root "${output_root}" \
+        --target_freq "${target_freq}" \
+        --symbol "${symbol}" \
+        --depth 5
 }
 
 run_commodity_cross_section_process() {

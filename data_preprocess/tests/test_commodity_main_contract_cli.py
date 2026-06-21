@@ -103,3 +103,5 @@ def test_commodity_full_process_shell_exposes_expected_functions():
     assert "--market_type commodity_futures" in text
     assert "--orderbook_depth 5" in text
     assert "run_merge_process " not in text
+    assert "python - <<" not in text
+    assert "operator_futures.commodity.downscale_continuous_by_trading_day" in text
