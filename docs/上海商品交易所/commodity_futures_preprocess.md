@@ -53,6 +53,25 @@ docs/上海商品交易所/fu2302.csv
 
 ## 验证命令
 
+完整燃料油流程入口：
+
+```bash
+source data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh
+run_commodity_full_process "$(pwd)" 2026 2026-01-01 2026-02-01 5min fu 燃料油 4
+```
+
+该入口会先从 `data/原始下载/燃料油/2026` 扫描所有合约 CSV，按 `TradingDay` 选择每日主力合约，生成连续主力原始文件：
+
+```text
+PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu/fu_2026.csv
+```
+
+然后继续执行商品期货下采样、cross-section、merge/concat、time feature、merge clean、IC feature selection 和 scale/save。最终训练入口数据写入：
+
+```text
+PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/5min/2026-01-01-2026-02-01/
+```
+
 运行单日样例 smoke test：
 
 ```bash

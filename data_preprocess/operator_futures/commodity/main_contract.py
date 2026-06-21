@@ -101,3 +101,49 @@ def stitch_main_contract_frames(
 
     stitched = pd.concat(output, ignore_index=True)
     return stitched.sort_values("timestamp").reset_index(drop=True)
+
+
+def load_contract_frames_by_trading_day(
+    raw_root: Path, commodity_name: str, year: str
+) -> Dict[str, Dict[str, Tuple[pd.DataFrame, Path]]]:
+    days: Dict[str, Dict[str, Tuple[pd.DataFrame, Path]]] = {}
+    for file_path in iter_contract_files(raw_root, commodity_name, year):
+        frame = pd.read_csv(file_path)
+        if frame.empty:
+            continue
+        required = {"InstrumentID", "TradingDay", "ActionDay", "UpdateTime"}
+        missing = required.difference(frame.columns)
+        if missing:
+            raise ValueError(f"{file_path} missing required columns: {sorted(missing)}")
+
+        trading_days = frame["TradingDay"].astype(str).unique()
+        if len(trading_days) != 1:
+            raise ValueError(
+                f"{file_path} contains multiple TradingDay values: {trading_days}"
+            )
+        contract = str(frame["InstrumentID"].iloc[0])
+        trading_day = str(trading_days[0])
+        days.setdefault(trading_day, {})[contract] = (frame, file_path)
+    return days
+
+
+def build_main_contract_continuous_frame(
+    raw_root: Path, commodity_name: str, year: str, symbol: str
+) -> pd.DataFrame:
+    days = load_contract_frames_by_trading_day(raw_root, commodity_name, year)
+    selected = []
+    previous_frames: Dict[str, pd.DataFrame] = {}
+    for trading_day in sorted(days):
+        current_items = days[trading_day]
+        current_frames = {
+            contract: frame for contract, (frame, _) in current_items.items()
+        }
+        contract, reason = select_main_contract_for_day(
+            previous_frames, current_frames, symbol
+        )
+        frame, source_file = current_items[contract]
+        copied = frame.copy()
+        copied["main_contract_selection_reason"] = reason
+        selected.append((trading_day, contract, copied, source_file))
+        previous_frames = current_frames
+    return stitch_main_contract_frames(selected)
