@@ -1,6 +1,6 @@
 ## 1. Dependency and compatibility harness
 
-- [ ] 1.0 Dependency and compatibility harness complete（与 `plan-ready.md` Task 1 和 superpowers plan Task 1 同步）
+- [x] 1.0 Dependency and compatibility harness complete（与 `plan-ready.md` Task 1 和 superpowers plan Task 1 同步） <!-- 已实现: 添加 Polars 必需依赖和兼容性测试 helper -->
 - [ ] 1.1 Update `data_preprocess/requirements.txt` to add required `polars` dependency while preserving existing dependency pins.
 - [ ] 1.2 Add focused compatibility helpers in `data_preprocess/tests` for comparing Polars-produced outputs against existing expected contracts, including column order, timestamps, row order, dtype/schema checks where practical, and float tolerance `rtol=1e-12, atol=1e-12`.
 - [ ] 1.3 Keep `openspec/changes/migrate-operator-futures-to-polars/compatibility-notes.md` current if implementation finds a suspected pandas bug or unavoidable schema/dtype difference.

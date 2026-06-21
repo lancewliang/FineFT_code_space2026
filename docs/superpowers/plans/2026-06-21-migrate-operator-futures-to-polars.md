@@ -173,14 +173,14 @@ Run: `conda run -n finetf pytest data_preprocess/tests/test_polars_compat.py -q`
 
 Expected: PASS, `4 passed`.
 
-- [ ] **Step 6: Commit Task 1**
+- [x] **Step 6: Commit Task 1**
 
 ```bash
 git add data_preprocess/requirements.txt data_preprocess/tests/polars_compat.py data_preprocess/tests/test_polars_compat.py openspec/changes/migrate-operator-futures-to-polars/compatibility-notes.md
 git commit -m "test: add polars preprocessing compatibility harness"
 ```
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 2: Binance downscale and IO paths
 
