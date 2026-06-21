@@ -31,6 +31,8 @@
 - **WHEN** 相邻 `TradingDay` 的主力合约发生变化
 - **THEN** 系统直接拼接被选合约，不做价格复权
 
+## ADDED Requirements
+
 ### Requirement: 商品期货脚本入口支持日期范围
 系统 SHALL 允许商品期货主流程通过 `START_DATE` / `END_DATE` 指定跨年的日期范围，并自动
 生成该范围所需的连续主力原始文件与后续处理文件。
