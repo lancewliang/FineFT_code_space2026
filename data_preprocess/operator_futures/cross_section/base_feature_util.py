@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import polars as pl
 import re
 
 minium = 1e-15
@@ -463,6 +464,228 @@ def process_snapshot_features(df: pd.DataFrame, topk=5, depth=25):
 
     df = pd.concat([price_related_df, volume_related_df], axis=1)
     return df
+
+
+def _as_polars_frame(df) -> pl.DataFrame:
+    if isinstance(df, pl.DataFrame):
+        out = df.clone()
+    else:
+        out = pl.from_pandas(df.reset_index())
+    if "timestamp" not in out.columns and "index" in out.columns:
+        out = out.rename({"index": "timestamp"})
+    return out
+
+
+def _timestamp_expr(df: pl.DataFrame) -> list[pl.Expr]:
+    return [pl.col("timestamp")] if "timestamp" in df.columns else []
+
+
+def normalize_feature_cross_section(df, features: list, method: str) -> pl.DataFrame:
+    df = _as_polars_frame(df)
+    assert method in ["buy_sell", "up_down_flat", "bid_ask"]
+    expressions = _timestamp_expr(df)
+    if method == "buy_sell":
+        assert len(features) == 3
+        all_feature, buy, sell = features
+        expressions.extend(
+            [
+                (pl.col(buy) / (pl.col(all_feature) + minium)).alias(
+                    f"{all_feature}_buy_bsnorm"
+                ),
+                (pl.col(sell) / (pl.col(all_feature) + minium)).alias(
+                    f"{all_feature}_sell_bsnorm"
+                ),
+                ((pl.col(buy) - pl.col(sell)) / (pl.col(all_feature) + minium)).alias(
+                    f"{all_feature}_buysell_imbalance_bsnorm"
+                ),
+            ]
+        )
+    elif method == "up_down_flat":
+        assert len(features) in [3, 4]
+        all_feature, up, down = features[:3]
+        expressions.extend(
+            [
+                (pl.col(up) / (pl.col(all_feature) + minium)).alias(
+                    f"{all_feature}_up_udnorm"
+                ),
+                (pl.col(down) / (pl.col(all_feature) + minium)).alias(
+                    f"{all_feature}_down_udnorm"
+                ),
+                ((pl.col(up) - pl.col(down)) / (pl.col(all_feature) + minium)).alias(
+                    f"{all_feature}_updown_imbalance_udnorm"
+                ),
+            ]
+        )
+        if len(features) == 4:
+            flat = features[3]
+            expressions.extend(
+                [
+                    (pl.col(flat) / (pl.col(all_feature) + minium)).alias(
+                        f"{all_feature}_flat_udnorm"
+                    ),
+                    (
+                        (pl.col(up) + pl.col(down) - pl.col(flat))
+                        / (pl.col(all_feature) + minium)
+                    ).alias(f"{all_feature}_updownflat_vol_udnorm"),
+                ]
+            )
+    elif method == "bid_ask":
+        assert len(features) in [2, 3]
+        if len(features) == 2:
+            bid, ask = features
+            denom = pl.col(bid) + pl.col(ask) + minium
+            expressions.extend(
+                [
+                    (pl.col(bid) / denom).alias(f"{bid}_abnorm"),
+                    (pl.col(ask) / denom).alias(f"{ask}_abnorm"),
+                    ((pl.col(bid) - pl.col(ask)) / denom).alias(
+                        f"{ask}_bid_imbalance_abnorm"
+                    ),
+                ]
+            )
+        else:
+            all_feature, bid, ask = features
+            expressions.extend(
+                [
+                    (pl.col(bid) / (pl.col(all_feature) + minium)).alias(
+                        f"{all_feature}_bid_abnorm"
+                    ),
+                    (pl.col(ask) / (pl.col(all_feature) + minium)).alias(
+                        f"{all_feature}_ask_abnorm"
+                    ),
+                    ((pl.col(bid) - pl.col(ask)) / (pl.col(all_feature) + minium)).alias(
+                        f"{all_feature}_askbid_imbalance_abnorm"
+                    ),
+                ]
+            )
+    return df.select(expressions)
+
+
+def process_k_line_feature(df) -> pl.DataFrame:
+    df = _as_polars_frame(df)
+    columns = df.columns
+    grouped_features, _ = find_ohlc_groups(columns)
+    expressions = _timestamp_expr(df)
+    for prefix, suffix in grouped_features:
+        open_feature = f"{prefix}open{suffix}"
+        high_feature = f"{prefix}high{suffix}"
+        low_feature = f"{prefix}low{suffix}"
+        close_feature = f"{prefix}close{suffix}"
+        twap_feature = f"{prefix}twap{suffix}"
+        awap_feature = f"{prefix}awap{suffix}"
+        high_low = pl.col(high_feature) - pl.col(low_feature)
+        expressions.extend(
+            [
+                (high_low / (pl.col(open_feature) + minium)).alias(f"{prefix}klen{suffix}"),
+                ((pl.col(close_feature) - pl.col(open_feature)) / (pl.col(open_feature) + minium)).alias(f"{prefix}kmid{suffix}"),
+                ((pl.col(close_feature) - pl.col(open_feature)) / (high_low + minium)).alias(f"{prefix}kmid2{suffix}"),
+                ((pl.col(high_feature) - pl.max_horizontal(open_feature, close_feature)) / (pl.col(open_feature) + minium)).alias(f"{prefix}kup{suffix}"),
+                ((pl.col(high_feature) - pl.max_horizontal(open_feature, close_feature)) / (high_low + minium)).alias(f"{prefix}kup2{suffix}"),
+                ((pl.min_horizontal(open_feature, close_feature) - pl.col(low_feature)) / (pl.col(open_feature) + minium)).alias(f"{prefix}klow{suffix}"),
+                ((pl.min_horizontal(open_feature, close_feature) - pl.col(low_feature)) / (high_low + minium)).alias(f"{prefix}klow2{suffix}"),
+                ((2 * pl.col(close_feature) - pl.col(high_feature) - pl.col(low_feature)) / (pl.col(open_feature) + minium)).alias(f"{prefix}ksft{suffix}"),
+                ((2 * pl.col(close_feature) - pl.col(high_feature) - pl.col(low_feature)) / (high_low + minium)).alias(f"{prefix}ksft2{suffix}"),
+                ((pl.col(open_feature) - pl.col(twap_feature)) / (pl.col(open_feature) + minium)).alias(f"{prefix}kotwap{suffix}"),
+                ((pl.col(open_feature) - pl.col(twap_feature)) / (high_low + minium)).alias(f"{prefix}kotwap2{suffix}"),
+                ((pl.col(close_feature) - pl.col(twap_feature)) / (pl.col(close_feature) + minium)).alias(f"{prefix}kctwap{suffix}"),
+                ((pl.col(close_feature) - pl.col(twap_feature)) / (high_low + minium)).alias(f"{prefix}kctwap2{suffix}"),
+                ((pl.col(open_feature) - pl.col(awap_feature)) / (pl.col(open_feature) + minium)).alias(f"{prefix}koawap{suffix}"),
+                ((pl.col(open_feature) - pl.col(awap_feature)) / (high_low + minium)).alias(f"{prefix}koawap2{suffix}"),
+                ((pl.col(close_feature) - pl.col(awap_feature)) / (pl.col(close_feature) + minium)).alias(f"{prefix}kcawap{suffix}"),
+                ((pl.col(close_feature) - pl.col(awap_feature)) / (high_low + minium)).alias(f"{prefix}kcawap2{suffix}"),
+            ]
+        )
+        vwap_feature = f"{prefix}vwap{suffix}"
+        if vwap_feature in columns:
+            expressions.extend(
+                [
+                    ((pl.col(open_feature) - pl.col(vwap_feature)) / (pl.col(open_feature) + minium)).alias(f"{prefix}kovwap{suffix}"),
+                    ((pl.col(open_feature) - pl.col(vwap_feature)) / (high_low + minium)).alias(f"{prefix}kovwap2{suffix}"),
+                    ((pl.col(close_feature) - pl.col(vwap_feature)) / (pl.col(close_feature) + minium)).alias(f"{prefix}kcvwap{suffix}"),
+                    ((pl.col(close_feature) - pl.col(vwap_feature)) / (high_low + minium)).alias(f"{prefix}kcvwap2{suffix}"),
+                ]
+            )
+    return df.select(expressions)
+
+
+def process_quotes_n_feature(df) -> pl.DataFrame:
+    df = _as_polars_frame(df)
+    _, unmatch_feature = find_ohlc_groups(df.columns)
+    grouped_features_1, grouped_features_2, grouped_features_3, _ = find_nquotes_groups(
+        unmatch_feature
+    )
+    frames = []
+    for section in grouped_features_1:
+        frames.append(normalize_feature_cross_section(df, grouped_features_1[section], "buy_sell"))
+    for section in grouped_features_2:
+        frames.append(normalize_feature_cross_section(df, grouped_features_2[section], "up_down_flat"))
+    for section in grouped_features_3:
+        frames.append(normalize_feature_cross_section(df, grouped_features_3[section], "bid_ask"))
+    if not frames:
+        return df.select(_timestamp_expr(df))
+    result = frames[0]
+    for frame in frames[1:]:
+        result = result.join(frame, on="timestamp", how="inner") if "timestamp" in result.columns else pl.concat([result, frame], how="horizontal")
+    return result
+
+
+def process_snapshot_features(df, topk=5, depth=25) -> pl.DataFrame:
+    df = _as_polars_frame(df)
+    if depth < 2:
+        raise ValueError("orderbook depth must be at least 2")
+    topk = min(topk, depth)
+    ask_size_array = df.select([f"ask{i}_size" for i in range(1, depth + 1)]).to_numpy()
+    bid_size_array = df.select([f"bid{i}_size" for i in range(1, depth + 1)]).to_numpy()
+    ask_price_array = df.select([f"ask{i}_price" for i in range(1, depth + 1)]).to_numpy()
+    bid_price_array = df.select([f"bid{i}_price" for i in range(1, depth + 1)]).to_numpy()
+
+    normalized_ask_size_array = ask_size_array / np.sum(ask_size_array, axis=1).reshape(-1, 1)
+    normalized_bid_size_array = bid_size_array / np.sum(bid_size_array, axis=1).reshape(-1, 1)
+    best_ask_size_array = ask_size_array[:, 0]
+    best_ask_price_array = ask_price_array[:, 0]
+    best_bid_size_array = bid_size_array[:, 0]
+    best_bid_price_array = bid_price_array[:, 0]
+
+    ask_indices = np.argsort(ask_size_array, axis=1)[:, -topk:]
+    bid_indices = np.argsort(bid_size_array, axis=1)[:, -topk:]
+    ask_price_topk_size = np.take_along_axis(ask_price_array, ask_indices, axis=1)
+    bid_price_topk_size = np.take_along_axis(bid_price_array, bid_indices, axis=1)
+    ask_size_topk_size = np.take_along_axis(ask_size_array, ask_indices, axis=1)
+    bid_size_topk_size = np.take_along_axis(bid_size_array, bid_indices, axis=1)
+
+    data = {}
+    if "timestamp" in df.columns:
+        data["timestamp"] = df["timestamp"].to_list()
+    data["midprice"] = ((df["ask1_price"] + df["bid1_price"]) / 2).to_list()
+    data["wap_1"] = (
+        (best_ask_size_array * best_bid_price_array + best_bid_size_array * best_ask_price_array)
+        / (best_ask_size_array + best_bid_size_array)
+    )
+    data["wap_2"] = (
+        (ask_size_array[:, 1] * bid_price_array[:, 1] + bid_size_array[:, 1] * ask_price_array[:, 1])
+        / (bid_size_array[:, 1] + ask_size_array[:, 1])
+    )
+    data["wap_balance"] = data["wap_1"] - data["wap_2"]
+    data["sell_wap"] = np.sum(normalized_ask_size_array * ask_price_array, axis=1)
+    data["buy_wap"] = np.sum(normalized_bid_size_array * bid_price_array, axis=1)
+    data["buy_sell_wap_spread"] = data["buy_wap"] - data["sell_wap"]
+    data["buy_spread_oe_max"] = np.abs(df["bid1_price"].to_numpy() - df[f"bid{depth}_price"].to_numpy())
+    data["sell_spread_oe_max"] = np.abs(df["ask1_price"].to_numpy() - df[f"ask{depth}_price"].to_numpy())
+    for i in range(topk):
+        data[f"ask_price_topk_size_{i + 1}_increments"] = ask_price_topk_size[:, i] - best_ask_price_array
+        data[f"bid_price_topk_size_{i + 1}_increments"] = bid_price_topk_size[:, i] - best_bid_price_array
+        data[f"ask_size_topk_size_{i + 1}_increments"] = ask_size_topk_size[:, i] - best_ask_size_array
+        data[f"bid_size_topk_size_{i + 1}_increments"] = bid_size_topk_size[:, i] - best_bid_size_array
+    data["buy_volume_oe"] = np.sum(bid_size_array, axis=1)
+    data["sell_volume_oe"] = np.sum(ask_size_array, axis=1)
+    data["imblance_volume_oe"] = (
+        (data["buy_volume_oe"] - data["sell_volume_oe"])
+        / (data["buy_volume_oe"] + data["sell_volume_oe"] + minium)
+    )
+    for i in range(1, depth + 1):
+        data[f"ask{i}_size_n"] = ask_size_array[:, i - 1] / data["sell_volume_oe"]
+        data[f"bid{i}_size_n"] = bid_size_array[:, i - 1] / data["buy_volume_oe"]
+    return pl.DataFrame(data)
 
 
 if __name__ == "__main__":

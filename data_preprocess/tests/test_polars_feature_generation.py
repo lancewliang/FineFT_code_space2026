@@ -12,6 +12,11 @@ from operator_futures.features_related.feature_util import (
     preprocess_trades,
     side_group_trades,
 )
+from operator_futures.cross_section.base_feature_util import (
+    process_k_line_feature,
+    process_snapshot_features,
+)
+from operator_futures.time_operator.time_operator_util import process_ohlc
 
 
 def test_quote_feature_counts_preserve_column_names():
@@ -73,3 +78,57 @@ def test_trade_feature_side_group_columns_exist():
     assert "timestamp" in base.columns
     assert "buy_volume" in side.columns
     assert "sell_volume" in side.columns
+
+
+def test_cross_section_features_return_polars_with_timestamp():
+    base = pl.DataFrame(
+        {
+            "timestamp": [1, 2],
+            "open": [100.0, 102.0],
+            "high": [105.0, 106.0],
+            "low": [99.0, 101.0],
+            "close": [103.0, 104.0],
+            "twap": [102.0, 103.0],
+            "awap": [101.0, 102.0],
+            "vwap": [102.5, 103.5],
+        }
+    )
+    snapshot = pl.DataFrame(
+        {
+            "timestamp": [1],
+            "ask1_price": [101.0],
+            "ask2_price": [102.0],
+            "ask1_size": [2.0],
+            "ask2_size": [3.0],
+            "bid1_price": [100.0],
+            "bid2_price": [99.0],
+            "bid1_size": [4.0],
+            "bid2_size": [5.0],
+        }
+    )
+
+    kline = process_k_line_feature(base)
+    snapshot_features = process_snapshot_features(snapshot, topk=1, depth=2)
+
+    assert isinstance(kline, pl.DataFrame)
+    assert kline.columns[:2] == ["timestamp", "klen"]
+    assert isinstance(snapshot_features, pl.DataFrame)
+    assert snapshot_features.columns[:2] == ["timestamp", "midprice"]
+
+
+def test_time_operator_ohlc_returns_polars_with_causal_rolling_features():
+    frame = pl.DataFrame(
+        {
+            "timestamp": [1, 2, 3, 4, 5],
+            "open": [10.0, 11.0, 12.0, 13.0, 100.0],
+            "high": [11.0, 12.0, 13.0, 14.0, 101.0],
+            "low": [9.0, 10.0, 11.0, 12.0, 99.0],
+            "close": [10.0, 11.0, 12.0, 13.0, 100.0],
+        }
+    )
+
+    out = process_ohlc(frame, [2])
+
+    assert isinstance(out, pl.DataFrame)
+    assert out["timestamp"].to_list() == [4, 5]
+    assert out["max_2"].to_list()[0] == 13.0 / 13.0

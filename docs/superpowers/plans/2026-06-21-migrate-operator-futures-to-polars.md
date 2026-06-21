@@ -571,7 +571,7 @@ indicators_df.write_ipc(output_path)
 
 If the repeated join expression becomes unwieldy, assign it once to `merged` before `select`.
 
-- [ ] **Step 5: Migrate cross-section and time feature modules incrementally**
+- [x] **Step 5: Migrate cross-section and time feature modules incrementally**
 
 For each function in `cross_section/base_feature_util.py` and `time_operator/*` that currently creates an index-aligned pandas DataFrame, replace the return value with a Polars DataFrame containing an explicit `timestamp` column. Use Polars rolling APIs for window features:
 
@@ -585,7 +585,7 @@ def _rolling_rank_last(expr: str, window: int) -> pl.Expr:
 
 Where Polars does not support an exact vectorized form, use `rolling_map` with a small, named helper and record the path in `compatibility-notes.md` if dtype or null handling differs from pandas.
 
-- [ ] **Step 6: Run feature generation tests**
+- [x] **Step 6: Run feature generation tests**
 
 Run: `conda run -n finetf pytest data_preprocess/tests/test_polars_feature_generation.py -q`
 
@@ -595,7 +595,7 @@ Run: `conda run -n finetf pytest data_preprocess/tests/test_commodity_feature_pi
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Task 3**
+- [x] **Step 7: Commit Task 3**
 
 ```bash
 git add data_preprocess/operator_futures/features_related/base_feature.py data_preprocess/operator_futures/features_related/feature_util.py data_preprocess/operator_futures/cross_section/base_feature_util.py data_preprocess/operator_futures/cross_section/create_feature.py data_preprocess/operator_futures/time_operator/create_feature.py data_preprocess/operator_futures/time_operator/create_feature_multi_processing.py data_preprocess/operator_futures/time_operator/multi_processing_util.py data_preprocess/operator_futures/time_operator/time_operator_util.py data_preprocess/tests/test_polars_feature_generation.py openspec/changes/migrate-operator-futures-to-polars/compatibility-notes.md

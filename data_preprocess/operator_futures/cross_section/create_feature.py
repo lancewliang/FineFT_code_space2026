@@ -1,8 +1,5 @@
-import pandas as pd
-import numpy as np
+import polars as pl
 import os
-import re
-from datetime import datetime
 import argparse
 import sys
 
@@ -67,7 +64,7 @@ parser.add_argument(
 def main(args):
     args.data_path = os.path.join(args.root_path, args.data_path)
     args.save_path = os.path.join(args.root_path, args.save_path)
-    base_feature = pd.read_feather(
+    base_feature = pl.read_ipc(
         os.path.join(
             args.data_path,
             "BASE_FEATURE",
@@ -76,8 +73,7 @@ def main(args):
             args.date + ".feather",
         )
     )
-    base_feature.index = base_feature["timestamp"]
-    snapshot = pd.read_feather(
+    snapshot = pl.read_ipc(
         os.path.join(
             args.data_path,
             "DOWNSCALE_ORDERBOOK_25",
@@ -86,16 +82,11 @@ def main(args):
             args.date + ".feather",
         )
     )
-    snapshot.index = snapshot["timestamp"]
     kline_feature = process_k_line_feature(base_feature)
-    kline_feature.reset_index(inplace=True)
     quotes_feature = process_quotes_n_feature(base_feature)
-    quotes_feature.reset_index(inplace=True)
     snapshot_feature = process_snapshot_features(
         snapshot, depth=args.orderbook_depth
     )
-    snapshot_feature.index.name = "timestamp"
-    snapshot_feature.reset_index(inplace=True)
 
     if not os.path.exists(
         os.path.join(args.save_path, "KLINE_FEATURE", args.symbols, args.target_freq)
@@ -121,7 +112,7 @@ def main(args):
                 args.save_path, "SNAPSHOT_FEATURE", args.symbols, args.target_freq
             )
         )
-    kline_feature.to_feather(
+    kline_feature.write_ipc(
         os.path.join(
             args.save_path,
             "KLINE_FEATURE",
@@ -130,7 +121,7 @@ def main(args):
             args.date + ".feather",
         )
     )
-    quotes_feature.to_feather(
+    quotes_feature.write_ipc(
         os.path.join(
             args.save_path,
             "QUOTES_FEATURE",
@@ -139,7 +130,7 @@ def main(args):
             args.date + ".feather",
         )
     )
-    snapshot_feature.to_feather(
+    snapshot_feature.write_ipc(
         os.path.join(
             args.save_path,
             "SNAPSHOT_FEATURE",
