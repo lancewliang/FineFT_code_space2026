@@ -15,7 +15,7 @@ from .downscale import (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Downscale one commodity futures day")
     parser.add_argument("--input", required=True)
-    parser.add_argument("--output_dir", required=True)
+    parser.add_argument("--output_dir", "--output_root", dest="output_dir", required=True)
     parser.add_argument("--symbol", default="fu")
     parser.add_argument("--target_freq", default="5min")
     parser.add_argument(

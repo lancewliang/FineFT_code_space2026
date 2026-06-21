@@ -155,6 +155,34 @@ def test_stitch_main_contract_cli_accepts_date_range(tmp_path):
     ]
 
 
+def test_downscale_single_day_cli_accepts_output_root_alias(tmp_path):
+    output_root = tmp_path / "downscale"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "operator_futures.commodity.downscale_single_day",
+            "--input",
+            str(REPO_ROOT / "docs/上海商品交易所/fu2302.csv"),
+            "--output_root",
+            str(output_root),
+            "--symbol",
+            "fu",
+            "--target_freq",
+            "5min",
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "data_preprocess")},
+        check=True,
+    )
+
+    assert (output_root / "derivative_reference.feather").exists()
+    assert (output_root / "orderbook_5.feather").exists()
+    assert (output_root / "base_feature.feather").exists()
+    assert (output_root / "quote_feature.feather").exists()
+
+
 def test_commodity_full_process_shell_exposes_expected_functions():
     script = (
         REPO_ROOT
