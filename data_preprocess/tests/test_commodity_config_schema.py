@@ -1,7 +1,13 @@
+from datetime import time
+
 import pytest
 import pandas as pd
 
-from operator_futures.commodity.config import CommodityConfig, get_commodity_config
+from operator_futures.commodity.config import (
+    CommodityConfig,
+    TradingSession,
+    get_commodity_config,
+)
 from operator_futures.commodity.schema import (
     build_orderbook_columns,
     get_reward_execution_columns,
@@ -21,6 +27,12 @@ def test_fu_config_contract():
     assert config.main_contract_months == tuple(range(1, 13))
     assert config.contract_unit == 10
     assert config.use_contract_multiplier is False
+    assert tuple((session.start, session.end) for session in config.trading_sessions) == (
+        (time(9, 0), time(10, 15)),
+        (time(10, 30), time(11, 30)),
+        (time(13, 30), time(15, 0)),
+        (time(21, 0), time(23, 0)),
+    )
 
 
 def test_commodity_config_rejects_non_positive_contract_unit():
@@ -36,6 +48,41 @@ def test_commodity_config_rejects_non_positive_contract_unit():
             main_contract_months=(1,),
             contract_unit=0,
             use_contract_multiplier=False,
+            trading_sessions=(TradingSession(time(9, 0), time(10, 15)),),
+        )
+
+
+def test_commodity_config_rejects_empty_trading_sessions():
+    with pytest.raises(ValueError, match="trading_sessions must not be empty"):
+        CommodityConfig(
+            symbol="bad",
+            display_name="bad",
+            dataset_name="bad",
+            orderbook_depth=5,
+            funding_enabled=False,
+            buy_fee_rate=0.0001,
+            sell_fee_rate=0.0003,
+            main_contract_months=(1,),
+            contract_unit=10,
+            use_contract_multiplier=False,
+            trading_sessions=(),
+        )
+
+
+def test_commodity_config_rejects_invalid_trading_session_bounds():
+    with pytest.raises(ValueError, match="trading session start must be before end"):
+        CommodityConfig(
+            symbol="bad",
+            display_name="bad",
+            dataset_name="bad",
+            orderbook_depth=5,
+            funding_enabled=False,
+            buy_fee_rate=0.0001,
+            sell_fee_rate=0.0003,
+            main_contract_months=(1,),
+            contract_unit=10,
+            use_contract_multiplier=False,
+            trading_sessions=(TradingSession(time(9, 0), time(9, 0)),),
         )
 
 

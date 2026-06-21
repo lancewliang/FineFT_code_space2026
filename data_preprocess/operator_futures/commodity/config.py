@@ -1,5 +1,16 @@
 from dataclasses import dataclass
+from datetime import time
 from typing import Dict, Tuple
+
+
+@dataclass(frozen=True)
+class TradingSession:
+    start: time
+    end: time
+
+    def __post_init__(self) -> None:
+        if self.start >= self.end:
+            raise ValueError("trading session start must be before end")
 
 
 @dataclass(frozen=True)
@@ -14,10 +25,13 @@ class CommodityConfig:
     main_contract_months: Tuple[int, ...]
     contract_unit: float
     use_contract_multiplier: bool
+    trading_sessions: Tuple[TradingSession, ...]
 
     def __post_init__(self) -> None:
         if self.contract_unit <= 0:
             raise ValueError("contract_unit must be positive")
+        if not self.trading_sessions:
+            raise ValueError("trading_sessions must not be empty")
 
 
 COMMODITY_CONFIGS: Dict[str, CommodityConfig] = {
@@ -32,6 +46,12 @@ COMMODITY_CONFIGS: Dict[str, CommodityConfig] = {
         main_contract_months=tuple(range(1, 13)),
         contract_unit=10,
         use_contract_multiplier=False,
+        trading_sessions=(
+            TradingSession(time(9, 0), time(10, 15)),
+            TradingSession(time(10, 30), time(11, 30)),
+            TradingSession(time(13, 30), time(15, 0)),
+            TradingSession(time(21, 0), time(23, 0)),
+        ),
     )
 }
 
