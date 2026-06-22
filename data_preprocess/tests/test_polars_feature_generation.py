@@ -132,3 +132,23 @@ def test_time_operator_ohlc_returns_polars_with_causal_rolling_features():
     assert isinstance(out, pl.DataFrame)
     assert out["timestamp"].to_list() == [4, 5]
     assert out["max_2"].to_list()[0] == 13.0 / 13.0
+
+
+def test_time_operator_ohlc_preserves_rank_and_index_features():
+    frame = pl.DataFrame(
+        {
+            "timestamp": [1, 2, 3, 4, 5, 6],
+            "open": [10.0, 11.0, 12.0, 13.0, 14.0, 15.0],
+            "high": [11.0, 13.0, 12.0, 16.0, 15.0, 17.0],
+            "low": [9.0, 10.0, 8.0, 12.0, 11.0, 14.0],
+            "close": [10.0, 11.0, 12.0, 13.0, 14.0, 15.0],
+        }
+    )
+
+    out = process_ohlc(frame, [2])
+
+    assert out.height == 3
+    assert out["rank_2"].to_list() != [0.0, 0.0, 0.0]
+    assert out["imax_2"].to_list() != [0.0, 0.0, 0.0]
+    assert out["imin_2"].to_list() != [0.0, 0.0, 0.0]
+    assert out["imxd_2"].to_list() != [0.0, 0.0, 0.0]

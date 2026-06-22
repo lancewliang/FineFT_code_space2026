@@ -72,6 +72,7 @@ rules:
     - For trading or experiment requirements, specify symbol(s), frequency,
       date windows, train/validation/test role, leverage, transaction cost
       assumptions, and financial metrics when relevant.
+    - document use chinese language
   design:
     - Preserve the existing directory boundaries and script-driven workflow
       unless the design explains why a boundary must change.

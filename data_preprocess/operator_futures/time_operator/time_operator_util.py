@@ -166,38 +166,47 @@ def process_ohlc(df: pd.DataFrame, window: list):
 
         expressions = []
         for w in window:
-            history_close = pl.col("close").shift(1)
-            history_high = pl.col("high").shift(1)
-            history_low = pl.col("low").shift(1)
             close_shift = pl.col("close").shift(w)
-            rolling_mean = history_close.rolling_mean(w)
-            rolling_std = history_close.rolling_std(w)
-            rolling_max = history_high.rolling_max(w)
-            rolling_min = history_low.rolling_min(w)
-            rolling_q80 = history_close.rolling_quantile(0.8, window_size=w)
-            rolling_q20 = history_close.rolling_quantile(0.2, window_size=w)
+            close_rolling = pl.col("close").rolling_mean(w)
+            close_std = pl.col("close").rolling_std(w)
+            close_max = pl.col("close").rolling_max(w)
+            close_min = pl.col("close").rolling_min(w)
+            close_q80 = pl.col("close").rolling_quantile(0.8, window_size=w)
+            close_q20 = pl.col("close").rolling_quantile(0.2, window_size=w)
+            close_rank = pl.col("close").rolling_map(
+                lambda values: float((np.asarray(values) <= values[-1]).sum()) / len(values),
+                window_size=w,
+            )
+            high_rank = pl.col("high").rolling_map(
+                lambda values: float(np.argmax(np.asarray(values))) / w,
+                window_size=w,
+            )
+            low_rank = pl.col("low").rolling_map(
+                lambda values: float(np.argmin(np.asarray(values))) / w,
+                window_size=w,
+            )
 
             expressions.extend(
                 [
                     (close_shift / pl.col("close")).alias(f"roc_{w}"),
-                    (rolling_mean / pl.col("close")).alias(f"ma_{w}"),
-                    (rolling_std / pl.col("close")).alias(f"std_{w}"),
+                    (close_rolling / pl.col("close")).alias(f"ma_{w}"),
+                    (close_std / pl.col("close")).alias(f"std_{w}"),
                     ((close_shift - pl.col("close")) / (w * pl.col("close"))).alias(
                         f"beta_{w}"
                     ),
-                    (rolling_max / pl.col("close")).alias(f"max_{w}"),
-                    (rolling_min / pl.col("close")).alias(f"min_{w}"),
-                    (rolling_q80 / pl.col("close")).alias(f"qtlu_{w}"),
-                    (rolling_q20 / pl.col("close")).alias(f"qtld_{w}"),
-                    pl.lit(0.0).alias(f"rank_{w}"),
-                    pl.lit(0.0).alias(f"imax_{w}"),
-                    pl.lit(0.0).alias(f"imin_{w}"),
-                    pl.lit(0.0).alias(f"imxd_{w}"),
+                    (close_max / pl.col("close")).alias(f"max_{w}"),
+                    (close_min / pl.col("close")).alias(f"min_{w}"),
+                    (close_q80 / pl.col("close")).alias(f"qtlu_{w}"),
+                    (close_q20 / pl.col("close")).alias(f"qtld_{w}"),
+                    close_rank.alias(f"rank_{w}"),
+                    high_rank.alias(f"imax_{w}"),
+                    low_rank.alias(f"imin_{w}"),
+                    (high_rank - low_rank).alias(f"imxd_{w}"),
                     (
-                        (pl.col("close") - pl.min_horizontal(history_low, close_shift))
+                        (pl.col("close") - pl.min_horizontal(pl.col("low"), close_shift))
                         / (
-                            pl.max_horizontal(history_high, close_shift)
-                            - pl.min_horizontal(history_low, close_shift)
+                            pl.max_horizontal(pl.col("high"), close_shift)
+                            - pl.min_horizontal(pl.col("low"), close_shift)
                             + 1e-12
                         )
                     ).alias(f"rsv_{w}"),

@@ -167,15 +167,74 @@ def _process_ohlcv_single_window_polars(df: pl.DataFrame, window: int) -> pl.Dat
 
 
 def _process_ohlc_single_window_polars(df: pl.DataFrame, window: int) -> pl.DataFrame:
-    ohlcv = _process_ohlcv_single_window_polars(df.with_columns(pl.lit(0.0).alias("volume")), window)
-    keep = [
-        name
-        for name in ohlcv.columns
-        if name == "timestamp"
-        or not name.startswith(("log_volume", "corr_", "cord_", "vma_", "vstd_", "wvma_", "vsump_", "vsumn_", "vsumd_"))
-        and not name.endswith("vma_{}_std_norm".format(window))
-    ]
-    return ohlcv.select(keep).slice(max(0, (window + 1) - (window + 10)))
+    df = _ensure_polars_with_timestamp(df)
+    close = pl.col("close")
+    ret1 = (close / (close.shift(1) + min_value) - 1).alias("__ret1")
+    base = df.with_columns(
+        ret1,
+        pl.col("__ret1").abs().alias("__abs_ret1"),
+        pl.when(pl.col("__ret1") > 0).then(pl.col("__ret1")).otherwise(0).alias("__pos_ret1"),
+    )
+
+    close_shift = close.shift(window)
+    close_rolling = close.rolling_mean(window)
+    close_std = close.rolling_std(window)
+    close_max = close.rolling_max(window)
+    close_min = close.rolling_min(window)
+    close_q80 = close.rolling_quantile(0.8, window_size=window)
+    close_q20 = close.rolling_quantile(0.2, window_size=window)
+    close_rank = close.rolling_map(
+        lambda values: float((np.asarray(values) <= values[-1]).sum()) / len(values),
+        window_size=window,
+    )
+    high_rank = pl.col("high").rolling_map(
+        lambda values: float(np.argmax(np.asarray(values))) / window,
+        window_size=window,
+    )
+    low_rank = pl.col("low").rolling_map(
+        lambda values: float(np.argmin(np.asarray(values))) / window,
+        window_size=window,
+    )
+
+    out = base.select(
+        "timestamp",
+        (close_shift / close).alias(f"roc_{window}"),
+        (close_rolling / close).alias(f"ma_{window}"),
+        (close_std / close).alias(f"std_{window}"),
+        ((close_shift - close) / (window * close)).alias(f"beta_{window}"),
+        (close_max / close).alias(f"max_{window}"),
+        (close_min / close).alias(f"min_{window}"),
+        (close_q80 / close).alias(f"qtlu_{window}"),
+        (close_q20 / close).alias(f"qtld_{window}"),
+        close_rank.alias(f"rank_{window}"),
+        high_rank.alias(f"imax_{window}"),
+        low_rank.alias(f"imin_{window}"),
+        (high_rank - low_rank).alias(f"imxd_{window}"),
+        ((close - pl.min_horizontal(pl.col("low"), close_shift)) / (pl.max_horizontal(pl.col("high"), close_shift) - pl.min_horizontal(pl.col("low"), close_shift) + min_value)).alias(f"rsv_{window}"),
+        ((pl.col("__ret1") > 0).rolling_sum(window) / window).alias(f"cntp_{window}"),
+        ((pl.col("__ret1") < 0).rolling_sum(window) / window).alias(f"cntn_{window}"),
+        (
+            ((pl.col("__ret1") > 0).rolling_sum(window) / window)
+            - ((pl.col("__ret1") < 0).rolling_sum(window) / window)
+        ).alias(f"cntd_{window}"),
+        (
+            pl.col("__pos_ret1").rolling_sum(window) / (pl.col("__abs_ret1").rolling_sum(window) + min_value)
+        ).alias(f"sump_{window}"),
+        (
+            1
+            - (
+                pl.col("__pos_ret1").rolling_sum(window) / (pl.col("__abs_ret1").rolling_sum(window) + min_value)
+            )
+        ).alias(f"sumn_{window}"),
+        (
+            2
+            * (
+                pl.col("__pos_ret1").rolling_sum(window) / (pl.col("__abs_ret1").rolling_sum(window) + min_value)
+            )
+            - 1
+        ).alias(f"sumd_{window}"),
+    )
+    return _clean_numeric(out.slice(window + 1))
 
 
 def get_multi_window_ohlcv(df, windows):
