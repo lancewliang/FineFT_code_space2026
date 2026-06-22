@@ -1,376 +1,190 @@
+from __future__ import annotations
+
+from functools import reduce
+
 import numpy as np
-import pandas as pd
-from multiprocessing import Pool
-import time
-from datetime import datetime
-from multiprocessing import cpu_count
+import polars as pl
 
 min_value = 1e-12
 
 
-def my_rank(x):
-    return pd.Series(x).rank(pct=True).iloc[-1]
+def get_multi_feature_window_price(df, windows, feature_name_list):
+    df = _ensure_polars_with_timestamp(df)
+    pieces = []
+    for feature_name in feature_name_list:
+        if feature_name not in df.columns:
+            continue
+        for window in windows:
+            exprs = [
+                (
+                    (pl.col(feature_name) / (pl.col(feature_name).shift(1) + min_value))
+                    .log()
+                    * 1000
+                ).alias(f"{feature_name}_log_return_{window}")
+            ]
+            if window != 1:
+                mean = pl.col(feature_name).rolling_mean(window)
+                std = pl.col(feature_name).rolling_std(window)
+                exprs.append(
+                    ((pl.col(feature_name) - mean) / (std + min_value)).alias(
+                        f"{feature_name}_trend_{window}"
+                    )
+                )
+            pieces.append(df.select("timestamp", *exprs).slice(window + 1))
+    return _clean_numeric(_inner_join_on_timestamp(pieces))
 
 
-def process_ohlcv_single_window(df: pd.DataFrame, w: int):
-    columns = [
-        "log_volume",
-        # 对于每个w in window的列名
-        # 用close做normalization
-        *[f"roc_{w}"],
-        *[f"ma_{w}"],
-        *[f"std_{w}"],
-        *[f"beta_{w}"],
-        *[f"max_{w}"],
-        *[f"min_{w}"],
-        *[f"qtlu_{w}"],
-        *[f"qtld_{w}"],
-        *[f"rank_{w}"],
-        *[f"imax_{w}"],
-        *[f"imin_{w}"],
-        *[f"imxd_{w}"],
-        *[f"rsv_{w}"],
-        *[f"cntp_{w}"],
-        *[f"cntn_{w}"],
-        *[f"cntd_{w}"],
-        *[f"corr_{w}"],
-        *[f"cord_{w}"],
-        *[f"sump_{w}"],
-        *[f"sumn_{w}"],
-        *[f"sumd_{w}"],
-        *[f"vma_{w}"],
-        *[f"vstd_{w}"],
-        *[f"wvma_{w}"],
-        *[f"vsump_{w}"],
-        *[f"vsumn_{w}"],
-        *[f"vsumd_{w}"],
-        # 用std做normalization
-        *[f"roc_{w}_std_norm"],
-        *[f"ma_{w}_std_norm"],
-        *[f"beta_{w}_std_norm"],
-        *[f"max_{w}_std_norm"],
-        *[f"min_{w}_std_norm"],
-        *[f"qtlu_{w}_std_norm"],
-        *[f"qtld_{w}_std_norm"],
-        *[f"rsv_{w}_std_norm"],
-        *[f"vma_{w}_std_norm"],
-        # 最初添加的列
-        "ret1",
-        "abs_ret1",
-        "pos_ret1",
-        "vchg1",
-        "abs_vchg1",
-        "pos_vchg1",
-    ]
-    df_feature = pd.DataFrame(columns=columns, index=df.index)
-    df_feature["ret1"] = df["close"].pct_change(1, fill_method=None)
-    df_feature["abs_ret1"] = np.abs(df_feature["ret1"])
-    df_feature["pos_ret1"] = df_feature["ret1"]
-    df_feature.loc[df_feature["pos_ret1"].lt(0), "pos_ret1"] = 0
-    df_feature["vchg1"] = df["volume"] - df["volume"].shift(1)
-    df_feature["abs_vchg1"] = np.abs(df_feature["vchg1"])
-    df_feature["pos_vchg1"] = df_feature["vchg1"]
-    df_feature.loc[df_feature["pos_vchg1"].lt(0), "pos_vchg1"] = 0
-    df_feature["log_volume"] = np.log(df["volume"] + 1)
-
-    close_shift = df["close"].shift(w)
-    close_rolling = df["close"].rolling(w)
-    close_std = close_rolling.std() + min_value
-    volume_rolling = np.log(df["volume"] + 1).rolling(w)
-    close_shift_1 = df["close"].shift(1)
-    volume_shift_1 = df["volume"].shift(1)
-    ori_volume_rolling = df["volume"].rolling(w)
-    ori_volume_std = ori_volume_rolling.std() + min_value
-    volume_std = volume_rolling.std() + min_value
-
-    df_feature["roc_{}".format(w)] = close_shift / df["close"]
-    df_feature["roc_{}_std_norm".format(w)] = close_shift / close_std
-
-    df_feature["ma_{}".format(w)] = close_rolling.mean() / df["close"]
-    df_feature["ma_{}_std_norm".format(w)] = close_rolling.mean() / close_std
-
-    df_feature["std_{}".format(w)] = close_rolling.std() / df["close"]
-
-    df_feature["beta_{}".format(w)] = (close_shift - df["close"]) / (w * df["close"])
-    df_feature["beta_{}_std_norm".format(w)] = (close_shift - df["close"]) / (
-        w * close_std
-    )
-
-    df_feature["max_{}".format(w)] = close_rolling.max() / df["close"]
-    df_feature["max_{}_std_norm".format(w)] = close_rolling.max() / close_std
-    df_feature["min_{}".format(w)] = close_rolling.min() / df["close"]
-    df_feature["min_{}_std_norm".format(w)] = close_rolling.min() / close_std
-    df_feature["qtlu_{}".format(w)] = close_rolling.quantile(0.8) / df["close"]
-    df_feature["qtlu_{}_std_norm".format(w)] = close_rolling.quantile(0.8) / close_std
-    df_feature["qtld_{}".format(w)] = close_rolling.quantile(0.2) / df["close"]
-    df_feature["qtld_{}_std_norm".format(w)] = close_rolling.quantile(0.2) / close_std
-    df_feature["rank_{}".format(w)] = close_rolling.apply(my_rank) / w
-    df_feature["imax_{}".format(w)] = df["high"].rolling(w).apply(np.argmax) / w
-    df_feature["imin_{}".format(w)] = df["low"].rolling(w).apply(np.argmin) / w
-    df_feature["imxd_{}".format(w)] = (
-        df["high"].rolling(w).apply(np.argmax) - df["low"].rolling(w).apply(np.argmin)
-    ) / w
-    # 前几日收盘价与当前low的最小值
-    min = df["low"].where(df["low"] < close_shift, close_shift)
-    # 前几日收盘价与当前high的最大值
-    max = df["high"].where(df["high"] > close_shift, close_shift)
-    df_feature["rsv_{}".format(w)] = (df["close"] - min) / (max - min + min_value)
-    df_feature["rsv_{}_std_norm".format(w)] = (df["close"] - min) / (
-        close_std + min_value
-    )
-    # 统计过去收益率大于0小于0的情况
-    df_feature["cntp_{}".format(w)] = (df_feature["ret1"].gt(0)).rolling(w).sum() / w
-    df_feature["cntn_{}".format(w)] = (df_feature["ret1"].lt(0)).rolling(w).sum() / w
-    df_feature["cntd_{}".format(w)] = (
-        df_feature["cntp_{}".format(w)] - df_feature["cntn_{}".format(w)]
-    )
-    df_feature["corr_{}".format(w)] = close_rolling.corr(pairwise=volume_rolling)
-    previous_returns = df["close"] / close_shift_1
-    previous_volume = np.log(df["volume"] / volume_shift_1 + 1)
-    df_feature["cord_{}".format(w)] = previous_returns.rolling(w).corr(
-        pairwise=previous_volume.rolling(w)
-    )
-    df_feature["sump_{}".format(w)] = df_feature["pos_ret1"].rolling(w).sum() / (
-        df_feature["abs_ret1"].rolling(w).sum() + min_value
-    )
-    df_feature["sumn_{}".format(w)] = 1 - df_feature["sump_{}".format(w)]
-    df_feature["sumd_{}".format(w)] = 2 * df_feature["sump_{}".format(w)] - 1
-    df_feature["vma_{}".format(w)] = ori_volume_rolling.mean() / (
-        df["volume"] + min_value
-    )
-    df_feature["vma_{}_std_norm".format(w)] = ori_volume_rolling.mean() / (
-        ori_volume_std + min_value
-    )
-    df_feature["vstd_{}".format(w)] = ori_volume_rolling.std() / (
-        df["volume"] + min_value
-    )
-    shift = np.abs((df["close"] / close_shift_1 - 1)) * df["volume"]
-    df1 = shift.rolling(w).std()
-    df2 = shift.rolling(w).mean()
-    df_feature["wvma_{}".format(w)] = df1 / (df2 + min_value)
-    df_feature["vsump_{}".format(w)] = df_feature["pos_vchg1"].rolling(w).sum() / (
-        df_feature["abs_vchg1"].rolling(w).sum() + 1e-12
-    )
-    df_feature["vsumn_{}".format(w)] = 1 - df_feature["vsump_{}".format(w)]
-    df_feature["vsumd_{}".format(w)] = 2 * df_feature["vsump_{}".format(w)] - 1
-
-    df_feature.drop(
-        columns=[
-            "ret1",
-            "abs_ret1",
-            "pos_ret1",
-            "vchg1",
-            "abs_vchg1",
-            "pos_vchg1",
-        ],
-        inplace=True,
-    )
-
-    df_feature.replace([np.inf, -np.inf], np.nan, inplace=True)
-    # 原地用0填充所有NaN值
-    df_feature.fillna(0, inplace=True)
-    df_feature = df_feature.iloc[w + 10 :]
-
-    return df_feature
+def _ensure_polars_with_timestamp(df) -> pl.DataFrame:
+    if isinstance(df, pl.DataFrame):
+        if "timestamp" in df.columns:
+            return df
+        return df.with_row_index("timestamp")
+    raise TypeError("time operator helpers require a Polars DataFrame")
 
 
-def process_ohlc_single_window(df: pd.DataFrame, w: int):
-    df_feature = pd.DataFrame(index=df.index)
-    df_feature["ret1"] = df["close"].pct_change(1, fill_method=None)
-    df_feature["abs_ret1"] = np.abs(df_feature["ret1"])
-    df_feature["pos_ret1"] = df_feature["ret1"]
-    df_feature.loc[df_feature["pos_ret1"].lt(0), "pos_ret1"] = 0
-
-    close_shift = df["close"].shift(w)
-    close_rolling = df["close"].rolling(w)
-    close_std = close_rolling.std() + min_value
-    df_feature["roc_{}".format(w)] = close_shift / df["close"]
-    df_feature["roc_{}_std_norm".format(w)] = close_shift / close_std
-
-    df_feature["ma_{}".format(w)] = close_rolling.mean() / df["close"]
-    df_feature["ma_{}_std_norm".format(w)] = close_rolling.mean() / close_std
-
-    df_feature["std_{}".format(w)] = close_rolling.std() / df["close"]
-
-    df_feature["beta_{}".format(w)] = (close_shift - df["close"]) / (w * df["close"])
-    df_feature["beta_{}_std_norm".format(w)] = (close_shift - df["close"]) / (
-        w * close_std
-    )
-    df_feature["max_{}".format(w)] = close_rolling.max() / df["close"]
-    df_feature["max_{}_std_norm".format(w)] = close_rolling.max() / close_std
-
-    df_feature["min_{}".format(w)] = close_rolling.min() / df["close"]
-    df_feature["min_{}_std_norm".format(w)] = close_rolling.min() / close_std
-
-    df_feature["qtlu_{}".format(w)] = close_rolling.quantile(0.8) / df["close"]
-    df_feature["qtlu_{}_std_norm".format(w)] = close_rolling.quantile(0.8) / close_std
-
-    df_feature["qtld_{}".format(w)] = close_rolling.quantile(0.2) / df["close"]
-    df_feature["qtld_{}_std_norm".format(w)] = close_rolling.quantile(0.2) / close_std
-
-    df_feature["rank_{}".format(w)] = close_rolling.apply(my_rank) / w
-    df_feature["imax_{}".format(w)] = df["high"].rolling(w).apply(np.argmax) / w
-    df_feature["imin_{}".format(w)] = df["low"].rolling(w).apply(np.argmin) / w
-    df_feature["imxd_{}".format(w)] = (
-        df["high"].rolling(w).apply(np.argmax) - df["low"].rolling(w).apply(np.argmin)
-    ) / w
-    # 前几日收盘价与当前low的最小值
-    min = df["low"].where(df["low"] < close_shift, close_shift)
-    # 前几日收盘价与当前high的最大值
-    max = df["high"].where(df["high"] > close_shift, close_shift)
-    df_feature["rsv_{}".format(w)] = (df["close"] - min) / (max - min + 1e-12)
-    # 统计过去收益率大于0小于0的情况
-    df_feature["cntp_{}".format(w)] = (df_feature["ret1"].gt(0)).rolling(w).sum() / w
-    df_feature["cntn_{}".format(w)] = (df_feature["ret1"].lt(0)).rolling(w).sum() / w
-    df_feature["cntd_{}".format(w)] = (
-        df_feature["cntp_{}".format(w)] - df_feature["cntn_{}".format(w)]
-    )
-
-    df_feature["sump_{}".format(w)] = df_feature["pos_ret1"].rolling(w).sum() / (
-        df_feature["abs_ret1"].rolling(w).sum() + 1e-12
-    )
-    df_feature["sumn_{}".format(w)] = 1 - df_feature["sump_{}".format(w)]
-    df_feature["sumd_{}".format(w)] = 2 * df_feature["sump_{}".format(w)] - 1
-
-    df_feature.drop(
-        columns=[
-            "ret1",
-            "abs_ret1",
-            "pos_ret1",
-        ],
-        inplace=True,
-    )
-
-    df_feature.replace([np.inf, -np.inf], np.nan, inplace=True)
-    # 原地用0填充所有NaN值
-    df_feature.fillna(0, inplace=True)
-    df_feature = df_feature.iloc[w + 1 :]
-
-    return df_feature
+def _inner_join_on_timestamp(frames: list[pl.DataFrame]) -> pl.DataFrame:
+    frames = [frame for frame in frames if frame is not None and frame.height > 0]
+    if not frames:
+        return pl.DataFrame({"timestamp": []})
+    return reduce(lambda left, right: left.join(right, on="timestamp", how="inner"), frames)
 
 
-def process_single_price_single_window(df: pd.Series, w: int):
-    # the rename has been done in the function
-    # create feature for none ohlcv form information
-    assert len(df.shape) == 1
-    feature_name = df.name
-    columns = [
-        *[f"log_return_{w}"],
-        *[f"rolling_mean_{w}"],
-        *[f"std_{w}"],
-        *[f"trend_{w}"],
-    ]
-    df_time_feature = pd.DataFrame(columns=columns, index=df.index)
-    rolling = df.rolling(w)
-    df_time_feature[f"log_return_{w}"] = np.log(df / (df.shift(1)+min_value)) * 1000
-    if w != 1:
-        df_time_feature[f"rolling_mean_{w}"] = rolling.mean()
-        df_time_feature[f"std_{w}"] = rolling.std()
-        df_time_feature[f"trend_{w}"] = (df - df_time_feature[f"rolling_mean_{w}"]) / (
-            df_time_feature[f"std_{w}"] + min_value
+def _clean_numeric(df: pl.DataFrame) -> pl.DataFrame:
+    exprs = []
+    for name, dtype in zip(df.columns, df.dtypes):
+        if name == "timestamp" or not dtype.is_numeric():
+            continue
+        col = pl.col(name)
+        exprs.append(
+            pl.when(col.is_nan() | col.is_infinite() | col.is_null())
+            .then(0.0)
+            .otherwise(col)
+            .alias(name)
         )
-        df_time_feature.drop(columns=[f"rolling_mean_{w}", f"std_{w}"], inplace=True)
-    else:
-        df_time_feature.drop(
-            columns=[f"rolling_mean_{w}", f"std_{w}", f"trend_{w}"], inplace=True
-        )
-    df_time_feature = df_time_feature.iloc[w + 1 :]
-    df_time_feature.rename(
-        columns={
-            column: feature_name + "_" + column for column in df_time_feature.columns
-        },
-        inplace=True,
+    return df.with_columns(exprs).fill_null(0) if exprs else df.fill_null(0)
+
+
+def _rolling_rank_pct(column: str, window: int, alias: str) -> pl.Expr:
+    return pl.col(column).rolling_map(
+        lambda values: float((np.asarray(values) <= values[-1]).sum()) / len(values),
+        window_size=window,
+    ).alias(alias)
+
+
+def _rolling_arg(column: str, window: int, alias: str, fn) -> pl.Expr:
+    return (
+        pl.col(column)
+        .rolling_map(lambda values: float(fn(np.asarray(values))) / window, window_size=window)
+        .alias(alias)
     )
-    return df_time_feature
 
 
-def remove_duplicate_columns(df):
-    # 转置DataFrame，因为drop_duplicates作用于行
-    df_transposed = df.T
-    # 删除重复的行（现在的行是原始的列）
-    df_transposed = df_transposed.drop_duplicates()
-    # 再次转置，回到原始的行列布局
-    df_unique = df_transposed.T
-    return df_unique
+def _rolling_corr_expr(x: pl.Expr, y: pl.Expr, window: int, alias: str) -> pl.Expr:
+    mean_x = x.rolling_mean(window)
+    mean_y = y.rolling_mean(window)
+    cov = (x * y).rolling_mean(window) - mean_x * mean_y
+    return (cov / (x.rolling_std(window) * y.rolling_std(window) + min_value)).alias(alias)
+
+
+def _process_ohlcv_single_window_polars(df: pl.DataFrame, window: int) -> pl.DataFrame:
+    df = _ensure_polars_with_timestamp(df)
+    close = pl.col("close")
+    volume = pl.col("volume")
+    ret1 = (close / (close.shift(1) + min_value) - 1).alias("__ret1")
+    vchg1 = (volume - volume.shift(1)).alias("__vchg1")
+    base = df.with_columns(
+        ret1,
+        vchg1,
+        (volume + 1).log().alias("__log_volume"),
+    ).with_columns(
+        pl.col("__ret1").abs().alias("__abs_ret1"),
+        pl.when(pl.col("__ret1") > 0)
+        .then(pl.col("__ret1"))
+        .otherwise(0)
+        .alias("__pos_ret1"),
+        pl.col("__vchg1").abs().alias("__abs_vchg1"),
+        pl.when(pl.col("__vchg1") > 0)
+        .then(pl.col("__vchg1"))
+        .otherwise(0)
+        .alias("__pos_vchg1"),
+    )
+    close_shift = close.shift(window)
+    close_std = close.rolling_std(window) + min_value
+    volume_std = volume.rolling_std(window) + min_value
+    log_volume = pl.col("__log_volume")
+    min_price = pl.min_horizontal(pl.col("low"), close_shift)
+    max_price = pl.max_horizontal(pl.col("high"), close_shift)
+    previous_returns = close / (close.shift(1) + min_value)
+    previous_volume = (volume / (volume.shift(1) + min_value) + 1).log()
+    shift = (previous_returns - 1).abs() * volume
+    high_arg = _rolling_arg("high", window, f"imax_{window}", np.argmax)
+    low_arg = _rolling_arg("low", window, f"imin_{window}", np.argmin)
+
+    out = base.select(
+        "timestamp",
+        log_volume.alias("log_volume"),
+        (close_shift / (close + min_value)).alias(f"roc_{window}"),
+        (close.rolling_mean(window) / (close + min_value)).alias(f"ma_{window}"),
+        (close.rolling_std(window) / (close + min_value)).alias(f"std_{window}"),
+        ((close_shift - close) / (window * (close + min_value))).alias(f"beta_{window}"),
+        (close.rolling_max(window) / (close + min_value)).alias(f"max_{window}"),
+        (close.rolling_min(window) / (close + min_value)).alias(f"min_{window}"),
+        (close.rolling_quantile(0.8, window_size=window) / (close + min_value)).alias(f"qtlu_{window}"),
+        (close.rolling_quantile(0.2, window_size=window) / (close + min_value)).alias(f"qtld_{window}"),
+        _rolling_rank_pct("close", window, f"rank_{window}"),
+        high_arg,
+        low_arg,
+        (high_arg - low_arg).alias(f"imxd_{window}"),
+        ((close - min_price) / (max_price - min_price + min_value)).alias(f"rsv_{window}"),
+        (pl.col("__ret1").gt(0).cast(pl.Float64).rolling_sum(window) / window).alias(f"cntp_{window}"),
+        (pl.col("__ret1").lt(0).cast(pl.Float64).rolling_sum(window) / window).alias(f"cntn_{window}"),
+        (
+            pl.col("__ret1").gt(0).cast(pl.Float64).rolling_sum(window) / window
+            - pl.col("__ret1").lt(0).cast(pl.Float64).rolling_sum(window) / window
+        ).alias(f"cntd_{window}"),
+        _rolling_corr_expr(close, log_volume, window, f"corr_{window}"),
+        _rolling_corr_expr(previous_returns, previous_volume, window, f"cord_{window}"),
+        (pl.col("__pos_ret1").rolling_sum(window) / (pl.col("__abs_ret1").rolling_sum(window) + min_value)).alias(f"sump_{window}"),
+        (1 - pl.col("__pos_ret1").rolling_sum(window) / (pl.col("__abs_ret1").rolling_sum(window) + min_value)).alias(f"sumn_{window}"),
+        (2 * pl.col("__pos_ret1").rolling_sum(window) / (pl.col("__abs_ret1").rolling_sum(window) + min_value) - 1).alias(f"sumd_{window}"),
+        (volume.rolling_mean(window) / (volume + min_value)).alias(f"vma_{window}"),
+        (volume.rolling_std(window) / (volume + min_value)).alias(f"vstd_{window}"),
+        (shift.rolling_std(window) / (shift.rolling_mean(window) + min_value)).alias(f"wvma_{window}"),
+        (pl.col("__pos_vchg1").rolling_sum(window) / (pl.col("__abs_vchg1").rolling_sum(window) + min_value)).alias(f"vsump_{window}"),
+        (1 - pl.col("__pos_vchg1").rolling_sum(window) / (pl.col("__abs_vchg1").rolling_sum(window) + min_value)).alias(f"vsumn_{window}"),
+        (2 * pl.col("__pos_vchg1").rolling_sum(window) / (pl.col("__abs_vchg1").rolling_sum(window) + min_value) - 1).alias(f"vsumd_{window}"),
+        (close_shift / close_std).alias(f"roc_{window}_std_norm"),
+        (close.rolling_mean(window) / close_std).alias(f"ma_{window}_std_norm"),
+        ((close_shift - close) / (window * close_std)).alias(f"beta_{window}_std_norm"),
+        (close.rolling_max(window) / close_std).alias(f"max_{window}_std_norm"),
+        (close.rolling_min(window) / close_std).alias(f"min_{window}_std_norm"),
+        (close.rolling_quantile(0.8, window_size=window) / close_std).alias(f"qtlu_{window}_std_norm"),
+        (close.rolling_quantile(0.2, window_size=window) / close_std).alias(f"qtld_{window}_std_norm"),
+        ((close - min_price) / (close_std + min_value)).alias(f"rsv_{window}_std_norm"),
+        (volume.rolling_mean(window) / volume_std).alias(f"vma_{window}_std_norm"),
+    ).slice(window + 10)
+    return _clean_numeric(out)
+
+
+def _process_ohlc_single_window_polars(df: pl.DataFrame, window: int) -> pl.DataFrame:
+    ohlcv = _process_ohlcv_single_window_polars(df.with_columns(pl.lit(0.0).alias("volume")), window)
+    keep = [
+        name
+        for name in ohlcv.columns
+        if name == "timestamp"
+        or not name.startswith(("log_volume", "corr_", "cord_", "vma_", "vstd_", "wvma_", "vsump_", "vsumn_", "vsumd_"))
+        and not name.endswith("vma_{}_std_norm".format(window))
+    ]
+    return ohlcv.select(keep).slice(max(0, (window + 1) - (window + 10)))
 
 
 def get_multi_window_ohlcv(df, windows):
-    with Pool(processes=len(windows)) as pool:
-        results = [
-            pool.apply_async(process_ohlcv_single_window, args=(df, w)) for w in windows
-        ]
-
-        # 等待所有结果完成，并获取结果
-        processed_dfs = [result.get() for result in results]
-    df_final = pd.concat(processed_dfs, axis=1, join="inner")
-    df_final = remove_duplicate_columns(df_final)
-    return df_final
+    df = _ensure_polars_with_timestamp(df)
+    pieces = [_process_ohlcv_single_window_polars(df, window) for window in windows]
+    return _clean_numeric(_inner_join_on_timestamp(pieces))
 
 
 def get_multi_window_ohlc(df, windows):
-    with Pool(processes=len(windows)) as pool:
-        results = [
-            pool.apply_async(process_ohlc_single_window, args=(df, w)) for w in windows
-        ]
-
-        # 等待所有结果完成，并获取结果
-        processed_dfs = [result.get() for result in results]
-    df_final = pd.concat(processed_dfs, axis=1, join="inner")
-    df_final = remove_duplicate_columns(df_final)
-    return df_final
-
-
-def get_multi_feature_window_price(df, windows, feature_name_list):
-    df_list = [df[feature_name] for feature_name in feature_name_list]
-    max_workers = int(min(cpu_count() / 2, len(df_list) * len(windows)))
-    with Pool(processes=max_workers) as pool:
-        results = [
-            pool.apply_async(process_single_price_single_window, args=(df_single, w))
-            for w in windows
-            for df_single in df_list
-        ]
-        processed_dfs = [result.get() for result in results]
-    df_final = pd.concat(processed_dfs, axis=1, join="inner")
-    df_final = remove_duplicate_columns(df_final)
-    return df_final
-
-
-if __name__ == "__main__":
-    start_time = time.time()
-    windows = [5, 10]
-    price_features = [
-        *[f"bid{l+1}_price" for l in range(25)],
-        *[f"ask{l+1}_price" for l in range(25)],
-        "buy_spread_oe_max",
-        "sell_spread_oe_max",
-        "wap_1",
-        "wap_2",
-        "buy_wap",
-        "sell_wap",
-        "mark_price",
-    ]
-    # df = pd.read_feather("outlook/demo_df/df_ohlcv.feather")
-    # df.set_index("timestamp", inplace=True)
-    # df_final = get_multi_window_ohlcv(df, windows=windows)
-    # df_final.reset_index(inplace=True)
-    # end_time = time.time()
-    # print("cost time", end_time - start_time)
-    # df_final.to_feather("outlook/demo_df/multi_processing_p_df_ohlcv.feather")
-
-    # df = pd.read_feather("outlook/demo_df/df_ohlc.feather")
-    # df.set_index("timestamp", inplace=True)
-    # df_final = get_multi_window_ohlc(df, windows=windows)
-    # df_final.reset_index(inplace=True)
-    # end_time = time.time()
-    # print("cost time", end_time - start_time)
-    # df_final.to_feather("outlook/demo_df/multi_processing_p_df_ohlc.feather")
-
-    df = pd.read_feather(
-        "./PREPROCESS_DATASET/binance-futures/MERGE_CONCAT/CONCAT_FEATURE/BNBUSDT/5min/2021-04-01-2024-05-01.feather"
-    )
-    df.set_index("timestamp", inplace=True)
-    df_time=get_multi_feature_window_price(df, windows, price_features)
-    df_time.reset_index(inplace=True)
-    end_time = time.time()
-    print("cost time", end_time - start_time)
-    df_time.to_feather("outlook/demo_df/multi_processing_p_df_time.feather")
+    df = _ensure_polars_with_timestamp(df)
+    pieces = [_process_ohlc_single_window_polars(df, window) for window in windows]
+    return _clean_numeric(_inner_join_on_timestamp(pieces))

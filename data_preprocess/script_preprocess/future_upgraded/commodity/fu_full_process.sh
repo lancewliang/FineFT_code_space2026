@@ -1,5 +1,28 @@
 source data_preprocess/script_preprocess/future_upgraded/commodity/commodity_process.sh
 
+commodity_downscale_outputs_exist() {
+    local root_path=$1
+    local symbol=$2
+    local target_freq=$3
+    local date=$4
+    local output_root="${root_path}/PREPROCESS_DATASET/commodity-futures"
+
+    [ -f "${output_root}/BASE_FEATURE/${symbol}/${target_freq}/${date}.feather" ] \
+        && [ -f "${output_root}/DOWNSCALE_ORDERBOOK_25/${symbol}/${target_freq}/${date}.feather" ]
+}
+
+commodity_cross_section_outputs_exist() {
+    local root_path=$1
+    local symbol=$2
+    local target_freq=$3
+    local date=$4
+    local output_root="${root_path}/PREPROCESS_DATASET/commodity-futures/CROSS_SECTION"
+
+    [ -f "${output_root}/KLINE_FEATURE/${symbol}/${target_freq}/${date}.feather" ] \
+        && [ -f "${output_root}/QUOTES_FEATURE/${symbol}/${target_freq}/${date}.feather" ] \
+        && [ -f "${output_root}/SNAPSHOT_FEATURE/${symbol}/${target_freq}/${date}.feather" ]
+}
+
 run_commodity_stitch_main_contract() {
     local root_path=$1
     local commodity_name=${2:-燃料油}
@@ -49,9 +72,14 @@ run_commodity_cross_section_process() {
     current_date=$(date -I -d "$start_date")
     local process_count=0
     while [ "$current_date" != "$end_date" ]; do
+        if ! commodity_downscale_outputs_exist "$root_path" "$symbol" "$target_freq" "$current_date"; then
+            echo "Skipping commodity cross-section date with missing downscale outputs: date=${current_date}"
+            current_date=$(date -I -d "$current_date + 1 day")
+            continue
+        fi
         local log_dir="log_futures/downscale/cross_section/${target_freq}/${symbol}"
         mkdir -p "$log_dir"
-        nohup python -u data_preprocess/operator_futures/cross_section/create_feature.py \
+        PYTHONPATH="${root_path}/data_preprocess" nohup python -u data_preprocess/operator_futures/cross_section/create_feature.py \
             --symbols "$symbol" \
             --target_freq "$target_freq" \
             --date "$current_date" \
@@ -79,7 +107,7 @@ run_commodity_scale_save() {
     local symbol=$4
     local root_path=$5
 
-    python -u data_preprocess/operator_futures/scale_describe_save/scale_save.py \
+    PYTHONPATH="${root_path}/data_preprocess" python -u data_preprocess/operator_futures/scale_describe_save/scale_save.py \
         --symbols "$symbol" \
         --target_freq "$target_freq" \
         --start_date "$start_date" \
@@ -88,7 +116,8 @@ run_commodity_scale_save() {
         --data_path "PREPROCESS_DATASET/commodity-futures/IC_RESULT" \
         --save_path "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/" \
         --market_type commodity_futures \
-        --orderbook_depth 5
+        --orderbook_depth 5 \
+        --ic_choice ic
 }
 
 run_commodity_merge_process() {
@@ -103,9 +132,15 @@ run_commodity_merge_process() {
     current_date=$(date -I -d "$start_date")
     local process_count=0
     while [ "$current_date" != "$end_date" ]; do
+        if ! commodity_downscale_outputs_exist "$root_path" "$symbol" "$target_freq" "$current_date" \
+            || ! commodity_cross_section_outputs_exist "$root_path" "$symbol" "$target_freq" "$current_date"; then
+            echo "Skipping commodity merge date with missing feature outputs: date=${current_date}"
+            current_date=$(date -I -d "$current_date + 1 day")
+            continue
+        fi
         local log_dir="log_futures/merge/${target_freq}/${symbol}"
         mkdir -p "$log_dir"
-        nohup python -u data_preprocess/operator_futures/merge_concat/merge.py \
+        PYTHONPATH="${root_path}/data_preprocess" nohup python -u data_preprocess/operator_futures/merge_concat/merge.py \
             --symbols "$symbol" \
             --target_freq "$target_freq" \
             --date "$current_date" \
@@ -131,7 +166,7 @@ run_commodity_concat_process() {
     local symbol=$4
     local root_path=$5
 
-    python -u data_preprocess/operator_futures/merge_concat/concat.py \
+    PYTHONPATH="${root_path}/data_preprocess" python -u data_preprocess/operator_futures/merge_concat/concat.py \
         --symbols "$symbol" \
         --target_freq "$target_freq" \
         --start_date "$start_date" \
@@ -148,14 +183,15 @@ run_commodity_time_feature() {
     local symbol=$4
     local root_path=$5
 
-    python -u data_preprocess/operator_futures/time_operator/create_feature_multi_processing.py \
+    PYTHONPATH="${root_path}/data_preprocess" python -u data_preprocess/operator_futures/time_operator/create_feature_multi_processing.py \
         --symbols "$symbol" \
         --target_freq "$target_freq" \
         --start_date "$start_date" \
         --end_date "$end_date" \
         --root_path "$root_path" \
         --data_path "PREPROCESS_DATASET/commodity-futures/MERGE_CONCAT/CONCAT_FEATURE/" \
-        --save_path "PREPROCESS_DATASET/commodity-futures/TIME_FEATURE/"
+        --save_path "PREPROCESS_DATASET/commodity-futures/TIME_FEATURE/" \
+        --orderbook_depth 5
 }
 
 run_commodity_merge_and_clean() {
@@ -165,7 +201,7 @@ run_commodity_merge_and_clean() {
     local symbol=$4
     local root_path=$5
 
-    python -u data_preprocess/operator_futures/merge_all/merge_clean.py \
+    PYTHONPATH="${root_path}/data_preprocess" python -u data_preprocess/operator_futures/merge_all/merge_clean.py \
         --symbols "$symbol" \
         --target_freq "$target_freq" \
         --start_date "$start_date" \
@@ -183,7 +219,7 @@ run_commodity_ic_correlation() {
     local symbol=$4
     local root_path=$5
 
-    python -u data_preprocess/operator_futures/feature_selection/ic_correlation.py \
+    PYTHONPATH="${root_path}/data_preprocess" python -u data_preprocess/operator_futures/feature_selection/ic_correlation.py \
         --symbols "$symbol" \
         --target_freq "$target_freq" \
         --start_date "$start_date" \

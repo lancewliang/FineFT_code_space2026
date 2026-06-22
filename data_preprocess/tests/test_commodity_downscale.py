@@ -252,6 +252,62 @@ def test_empty_quote_window_fails_fast():
         downscale_quote_features(second.head(0), "5min")
 
 
+def test_limit_down_single_sided_quote_window_counts_as_quote():
+    second = pl.DataFrame(
+        {
+            "timestamp": [
+                datetime(2026, 2, 2, 13, 50, 1),
+                datetime(2026, 2, 2, 13, 52, 0),
+                datetime(2026, 2, 2, 13, 54, 59),
+            ],
+            "LastPrice": [2679.0, 2679.0, 2679.0],
+            "LowPrice": [2679.0, 2679.0, 2679.0],
+            "LowerLimitPrice": [2679.0, 2679.0, 2679.0],
+            "BidPrice1": [None, None, None],
+            "BidVolume1": [0, 0, 0],
+            "AskPrice1": [2679.0, 2679.0, 2679.0],
+            "AskVolume1": [601, 900, 1383],
+        }
+    )
+
+    result = downscale_quote_features(second, "5min")
+    window = result.filter(pl.col("timestamp") == datetime(2026, 2, 2, 13, 55, 0))
+
+    assert window.item(0, "nquote") == 3
+    assert window.item(0, "open_bid") == 2679.0
+    assert window.item(0, "close_bid") == 2679.0
+    assert window.item(0, "open_bidsize") == 0
+    assert window.item(0, "close_bidsize") == 0
+
+
+def test_limit_up_single_sided_quote_window_counts_as_quote():
+    second = pl.DataFrame(
+        {
+            "timestamp": [
+                datetime(2026, 2, 2, 13, 50, 1),
+                datetime(2026, 2, 2, 13, 52, 0),
+                datetime(2026, 2, 2, 13, 54, 59),
+            ],
+            "LastPrice": [2905.0, 2905.0, 2905.0],
+            "HighPrice": [2905.0, 2905.0, 2905.0],
+            "UpperLimitPrice": [2905.0, 2905.0, 2905.0],
+            "BidPrice1": [2905.0, 2905.0, 2905.0],
+            "BidVolume1": [601, 900, 1383],
+            "AskPrice1": [None, None, None],
+            "AskVolume1": [0, 0, 0],
+        }
+    )
+
+    result = downscale_quote_features(second, "5min")
+    window = result.filter(pl.col("timestamp") == datetime(2026, 2, 2, 13, 55, 0))
+
+    assert window.item(0, "nquote") == 3
+    assert window.item(0, "open_ask") == 2905.0
+    assert window.item(0, "close_ask") == 2905.0
+    assert window.item(0, "open_asksize") == 0
+    assert window.item(0, "close_asksize") == 0
+
+
 def test_cross_session_quote_gap_does_not_fail():
     second = pl.DataFrame(
         {

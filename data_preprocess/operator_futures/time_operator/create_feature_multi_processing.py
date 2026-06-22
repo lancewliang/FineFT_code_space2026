@@ -1,19 +1,15 @@
-import pandas as pd
-import numpy as np
 import os
-import re
-from datetime import datetime
 import argparse
 import sys
-from multiprocessing import Pool
 
 sys.path.append(".")
 from operator_futures.util import find_ohlcv_groups, find_ohlc_groups
-from memory_profiler import profile
+import polars as pl
 from operator_futures.time_operator.multi_processing_util import (
     get_multi_window_ohlcv,
     get_multi_window_ohlc,
     get_multi_feature_window_price,
+    _inner_join_on_timestamp,
 )
 
 parser = argparse.ArgumentParser()
@@ -67,6 +63,12 @@ parser.add_argument(
     default="2,6,12,16,24,48",
     help="List of windows sizes as comma-separated values",
 )
+parser.add_argument(
+    "--orderbook_depth",
+    type=int,
+    default=25,
+    help="the available orderbook depth",
+)
 
 
 def main(args):
@@ -74,7 +76,7 @@ def main(args):
     windows = list(map(int, args.windows.split(",")))
     args.data_path = os.path.join(args.root_path, args.data_path)
     args.save_path = os.path.join(args.root_path, args.save_path)
-    original_df = pd.read_feather(
+    original_df = pl.read_ipc(
         os.path.join(
             args.data_path,
             args.symbols,
@@ -82,12 +84,11 @@ def main(args):
             args.start_date + "-" + args.end_date + ".feather",
         )
     )
-    original_df.set_index("timestamp", inplace=True)
-    ohlcv_features, _ = find_ohlcv_groups(original_df)
-    ohlc_features, _ = find_ohlc_groups(original_df)
+    ohlcv_features, _ = find_ohlcv_groups(original_df.columns)
+    ohlc_features, _ = find_ohlc_groups(original_df.columns)
     price_features = [
-        *[f"bid{l+1}_price" for l in range(25)],
-        *[f"ask{l+1}_price" for l in range(25)],
+        *[f"bid{l+1}_price" for l in range(args.orderbook_depth)],
+        *[f"ask{l+1}_price" for l in range(args.orderbook_depth)],
         "buy_spread_oe_max",
         "sell_spread_oe_max",
         "wap_1",
@@ -98,8 +99,11 @@ def main(args):
         "buy_volume_oe",
         "sell_volume_oe",
         "imblance_volume_oe",
-        *[f"ask{l+1}_size_n" for l in range(25)],
-        *[f"bid{l+1}_size_n" for l in range(25)],
+        *[f"ask{l+1}_size_n" for l in range(args.orderbook_depth)],
+        *[f"bid{l+1}_size_n" for l in range(args.orderbook_depth)],
+    ]
+    price_features = [
+        feature for feature in price_features if feature in original_df.columns
     ]
     df_time = get_multi_feature_window_price(original_df, windows, price_features)
     time_feature_list_all.append(df_time)
@@ -112,18 +116,19 @@ def main(args):
         after_name = prefix + suffix
         converted_strings = "_origin" if after_name == "" else after_name
         feature_names = ohlcv_features[ffuixes]
-        df_ohlcv = original_df[feature_names].copy()
-        df_ohlcv.rename(
-            columns={
+        df_ohlcv = original_df.select(["timestamp", *feature_names]).rename(
+            {
                 prefix + key + suffix: key
                 for key in ["open", "high", "low", "close", "volume"]
             },
-            inplace=True,
         )
         p_process_ohlcv = get_multi_window_ohlcv(df_ohlcv, windows)
-        p_process_ohlcv.rename(
-            columns={key: key + converted_strings for key in p_process_ohlcv.columns},
-            inplace=True,
+        p_process_ohlcv = p_process_ohlcv.rename(
+            {
+                key: key + converted_strings
+                for key in p_process_ohlcv.columns
+                if key != "timestamp"
+            }
         )
         time_feature_list_all.append(p_process_ohlcv)
     for ffuixes in ohlc_features:
@@ -133,9 +138,8 @@ def main(args):
         converted_strings = "_origin" if after_name == "" else after_name
         print(converted_strings)
         feature_names = ohlc_features[ffuixes]
-        df_ohlc = original_df[feature_names].copy()
-        df_ohlc.rename(
-            columns={
+        df_ohlc = original_df.select(["timestamp", *feature_names]).rename(
+            {
                 prefix + key + suffix: key
                 for key in [
                     "open",
@@ -143,21 +147,22 @@ def main(args):
                     "low",
                     "close",
                 ]
-            },
-            inplace=True,
+            }
         )
         p_process_ohlc = get_multi_window_ohlc(df_ohlc, windows)
-        p_process_ohlc.rename(
-            columns={key: key + converted_strings for key in p_process_ohlc.columns},
-            inplace=True,
+        p_process_ohlc = p_process_ohlc.rename(
+            {
+                key: key + converted_strings
+                for key in p_process_ohlc.columns
+                if key != "timestamp"
+            }
         )
         time_feature_list_all.append(p_process_ohlc)
 
-    time_df = pd.concat(time_feature_list_all, axis=1, join="inner")
-    time_df.reset_index(inplace=True)
+    time_df = _inner_join_on_timestamp(time_feature_list_all)
     if not os.path.exists(os.path.join(args.save_path, args.symbols, args.target_freq)):
         os.makedirs(os.path.join(args.save_path, args.symbols, args.target_freq))
-    time_df.to_feather(
+    time_df.write_ipc(
         os.path.join(
             args.save_path,
             args.symbols,

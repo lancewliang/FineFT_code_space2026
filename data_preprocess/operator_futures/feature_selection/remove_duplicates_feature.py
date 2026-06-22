@@ -1,12 +1,11 @@
-import pandas as pd
-import numpy as np
-import os
-import re
-from datetime import datetime
 import argparse
-import sys
-from multiprocessing import Pool
 import json
+import os
+import sys
+from pathlib import Path
+
+import numpy as np
+import polars as pl
 
 sys.path.append(".")
 from operator_futures.feature_selection.cor_util import select_feature
@@ -101,190 +100,64 @@ def remove_duplicates_preserve_order(lst):
 
 
 def main(args):
-    windows_list = args.windows_list
-    windows_list.sort()
+    windows_list = sorted(args.windows_list)
     args.data_path = os.path.join(args.root_path, args.data_path)
     args.save_path = os.path.join(args.root_path, args.save_path)
-    df = pd.read_feather(
-        os.path.join(
-            args.data_path,
-            args.symbols,
-            args.target_freq,
-            "{}-{}.feather".format(args.start_date, args.end_date),
-        )
-    )
-    reward_features = df.columns[:106]
-    state_feature = [col for col in df.columns if col not in reward_features]
-    df.set_index("timestamp", inplace=True)
+    input_path = Path(args.data_path) / args.symbols / args.target_freq / f"{args.start_date}-{args.end_date}.feather"
+    output_dir = Path(args.save_path) / args.symbols / args.target_freq / f"{args.start_date}-{args.end_date}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    df = pl.read_ipc(input_path)
+    reward_features = list(df.columns[:106])
     ic_selection_key_all = []
     assert args.ic_choice in ["ic", "rank_ic", "catboost"]
+
     if args.ic_choice == "ic":
-        ic_file_name_list = ["ic_window_{}.json".format(w) for w in args.windows_list]
+        ic_file_name_list = [f"ic_window_{w}.json" for w in windows_list]
         cor_file_name = "correlation.csv"
         for ic_file_name in ic_file_name_list:
-            with open(
-                os.path.join(
-                    args.save_path,
-                    args.symbols,
-                    args.target_freq,
-                    "{}-{}".format(args.start_date, args.end_date),
-                    ic_file_name,
-                ),
-                "r",
-            ) as f:
+            with open(output_dir / ic_file_name, "r", encoding="utf-8") as f:
                 cor = json.load(f)
-            cor_abs = {}
-            for key in cor.keys():
-                cor_abs[key] = abs(cor[key])
-            ic_selection_key = [
-                key for key in cor_abs.keys() if cor_abs[key] > args.ic_theshold
-            ]
-            ic_selection_key_all.extend(ic_selection_key)
-        ic_selection_key = remove_duplicates_preserve_order(ic_selection_key_all)
-        df_cor = pd.read_csv(
-            os.path.join(
-                args.save_path,
-                args.symbols,
-                args.target_freq,
-                "{}-{}".format(args.start_date, args.end_date),
-                cor_file_name,
-            ),
-            index_col=0,
-        )
-        df_cor = df_cor.loc[ic_selection_key, ic_selection_key]
+            ic_selection_key_all.extend(
+                [key for key, value in cor.items() if abs(value) > args.ic_theshold]
+            )
     elif args.ic_choice == "rank_ic":
-        ic_file_name_list = [
-            "rank_ic_window_{}.json".format(w) for w in args.windows_list
-        ]
+        ic_file_name_list = [f"rank_ic_window_{w}.json" for w in windows_list]
         cor_file_name = "rank_correlation.csv"
         for ic_file_name in ic_file_name_list:
-            with open(
-                os.path.join(
-                    args.save_path,
-                    args.symbols,
-                    args.target_freq,
-                    "{}-{}".format(args.start_date, args.end_date),
-                    ic_file_name,
-                ),
-                "r",
-            ) as f:
+            with open(output_dir / ic_file_name, "r", encoding="utf-8") as f:
                 cor = json.load(f)
-            cor_abs = {}
-            for key in cor.keys():
-                cor_abs[key] = abs(cor[key])
-            ic_selection_key = [
-                key for key in cor_abs.keys() if cor_abs[key] > args.ic_theshold
-            ]
-            ic_selection_key_all.extend(ic_selection_key)
-        ic_selection_key = remove_duplicates_preserve_order(ic_selection_key_all)
-        df_cor = pd.read_csv(
-            os.path.join(
-                args.save_path,
-                args.symbols,
-                args.target_freq,
-                "{}-{}".format(args.start_date, args.end_date),
-                cor_file_name,
-            ),
-            index_col=0,
-        )
-        df_cor = df_cor.loc[ic_selection_key, ic_selection_key]
-    elif args.ic_choice == "catboost":
-        ic_file_name_list = [
-            "cat_boost_feature_importance_{}.csv".format(w) for w in args.windows_list
-        ]
+            ic_selection_key_all.extend(
+                [key for key, value in cor.items() if abs(value) > args.ic_theshold]
+            )
+    else:
+        ic_file_name_list = [f"cat_boost_feature_importance_{w}.csv" for w in windows_list]
         cor_file_name = "correlation_catboost.csv"
         for ic_file_name in ic_file_name_list:
-            feature_importance_df = pd.read_csv(
-                os.path.join(
-                    args.save_path,
-                    args.symbols,
-                    args.target_freq,
-                    "{}-{}".format(args.start_date, args.end_date),
-                    ic_file_name,
-                )
+            feature_importance_df = pl.read_csv(output_dir / ic_file_name)
+            ic_selection_key_all.extend(
+                feature_importance_df.filter(pl.col("Importance") > args.ic_theshold)["Feature"].to_list()
             )
-            catboost_selection_key = feature_importance_df[
-                feature_importance_df["Importance"] > args.ic_theshold
-            ]["Feature"].values.tolist()
-            ic_selection_key_all.extend(catboost_selection_key)
-        ic_selection_key = remove_duplicates_preserve_order(ic_selection_key_all)
-        df_cor = pd.read_csv(
-            os.path.join(
-                args.save_path,
-                args.symbols,
-                args.target_freq,
-                "{}-{}".format(args.start_date, args.end_date),
-                cor_file_name,
-            )
-        )
-        df_cor = df_cor.loc[ic_selection_key, ic_selection_key]
-    else:
-        print("wrong ic_choice")
+
+    ic_selection_key = remove_duplicates_preserve_order(ic_selection_key_all)
+    df_cor = pl.read_csv(output_dir / cor_file_name)
+    if "feature" not in df_cor.columns:
+        df_cor = df_cor.rename({df_cor.columns[0]: "feature"})
+    if ic_selection_key:
+        keep_columns = ["feature", *ic_selection_key]
+        df_cor = df_cor.select([column for column in keep_columns if column in df_cor.columns])
     selected_feature_names = select_feature(corre_df=df_cor, theshold=args.cor_theshold)
-    state_feature = selected_feature_names
-    reward_features = reward_features.tolist()
-    df.reset_index(inplace=True)
-    df = df[reward_features + state_feature]
+    out = df.select([*reward_features, *selected_feature_names])
+
     if args.ic_choice == "ic":
-        df.to_feather(
-            os.path.join(
-                args.save_path,
-                args.symbols,
-                args.target_freq,
-                "{}-{}".format(args.start_date, args.end_date),
-                "df.feather".format(args.start_date, args.end_date),
-            )
-        )
-        np.save(
-            os.path.join(
-                args.save_path,
-                args.symbols,
-                args.target_freq,
-                "{}-{}".format(args.start_date, args.end_date),
-                "state_features.npy",
-            ),
-            state_feature,
-        )
+        out.write_ipc(output_dir / "df.feather")
+        np.save(output_dir / "state_features.npy", np.array(selected_feature_names))
     elif args.ic_choice == "rank_ic":
-        df.to_feather(
-            os.path.join(
-                args.save_path,
-                args.symbols,
-                args.target_freq,
-                "{}-{}".format(args.start_date, args.end_date),
-                "df_rank.feather".format(args.start_date, args.end_date),
-            )
-        )
-        np.save(
-            os.path.join(
-                args.save_path,
-                args.symbols,
-                args.target_freq,
-                "{}-{}".format(args.start_date, args.end_date),
-                "state_features_rank.npy",
-            ),
-            state_feature,
-        )
-    elif args.ic_choice == "catboost":
-        df.to_feather(
-            os.path.join(
-                args.save_path,
-                args.symbols,
-                args.target_freq,
-                "{}-{}".format(args.start_date, args.end_date),
-                "df_catboost.feather".format(args.start_date, args.end_date),
-            )
-        )
-        np.save(
-            os.path.join(
-                args.save_path,
-                args.symbols,
-                args.target_freq,
-                "{}-{}".format(args.start_date, args.end_date),
-                "state_features_catboost.npy",
-            ),
-            state_feature,
-        )
+        out.write_ipc(output_dir / "df_rank.feather")
+        np.save(output_dir / "state_features_rank.npy", np.array(selected_feature_names))
+    else:
+        out.write_ipc(output_dir / "df_catboost.feather")
+        np.save(output_dir / "state_features_catboost.npy", np.array(selected_feature_names))
+    return out
 
 
 if __name__ == "__main__":

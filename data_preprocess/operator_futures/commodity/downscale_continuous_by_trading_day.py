@@ -43,6 +43,13 @@ def _iter_iso_dates(start_date: str, end_date: str):
         current += timedelta(days=1)
 
 
+def _trading_day_output_name(trading_day: str) -> str:
+    trading_day = str(trading_day)
+    if len(trading_day) == 8 and trading_day.isdigit():
+        return datetime.strptime(trading_day, "%Y%m%d").date().isoformat()
+    return trading_day
+
+
 def _write_downscaled_day(
     day_frame: pl.DataFrame,
     output_root: Path,
@@ -71,10 +78,11 @@ def _write_downscaled_day(
         "BASE_FEATURE": downscale_base_features(second, target_freq, symbol),
         "COMMODITY_QUOTE_FEATURE": downscale_quote_features(second, target_freq),
     }
+    output_name = _trading_day_output_name(trading_day)
     for folder, frame in outputs.items():
         path = output_root / folder / symbol / target_freq
         path.mkdir(parents=True, exist_ok=True)
-        frame.write_ipc(path / f"{trading_day}.feather")
+        frame.write_ipc(path / f"{output_name}.feather")
     return trading_day
 
 

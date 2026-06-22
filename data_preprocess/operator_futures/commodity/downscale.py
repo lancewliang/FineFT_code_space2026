@@ -367,13 +367,64 @@ def _change_count_expr(column: str, direction: str | None = None) -> pl.Expr:
     return diff.ne(0).fill_null(True)
 
 
+def _normalize_limit_single_sided_quote_prices(df: pl.DataFrame) -> pl.DataFrame:
+    def optional_column(name: str) -> pl.Expr:
+        if name in df.columns:
+            return pl.col(name)
+        return pl.lit(None, dtype=pl.Float64)
+
+    last_price = optional_column("LastPrice")
+    low_price = optional_column("LowPrice")
+    high_price = optional_column("HighPrice")
+    lower_limit = optional_column("LowerLimitPrice")
+    upper_limit = optional_column("UpperLimitPrice")
+    limit_down = (
+        pl.col("BidPrice1").is_null()
+        & (pl.col("BidVolume1").fill_null(0) == 0)
+        & pl.col("AskPrice1").is_not_null()
+        & lower_limit.is_not_null()
+        & (
+            (last_price == lower_limit)
+            | (low_price == lower_limit)
+        )
+    ).fill_null(False)
+    limit_up = (
+        pl.col("AskPrice1").is_null()
+        & (pl.col("AskVolume1").fill_null(0) == 0)
+        & pl.col("BidPrice1").is_not_null()
+        & upper_limit.is_not_null()
+        & (
+            (last_price == upper_limit)
+            | (high_price == upper_limit)
+        )
+    ).fill_null(False)
+    return df.with_columns(
+        pl.when(limit_down)
+        .then(lower_limit)
+        .otherwise(pl.col("BidPrice1"))
+        .alias("BidPrice1"),
+        pl.when(limit_down)
+        .then(pl.lit(0))
+        .otherwise(pl.col("BidVolume1"))
+        .alias("BidVolume1"),
+        pl.when(limit_up)
+        .then(upper_limit)
+        .otherwise(pl.col("AskPrice1"))
+        .alias("AskPrice1"),
+        pl.when(limit_up)
+        .then(pl.lit(0))
+        .otherwise(pl.col("AskVolume1"))
+        .alias("AskVolume1"),
+    )
+
+
 def downscale_quote_features(
     second_df: pl.DataFrame, target_freq: str, symbol: str = "fu"
 ) -> pl.DataFrame:
     if second_df.height == 0:
         raise ValueError("Target window has no quote snapshots")
 
-    quote = second_df.sort("timestamp").select(
+    quote = _normalize_limit_single_sided_quote_prices(second_df).sort("timestamp").select(
         "timestamp",
         pl.col("BidPrice1").alias("bid_price"),
         pl.col("AskPrice1").alias("ask_price"),

@@ -239,13 +239,16 @@ def test_downscale_continuous_cli_reads_daily_input_dir_and_skips_missing_day(
     )
 
     assert (
-        output_root / "DOWNSCALE_DERTIC" / "fu" / "5min" / "20260105.feather"
+        output_root / "DOWNSCALE_DERTIC" / "fu" / "5min" / "2026-01-05.feather"
     ).exists()
     assert not (
-        output_root / "DOWNSCALE_DERTIC" / "fu" / "5min" / "20260106.feather"
+        output_root / "DOWNSCALE_DERTIC" / "fu" / "5min" / "2026-01-06.feather"
     ).exists()
     assert (
-        output_root / "DOWNSCALE_DERTIC" / "fu" / "5min" / "20260107.feather"
+        output_root / "DOWNSCALE_DERTIC" / "fu" / "5min" / "2026-01-07.feather"
+    ).exists()
+    assert not (
+        output_root / "DOWNSCALE_DERTIC" / "fu" / "5min" / "20260105.feather"
     ).exists()
     assert "Missing commodity continuous daily file" in result.stderr
     assert "2026-01-06" in result.stderr
@@ -302,6 +305,149 @@ def test_commodity_full_process_shell_exposes_expected_functions():
     assert "operator_futures.commodity.downscale_continuous_by_trading_day" in text
 
 
+def test_commodity_full_process_shell_sets_pythonpath_for_operator_scripts():
+    script = (
+        REPO_ROOT
+        / "data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
+    )
+    text = script.read_text(encoding="utf-8")
+
+    operator_script_calls = [
+        "data_preprocess/operator_futures/cross_section/create_feature.py",
+        "data_preprocess/operator_futures/scale_describe_save/scale_save.py",
+        "data_preprocess/operator_futures/merge_concat/merge.py",
+        "data_preprocess/operator_futures/merge_concat/concat.py",
+        "data_preprocess/operator_futures/time_operator/create_feature_multi_processing.py",
+        "data_preprocess/operator_futures/merge_all/merge_clean.py",
+        "data_preprocess/operator_futures/feature_selection/ic_correlation.py",
+    ]
+
+    for script_path in operator_script_calls:
+        assert (
+            f'PYTHONPATH="${{root_path}}/data_preprocess" python -u {script_path}'
+            in text
+            or f'PYTHONPATH="${{root_path}}/data_preprocess" nohup python -u {script_path}'
+            in text
+        )
+
+
+def test_commodity_cross_section_shell_skips_missing_downscale_outputs(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_python = fake_bin / "python"
+    fake_python.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "%s\\n" "$*" >> "${CALL_LOG}"\n',
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+
+    output_root = tmp_path / "PREPROCESS_DATASET" / "commodity-futures"
+    base_dir = output_root / "BASE_FEATURE" / "fu" / "5min"
+    book_dir = output_root / "DOWNSCALE_ORDERBOOK_25" / "fu" / "5min"
+    base_dir.mkdir(parents=True)
+    book_dir.mkdir(parents=True)
+    (base_dir / "2026-01-05.feather").write_text("", encoding="utf-8")
+    (book_dir / "2026-01-05.feather").write_text("", encoding="utf-8")
+
+    call_log = tmp_path / "calls.log"
+    command = f"""
+set -euo pipefail
+export PATH="{fake_bin}:$PATH"
+export CALL_LOG="{call_log}"
+source "{REPO_ROOT}/data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
+cd "{tmp_path}"
+run_commodity_cross_section_process "2026-01-05" "2026-01-07" 1 "5min" "fu" "{tmp_path}"
+"""
+
+    subprocess.run(["bash", "-c", command], cwd=REPO_ROOT, check=True)
+
+    calls = call_log.read_text(encoding="utf-8")
+    assert "--date 2026-01-05" in calls
+    assert "--date 2026-01-06" not in calls
+
+
+def test_time_feature_multi_processing_accepts_commodity_orderbook_depth(tmp_path):
+    data_dir = (
+        tmp_path
+        / "PREPROCESS_DATASET"
+        / "commodity-futures"
+        / "MERGE_CONCAT"
+        / "CONCAT_FEATURE"
+        / "fu"
+        / "5min"
+    )
+    data_dir.mkdir(parents=True)
+    rows = []
+    for idx in range(20):
+        row = {
+            "timestamp": idx,
+            "open": 2600.0 + idx,
+            "high": 2601.0 + idx,
+            "low": 2599.0 + idx,
+            "close": 2600.5 + idx,
+            "volume": 100.0 + idx,
+            "buy_spread_oe_max": 4.0,
+            "sell_spread_oe_max": 4.0,
+            "wap_1": 2600.2 + idx,
+            "wap_2": 2600.3 + idx,
+            "buy_wap": 2600.1 + idx,
+            "sell_wap": 2600.4 + idx,
+            "mark_price": 2600.25 + idx,
+            "buy_volume_oe": 20.0 + idx,
+            "sell_volume_oe": 21.0 + idx,
+            "imblance_volume_oe": 1.0,
+        }
+        for level in range(1, 6):
+            row[f"bid{level}_price"] = 2600.0 + idx - level
+            row[f"ask{level}_price"] = 2600.0 + idx + level
+            row[f"bid{level}_size_n"] = 0.1 * level
+            row[f"ask{level}_size_n"] = 0.1 * level
+        rows.append(row)
+    pd.DataFrame(rows).to_feather(data_dir / "2026-01-05-2026-01-06.feather")
+
+    subprocess.run(
+        [
+            sys.executable,
+            "data_preprocess/operator_futures/time_operator/create_feature_multi_processing.py",
+            "--root_path",
+            str(tmp_path),
+            "--data_path",
+            "PREPROCESS_DATASET/commodity-futures/MERGE_CONCAT/CONCAT_FEATURE/",
+            "--save_path",
+            "PREPROCESS_DATASET/commodity-futures/TIME_FEATURE/",
+            "--symbols",
+            "fu",
+            "--target_freq",
+            "5min",
+            "--start_date",
+            "2026-01-05",
+            "--end_date",
+            "2026-01-06",
+            "--windows",
+            "2",
+            "--orderbook_depth",
+            "5",
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "data_preprocess")},
+        check=True,
+    )
+
+    output = (
+        tmp_path
+        / "PREPROCESS_DATASET"
+        / "commodity-futures"
+        / "TIME_FEATURE"
+        / "fu"
+        / "5min"
+        / "2026-01-05-2026-01-06.feather"
+    )
+    out = pd.read_feather(output)
+    assert "bid5_price_log_return_2" in out.columns
+    assert "bid6_price_log_return_2" not in out.columns
+
+
 def test_commodity_main_script_uses_date_range_full_process_entrypoint():
     script = (
         REPO_ROOT
@@ -316,4 +462,28 @@ def test_commodity_main_script_uses_date_range_full_process_entrypoint():
     assert "END_DATE" in text
     assert "TARGET_FREQ" in text
     assert "COMMODITY_NAME" in text
+    assert "START_DATE=${START_DATE:-2025-11-03}" in text
+    assert "END_DATE=${END_DATE:-2025-11-08}" in text
     assert '"${YEAR}"' not in text
+
+
+def test_commodity_full_process_shell_sets_time_feature_orderbook_depth():
+    script = (
+        REPO_ROOT
+        / "data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
+    )
+    text = script.read_text(encoding="utf-8")
+
+    assert "time_operator/create_feature_multi_processing.py" in text
+    assert "--orderbook_depth 5" in text
+
+
+def test_commodity_full_process_shell_scales_ic_selection_output():
+    script = (
+        REPO_ROOT
+        / "data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
+    )
+    text = script.read_text(encoding="utf-8")
+
+    assert "scale_describe_save/scale_save.py" in text
+    assert "--ic_choice ic" in text
