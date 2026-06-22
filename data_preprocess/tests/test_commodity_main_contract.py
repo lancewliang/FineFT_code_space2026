@@ -5,6 +5,7 @@ from pathlib import Path
 import polars as pl
 
 from operator_futures.commodity.main_contract import (
+    build_main_contract_daily_frames_for_date_range,
     build_main_contract_continuous_frame_for_date_range,
     calculate_contract_volume,
     infer_years_for_date_range,
@@ -12,6 +13,7 @@ from operator_futures.commodity.main_contract import (
     normalize_timestamp,
     select_main_contract_for_day,
     stitch_main_contract_frames,
+    write_main_contract_daily_files_for_date_range,
 )
 
 
@@ -235,3 +237,67 @@ def test_build_main_contract_logs_selected_file_contract_and_reason(
     assert "reason=current_trading_day_fallback" in selected_logs[0].message
     assert "file_name=fu2402.csv" in selected_logs[0].message
     assert f"source_file={expected_file}" in selected_logs[0].message
+
+
+def test_build_main_contract_daily_frames_skips_missing_calendar_dates(
+    tmp_path, caplog
+):
+    raw_root = tmp_path / "data" / "原始下载"
+    _write_contract_file(
+        raw_root, "燃料油", "2026", "01", "20260105", "fu2602", "20260104", [0, 30]
+    )
+    _write_contract_file(
+        raw_root, "燃料油", "2026", "01", "20260107", "fu2602", "20260106", [0, 4]
+    )
+
+    with caplog.at_level(
+        logging.INFO, logger="operator_futures.commodity.main_contract"
+    ):
+        daily = build_main_contract_daily_frames_for_date_range(
+            raw_root,
+            "燃料油",
+            "2026-01-05",
+            "2026-01-08",
+            "fu",
+        )
+
+    assert sorted(daily) == ["2026-01-05", "2026-01-07"]
+    assert daily["2026-01-05"]["main_contract_trading_day"].cast(
+        pl.Utf8
+    ).to_list() == [
+        "20260105",
+        "20260105",
+    ]
+    assert "Skipped commodity main-contract source dates" in caplog.text
+    assert "2026-01-06" in caplog.text
+
+
+def test_write_main_contract_daily_files_overwrites_existing_file(tmp_path, caplog):
+    raw_root = tmp_path / "data" / "原始下载"
+    output_dir = (
+        tmp_path / "PREPROCESS_DATASET" / "commodity-futures" / "CONTINUOUS_RAW" / "fu"
+    )
+    _write_contract_file(
+        raw_root, "燃料油", "2026", "01", "20260105", "fu2602", "20260104", [0, 30]
+    )
+    output_dir.mkdir(parents=True)
+    existing = output_dir / "2026-01-05.csv"
+    existing.write_text("old\n", encoding="utf-8")
+
+    with caplog.at_level(
+        logging.INFO, logger="operator_futures.commodity.main_contract"
+    ):
+        written = write_main_contract_daily_files_for_date_range(
+            raw_root=raw_root,
+            commodity_name="燃料油",
+            output_dir=output_dir,
+            start_date="2026-01-05",
+            end_date="2026-01-06",
+            symbol="fu",
+        )
+
+    assert written == [existing]
+    result = pl.read_csv(existing)
+    assert result["main_contract"].to_list() == ["fu2602", "fu2602"]
+    assert "Overwriting commodity main-contract daily file" in caplog.text
+    assert str(existing) in caplog.text

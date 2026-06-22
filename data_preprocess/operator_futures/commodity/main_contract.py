@@ -265,6 +265,122 @@ def _trading_day_in_range(trading_day: str, start_date: str, end_date: str) -> b
     return _parse_date(start_date) <= trading_ts < _parse_date(end_date)
 
 
+def _format_trading_day_file_date(trading_day: str) -> str:
+    return datetime.strptime(trading_day, "%Y%m%d").date().isoformat()
+
+
+def _iter_iso_dates(start_date: str, end_date: str) -> Iterable[str]:
+    current = _parse_date(start_date)
+    end = _parse_date(end_date)
+    if end <= current:
+        raise ValueError(
+            f"end_date must be greater than start_date for left-open range: "
+            f"{start_date} -> {end_date}"
+        )
+
+    while current < end:
+        yield current.isoformat()
+        current += timedelta(days=1)
+
+
+def build_main_contract_daily_frames_for_date_range(
+    raw_root: Path,
+    commodity_name: str,
+    start_date: str,
+    end_date: str,
+    symbol: str,
+) -> Dict[str, pl.DataFrame]:
+    years = infer_years_for_date_range(start_date, end_date)
+    logger.info(
+        "Building commodity main-contract daily files: symbol=%s commodity=%s start_date=%s end_date=%s years=%s",
+        symbol,
+        commodity_name,
+        start_date,
+        end_date,
+        ",".join(years),
+    )
+    days = load_contract_frames_by_trading_day_for_years(
+        raw_root, commodity_name, years
+    )
+    daily: Dict[str, pl.DataFrame] = {}
+    selected_dates = set()
+    previous_frames: Dict[str, pl.DataFrame] = {}
+
+    for trading_day in sorted(days):
+        current_items = days[trading_day]
+        current_frames = {
+            contract: frame for contract, (frame, _) in current_items.items()
+        }
+        if not _trading_day_in_range(trading_day, start_date, end_date):
+            previous_frames = current_frames
+            continue
+
+        contract, reason = select_main_contract_for_day(
+            previous_frames, current_frames, symbol
+        )
+        frame, source_file = current_items[contract]
+        _log_selected_main_contract_file(
+            trading_day,
+            contract,
+            reason,
+            source_file,
+            previous_frames,
+            current_frames,
+        )
+        copied = frame.with_columns(
+            pl.lit(reason).alias("main_contract_selection_reason")
+        )
+        date = _format_trading_day_file_date(trading_day)
+        daily[date] = stitch_main_contract_frames(
+            [(trading_day, contract, copied, source_file)]
+        )
+        selected_dates.add(date)
+        previous_frames = current_frames
+
+    skipped = [
+        date for date in _iter_iso_dates(start_date, end_date) if date not in selected_dates
+    ]
+    if skipped:
+        logger.info(
+            "Skipped commodity main-contract source dates: dates=%s",
+            ",".join(skipped),
+        )
+    if not daily:
+        raise ValueError("No selected main-contract frames to stitch")
+    return daily
+
+
+def write_main_contract_daily_files_for_date_range(
+    raw_root: Path,
+    commodity_name: str,
+    output_dir: Path,
+    start_date: str,
+    end_date: str,
+    symbol: str,
+) -> List[Path]:
+    daily = build_main_contract_daily_frames_for_date_range(
+        raw_root,
+        commodity_name,
+        start_date,
+        end_date,
+        symbol,
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    written: List[Path] = []
+    for date, frame in sorted(daily.items()):
+        path = output_dir / f"{date}.csv"
+        if path.exists():
+            logger.info("Overwriting commodity main-contract daily file: output=%s", path)
+        frame.write_csv(path)
+        logger.info(
+            "Wrote commodity main-contract daily file: output=%s rows=%d",
+            path,
+            frame.height,
+        )
+        written.append(path)
+    return written
+
+
 def build_main_contract_continuous_frame(
     raw_root: Path, commodity_name: str, year: str, symbol: str
 ) -> pl.DataFrame:

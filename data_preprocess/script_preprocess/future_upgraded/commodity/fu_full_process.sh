@@ -7,7 +7,6 @@ run_commodity_stitch_main_contract() {
     local end_date=$4
     local symbol=${5:-fu}
     local output_dir="${root_path}/PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/${symbol}"
-    local output_file="${output_dir}/${symbol}_${start_date}_${end_date}.csv"
 
     mkdir -p "${output_dir}"
     PYTHONPATH="${root_path}/data_preprocess" python -m operator_futures.commodity.stitch_main_contract \
@@ -16,18 +15,22 @@ run_commodity_stitch_main_contract() {
         --start_date "${start_date}" \
         --end_date "${end_date}" \
         --symbol "${symbol}" \
-        --output "${output_file}"
+        --output_dir "${output_dir}"
 }
 
 run_commodity_downscale_continuous_by_trading_day() {
     local root_path=$1
-    local continuous_file=$2
-    local target_freq=$3
-    local symbol=${4:-fu}
+    local continuous_dir=$2
+    local start_date=$3
+    local end_date=$4
+    local target_freq=$5
+    local symbol=${6:-fu}
     local output_root="${root_path}/PREPROCESS_DATASET/commodity-futures"
 
     PYTHONPATH="${root_path}/data_preprocess" python -m operator_futures.commodity.downscale_continuous_by_trading_day \
-        --input "${continuous_file}" \
+        --input_dir "${continuous_dir}" \
+        --start_date "${start_date}" \
+        --end_date "${end_date}" \
         --output_root "${output_root}" \
         --target_freq "${target_freq}" \
         --symbol "${symbol}" \
@@ -202,8 +205,8 @@ run_commodity_full_process() {
     local max_processes=${7:-4}
 
     run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$start_date" "$end_date" "$symbol"
-    local continuous_file="${root_path}/PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/${symbol}/${symbol}_${start_date}_${end_date}.csv"
-    run_commodity_downscale_continuous_by_trading_day "$root_path" "$continuous_file" "$target_freq" "$symbol"
+    local continuous_dir="${root_path}/PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/${symbol}"
+    run_commodity_downscale_continuous_by_trading_day "$root_path" "$continuous_dir" "$start_date" "$end_date" "$target_freq" "$symbol"
     run_commodity_cross_section_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path"
     run_commodity_merge_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path"
     run_commodity_concat_process "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"

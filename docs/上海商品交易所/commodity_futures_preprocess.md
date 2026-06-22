@@ -58,7 +58,7 @@ docs/上海商品交易所/fu2302.csv
 
 ```bash
 source data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh
-run_commodity_full_process "$(pwd)" 2026 2026-01-01 2026-02-01 5min fu 燃料油 4
+run_commodity_full_process "$(pwd)" 2026-01-01 2026-02-01 5min fu 燃料油 4
 ```
 
 也可以直接使用 main script，并通过环境变量覆盖默认参数：
@@ -68,16 +68,38 @@ YEAR=2026 START_DATE=2026-01-01 END_DATE=2026-02-01 TARGET_FREQ=5min \
   bash data_preprocess/script_preprocess/future_upgraded/commodity/main.sh
 ```
 
-该入口会先从 `data/原始下载/燃料油/2026` 扫描所有合约 CSV，按 `TradingDay` 选择每日主力合约，生成连续主力原始文件：
+该入口会先从日期范围覆盖的 `data/原始下载/燃料油/{YYYY}` 目录扫描所有合约 CSV，按 `TradingDay` 选择每日主力合约，生成连续主力原始日文件：
 
 ```text
-PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu/fu_2026.csv
+PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu/2026-01-05.csv
+PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu/2026-01-06.csv
 ```
 
 然后继续执行商品期货下采样、cross-section、merge/concat、time feature、merge clean、IC feature selection 和 scale/save。最终训练入口数据写入：
 
 ```text
 PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/5min/2026-01-01-2026-02-01/
+```
+
+直接运行连续主力拼接和下采样 CLI：
+
+```bash
+PYTHONPATH=data_preprocess python -m operator_futures.commodity.stitch_main_contract \
+  --raw_root data/原始下载 \
+  --commodity_name 燃料油 \
+  --start_date 2026-01-01 \
+  --end_date 2026-02-01 \
+  --symbol fu \
+  --output_dir PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu
+
+PYTHONPATH=data_preprocess python -m operator_futures.commodity.downscale_continuous_by_trading_day \
+  --input_dir PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu \
+  --start_date 2026-01-01 \
+  --end_date 2026-02-01 \
+  --output_root PREPROCESS_DATASET/commodity-futures \
+  --symbol fu \
+  --target_freq 5min \
+  --depth 5
 ```
 
 运行单日样例 smoke test：
