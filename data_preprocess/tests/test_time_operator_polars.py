@@ -5,6 +5,8 @@ import sys
 
 import polars as pl
 
+from operator_futures.time_operator.multi_processing_util import get_multi_window_ohlcv
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -98,3 +100,21 @@ def test_time_feature_cli_respects_orderbook_depth_and_output_contract(tmp_path)
     assert out.height > 0
     assert "bid5_price_log_return_2" in out.columns
     assert "bid6_price_log_return_2" not in out.columns
+
+
+def test_get_multi_window_ohlcv_supports_multiple_windows_without_suffix_collision():
+    frame = pl.DataFrame(
+        {
+            "timestamp": list(range(1, 21)),
+            "open": [10.0 + idx for idx in range(20)],
+            "high": [11.0 + idx for idx in range(20)],
+            "low": [9.0 + idx for idx in range(20)],
+            "close": [10.0 + idx for idx in range(20)],
+            "volume": [100.0 + idx for idx in range(20)],
+        }
+    )
+
+    out = get_multi_window_ohlcv(frame, [2, 3, 4])
+
+    assert out.height > 0
+    assert "log_volume" in out.columns

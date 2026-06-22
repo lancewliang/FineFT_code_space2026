@@ -46,7 +46,13 @@ def _inner_join_on_timestamp(frames: list[pl.DataFrame]) -> pl.DataFrame:
     frames = [frame for frame in frames if frame is not None and frame.height > 0]
     if not frames:
         return pl.DataFrame({"timestamp": []})
-    return reduce(lambda left, right: left.join(right, on="timestamp", how="inner"), frames)
+    seen = {"timestamp"}
+    deduped_frames = []
+    for frame in frames:
+        columns = [name for name in frame.columns if name == "timestamp" or name not in seen]
+        deduped_frames.append(frame.select(columns))
+        seen.update(name for name in frame.columns if name != "timestamp")
+    return reduce(lambda left, right: left.join(right, on="timestamp", how="inner"), deduped_frames)
 
 
 def _clean_numeric(df: pl.DataFrame) -> pl.DataFrame:
