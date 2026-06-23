@@ -51,6 +51,60 @@ def test_select_feature_accepts_polars_correlation_matrix():
     assert select_feature(corre_df=corre_df, theshold=0.5) == ["feature_a"]
 
 
+def test_select_feature_matches_pandas_reference_removal_order():
+    from operator_futures.feature_selection.cor_util import select_feature
+
+    corre_df = pl.DataFrame(
+        {
+            "feature": ["feature_a", "feature_b", "feature_c", "feature_d"],
+            "feature_a": [1.0, 0.9, 0.9, 0.1],
+            "feature_b": [0.9, 1.0, 0.1, 0.1],
+            "feature_c": [0.9, 0.1, 1.0, 0.1],
+            "feature_d": [0.1, 0.1, 0.1, 1.0],
+        }
+    )
+
+    assert select_feature(corre_df=corre_df, theshold=0.7) == [
+        "feature_a",
+        "feature_d",
+    ]
+
+
+def test_ic_correlation_matrix_uses_pairwise_nan_handling():
+    from operator_futures.feature_selection.ic_correlation import (
+        build_pandas_like_correlation_frame,
+    )
+
+    frame = pl.DataFrame(
+        {
+            "feature_a": [1.0, 2.0, float("nan"), 4.0],
+            "feature_b": [2.0, 4.0, 6.0, float("nan")],
+            "feature_c": [3.0, 3.0, 3.0, 3.0],
+        }
+    )
+
+    result = build_pandas_like_correlation_frame(
+        frame, ["feature_a", "feature_b", "feature_c"]
+    )
+
+    assert result["feature"].to_list() == ["feature_a", "feature_b", "feature_c"]
+    assert abs(result["feature_b"].to_list()[0] - 1.0) < 1e-12
+    assert np.isnan(result["feature_c"].to_list()[0])
+
+
+def test_scale_helpers_ignore_nan_like_pandas():
+    from operator_futures.scale_describe_save.scale_save import scale_mean, scale_std
+
+    frame = pl.DataFrame({"feature_a": [1.0, float("nan"), 3.0]})
+
+    scaled = scale_mean(scale_std(frame, 10), 10, 10)
+
+    values = scaled["feature_a"].to_list()
+    assert not np.isnan(values[0])
+    assert np.isnan(values[1])
+    assert not np.isnan(values[2])
+
+
 def test_ic_correlation_cli_writes_expected_files(tmp_path):
     input_file = (
         tmp_path

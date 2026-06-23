@@ -22,15 +22,29 @@ def select_feature(features=None, df=None, corre_df: pl.DataFrame = None, thesho
     if corre_df is not None:
         corre_df = _normalise_correlation_matrix(corre_df)
         all_feature_names = [column for column in corre_df.columns if column != "feature"]
+        if not all_feature_names:
+            return []
+        row_feature_names = corre_df["feature"].to_list()
+        row_index_by_feature = {
+            feature: index for index, feature in enumerate(row_feature_names)
+        }
+        col_index_by_feature = {
+            feature: index for index, feature in enumerate(all_feature_names)
+        }
+        matrix = corre_df.select(all_feature_names).to_numpy()
         selected_feature_names = []
-        remaining_features = list(all_feature_names)
+        remaining_features = all_feature_names
         for feature in all_feature_names:
             if feature in remaining_features:
                 selected_feature_names.append(feature)
                 remaining_features.remove(feature)
-                for remain_f in list(remaining_features):
-                    value = corre_df.filter(pl.col("feature") == feature).select(remain_f)
-                    if value.height and np.abs(float(value.item())) > theshold:
+                row_index = row_index_by_feature.get(feature)
+                if row_index is None:
+                    continue
+                for remain_f in remaining_features:
+                    col_index = col_index_by_feature[remain_f]
+                    value = matrix[row_index, col_index]
+                    if np.abs(float(value)) > theshold:
                         remaining_features.remove(remain_f)
         return selected_feature_names
     if features is None or df is None:

@@ -1,28 +1,24 @@
+import pandas as pd
+import numpy as np
 import os
+import re
+from datetime import datetime
 import argparse
-import logging
 import sys
-import time
+from multiprocessing import Pool
 
 sys.path.append(".")
-from operator_futures.util import find_ohlcv_groups, find_ohlc_groups
-import polars as pl
-from operator_futures.time_operator.multi_processing_util import (
+from operator_futures.feature_validation.pandas_reference.util import find_ohlcv_groups, find_ohlc_groups
+try:
+    from memory_profiler import profile
+except ModuleNotFoundError:  # pragma: no cover
+    def profile(func):
+        return func
+from operator_futures.feature_validation.pandas_reference.time_operator.multi_processing_util import (
     get_multi_window_ohlcv,
     get_multi_window_ohlc,
     get_multi_feature_window_price,
-    _inner_join_on_timestamp,
 )
-
-
-logger = logging.getLogger(__name__)
-
-
-def configure_logging():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
 
 parser = argparse.ArgumentParser()
 # data path
@@ -75,49 +71,27 @@ parser.add_argument(
     default="2,6,12,16,24,48",
     help="List of windows sizes as comma-separated values",
 )
-parser.add_argument(
-    "--orderbook_depth",
-    type=int,
-    default=25,
-    help="the available orderbook depth",
-)
 
 
 def main(args):
-    started_at = time.monotonic()
     time_feature_list_all = []
     windows = list(map(int, args.windows.split(",")))
     args.data_path = os.path.join(args.root_path, args.data_path)
     args.save_path = os.path.join(args.root_path, args.save_path)
-    logger.info(
-        "Starting time feature process: symbol=%s start_date=%s end_date=%s target_freq=%s windows=%s data_path=%s save_path=%s orderbook_depth=%d",
-        args.symbols,
-        args.start_date,
-        args.end_date,
-        args.target_freq,
-        windows,
-        args.data_path,
-        args.save_path,
-        args.orderbook_depth,
+    original_df = pd.read_feather(
+        os.path.join(
+            args.data_path,
+            args.symbols,
+            args.target_freq,
+            args.start_date + "-" + args.end_date + ".feather",
+        )
     )
-    input_path = os.path.join(
-        args.data_path,
-        args.symbols,
-        args.target_freq,
-        args.start_date + "-" + args.end_date + ".feather",
-    )
-    logger.info("Reading time feature input: input=%s", input_path)
-    original_df = pl.read_ipc(input_path)
-    logger.info(
-        "Loaded time feature input: rows=%d columns=%d",
-        original_df.height,
-        len(original_df.columns),
-    )
-    ohlcv_features, _ = find_ohlcv_groups(original_df.columns)
-    ohlc_features, _ = find_ohlc_groups(original_df.columns)
+    original_df.set_index("timestamp", inplace=True)
+    ohlcv_features, _ = find_ohlcv_groups(original_df)
+    ohlc_features, _ = find_ohlc_groups(original_df)
     price_features = [
-        *[f"bid{l+1}_price" for l in range(args.orderbook_depth)],
-        *[f"ask{l+1}_price" for l in range(args.orderbook_depth)],
+        *[f"bid{l+1}_price" for l in range(25)],
+        *[f"ask{l+1}_price" for l in range(25)],
         "buy_spread_oe_max",
         "sell_spread_oe_max",
         "wap_1",
@@ -128,18 +102,9 @@ def main(args):
         "buy_volume_oe",
         "sell_volume_oe",
         "imblance_volume_oe",
-        *[f"ask{l+1}_size_n" for l in range(args.orderbook_depth)],
-        *[f"bid{l+1}_size_n" for l in range(args.orderbook_depth)],
+        *[f"ask{l+1}_size_n" for l in range(25)],
+        *[f"bid{l+1}_size_n" for l in range(25)],
     ]
-    price_features = [
-        feature for feature in price_features if feature in original_df.columns
-    ]
-    logger.info(
-        "Detected time feature groups: price_features=%d ohlcv_groups=%d ohlc_groups=%d",
-        len(price_features),
-        len(ohlcv_features),
-        len(ohlc_features),
-    )
     df_time = get_multi_feature_window_price(original_df, windows, price_features)
     time_feature_list_all.append(df_time)
     for key in ohlcv_features:
@@ -151,19 +116,18 @@ def main(args):
         after_name = prefix + suffix
         converted_strings = "_origin" if after_name == "" else after_name
         feature_names = ohlcv_features[ffuixes]
-        df_ohlcv = original_df.select(["timestamp", *feature_names]).rename(
-            {
+        df_ohlcv = original_df[feature_names].copy()
+        df_ohlcv.rename(
+            columns={
                 prefix + key + suffix: key
                 for key in ["open", "high", "low", "close", "volume"]
             },
+            inplace=True,
         )
         p_process_ohlcv = get_multi_window_ohlcv(df_ohlcv, windows)
-        p_process_ohlcv = p_process_ohlcv.rename(
-            {
-                key: key + converted_strings
-                for key in p_process_ohlcv.columns
-                if key != "timestamp"
-            }
+        p_process_ohlcv.rename(
+            columns={key: key + converted_strings for key in p_process_ohlcv.columns},
+            inplace=True,
         )
         time_feature_list_all.append(p_process_ohlcv)
     for ffuixes in ohlc_features:
@@ -171,10 +135,11 @@ def main(args):
         # print("prefix",prefix,"suffix",suffix)
         after_name = prefix + suffix
         converted_strings = "_origin" if after_name == "" else after_name
-        logger.info("Processing OHLC feature group: suffix=%s features=%d", converted_strings, len(ohlc_features[ffuixes]))
+        print(converted_strings)
         feature_names = ohlc_features[ffuixes]
-        df_ohlc = original_df.select(["timestamp", *feature_names]).rename(
-            {
+        df_ohlc = original_df[feature_names].copy()
+        df_ohlc.rename(
+            columns={
                 prefix + key + suffix: key
                 for key in [
                     "open",
@@ -182,39 +147,31 @@ def main(args):
                     "low",
                     "close",
                 ]
-            }
+            },
+            inplace=True,
         )
         p_process_ohlc = get_multi_window_ohlc(df_ohlc, windows)
-        p_process_ohlc = p_process_ohlc.rename(
-            {
-                key: key + converted_strings
-                for key in p_process_ohlc.columns
-                if key != "timestamp"
-            }
+        p_process_ohlc.rename(
+            columns={key: key + converted_strings for key in p_process_ohlc.columns},
+            inplace=True,
         )
         time_feature_list_all.append(p_process_ohlc)
 
-    time_df = _inner_join_on_timestamp(time_feature_list_all)
+    time_df = pd.concat(time_feature_list_all, axis=1, join="inner")
+    time_df.reset_index(inplace=True)
     if not os.path.exists(os.path.join(args.save_path, args.symbols, args.target_freq)):
         os.makedirs(os.path.join(args.save_path, args.symbols, args.target_freq))
-    output_path = os.path.join(
-        args.save_path,
-        args.symbols,
-        args.target_freq,
-        args.start_date + "-" + args.end_date + ".feather",
-    )
-    logger.info("Writing time feature output: output=%s rows=%d columns=%d", output_path, time_df.height, len(time_df.columns))
-    time_df.write_ipc(output_path)
-    logger.info(
-        "Finished time feature process: rows=%d columns=%d elapsed_seconds=%.2f",
-        time_df.height,
-        len(time_df.columns),
-        time.monotonic() - started_at,
+    time_df.to_feather(
+        os.path.join(
+            args.save_path,
+            args.symbols,
+            args.target_freq,
+            args.start_date + "-" + args.end_date + ".feather",
+        )
     )
 
 
 if __name__ == "__main__":
-    configure_logging()
     args = parser.parse_args()
     main(args)
-    logger.info("Done!")
+    print("Done!")

@@ -5,12 +5,24 @@ import os
 import argparse
 import sys
 import json
+import logging
 from pathlib import Path
+import time
 
 import polars as pl
 
 sys.path.append(".")
 from operator_futures.feature_selection.cor_util import select_feature
+
+
+logger = logging.getLogger(__name__)
+
+
+def configure_logging():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
 
 # TODO add multi-labelling: the target is calculated as a list of window lengths
 parser = argparse.ArgumentParser()
@@ -101,10 +113,27 @@ parser.add_argument(
 def calculate_cor(column, target):
     column = np.asarray(column, dtype=float)
     target = np.asarray(target, dtype=float)
-    if column.size == 0 or target.size == 0 or np.nanstd(column) == 0 or np.nanstd(target) == 0:
-        return 0.0
-    value = np.corrcoef(column, target)[0, 1]
-    return float(np.nan_to_num(value, nan=0.0, posinf=0.0, neginf=0.0))
+    valid = ~(np.isnan(column) | np.isnan(target))
+    column = column[valid]
+    target = target[valid]
+    if column.size < 2 or target.size < 2 or np.std(column) == 0 or np.std(target) == 0:
+        return np.nan
+    return float(np.corrcoef(column, target)[0, 1])
+
+
+def build_pandas_like_correlation_frame(df: pl.DataFrame, features: list[str]) -> pl.DataFrame:
+    if not features:
+        return pl.DataFrame({"feature": []})
+    arrays = [df[feature].to_numpy() for feature in features]
+    matrix = np.empty((len(features), len(features)), dtype=float)
+    for row_index, left in enumerate(arrays):
+        for col_index in range(row_index, len(features)):
+            value = calculate_cor(left, arrays[col_index])
+            matrix[row_index, col_index] = value
+            matrix[col_index, row_index] = value
+    return pl.DataFrame(matrix, schema=features).with_columns(
+        pl.Series("feature", features)
+    ).select(["feature", *features])
 
 
 def remove_duplicates_preserve_order(lst):
@@ -145,6 +174,7 @@ def select_reward_state_features(df, market_type="crypto_futures", orderbook_dep
 
 
 def main(args):
+    started_at = time.monotonic()
     args.data_path = os.path.join(args.root_path, args.data_path)
     args.save_path = os.path.join(args.root_path, args.save_path)
     input_path = Path(args.data_path) / args.symbols / args.target_freq / (
@@ -154,13 +184,34 @@ def main(args):
         "{}-{}".format(args.start_date, args.end_date)
     )
     output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(
+        "Starting IC correlation process: symbol=%s start_date=%s end_date=%s target_freq=%s input=%s output_dir=%s ic_threshold=%s cor_threshold=%s windows=%s market_type=%s orderbook_depth=%d",
+        args.symbols,
+        args.start_date,
+        args.end_date,
+        args.target_freq,
+        input_path,
+        output_dir,
+        args.ic_theshold,
+        args.cor_theshold,
+        args.windows_list,
+        args.market_type,
+        args.orderbook_depth,
+    )
     df = pl.read_ipc(input_path)
+    logger.info("Loaded IC input: rows=%d columns=%d", df.height, len(df.columns))
     reward_features, state_feature = select_reward_state_features(
         df, args.market_type, args.orderbook_depth
+    )
+    logger.info(
+        "Selected IC feature groups: reward_features=%d candidate_state_features=%d",
+        len(reward_features),
+        len(state_feature),
     )
 
     ic_selection_key_all = []
     for window_length in args.windows_list:
+        logger.info("Calculating IC window: window=%d", window_length)
         target = calculate_target(df, "mark_price", window_length)
         df_ic = df.slice(0, max(df.height - window_length, 0))
         ic_result = [
@@ -181,25 +232,39 @@ def main(args):
             key for key in cor_abs.keys() if cor_abs[key] > args.ic_theshold
         ]
         ic_selection_key_all.extend(ic_selection_key)
+        logger.info(
+            "Finished IC window: window=%d selected_features=%d output=%s",
+            window_length,
+            len(ic_selection_key),
+            output_dir / "ic_window_{}.json".format(window_length),
+        )
     # ic_selection_key = list(set(ic_selection_key_all))
     ic_selection_key=remove_duplicates_preserve_order(ic_selection_key_all)
-    if ic_selection_key:
-        df_cor = df.select(ic_selection_key).corr().with_columns(
-            pl.Series("feature", ic_selection_key)
-        )
-        df_cor = df_cor.select(["feature", *ic_selection_key])
-    else:
-        df_cor = pl.DataFrame({"feature": []})
+    logger.info("Merged IC selected features: selected_features=%d", len(ic_selection_key))
+    df_cor = build_pandas_like_correlation_frame(df, ic_selection_key)
     df_cor.write_csv(output_dir / "correlation.csv")
     selected_feature_names = select_feature(corre_df=df_cor, theshold=args.cor_theshold)
     state_feature = selected_feature_names
     out = df.select([*reward_features, *state_feature])
+    logger.info(
+        "Writing IC outputs: selected_state_features=%d total_columns=%d output_dir=%s",
+        len(state_feature),
+        len(out.columns),
+        output_dir,
+    )
     out.write_ipc(output_dir / "df.feather")
     np.save(output_dir / "state_features.npy", np.array(state_feature))
+    logger.info(
+        "Finished IC correlation process: rows=%d columns=%d elapsed_seconds=%.2f",
+        out.height,
+        len(out.columns),
+        time.monotonic() - started_at,
+    )
     return out
 
 
 if __name__ == "__main__":
+    configure_logging()
     args = parser.parse_args()
     main(args)
-    print("Done!")
+    logger.info("Done!")
