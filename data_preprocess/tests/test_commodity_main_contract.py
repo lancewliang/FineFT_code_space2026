@@ -11,6 +11,7 @@ from operator_futures.commodity.main_contract import (
     infer_years_for_date_range,
     iter_contract_files,
     normalize_timestamp,
+    load_contract_files_by_trading_day_for_years,
     select_main_contract_for_day,
     stitch_main_contract_frames,
     write_main_contract_daily_files_for_date_range,
@@ -105,6 +106,23 @@ def test_iter_contract_files_scans_raw_download_layout(tmp_path):
     files = list(iter_contract_files(tmp_path / "data" / "原始下载", "燃料油", "2026"))
 
     assert files == [nested_file, flat_file]
+
+
+def test_load_contract_files_by_trading_day_for_years_returns_paths(tmp_path):
+    raw_root = tmp_path / "data" / "原始下载"
+    first = _write_contract_file(
+        raw_root, "燃料油", "2026", "01", "20260105", "fu2602", "20260104", [0, 30]
+    )
+    second = _write_contract_file(
+        raw_root, "燃料油", "2026", "01", "20260106", "fu2603", "20260105", [0, 20]
+    )
+
+    days = load_contract_files_by_trading_day_for_years(
+        raw_root, "燃料油", ["2026"]
+    )
+
+    assert days["20260105"]["fu2602"] == first
+    assert days["20260106"]["fu2603"] == second
 
 
 def test_select_main_contract_uses_previous_day_volume():

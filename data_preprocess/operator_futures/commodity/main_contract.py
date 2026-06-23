@@ -260,6 +260,61 @@ def load_contract_frames_by_trading_day_for_years(
     return days
 
 
+def load_contract_files_by_trading_day_for_years(
+    raw_root: Path, commodity_name: str, years: Sequence[str]
+) -> Dict[str, Dict[str, Path]]:
+    days: Dict[str, Dict[str, Path]] = {}
+    for year in years:
+        file_paths = list(iter_contract_files(raw_root, commodity_name, str(year)))
+        logger.info(
+            "Loading commodity raw file paths: commodity=%s year=%s files=%d",
+            commodity_name,
+            year,
+            len(file_paths),
+        )
+        for file_path in file_paths:
+            frame = pl.read_csv(file_path, n_rows=1)
+            if frame.height == 0:
+                logger.debug(
+                    "Skipping empty commodity raw file: file_name=%s source_file=%s",
+                    file_path.name,
+                    file_path,
+                )
+                continue
+            required = {"InstrumentID", "TradingDay", "ActionDay", "UpdateTime"}
+            missing = required.difference(frame.columns)
+            if missing:
+                raise ValueError(
+                    f"{file_path} missing required columns: {sorted(missing)}"
+                )
+
+            trading_days = frame["TradingDay"].cast(pl.Utf8).unique().to_list()
+            if len(trading_days) != 1:
+                raise ValueError(
+                    f"{file_path} contains multiple TradingDay values: {trading_days}"
+                )
+            contract = str(frame.item(0, "InstrumentID"))
+            trading_day = str(trading_days[0])
+            days.setdefault(trading_day, {})[contract] = file_path
+            logger.debug(
+                "Loaded commodity contract file path: trading_day=%s contract=%s "
+                "file_name=%s source_file=%s",
+                trading_day,
+                contract,
+                file_path.name,
+                file_path,
+            )
+    contract_count = sum(len(contracts) for contracts in days.values())
+    logger.info(
+        "Loaded commodity raw file paths: commodity=%s years=%s trading_days=%d contracts=%d",
+        commodity_name,
+        ",".join(str(year) for year in years),
+        len(days),
+        contract_count,
+    )
+    return days
+
+
 def _trading_day_in_range(trading_day: str, start_date: str, end_date: str) -> bool:
     trading_ts = datetime.strptime(trading_day, "%Y%m%d").date()
     return _parse_date(start_date) <= trading_ts < _parse_date(end_date)
@@ -283,13 +338,13 @@ def _iter_iso_dates(start_date: str, end_date: str) -> Iterable[str]:
         current += timedelta(days=1)
 
 
-def build_main_contract_daily_frames_for_date_range(
+def _iter_main_contract_daily_frames_for_date_range(
     raw_root: Path,
     commodity_name: str,
     start_date: str,
     end_date: str,
     symbol: str,
-) -> Dict[str, pl.DataFrame]:
+) -> Iterable[Tuple[str, pl.DataFrame]]:
     years = infer_years_for_date_range(start_date, end_date)
     logger.info(
         "Building commodity main-contract daily files: symbol=%s commodity=%s start_date=%s end_date=%s years=%s",
@@ -299,17 +354,16 @@ def build_main_contract_daily_frames_for_date_range(
         end_date,
         ",".join(years),
     )
-    days = load_contract_frames_by_trading_day_for_years(
+    days = load_contract_files_by_trading_day_for_years(
         raw_root, commodity_name, years
     )
-    daily: Dict[str, pl.DataFrame] = {}
     selected_dates = set()
     previous_frames: Dict[str, pl.DataFrame] = {}
 
     for trading_day in sorted(days):
         current_items = days[trading_day]
         current_frames = {
-            contract: frame for contract, (frame, _) in current_items.items()
+            contract: pl.read_csv(file_path) for contract, file_path in current_items.items()
         }
         if not _trading_day_in_range(trading_day, start_date, end_date):
             previous_frames = current_frames
@@ -318,7 +372,8 @@ def build_main_contract_daily_frames_for_date_range(
         contract, reason = select_main_contract_for_day(
             previous_frames, current_frames, symbol
         )
-        frame, source_file = current_items[contract]
+        source_file = current_items[contract]
+        frame = current_frames[contract]
         _log_selected_main_contract_file(
             trading_day,
             contract,
@@ -331,9 +386,7 @@ def build_main_contract_daily_frames_for_date_range(
             pl.lit(reason).alias("main_contract_selection_reason")
         )
         date = _format_trading_day_file_date(trading_day)
-        daily[date] = stitch_main_contract_frames(
-            [(trading_day, contract, copied, source_file)]
-        )
+        yield date, stitch_main_contract_frames([(trading_day, contract, copied, source_file)])
         selected_dates.add(date)
         previous_frames = current_frames
 
@@ -345,9 +398,23 @@ def build_main_contract_daily_frames_for_date_range(
             "Skipped commodity main-contract source dates: dates=%s",
             ",".join(skipped),
         )
-    if not daily:
+    if not selected_dates:
         raise ValueError("No selected main-contract frames to stitch")
-    return daily
+
+
+def build_main_contract_daily_frames_for_date_range(
+    raw_root: Path,
+    commodity_name: str,
+    start_date: str,
+    end_date: str,
+    symbol: str,
+) -> Dict[str, pl.DataFrame]:
+    return {
+        date: frame
+        for date, frame in _iter_main_contract_daily_frames_for_date_range(
+            raw_root, commodity_name, start_date, end_date, symbol
+        )
+    }
 
 
 def write_main_contract_daily_files_for_date_range(
@@ -358,16 +425,15 @@ def write_main_contract_daily_files_for_date_range(
     end_date: str,
     symbol: str,
 ) -> List[Path]:
-    daily = build_main_contract_daily_frames_for_date_range(
+    output_dir.mkdir(parents=True, exist_ok=True)
+    written: List[Path] = []
+    for date, frame in _iter_main_contract_daily_frames_for_date_range(
         raw_root,
         commodity_name,
         start_date,
         end_date,
         symbol,
-    )
-    output_dir.mkdir(parents=True, exist_ok=True)
-    written: List[Path] = []
-    for date, frame in sorted(daily.items()):
+    ):
         path = output_dir / f"{date}.csv"
         if path.exists():
             logger.info("Overwriting commodity main-contract daily file: output=%s", path)
