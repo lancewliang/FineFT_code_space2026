@@ -4,6 +4,7 @@ import subprocess
 import sys
 
 import numpy as np
+import pandas as pd
 import polars as pl
 
 
@@ -103,6 +104,31 @@ def test_scale_helpers_ignore_nan_like_pandas():
     assert not np.isnan(values[0])
     assert np.isnan(values[1])
     assert not np.isnan(values[2])
+
+
+def test_scale_helpers_match_reference_for_tiny_std_large_mean_adjustment():
+    from operator_futures.feature_validation.pandas_reference.scale_describe_save.scale_save import (
+        scale_mean as pandas_scale_mean,
+        scale_std as pandas_scale_std,
+    )
+    from operator_futures.scale_describe_save.scale_save import scale_mean, scale_std
+
+    pandas_frame = pd.DataFrame(
+        {
+            "corr_like": [
+                1.0000000001,
+                0.9999999999,
+                1.0000000002,
+                0.9999999998,
+            ]
+        }
+    )
+    polars_frame = pl.from_pandas(pandas_frame)
+
+    expected = pandas_scale_mean(pandas_scale_std(pandas_frame, 10), 10, 10)
+    actual = scale_mean(scale_std(polars_frame, 10), 10, 10).to_pandas()
+
+    pd.testing.assert_frame_equal(actual, expected)
 
 
 def test_ic_correlation_cli_writes_expected_files(tmp_path):

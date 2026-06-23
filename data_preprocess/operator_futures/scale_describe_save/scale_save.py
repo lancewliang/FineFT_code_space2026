@@ -66,29 +66,31 @@ parser.add_argument(
 
 
 def scale_std(df: pl.DataFrame, log_base=10):
-    exprs = []
+    columns = {}
     for column in df.columns:
-        std = df.select(pl.col(column).drop_nans().std()).item()
-        if std is None or std == 0:
-            scale = 1.0
-        else:
-            scale = log_base ** np.floor(np.log10(std) * np.log10(log_base) / np.log10(10))
-        exprs.append((pl.col(column) / scale).alias(column))
-    return df.with_columns(exprs)
+        values = df.get_column(column).to_numpy().astype(float, copy=False)
+        std = np.nanstd(values, ddof=1)
+        scale = log_base ** np.floor(np.log10(std) * np.log10(log_base) / np.log10(10))
+        columns[column] = values / scale
+    return pl.DataFrame(columns)
 
 
 def scale_mean(df: pl.DataFrame, log_base=10, clip_theshold=10):
-    exprs = []
+    columns = {}
     for column in df.columns:
-        mean_value = df.select(pl.col(column).drop_nans().mean()).item()
-        abs_mean = abs(mean_value) if mean_value is not None else 0.0
+        values = df.get_column(column).to_numpy().astype(float, copy=False)
+        mean_value = np.nanmean(values)
+        abs_mean = np.abs(mean_value)
         if abs_mean > clip_theshold:
-            adjustment = log_base ** np.round(np.log10(abs_mean) * np.log10(log_base) / np.log10(10))
+            adjustment = np.power(
+                log_base,
+                np.round(np.log10(abs_mean) * np.log10(log_base) / np.log10(10)),
+            )
             adjustment = -adjustment if mean_value > 0 else adjustment
         else:
             adjustment = 0.0
-        exprs.append((pl.col(column) + adjustment).alias(column))
-    return df.with_columns(exprs)
+        columns[column] = values + adjustment
+    return pl.DataFrame(columns)
 
 
 def main(args):
