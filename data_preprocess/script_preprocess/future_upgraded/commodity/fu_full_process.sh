@@ -1,5 +1,39 @@
 source data_preprocess/script_preprocess/future_upgraded/commodity/commodity_process.sh
 
+run_commodity_logged_step() {
+    local log_dir=$1
+    local symbol=$2
+    local target_freq=$3
+    local start_date=$4
+    local end_date=$5
+    local step_name=$6
+    shift 6
+
+    local step_log_dir="${log_dir}/steps"
+    local step_log="${step_log_dir}/${symbol}_${target_freq}_${start_date}_${end_date}_${step_name}.log"
+    mkdir -p "${step_log_dir}"
+
+    echo "[commodity][${step_name}] start -> ${step_log}"
+    local had_errexit=0
+    case "$-" in
+        *e*) had_errexit=1 ;;
+    esac
+    set +e
+    ( set -e; "$@" ) >"${step_log}" 2>&1
+    local status=$?
+    if [ "${had_errexit}" -eq 1 ]; then
+        set -e
+    else
+        set +e
+    fi
+    if [ "${status}" -eq 0 ]; then
+        echo "[commodity][${step_name}] success -> ${step_log}"
+    else
+        echo "[commodity][${step_name}] failed(${status}) -> ${step_log}"
+        return "${status}"
+    fi
+}
+
 commodity_downscale_outputs_exist() {
     local root_path=$1
     local symbol=$2
@@ -92,12 +126,12 @@ run_commodity_cross_section_process() {
         local pid=$!
         let process_count=process_count+1
         if [ "$process_count" -eq "$max_processes" ]; then
-            wait "$pid"
+            wait "$pid" || return $?
             process_count=0
         fi
         current_date=$(date -I -d "$current_date + 1 day")
     done
-    wait
+    wait || return $?
 }
 
 run_commodity_scale_save() {
@@ -151,12 +185,12 @@ run_commodity_merge_process() {
         local pid=$!
         let process_count=process_count+1
         if [ "$process_count" -eq "$max_processes" ]; then
-            wait "$pid"
+            wait "$pid" || return $?
             process_count=0
         fi
         current_date=$(date -I -d "$current_date + 1 day")
     done
-    wait
+    wait || return $?
 }
 
 run_commodity_concat_process() {
@@ -240,14 +274,43 @@ run_commodity_full_process() {
     local commodity_name=${6:-燃料油}
     local max_processes=${7:-4}
 
-    run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$start_date" "$end_date" "$symbol"
+    local log_dir="${LOG_DIR:-${root_path}/log_futures/ticker_result/commodity}"
+
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "stitch_main_contract" \
+        run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$start_date" "$end_date" "$symbol"
     local continuous_dir="${root_path}/PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/${symbol}"
-    run_commodity_downscale_continuous_by_trading_day "$root_path" "$continuous_dir" "$start_date" "$end_date" "$target_freq" "$symbol"
-    run_commodity_cross_section_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path"
-    run_commodity_merge_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path"
-    run_commodity_concat_process "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
-    run_commodity_time_feature "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
-    run_commodity_merge_and_clean "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
-    run_commodity_ic_correlation "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
-    run_commodity_scale_save "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "downscale_continuous_by_trading_day" \
+        run_commodity_downscale_continuous_by_trading_day "$root_path" "$continuous_dir" "$start_date" "$end_date" "$target_freq" "$symbol"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "cross_section" \
+        run_commodity_cross_section_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "merge" \
+        run_commodity_merge_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "concat" \
+        run_commodity_concat_process "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "time_feature" \
+        run_commodity_time_feature "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "merge_clean" \
+        run_commodity_merge_and_clean "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "ic_correlation" \
+        run_commodity_ic_correlation "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "scale_save" \
+        run_commodity_scale_save "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
 }

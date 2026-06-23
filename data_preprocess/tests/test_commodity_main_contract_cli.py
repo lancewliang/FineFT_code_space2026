@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import shutil
 import subprocess
 import sys
 
@@ -7,6 +8,26 @@ import pandas as pd
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _copy_commodity_script_tree(tmp_path: Path) -> Path:
+    source_dir = (
+        REPO_ROOT
+        / "data_preprocess"
+        / "script_preprocess"
+        / "future_upgraded"
+        / "commodity"
+    )
+    target_dir = (
+        tmp_path
+        / "data_preprocess"
+        / "script_preprocess"
+        / "future_upgraded"
+        / "commodity"
+    )
+    target_dir.parent.mkdir(parents=True)
+    shutil.copytree(source_dir, target_dir)
+    return target_dir
 
 
 def _write_contract(path: Path, contract: str, trading_day: str, action_day: str, volumes):
@@ -303,6 +324,204 @@ def test_commodity_full_process_shell_exposes_expected_functions():
     assert "run_merge_process " not in text
     assert "python - <<" not in text
     assert "operator_futures.commodity.downscale_continuous_by_trading_day" in text
+
+
+def test_commodity_full_process_writes_step_logs_and_preserves_child_log_paths(
+    tmp_path,
+):
+    script_dir = _copy_commodity_script_tree(tmp_path)
+    script = script_dir / "fu_full_process.sh"
+    original = script.read_text(encoding="utf-8")
+    script.write_text(
+        original
+        + """
+
+run_commodity_stitch_main_contract() { echo "stitch stdout"; }
+run_commodity_downscale_continuous_by_trading_day() { echo "downscale stderr" >&2; }
+run_commodity_cross_section_process() {
+    local target_freq=$4
+    local symbol=$5
+    local log_dir="log_futures/downscale/cross_section/${target_freq}/${symbol}"
+    mkdir -p "${log_dir}"
+    echo "child cross-section" >"${log_dir}/2026-01-05.log"
+}
+run_commodity_merge_process() {
+    local target_freq=$4
+    local symbol=$5
+    local log_dir="log_futures/merge/${target_freq}/${symbol}"
+    mkdir -p "${log_dir}"
+    echo "child merge" >"${log_dir}/2026-01-05.log"
+}
+run_commodity_concat_process() { echo "concat stdout"; }
+run_commodity_time_feature() { echo "time feature stdout"; }
+run_commodity_merge_and_clean() { echo "merge clean stdout"; }
+run_commodity_ic_correlation() { echo "ic stdout"; }
+run_commodity_scale_save() { echo "scale stdout"; }
+""",
+        encoding="utf-8",
+    )
+
+    env = {
+        **os.environ,
+        "ROOTPATH": str(tmp_path),
+        "START_DATE": "2026-01-05",
+        "END_DATE": "2026-01-07",
+        "TARGET_FREQ": "5min",
+        "SYMBOL": "fu",
+        "COMMODITY_NAME": "燃料油",
+        "MAX_PROCESSES": "1",
+    }
+    subprocess.run(
+        ["bash", str(script_dir / "main.sh")],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+    )
+
+    total_log = (
+        tmp_path
+        / "log_futures"
+        / "ticker_result"
+        / "commodity"
+        / "fu_5min_2026-01-05_2026-01-07.log"
+    )
+    assert total_log.exists()
+    text = total_log.read_text(encoding="utf-8")
+    for step_name in [
+        "stitch_main_contract",
+        "downscale_continuous_by_trading_day",
+        "cross_section",
+        "merge",
+        "concat",
+        "time_feature",
+        "merge_clean",
+        "ic_correlation",
+        "scale_save",
+    ]:
+        step_log = (
+            tmp_path
+            / "log_futures"
+            / "ticker_result"
+            / "commodity"
+            / "steps"
+            / f"fu_5min_2026-01-05_2026-01-07_{step_name}.log"
+        )
+        assert f"[commodity][{step_name}] start -> {step_log}" in text
+        assert f"[commodity][{step_name}] success -> {step_log}" in text
+        assert step_log.exists()
+
+    downscale_log = (
+        tmp_path
+        / "log_futures"
+        / "ticker_result"
+        / "commodity"
+        / "steps"
+        / "fu_5min_2026-01-05_2026-01-07_downscale_continuous_by_trading_day.log"
+    )
+    assert "downscale stderr" in downscale_log.read_text(encoding="utf-8")
+    assert (
+        tmp_path / "log_futures/downscale/cross_section/5min/fu/2026-01-05.log"
+    ).exists()
+    assert (tmp_path / "log_futures/merge/5min/fu/2026-01-05.log").exists()
+
+
+def test_commodity_full_process_step_logging_fails_fast(tmp_path):
+    script_dir = _copy_commodity_script_tree(tmp_path)
+    script = script_dir / "fu_full_process.sh"
+    original = script.read_text(encoding="utf-8")
+    script.write_text(
+        original
+        + """
+
+run_commodity_stitch_main_contract() { echo "stitch ok"; }
+run_commodity_downscale_continuous_by_trading_day() { echo "downscale failed" >&2; return 7; }
+run_commodity_cross_section_process() { echo "unexpected cross section"; }
+run_commodity_merge_process() { echo "unexpected merge"; }
+run_commodity_concat_process() { echo "unexpected concat"; }
+run_commodity_time_feature() { echo "unexpected time"; }
+run_commodity_merge_and_clean() { echo "unexpected clean"; }
+run_commodity_ic_correlation() { echo "unexpected ic"; }
+run_commodity_scale_save() { echo "unexpected scale"; }
+""",
+        encoding="utf-8",
+    )
+
+    env = {
+        **os.environ,
+        "ROOTPATH": str(tmp_path),
+        "START_DATE": "2026-01-05",
+        "END_DATE": "2026-01-07",
+        "TARGET_FREQ": "5min",
+        "SYMBOL": "fu",
+        "COMMODITY_NAME": "燃料油",
+        "MAX_PROCESSES": "1",
+    }
+    result = subprocess.run(
+        ["bash", str(script_dir / "main.sh")],
+        cwd=tmp_path,
+        env=env,
+    )
+
+    assert result.returncode == 7
+    total_log = (
+        tmp_path
+        / "log_futures"
+        / "ticker_result"
+        / "commodity"
+        / "fu_5min_2026-01-05_2026-01-07.log"
+    )
+    text = total_log.read_text(encoding="utf-8")
+    failed_step_log = (
+        tmp_path
+        / "log_futures"
+        / "ticker_result"
+        / "commodity"
+        / "steps"
+        / "fu_5min_2026-01-05_2026-01-07_downscale_continuous_by_trading_day.log"
+    )
+    assert (
+        f"[commodity][downscale_continuous_by_trading_day] failed(7) -> {failed_step_log}"
+        in text
+    )
+    assert "unexpected cross section" not in text
+    assert "downscale failed" in failed_step_log.read_text(encoding="utf-8")
+
+
+def test_commodity_cross_section_process_propagates_background_failures(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_python = fake_bin / "python"
+    fake_python.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "%s\\n" "$*" >> "${CALL_LOG}"\n'
+        'printf "%s\\n" "background failed" >&2\n'
+        "exit 6\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+
+    output_root = tmp_path / "PREPROCESS_DATASET" / "commodity-futures"
+    base_dir = output_root / "BASE_FEATURE" / "fu" / "5min"
+    book_dir = output_root / "DOWNSCALE_ORDERBOOK_25" / "fu" / "5min"
+    base_dir.mkdir(parents=True)
+    book_dir.mkdir(parents=True)
+    (base_dir / "2026-01-05.feather").write_text("", encoding="utf-8")
+    (book_dir / "2026-01-05.feather").write_text("", encoding="utf-8")
+
+    call_log = tmp_path / "calls.log"
+    command = f"""
+set -euo pipefail
+export PATH="{fake_bin}:$PATH"
+export CALL_LOG="{call_log}"
+source "{REPO_ROOT}/data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
+cd "{tmp_path}"
+run_commodity_cross_section_process "2026-01-05" "2026-01-06" 1 "5min" "fu" "{tmp_path}"
+"""
+
+    result = subprocess.run(["bash", "-c", command], cwd=REPO_ROOT)
+
+    assert result.returncode == 6
+    assert "--date 2026-01-05" in call_log.read_text(encoding="utf-8")
 
 
 def test_commodity_full_process_shell_sets_pythonpath_for_operator_scripts():
