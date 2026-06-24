@@ -340,6 +340,8 @@ def test_ic_and_scale_reference_use_commodity_reward_schema(tmp_path):
 
     assert "state_a" in scale_result.columns
     assert "state_b" in scale_result.columns
+    assert "symbol" in scale_result.columns
+    assert scale_result["symbol"].unique().tolist() == ["fu"]
     reward_columns = [
         column
         for column in get_reward_execution_columns(5)

@@ -301,6 +301,9 @@ def test_scale_save_cli_writes_expected_files(tmp_path):
     assert (output_dir / "df.feather").exists()
     assert (output_dir / "state_features.npy").exists()
     assert (output_dir / "df_describe.csv").exists()
+    df = pl.read_ipc(output_dir / "df.feather")
+    assert "symbol" in df.columns
+    assert df["symbol"].unique().to_list() == ["fu"]
 
 
 def test_remove_duplicates_feature_targets_do_not_import_pandas():

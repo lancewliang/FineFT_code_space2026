@@ -145,7 +145,9 @@ def main(args):
     df_state = scale_std(df_state, args.base)
     df_state = scale_mean(df_state, args.base, args.clip_theshold)
     df_describe = df_state.describe()
-    out = pl.concat([df_reward, df_state], how="horizontal")
+    out = pl.concat([df_reward, df_state], how="horizontal").with_columns(
+        pl.lit(args.symbols).alias("symbol")
+    )
     logger.info(
         "Writing scale-save outputs: output_dir=%s rows=%d columns=%d",
         output_dir,

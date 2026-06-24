@@ -284,6 +284,7 @@ def recompute_scale_save(config: ValidationConfig, start_date: str, end_date: st
     df_state = scale_std(df_state, 10)
     df_state = scale_mean(df_state, 10, 10)
     result = pd.concat([df_reward, df_state], axis=1)
+    result["symbol"] = config.symbol
     return normalize_reference_frame(result)
 
 

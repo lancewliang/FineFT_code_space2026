@@ -148,6 +148,7 @@ def main(args):
     df_state = scale_mean(df_state, args.base, args.clip_theshold)
     df_describe = df_state.describe()
     df = pd.concat([df_reward, df_state], axis=1)
+    df["symbol"] = args.symbols
     if not os.path.exists(
         os.path.join(
             args.save_path,

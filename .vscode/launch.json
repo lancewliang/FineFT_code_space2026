@@ -6,10 +6,10 @@
     "configurations": [
         
         {
-            "name": "Python Debugger: Current File with Arguments",
+            "name": "preprocess_data.py",
             "type": "debugpy",
             "request": "launch",
-            "program": "${file}",
+            "program": "${workspaceFolder}/FineFT/datahandler/preprocess_data.py",
             "console": "integratedTerminal",
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/FineFT"
@@ -26,6 +26,17 @@
                 "PYTHONPATH": "${workspaceFolder}/FineFT"
             },
             "args": "--data_path dataset/fu/valid.feather --timestamp timestamp"
+        },
+        {
+            "name": "vae_data_creation.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/FineFT/datahandler/vae_data_creation.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/FineFT"
+            },
+            "args": "--dataset_name fu"
         }
     ]
 }
