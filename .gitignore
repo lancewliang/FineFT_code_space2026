@@ -7,3 +7,4 @@ data/
 **.pyc
 log_futures/
 PREPROCESS_DATASET/
+dataset/
