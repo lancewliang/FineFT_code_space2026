@@ -1,12 +1,18 @@
 # FineFT 数据准备脚本逻辑与算法分析
 
-本文分析以下三个入口脚本：
+本文先分析核心 Python 数据处理脚本，再补充以下 shell 入口脚本的执行顺序和作用：
 
 - [`preprocess_data.py`](preprocess_data.py)：从原始 `df.feather` 切分训练、验证、测试数据，并生成训练分块。
 - [`slice_model.py`](slice_model.py)：对验证集做市场动态切片、合并和标签划分。
 - [`vae_data_creation.py`](vae_data_creation.py)：把按动态标签切好的验证片段转换成 VAE 训练用的 `.npy` 文件，并生成测试集特征数组。
+- [`create_data_adaboost.py`](create_data_adaboost.py)：把训练、验证、测试集转换成监督学习用的 `X/y` 数组。
+- [`split_train_valid_test.sh`](../../FineFT/script/data/split_train_valid_test.sh)：批量运行基础 train/valid/test 切分。
+- [`split_valid_multi_dynamics.sh`](../../FineFT/script/data/split_valid_multi_dynamics.sh)：批量运行验证集市场动态切片。
+- [`vae_data_creation.sh`](../../FineFT/script/data/vae_data_creation.sh)：批量生成 VAE 训练数组。
+- [`create_sl_data.sh`](../../FineFT/script/data/create_sl_data.sh)：批量生成监督学习数组。
+- [`ablation.sh`](../../FineFT/script/data/ablation.sh)：基于主训练集生成更小的消融实验数据，并对消融验证集做动态切片。
 
-这三步组成顺序依赖的数据构建链：
+主线 VAE 数据构建链：
 
 ```text
 dataset/<symbol>/df.feather
@@ -16,6 +22,16 @@ dataset/<symbol>/df.feather
   -> valid_processed.feather / valid/label_<k>/df_*.feather
   -> vae_data_creation.py
   -> VAE_data/label_<k>.npy / VAE_data/test.npy
+```
+
+监督学习数据构建链：
+
+```text
+dataset/<symbol>/df.feather
+  -> preprocess_data.py
+  -> train.feather / valid.feather / test.feather
+  -> create_data_adaboost.py
+  -> SL_data/X_train.npy / y_train.npy / X_valid.npy / y_valid.npy / X_test.npy / y_test.npy
 ```
 
 ## 1. preprocess_data.py
@@ -384,24 +400,297 @@ np.save(..., "test.npy")
 - 该脚本只使用验证集的动态标签片段生成 VAE 数据，没有使用训练集。
 - 顶部设置了多个线程相关环境变量，意图是限制底层数值库线程数，降低并行导致的资源占用或非确定性。
 
+## 4. create_data_adaboost.py
+
+### 输入、参数与输出
+
+该脚本由 `create_sl_data.sh` 批量调用，用于生成监督学习数据。默认输入：
+
+```text
+dataset/<dataset_name>/train.feather
+dataset/<dataset_name>/valid.feather
+dataset/<dataset_name>/test.feather
+dataset/<dataset_name>/state_features.npy
+```
+
+主要参数：
+
+- `--base_path`：输入数据根目录，默认 `dataset`。
+- `--dataset_name`：数据集名称，默认 `BTCUSDT`。
+- `--save_path`：输出数据根目录，默认 `dataset`。
+
+输出目录：
+
+```text
+dataset/<dataset_name>/SL_data/
+```
+
+输出文件：
+
+```text
+SL_data/X_train.npy
+SL_data/y_train.npy
+SL_data/X_valid.npy
+SL_data/y_valid.npy
+SL_data/X_test.npy
+SL_data/y_test.npy
+```
+
+### 核心逻辑
+
+脚本读取 `state_features.npy` 作为特征列名，并分别处理 `train.feather`、`valid.feather`、`test.feather`。特征矩阵取当前时刻的状态特征：
+
+```python
+X = data[state_features].values[:-1]
+```
+
+目标值使用下一时刻与当前时刻的 `mark_price` 差值：
+
+```python
+y = data["mark_price"].shift(-1) - data["mark_price"]
+y = y[:-1]
+```
+
+因此每个样本表示“用当前状态特征预测下一步 `mark_price` 变化”。`X` 和 `y` 都会去掉最后一行，因为最后一行没有下一时刻价格可用于构造目标。
+
+### 注意点
+
+- 该脚本依赖 `preprocess_data.py` 已经生成 `train.feather`、`valid.feather` 和 `test.feather`。
+- 该脚本不依赖 `slice_model.py` 的市场动态标签，也不依赖 `VAE_data/`。
+- `reward_feature` 在代码中固定为 `mark_price`，不能通过命令行参数修改。
+- `SL_data` 目录只在不存在时创建；重跑会覆盖同名 `.npy` 文件。
+
 ## 整体数据与算法关系
 
-这三个脚本的设计目的不同：
+这些脚本的设计目的不同：
 
 - `preprocess_data.py` 负责时间序列级别的数据切分，保证训练、验证、测试按时间先后分离。
 - `slice_model.py` 负责在验证集上识别市场动态。它使用滤波、拐点、线性斜率、DTW 距离和动态标签约束，把验证行情拆成多类连续片段。
 - `vae_data_creation.py` 负责把这些动态片段转成 VAE 可直接读取的特征矩阵。
+- `create_data_adaboost.py` 负责把基础 train/valid/test 数据转成监督学习可直接读取的特征和目标数组。
 
 从算法角度看，最关键的是 `slice_model.py`。它不是简单按固定窗口切分，而是采用“拐点初分 + 最小长度过滤 + DTW 相似性合并 + 斜率或形状标签”的动态建模流程。这样生成的 VAE 数据按市场状态分组，后续模型可以学习不同市场动态下的状态分布边界。
 
+## Shell 入口脚本的执行顺序和作用
+
+这些 shell 脚本都假设从 `FineFT` 目录运行，因为命令使用了 `python datahandler/...`、`dataset/...` 和 `log/...` 这类相对路径。运行前应先进入项目子目录并激活环境：
+
+```bash
+cd FineFT
+conda activate finetf
+```
+
+脚本中的每条命令都使用 `nohup ... >log/... 2>&1 &` 后台运行，所以同一个 shell 脚本内部的多币种任务会并行启动，调用者需要通过日志文件确认任务是否完成。
+
+### 1. split_train_valid_test.sh
+
+作用：批量运行基础数据切分。
+
+```text
+datahandler/preprocess_data.py --trading_pair BTCUSDT
+datahandler/preprocess_data.py --trading_pair BNBUSDT
+datahandler/preprocess_data.py --trading_pair ETHUSDT
+datahandler/preprocess_data.py --trading_pair DOTUSDT
+```
+
+输入：
+
+```text
+dataset/<symbol>/df.feather
+```
+
+输出：
+
+```text
+dataset/<symbol>/train.feather
+dataset/<symbol>/valid.feather
+dataset/<symbol>/test.feather
+dataset/<symbol>/train/df_*.feather
+```
+
+这是主线数据准备的第一步。后续 `split_valid_multi_dynamics.sh`、`vae_data_creation.sh`、`create_sl_data.sh` 和 `ablation.sh` 都直接或间接依赖它的输出。
+
+### 2. split_valid_multi_dynamics.sh
+
+作用：批量对基础验证集做市场动态切片。
+
+```text
+datahandler/slice_model.py --data_path dataset/<symbol>/valid.feather
+```
+
+输入：
+
+```text
+dataset/<symbol>/valid.feather
+```
+
+输出：
+
+```text
+dataset/<symbol>/valid_processed.feather
+dataset/<symbol>/valid/label_<k>/df_*.feather
+```
+
+它必须在 `split_train_valid_test.sh` 完成之后运行，因为它读取基础切分得到的 `valid.feather`。该步骤是 VAE 数据生成的前置步骤，但不是监督学习数据生成的前置步骤。
+
+### 3. vae_data_creation.sh
+
+作用：批量把动态标签验证片段转换成 VAE 训练数组，并把测试集转换成 `test.npy`。
+
+```text
+datahandler/vae_data_creation.py --dataset_name <symbol>
+```
+
+输入：
+
+```text
+dataset/<symbol>/valid/label_*/df_*.feather
+dataset/<symbol>/state_features.npy
+dataset/<symbol>/test.feather
+```
+
+输出：
+
+```text
+dataset/<symbol>/VAE_data/label_<k>.npy
+dataset/<symbol>/VAE_data/test.npy
+```
+
+它应在 `split_valid_multi_dynamics.sh` 完成之后运行。否则 `valid/label_*` 目录还不存在，无法生成按动态标签分组的 VAE 数据。
+
+### 4. create_sl_data.sh
+
+作用：批量生成监督学习数据。
+
+```text
+datahandler/create_data_adaboost.py --dataset_name <symbol>
+```
+
+输入：
+
+```text
+dataset/<symbol>/train.feather
+dataset/<symbol>/valid.feather
+dataset/<symbol>/test.feather
+dataset/<symbol>/state_features.npy
+```
+
+输出：
+
+```text
+dataset/<symbol>/SL_data/X_train.npy
+dataset/<symbol>/SL_data/y_train.npy
+dataset/<symbol>/SL_data/X_valid.npy
+dataset/<symbol>/SL_data/y_valid.npy
+dataset/<symbol>/SL_data/X_test.npy
+dataset/<symbol>/SL_data/y_test.npy
+```
+
+它只依赖 `split_train_valid_test.sh` 的基础切分结果，不依赖 `split_valid_multi_dynamics.sh` 或 `vae_data_creation.sh`。因此在基础切分完成后，`create_sl_data.sh` 可以和验证集动态切片/VAE 分支并行准备。
+
+### 5. ablation.sh
+
+作用：构建消融实验用的小规模数据分支，并对消融验证集做市场动态切片。
+
+第一组命令运行：
+
+```text
+datahandler/ablation_data_slice.py --trading_pair <symbol>
+```
+
+输入：
+
+```text
+dataset/<symbol>/train.feather
+```
+
+输出：
+
+```text
+dataset/ablation/<symbol>/train.feather
+dataset/ablation/<symbol>/valid.feather
+dataset/ablation/<symbol>/train/df_*.feather
+```
+
+`ablation_data_slice.py` 不是从原始 `df.feather` 重新切分，而是从主线已经生成的 `dataset/<symbol>/train.feather` 再切出更小的消融训练集和消融验证集。默认比例为：
+
+```text
+ablation train : ablation valid : unused = 40% : 20% : 40%
+```
+
+默认训练分块也更短：
+
+```text
+chunk_length = 864
+early_stop = 216
+```
+
+第二组命令运行：
+
+```text
+datahandler/slice_model.py --data_path dataset/ablation/<symbol>/valid.feather
+```
+
+输入：
+
+```text
+dataset/ablation/<symbol>/valid.feather
+```
+
+输出：
+
+```text
+dataset/ablation/<symbol>/valid_processed.feather
+dataset/ablation/<symbol>/valid/label_<k>/df_*.feather
+```
+
+因此，消融分支的逻辑顺序是：
+
+```text
+split_train_valid_test.sh
+  -> ablation_data_slice.py
+  -> slice_model.py --data_path dataset/ablation/<symbol>/valid.feather
+```
+
+但 `ablation.sh` 当前把两组命令都用 `&` 直接放到后台，没有在中间 `wait`。这意味着 `slice_model.py` 可能在 `ablation_data_slice.py` 写完 `dataset/ablation/<symbol>/valid.feather` 之前启动，存在竞态风险。更稳妥的运行方式是先等待第一组消融切分日志完成，再运行第二组动态切片命令。
+
 ## 建议的运行顺序
 
-在 `FineFT` 目录下运行：
+主线 VAE 数据建议按以下顺序运行：
+
+```bash
+bash script/data/split_train_valid_test.sh
+# 等待 log/data/<symbol>/train_valid_test_split.log 完成且无错误
+bash script/data/split_valid_multi_dynamics.sh
+# 等待 log/data/<symbol>/valid_split.log 完成且无错误
+bash script/data/vae_data_creation.sh
+```
+
+监督学习数据只依赖基础切分：
+
+```bash
+bash script/data/split_train_valid_test.sh
+# 等待基础切分完成
+bash script/data/create_sl_data.sh
+```
+
+消融实验数据依赖基础切分：
+
+```bash
+bash script/data/split_train_valid_test.sh
+# 等待基础切分完成
+bash script/data/ablation.sh
+```
+
+由于 `ablation.sh` 内部缺少阶段间等待，若要避免竞态，建议手动拆成两阶段执行：先运行四个 `ablation_data_slice.py` 命令并等待完成，再运行四个 `slice_model.py --data_path dataset/ablation/<symbol>/valid.feather` 命令。
+
+单个交易对的主线等价命令如下：
 
 ```bash
 python datahandler/preprocess_data.py --data_path dataset --trading_pair BNBUSDT
 python datahandler/slice_model.py --data_path dataset/BNBUSDT/valid.feather
 python datahandler/vae_data_creation.py --base_path dataset --dataset_name BNBUSDT --save_path dataset
+python datahandler/create_data_adaboost.py --base_path dataset --dataset_name BNBUSDT --save_path dataset
 ```
 
 如果要重复运行 `slice_model.py`，建议先备份或清理已有的：

@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 import pandas as pd
+import polars as pl
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -218,6 +219,9 @@ def test_downscale_single_day_cli_accepts_output_root_alias(tmp_path):
     assert (output_root / "orderbook_5.feather").exists()
     assert (output_root / "base_feature.feather").exists()
     assert (output_root / "quote_feature.feather").exists()
+    base = pl.read_ipc(output_root / "base_feature.feather")
+    assert "symbol" in base.columns
+    assert base["symbol"].unique().to_list() == ["fu"]
 
 
 def test_downscale_continuous_cli_reads_daily_input_dir_and_skips_missing_day(

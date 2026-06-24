@@ -16,7 +16,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument(
     "--data_path",
     type=str,
-    default="dataset/BTCUSDT/valid.feather",
+    default="dataset/fu/valid.feather",
     help="the number of transcation we store in one memory",
 )
 parser.add_argument(
@@ -122,15 +122,29 @@ class Linear_Market_Dynamics_Model(object):
         # get file name and extension from process_datafile_path
         file_name, file_extension = os.path.splitext(process_datafile_path)
 
+    def prepare_raw_data(self, raw_data):
+        print(f"loaded columns: {list(raw_data.columns)}")
+        required_columns = ["bid1_price", self.timestamp]
+        missing_columns = [
+            column for column in required_columns if column not in raw_data.columns
+        ]
+        if missing_columns:
+            raise ValueError(
+                f"{self.data_path} missing required columns: {missing_columns}"
+            )
+
+        raw_data[self.tic] = raw_data["symbol"]
+        raw_data[self.key_indicator] = raw_data["bid1_price"]
+        raw_data[self.timestamp] = raw_data.index
+        return raw_data
+
     def run(self):
         print("labeling start")
         path_names = Path(self.data_path).resolve().parents
         ticker_name_path = path_names[0]
         output_path = self.data_path
         raw_data = pd.read_feather(self.data_path)
-        raw_data[self.tic] = raw_data["symbol"]
-        raw_data[self.key_indicator] = raw_data["bid1_price"]
-        raw_data[self.timestamp] = raw_data.index
+        raw_data = self.prepare_raw_data(raw_data)
         process_data_path = os.path.join(ticker_name_path, "valid_processed.feather")
         raw_data.to_feather(process_data_path)
         self.data_path = process_data_path

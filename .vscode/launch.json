@@ -15,6 +15,17 @@
                 "PYTHONPATH": "${workspaceFolder}/FineFT"
             },
             "args": "--trading_pair fu"
+        },
+        {
+            "name": "slice_model.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/FineFT/datahandler/slice_model.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/FineFT"
+            },
+            "args": "--data_path dataset/fu/valid.feather --timestamp timestamp"
         }
     ]
 }
