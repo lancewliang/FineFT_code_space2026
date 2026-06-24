@@ -53,6 +53,18 @@ def test_invalid_best_quote_fails_fast():
     assert "'LastPrice':" in message
 
 
+def test_second_level_snapshots_handle_string_quote_columns():
+    raw = pl.read_csv(SAMPLE_PATH).head(1).with_columns(
+        pl.col("AskPrice1").cast(pl.Utf8)
+    )
+
+    second = create_second_level_snapshots(raw)
+
+    assert second.height == 1
+    assert second.item(0, "BidPrice1") == 2593.0
+    assert second.item(0, "AskPrice1") == 2638.0
+
+
 def test_second_level_drops_rows_with_all_depth_prices_null():
     raw = pl.read_csv(SAMPLE_PATH).head(2)
     dropped_timestamp = datetime.strptime(

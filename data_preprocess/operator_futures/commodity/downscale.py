@@ -12,6 +12,16 @@ ASK_PRICE_COLUMNS = [f"AskPrice{level}" for level in range(1, 6)]
 BID_VOLUME_COLUMNS = [f"BidVolume{level}" for level in range(1, 6)]
 ASK_VOLUME_COLUMNS = [f"AskVolume{level}" for level in range(1, 6)]
 DEPTH_PRICE_COLUMNS = BID_PRICE_COLUMNS + ASK_PRICE_COLUMNS
+SECOND_LEVEL_PRICE_COLUMNS = (
+    DEPTH_PRICE_COLUMNS
+    + [
+        "LastPrice",
+        "LowPrice",
+        "HighPrice",
+        "LowerLimitPrice",
+        "UpperLimitPrice",
+    ]
+)
 
 
 def _polars_freq(target_freq: str) -> str:
@@ -71,46 +81,51 @@ def _resample(frame: pl.DataFrame, target_freq: str, aggs: List[pl.Expr]) -> pl.
 
 
 def validate_best_quotes(df: pl.DataFrame, contract: str) -> None:
+    bid_price1 = pl.col("BidPrice1").cast(pl.Float64, strict=False)
+    ask_price1 = pl.col("AskPrice1").cast(pl.Float64, strict=False)
+    last_price = pl.col("LastPrice").cast(pl.Float64, strict=False)
+    low_price = pl.col("LowPrice").cast(pl.Float64, strict=False)
+    high_price = pl.col("HighPrice").cast(pl.Float64, strict=False)
+    lower_limit_price = pl.col("LowerLimitPrice").cast(pl.Float64, strict=False)
+    upper_limit_price = pl.col("UpperLimitPrice").cast(pl.Float64, strict=False)
+    normalized = df.with_columns(
+        bid_price1.alias("BidPrice1"),
+        ask_price1.alias("AskPrice1"),
+    )
     invalid = pl.any_horizontal(
-        pl.col("BidPrice1").is_null(),
-        pl.col("AskPrice1").is_null(),
-        pl.col("BidPrice1") <= 0,
-        pl.col("AskPrice1") <= 0,
-        pl.col("BidPrice1") >= pl.col("AskPrice1"),
+        bid_price1.is_null(),
+        ask_price1.is_null(),
+        bid_price1 <= 0,
+        ask_price1 <= 0,
+        bid_price1 >= ask_price1,
     )
     limit_down_single_sided = (
-        pl.col("LastPrice").is_not_null()
-        & pl.col("LowerLimitPrice").is_not_null()
-        & (
-            (pl.col("LastPrice") == pl.col("LowerLimitPrice"))
-            | (pl.col("LowPrice") == pl.col("LowerLimitPrice"))
-        )
+        last_price.is_not_null()
+        & lower_limit_price.is_not_null()
+        & ((last_price == lower_limit_price) | (low_price == lower_limit_price))
         & pl.all_horizontal(
             [pl.col(column).is_null() for column in BID_PRICE_COLUMNS]
         )
         & pl.all_horizontal(
             [pl.col(column).fill_null(0) == 0 for column in BID_VOLUME_COLUMNS]
         )
-        & pl.col("AskPrice1").is_not_null()
-        & (pl.col("AskPrice1") > 0)
+        & ask_price1.is_not_null()
+        & (ask_price1 > 0)
     ).fill_null(False)
     limit_up_single_sided = (
-        pl.col("LastPrice").is_not_null()
-        & pl.col("UpperLimitPrice").is_not_null()
-        & (
-            (pl.col("LastPrice") == pl.col("UpperLimitPrice"))
-            | (pl.col("HighPrice") == pl.col("UpperLimitPrice"))
-        )
+        last_price.is_not_null()
+        & upper_limit_price.is_not_null()
+        & ((last_price == upper_limit_price) | (high_price == upper_limit_price))
         & pl.all_horizontal(
             [pl.col(column).is_null() for column in ASK_PRICE_COLUMNS]
         )
         & pl.all_horizontal(
             [pl.col(column).fill_null(0) == 0 for column in ASK_VOLUME_COLUMNS]
         )
-        & pl.col("BidPrice1").is_not_null()
-        & (pl.col("BidPrice1") > 0)
+        & bid_price1.is_not_null()
+        & (bid_price1 > 0)
     ).fill_null(False)
-    invalid_rows = df.filter(
+    invalid_rows = normalized.filter(
         invalid & ~(limit_down_single_sided | limit_up_single_sided)
     )
     if invalid_rows.height:
@@ -156,7 +171,15 @@ def create_second_level_snapshots(df: pl.DataFrame) -> pl.DataFrame:
         if "InstrumentID" in df.columns and df.height
         else "unknown"
     )
-    copied = drop_empty_depth_price_rows(with_normalized_timestamp(df))
+    copied = drop_empty_depth_price_rows(
+        with_normalized_timestamp(df).with_columns(
+            [
+                pl.col(column).cast(pl.Float64, strict=False).alias(column)
+                for column in SECOND_LEVEL_PRICE_COLUMNS
+                if column in df.columns
+            ]
+        )
+    )
     validate_best_quotes(copied, contract)
     return (
         copied.sort("timestamp")
