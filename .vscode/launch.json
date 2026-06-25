@@ -38,5 +38,17 @@
             },
             "args": "--dataset_name fu"
         }
+        ,
+        {
+            "name": "build_maintenance_margin_dict.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/data_preprocess/operator_futures/commodity/build_maintenance_margin_dict.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/data_preprocess"
+            },
+            "args": "--dataset_name fu"
+        }
     ]
 }

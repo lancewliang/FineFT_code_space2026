@@ -6,11 +6,19 @@ sys.path.append(".")
 import os
 import random
 import argparse
+import logging
 import numpy as np
 import torch
 from torch import nn
 import pandas as pd
 from torch.utils.tensorboard import SummaryWriter
+
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+    )
 
 # RL util
 from RL.util.replay_buffer_DQN import Multi_step_ReplayBuffer_multi_info
@@ -676,6 +684,13 @@ class Weighted_Contexts_DQN:
         return action
 
     def train(self):
+        logger.info(
+            "开始训练 | 数据集=%s | 总采样数=%d | 预训练轮数=%d | 设备=%s",
+            self.dataset_name,
+            self.num_sample,
+            self.pretrain_epoch,
+            self.device,
+        )
         epoch_return_rate_train_list = []
         epoch_final_balance_train_list = []
         epoch_reward_sum_train_list = []
@@ -702,11 +717,13 @@ class Weighted_Contexts_DQN:
         step_counter_pretrain = 0
         step_counter_diverse = 0
         for sample in range(self.num_sample):
+            logger.info("===== 第 %d/%d 轮采样 =====", sample + 1, self.num_sample)
             pretrain = sample < self.pretrain_epoch
+            logger.info("当前阶段: %s", "预训练" if pretrain else "多样化训练")
             df_index = random.choices(range(self.total_df_index_length), k=1)[0]
             initial_action = random.choices(range(self.position_choices), k=1)[0]
             print(
-                "we are training with df_{} with initial action {}".format(
+                "正在使用 df_{} 进行训练, 初始动作={}".format(
                     df_index, initial_action
                 )
             )
@@ -719,7 +736,7 @@ class Weighted_Contexts_DQN:
                 )
             )
             print(
-                "the initial position and leverage are {} and {}".format(
+                "初始仓位={}, 初始杠杆={}".format(
                     self.initial_position, self.initial_leverage
                 )
             )
@@ -778,7 +795,7 @@ class Weighted_Contexts_DQN:
                     optimal_step_counter = 0
                     episode_reward_sum = 0
                     print(
-                        "pretrain using rule based policy with index {}".format(index)
+                        "预训练阶段: 使用基于规则策略 index={} 采数".format(index)
                     )
                     while True:
                         a = self.act_multi_styles_pretrain(
@@ -836,6 +853,14 @@ class Weighted_Contexts_DQN:
                                     global_step=self.update_counter,
                                     walltime=None,
                                 )
+                                logger.info(
+                                    "预训练更新 | 步数=%d | 累计更新次数=%d | 总损失=%.6f | KL损失=%.6f | TD损失=%.6f",
+                                    step_counter_pretrain,
+                                    self.update_counter,
+                                    total_loss,
+                                    KL_loss,
+                                    td_loss,
+                                )
                     final_balance = env.unrealized_pnl + env.wallet_balance
                     required_money = self.initial_wallet_balance
                     self.writer.add_scalar(
@@ -851,12 +876,19 @@ class Weighted_Contexts_DQN:
                         global_step=sample,
                         walltime=None,
                     )
+                    logger.info(
+                        "预训练回合结束 | 规则索引=%d | 累计奖励=%.4f | 最终余额=%.4f | 收益率=%.6f",
+                        index,
+                        episode_reward_sum,
+                        final_balance,
+                        final_balance / (required_money + 1e-12) - 1,
+                    )
             else:
                 for index in range(self.N):
                     s, info = env.reset()
                     episode_reward_sum = 0
                     print(
-                        "diverse train with using context index policy {}".format(index)
+                        "多样化训练: 使用上下文索引 index={} 采数".format(index)
                     )
                     while True:
                         a = self.act_multi_styles(s, info, self.epsilon, index)
@@ -930,6 +962,17 @@ class Weighted_Contexts_DQN:
                                     global_step=self.update_counter,
                                     walltime=None,
                                 )
+                                logger.info(
+                                    "多样化训练更新 | 步数=%d | 累计更新次数=%d | 总损失=%.6f | KL损失=%.6f | TD损失=%.6f | 探索率=%.4f | 适配系数=%.4f | 学习率=%.6f",
+                                    step_counter_diverse,
+                                    self.update_counter,
+                                    total_loss,
+                                    KL_loss,
+                                    td_loss,
+                                    self.epsilon,
+                                    self.ada,
+                                    self.lr,
+                                )
 
                     final_balance = env.unrealized_pnl + env.wallet_balance
                     required_money = self.initial_wallet_balance
@@ -945,6 +988,13 @@ class Weighted_Contexts_DQN:
                         scalar_value=episode_reward_sum,
                         global_step=sample,
                         walltime=None,
+                    )
+                    logger.info(
+                        "多样化回合结束 | 上下文索引=%d | 累计奖励=%.4f | 最终余额=%.4f | 收益率=%.6f",
+                        index,
+                        episode_reward_sum,
+                        final_balance,
+                        final_balance / (required_money + 1e-12) - 1,
                     )
             epoch_return_rate_train_list.append(
                 final_balance / (required_money + 1e-12)
@@ -984,6 +1034,14 @@ class Weighted_Contexts_DQN:
                     self.eval_net.state_dict(),
                     os.path.join(epoch_path, "trained_model.pkl"),
                 )
+                logger.info(
+                    "第 %d 轮 epoch 训练完成 | 平均收益率=%.6f | 平均最终余额=%.4f | 平均累计奖励=%.4f | 模型已保存至=%s",
+                    epoch_index,
+                    mean_return_rate_train,
+                    mean_final_balance_train,
+                    mean_reward_sum_train,
+                    epoch_path,
+                )
                 # self.test(epoch_path)
                 epoch_return_rate_train_list = []
                 epoch_final_balance_train_list = []
@@ -991,6 +1049,8 @@ class Weighted_Contexts_DQN:
 
 
 if __name__ == "__main__":
+    print('start')
+    logger.info('start')
     args = parser.parse_args()
     trainer = Weighted_Contexts_DQN(args)
     trainer.train()
