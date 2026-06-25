@@ -1124,11 +1124,12 @@ def create_optimal_q_table_from_df(
     # the default is for btcusdt perpetual contract
     max_punishment=1e10,
     gamma=1,
+    order_book_depth=25,
 ):
-    bid_prices_names = ["bid{}_price".format(i) for i in range(1, 26)]
-    ask_prices_names = ["ask{}_price".format(i) for i in range(1, 26)]
-    bid_sizes_names = ["bid{}_size".format(i) for i in range(1, 26)]
-    ask_sizes_names = ["ask{}_size".format(i) for i in range(1, 26)]
+    bid_prices_names = ["bid{}_price".format(i) for i in range(1, order_book_depth + 1)]
+    ask_prices_names = ["ask{}_price".format(i) for i in range(1, order_book_depth + 1)]
+    bid_sizes_names = ["bid{}_size".format(i) for i in range(1, order_book_depth + 1)]
+    ask_sizes_names = ["ask{}_size".format(i) for i in range(1, order_book_depth + 1)]
 
     markprice_array = df["mark_price"].values
     timestamp_array = df["timestamp"].values

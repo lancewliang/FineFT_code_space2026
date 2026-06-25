@@ -82,6 +82,12 @@ parser.add_argument(
     help="the transcation cost of not holding the same action as before",
 )
 parser.add_argument(
+    "--order_book_depth",
+    type=int,
+    default=25,
+    help="number of bid/ask price levels available in the order book",
+)
+parser.add_argument(
     "--position_choices",
     type=int,
     default=9,
@@ -347,6 +353,7 @@ class Weighted_Contexts_DQN:
             allow_pickle=True,
         ).item()
         self.max_holding_number = args.max_holding_number
+        self.order_book_depth = args.order_book_depth
         self.position_choices = args.position_choices
         self.single_side_action_num = int((self.position_choices - 1) / 2)
         self.position_list = (
@@ -731,6 +738,7 @@ class Weighted_Contexts_DQN:
                 df=self.train_df,
                 feature_list=self.tech_indicator_list,
                 max_holding_number=self.max_holding_number,
+                order_book_depth=self.order_book_depth,
                 position_choices=self.position_choices,  # (must be an odd number, the minum of trading equals to (max_holder_number)/((action_dim-1)/2)s))
                 leverage_choice=self.leverage_choices,  # recommend only use one leverage choice, because the leverage does not influence the return directly, the position
                 # itself is enough to show the risk preference
@@ -750,6 +758,7 @@ class Weighted_Contexts_DQN:
                 q_table = create_optimal_q_table_from_df(
                     df=self.train_df,
                     max_holding_number=self.max_holding_number,
+                    order_book_depth=self.order_book_depth,
                     position_choices=self.position_choices,  # (must be an odd number, the minum of trading equals to (max_holder_number)/((action_dim-1)/2)s))
                     leverage_choice=self.leverage_choices,  # recommend only use one leverage choice, because the leverage does not influence the return directly, the position
                     # itself is enough to show the risk preference
