@@ -26,12 +26,15 @@ class CommodityConfig:
     contract_unit: float
     use_contract_multiplier: bool
     trading_sessions: Tuple[TradingSession, ...]
+    maintenance_margin_rate: float
 
     def __post_init__(self) -> None:
         if self.contract_unit <= 0:
             raise ValueError("contract_unit must be positive")
         if not self.trading_sessions:
             raise ValueError("trading_sessions must not be empty")
+        if not 0 <= self.maintenance_margin_rate < 1:
+            raise ValueError("maintenance_margin_rate must be in [0, 1)")
 
 
 COMMODITY_CONFIGS: Dict[str, CommodityConfig] = {
@@ -52,6 +55,7 @@ COMMODITY_CONFIGS: Dict[str, CommodityConfig] = {
             TradingSession(time(13, 30), time(15, 0)),
             TradingSession(time(21, 0), time(23, 0)),
         ),
+        maintenance_margin_rate=0.5,
     )
 }
 

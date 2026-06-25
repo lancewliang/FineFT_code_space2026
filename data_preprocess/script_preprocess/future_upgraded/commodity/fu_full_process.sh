@@ -265,6 +265,16 @@ run_commodity_ic_correlation() {
         --orderbook_depth 5
 }
 
+run_commodity_maintenance_margin_dict() {
+    local root_path=$1
+    local symbol=${2:-fu}
+    local output_root=${3:-dataset}
+
+    PYTHONPATH="${root_path}/data_preprocess" python -u -m operator_futures.commodity.build_maintenance_margin_dict \
+        --symbol "${symbol}" \
+        --output_root "${root_path}/${output_root}"
+}
+
 run_commodity_full_process() {
     local root_path=$1
     local start_date=$2
@@ -313,4 +323,8 @@ run_commodity_full_process() {
         "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
         "scale_save" \
         run_commodity_scale_save "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "maintenance_margin_dict" \
+        run_commodity_maintenance_margin_dict "$root_path" "$symbol" "dataset"
 }
