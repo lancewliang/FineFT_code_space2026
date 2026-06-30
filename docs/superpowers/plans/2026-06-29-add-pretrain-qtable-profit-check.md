@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Precompute the actual qtables used by `weight_advantage_pretrain.py` before the sample loop and print per-sample DP-path profitability diagnostics.
+**Goal:** Precompute qtables for the actual `weight_advantage_pretrain.py` sample plan with multiprocessing, independently validate every sample, and export per-sample DP-path CSV diagnostics before training starts.
 
-**Architecture:** Keep the change surgical inside `FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py`. Add focused helper methods on `Weighted_Contexts_DQN` for sample-plan generation, df loading, initial-state setup, qtable caching, environment construction, and DP-path reward evaluation; then make `train()` consume the plan/cache instead of sampling qtables inside the pretrain branch.
+**Architecture:** Move qtable diagnostic logic into `FineFT/RL/DiHFT/low_level/pretrain_qtable_diagnostics.py`. The module builds the sample plan, computes unique `df_index` qtables in worker processes, then performs stable sample-ordered env replay and CSV export in the main process; `weight_advantage_pretrain.py` consumes the returned plan, qtable cache, and df cache.
 
-**Tech Stack:** Python 3.10, pandas, NumPy, existing FineFT demo environment utilities, existing qtable utilities, OpenSpec.
+**Tech Stack:** Python 3.10, multiprocessing, pandas, NumPy, existing FineFT demo environment utilities, existing qtable utilities, OpenSpec.
 
 **Traceability (sddflow):**
 - plan-ready: `openspec/changes/add-pretrain-qtable-profit-check/plan-ready.md`
@@ -17,145 +17,330 @@
 
 ## File Structure
 
-- `FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py`: modify only this training script. Add small helper methods to `Weighted_Contexts_DQN`, build qtable diagnostics before `for sample in range(self.num_sample)`, and reuse the cached qtable in the pretrain branch.
-- `openspec/changes/add-pretrain-qtable-profit-check/tasks.md`: already created; build stage will mark task checkboxes when complete.
-- `openspec/changes/add-pretrain-qtable-profit-check/plan-ready.md`: already created; build stage will mark task checkboxes when complete.
+- `FineFT/RL/DiHFT/low_level/pretrain_qtable_diagnostics.py`: new independent diagnostics module. It owns sample plan generation, multiprocessing qtable calculation, qtable/df cache construction, DP path replay, sample-level logging, and per-sample CSV export.
+- `FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py`: training script. It imports the diagnostics module, calls it before `for sample in range(self.num_sample)`, consumes `sample_plan`, `q_table_cache`, and `train_df_cache`, and reuses cached qtables in pretrain.
+- `openspec/changes/add-pretrain-qtable-profit-check/tasks.md`: build stage will mark task checkboxes when complete.
+- `openspec/changes/add-pretrain-qtable-profit-check/plan-ready.md`: build stage will mark task checkboxes when complete.
 
 ### Task 1: Sample plan and qtable cache implementation
 
-> **trace:** plan-ready.md -> `### Task 1: Sample plan and qtable cache implementation` | tasks.md -> `- [ ] 1.0 Complete sample plan and qtable cache implementation.`
-> **sync:** tasks.md -> `- [ ] 1.0 Complete sample plan and qtable cache implementation.` | plan-ready.md -> `### Task 1: Sample plan and qtable cache implementation`
+> **trace:** plan-ready.md -> `### Task 1: Sample plan and qtable cache implementation` | tasks.md -> `- [ ] 1.0 Complete sample plan, qtable cache, multiprocessing, and CSV diagnostics implementation.`
+> **sync:** tasks.md -> `- [ ] 1.0 Complete sample plan, qtable cache, multiprocessing, and CSV diagnostics implementation.` | plan-ready.md -> `### Task 1: Sample plan and qtable cache implementation`
 
 **Files:**
+- Create: `FineFT/RL/DiHFT/low_level/pretrain_qtable_diagnostics.py`
 - Modify: `FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py`
 
-- [ ] **Step 1: Add helper methods to `Weighted_Contexts_DQN`**
+- [x] **Step 1: Create the diagnostics module imports and sample plan helper**
 
-Insert these methods after `act_multi_styles_pretrain()` and before `act_multi_styles()`:
+Create `FineFT/RL/DiHFT/low_level/pretrain_qtable_diagnostics.py` with this content:
 
 ```python
-    def _build_sample_plan(self):
-        sample_plan = []
-        for _ in range(self.num_sample):
-            df_index = random.choices(range(self.total_df_index_length), k=1)[0]
-            initial_action = random.choices(range(self.position_choices), k=1)[0]
-            sample_plan.append((df_index, initial_action))
-        return sample_plan
+import multiprocessing as mp
+import os
+import random
 
-    def _load_train_df_by_index(self, df_index):
-        df_path = os.path.join(
-            self.train_data_path, "df_{}.feather".format(df_index)
-        )
-        return pd.read_feather(df_path)
+import numpy as np
+import pandas as pd
 
-    def _set_initial_state_from_action(self, train_df, initial_action):
-        self.initial_position, self.initial_leverage = (
-            map_action_to_position_leverage(
-                initial_action, self.leverage_choices, self.position_list
-            )
-        )
-        current_markprice = train_df["mark_price"].values[0]
-        self.initial_margin = np.abs(
-            self.initial_position * current_markprice / self.initial_leverage
-        )
-        self.initial_state = (
-            self.initial_wallet_balance,
-            self.initial_margin,
-            self.initial_unrealized_pnL,
-            self.initial_position,
-            self.initial_leverage,
-        )
+from env.env_class.futures_util import (
+    create_optimal_q_table_from_df,
+    get_dp_action_from_qtable,
+    map_action_to_position_leverage,
+)
+from env.env_initiate.demo_initiate import initiate_demo_env
 
-    def _create_demo_env_for_df(self, train_df):
-        return initiate_demo_env(
-            df=train_df,
-            feature_list=self.tech_indicator_list,
-            max_holding_number=self.max_holding_number,
-            order_book_depth=self.order_book_depth,
-            position_choices=self.position_choices,
-            leverage_choice=self.leverage_choices,
-            long_estimated_rate=self.long_estimated_rate,
-            short_estimated_rate=self.short_estimated_rate,
-            commission_rate=self.transcation_cost,
-            maintenance_margin_ratio_dict=self.maintenance_margin_ratio_dict,
-            early_stop=self.early_stop,
-            initial_state=self.initial_state,
-            gamma=self.gamma,
-            max_punishment=1e10,
-        )
 
-    def _create_q_table_for_df(self, train_df):
-        return create_optimal_q_table_from_df(
-            df=train_df,
-            max_holding_number=self.max_holding_number,
-            order_book_depth=self.order_book_depth,
-            position_choices=self.position_choices,
-            leverage_choice=self.leverage_choices,
-            long_estimated_rate=self.long_estimated_rate,
-            short_estimated_rate=self.short_estimated_rate,
-            commission_rate=self.transcation_cost,
-            max_punishment=1e10,
-            gamma=1,
-        )
-
-    def _evaluate_dp_action_path_reward(
-        self, train_df, q_table, initial_action, sample_index, df_index
-    ):
-        self._set_initial_state_from_action(train_df, initial_action)
-        env = self._create_demo_env_for_df(train_df)
-        perfection_action_list = get_dp_action_from_qtable(q_table, initial_action)
-        s, info = env.reset()
-        episode_reward_sum = 0
-
-        for action in perfection_action_list:
-            s, reward, done, info = env.step(action)
-            episode_reward_sum += reward
-            if done:
-                break
-
-        profitable = episode_reward_sum > 0
-        logger.info(
-            "qtable诊断 | sample=%d | df_index=%d | initial_action=%d | episode_reward_sum=%.4f | profitable=%s",
-            sample_index + 1,
-            df_index,
-            initial_action,
-            episode_reward_sum,
-            profitable,
-        )
-        print(
-            "qtable诊断: sample={} df_index={} initial_action={} episode_reward_sum={:.4f} profitable={}".format(
-                sample_index + 1,
-                df_index,
-                initial_action,
-                episode_reward_sum,
-                profitable,
-            )
-        )
-        return episode_reward_sum, profitable
-
-    def _prepare_q_table_cache_and_diagnostics(self, sample_plan):
-        q_table_cache = {}
-        train_df_cache = {}
-        for sample_index, (df_index, initial_action) in enumerate(sample_plan):
-            if df_index not in train_df_cache:
-                train_df_cache[df_index] = self._load_train_df_by_index(df_index)
-            if df_index not in q_table_cache:
-                q_table_cache[df_index] = self._create_q_table_for_df(
-                    train_df_cache[df_index]
-                )
-            self._evaluate_dp_action_path_reward(
-                train_df_cache[df_index],
-                q_table_cache[df_index],
-                initial_action,
-                sample_index,
-                df_index,
-            )
-        return q_table_cache, train_df_cache
+def build_sample_plan(num_sample, total_df_index_length, position_choices):
+    sample_plan = []
+    for _ in range(num_sample):
+        df_index = random.choices(range(total_df_index_length), k=1)[0]
+        initial_action = random.choices(range(position_choices), k=1)[0]
+        sample_plan.append((df_index, initial_action))
+    return sample_plan
 ```
 
-- [ ] **Step 2: Build sample plan and qtable cache before the sample loop**
+- [x] **Step 2: Add qtable worker and multiprocessing cache builder**
 
-In `train()`, replace this block:
+Append this code to `pretrain_qtable_diagnostics.py`:
+
+```python
+def _create_q_table_worker(args):
+    df_index, train_data_path, qtable_kwargs = args
+    df_path = os.path.join(train_data_path, "df_{}.feather".format(df_index))
+    train_df = pd.read_feather(df_path)
+    q_table = create_optimal_q_table_from_df(df=train_df, **qtable_kwargs)
+    return df_index, train_df, q_table
+
+
+def build_q_table_cache(sample_plan, train_data_path, qtable_kwargs, process_count=None):
+    unique_df_indices = sorted({df_index for df_index, _ in sample_plan})
+    if process_count is None:
+        process_count = min(len(unique_df_indices), os.cpu_count() or 1)
+    process_count = max(1, process_count)
+
+    worker_args = [
+        (df_index, train_data_path, qtable_kwargs)
+        for df_index in unique_df_indices
+    ]
+    if process_count == 1:
+        results = [_create_q_table_worker(args) for args in worker_args]
+    else:
+        with mp.Pool(processes=process_count) as pool:
+            results = pool.map(_create_q_table_worker, worker_args)
+
+    train_df_cache = {}
+    q_table_cache = {}
+    for df_index, train_df, q_table in results:
+        train_df_cache[df_index] = train_df
+        q_table_cache[df_index] = q_table
+    return q_table_cache, train_df_cache
+```
+
+- [x] **Step 3: Add initial-state and env helper functions**
+
+Append this code to `pretrain_qtable_diagnostics.py`:
+
+```python
+def build_initial_state(
+    train_df,
+    initial_action,
+    leverage_choices,
+    position_list,
+    initial_wallet_balance,
+    initial_unrealized_pnl,
+):
+    initial_position, initial_leverage = map_action_to_position_leverage(
+        initial_action, leverage_choices, position_list
+    )
+    current_markprice = train_df["mark_price"].values[0]
+    initial_margin = np.abs(initial_position * current_markprice / initial_leverage)
+    initial_state = (
+        initial_wallet_balance,
+        initial_margin,
+        initial_unrealized_pnl,
+        initial_position,
+        initial_leverage,
+    )
+    return initial_position, initial_leverage, initial_margin, initial_state
+
+
+def create_demo_env(train_df, env_kwargs, initial_state):
+    return initiate_demo_env(
+        df=train_df,
+        feature_list=env_kwargs["feature_list"],
+        max_holding_number=env_kwargs["max_holding_number"],
+        order_book_depth=env_kwargs["order_book_depth"],
+        position_choices=env_kwargs["position_choices"],
+        leverage_choice=env_kwargs["leverage_choices"],
+        long_estimated_rate=env_kwargs["long_estimated_rate"],
+        short_estimated_rate=env_kwargs["short_estimated_rate"],
+        commission_rate=env_kwargs["commission_rate"],
+        maintenance_margin_ratio_dict=env_kwargs["maintenance_margin_ratio_dict"],
+        early_stop=env_kwargs["early_stop"],
+        initial_state=initial_state,
+        gamma=env_kwargs["gamma"],
+        max_punishment=1e10,
+    )
+```
+
+- [x] **Step 4: Add CSV row helpers and DP replay**
+
+Append this code to `pretrain_qtable_diagnostics.py`:
+
+```python
+def _value_from_row(row, column):
+    return row[column] if column in row.index else np.nan
+
+
+def _diagnostic_row(
+    train_df,
+    env,
+    sample_index,
+    df_index,
+    initial_action,
+    step_index,
+    action,
+    previous_action,
+    reward,
+    cumulative_profit,
+    previous_slippage_sum,
+):
+    source_row = train_df.iloc[min(step_index, len(train_df) - 1)]
+    step_slippage = env.slippage_sum - previous_slippage_sum
+    return {
+        "sample_index": sample_index + 1,
+        "df_index": df_index,
+        "initial_action": initial_action,
+        "step_index": step_index,
+        "timestamp": _value_from_row(source_row, "timestamp"),
+        "open": _value_from_row(source_row, "open"),
+        "high": _value_from_row(source_row, "high"),
+        "low": _value_from_row(source_row, "low"),
+        "close": _value_from_row(source_row, "close"),
+        "volume": _value_from_row(source_row, "volume"),
+        "mark_price": _value_from_row(source_row, "mark_price"),
+        "action": action,
+        "previous_action": previous_action,
+        "position": env.position,
+        "leverage": env.leverage,
+        "commission_rate": env.commission_rate,
+        "step_slippage": step_slippage,
+        "step_reward": reward,
+        "cumulative_profit": cumulative_profit,
+        "profitable": cumulative_profit > 0,
+    }
+
+
+def evaluate_and_export_sample(
+    sample_index,
+    df_index,
+    initial_action,
+    train_df,
+    q_table,
+    env_kwargs,
+    output_dir,
+):
+    _, _, _, initial_state = build_initial_state(
+        train_df,
+        initial_action,
+        env_kwargs["leverage_choices"],
+        env_kwargs["position_list"],
+        env_kwargs["initial_wallet_balance"],
+        env_kwargs["initial_unrealized_pnl"],
+    )
+    env = create_demo_env(train_df, env_kwargs, initial_state)
+    action_list = get_dp_action_from_qtable(q_table, initial_action)
+    _, info = env.reset()
+    cumulative_profit = 0
+    previous_slippage_sum = env.slippage_sum
+    rows = []
+
+    for step_index, action in enumerate(action_list):
+        previous_action = info["previous_action"]
+        _, reward, done, info = env.step(action)
+        cumulative_profit += reward
+        rows.append(
+            _diagnostic_row(
+                train_df,
+                env,
+                sample_index,
+                df_index,
+                initial_action,
+                step_index,
+                action,
+                previous_action,
+                reward,
+                cumulative_profit,
+                previous_slippage_sum,
+            )
+        )
+        previous_slippage_sum = env.slippage_sum
+        if done:
+            break
+
+    os.makedirs(output_dir, exist_ok=True)
+    csv_path = os.path.join(
+        output_dir,
+        "sample_{:04d}_df_{}_initial_action_{}.csv".format(
+            sample_index + 1, df_index, initial_action
+        ),
+    )
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
+    return {
+        "sample_index": sample_index + 1,
+        "df_index": df_index,
+        "initial_action": initial_action,
+        "episode_reward_sum": cumulative_profit,
+        "profitable": cumulative_profit > 0,
+        "csv_path": csv_path,
+    }
+```
+
+- [x] **Step 5: Add orchestration function for training script use**
+
+Append this code to `pretrain_qtable_diagnostics.py`:
+
+```python
+def prepare_pretrain_qtable_diagnostics(
+    num_sample,
+    total_df_index_length,
+    position_choices,
+    train_data_path,
+    qtable_kwargs,
+    env_kwargs,
+    output_dir,
+    logger=None,
+    process_count=None,
+):
+    sample_plan = build_sample_plan(
+        num_sample, total_df_index_length, position_choices
+    )
+    q_table_cache, train_df_cache = build_q_table_cache(
+        sample_plan,
+        train_data_path,
+        qtable_kwargs,
+        process_count=process_count,
+    )
+    diagnostics = []
+    for sample_index, (df_index, initial_action) in enumerate(sample_plan):
+        diagnostic = evaluate_and_export_sample(
+            sample_index,
+            df_index,
+            initial_action,
+            train_df_cache[df_index],
+            q_table_cache[df_index],
+            env_kwargs,
+            output_dir,
+        )
+        diagnostics.append(diagnostic)
+        message = (
+            "qtable诊断 | sample={sample_index} | df_index={df_index} | "
+            "initial_action={initial_action} | episode_reward_sum={episode_reward_sum:.4f} | "
+            "profitable={profitable} | csv_path={csv_path}"
+        ).format(**diagnostic)
+        if logger is not None:
+            logger.info(message)
+        print(message.replace(" | ", " "))
+    return sample_plan, q_table_cache, train_df_cache, diagnostics
+```
+
+- [x] **Step 6: Import diagnostics orchestration in the training script**
+
+In `FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py`, add this import near the other low-level imports:
+
+```python
+from RL.DiHFT.low_level.pretrain_qtable_diagnostics import (
+    prepare_pretrain_qtable_diagnostics,
+    build_initial_state,
+    create_demo_env,
+)
+```
+
+- [x] **Step 7: Add a small method to apply initial state in the trainer**
+
+Inside `Weighted_Contexts_DQN`, insert this method after `act_multi_styles_pretrain()`:
+
+```python
+    def _set_initial_state_from_action(self, train_df, initial_action):
+        (
+            self.initial_position,
+            self.initial_leverage,
+            self.initial_margin,
+            self.initial_state,
+        ) = build_initial_state(
+            train_df,
+            initial_action,
+            self.leverage_choices,
+            self.position_list,
+            self.initial_wallet_balance,
+            self.initial_unrealized_pnL,
+        )
+```
+
+- [x] **Step 8: Build plan/cache/CSV diagnostics before the sample loop**
+
+In `train()`, replace:
 
 ```python
         step_counter_pretrain = 0
@@ -168,14 +353,50 @@ with:
 ```python
         step_counter_pretrain = 0
         step_counter_diverse = 0
-        sample_plan = self._build_sample_plan()
-        q_table_cache, train_df_cache = self._prepare_q_table_cache_and_diagnostics(
-            sample_plan
+        qtable_diagnostics_dir = os.path.join(self.model_path, "qtable_diagnostics")
+        qtable_kwargs = {
+            "max_holding_number": self.max_holding_number,
+            "order_book_depth": self.order_book_depth,
+            "position_choices": self.position_choices,
+            "leverage_choice": self.leverage_choices,
+            "long_estimated_rate": self.long_estimated_rate,
+            "short_estimated_rate": self.short_estimated_rate,
+            "commission_rate": self.transcation_cost,
+            "max_punishment": 1e10,
+            "gamma": 1,
+        }
+        env_kwargs = {
+            "feature_list": self.tech_indicator_list,
+            "max_holding_number": self.max_holding_number,
+            "order_book_depth": self.order_book_depth,
+            "position_choices": self.position_choices,
+            "leverage_choices": self.leverage_choices,
+            "position_list": self.position_list,
+            "long_estimated_rate": self.long_estimated_rate,
+            "short_estimated_rate": self.short_estimated_rate,
+            "commission_rate": self.transcation_cost,
+            "maintenance_margin_ratio_dict": self.maintenance_margin_ratio_dict,
+            "early_stop": self.early_stop,
+            "gamma": self.gamma,
+            "initial_wallet_balance": self.initial_wallet_balance,
+            "initial_unrealized_pnl": self.initial_unrealized_pnL,
+        }
+        sample_plan, q_table_cache, train_df_cache, _ = (
+            prepare_pretrain_qtable_diagnostics(
+                num_sample=self.num_sample,
+                total_df_index_length=self.total_df_index_length,
+                position_choices=self.position_choices,
+                train_data_path=self.train_data_path,
+                qtable_kwargs=qtable_kwargs,
+                env_kwargs=env_kwargs,
+                output_dir=qtable_diagnostics_dir,
+                logger=logger,
+            )
         )
         for sample in range(self.num_sample):
 ```
 
-- [ ] **Step 3: Make the training loop consume `sample_plan`**
+- [x] **Step 9: Make the training loop consume cached plan and df**
 
 Inside the `for sample in range(self.num_sample):` loop, replace:
 
@@ -190,54 +411,7 @@ with:
             df_index, initial_action = sample_plan[sample]
 ```
 
-- [ ] **Step 4: Reuse cached dfs and shared initial-state/env helpers in the loop**
-
-Replace the current df loading, initial state setup, and `initiate_demo_env(...)` block:
-
-```python
-            self.train_df = pd.read_feather(
-                os.path.join(self.train_data_path, "df_{}.feather".format(df_index))
-            )
-            self.initial_position, self.initial_leverage = (
-                map_action_to_position_leverage(
-                    initial_action, self.leverage_choices, self.position_list
-                )
-            )
-            print(
-                "初始仓位={}, 初始杠杆={}".format(
-                    self.initial_position, self.initial_leverage
-                )
-            )
-            current_markprice = self.train_df["mark_price"].values[0]
-            self.initial_margin = np.abs(
-                self.initial_position * current_markprice / self.initial_leverage
-            )
-            self.initial_state = (
-                self.initial_wallet_balance,
-                self.initial_margin,
-                self.initial_unrealized_pnL,
-                self.initial_position,
-                self.initial_leverage,
-            )
-            env = initiate_demo_env(
-                df=self.train_df,
-                feature_list=self.tech_indicator_list,
-                max_holding_number=self.max_holding_number,
-                order_book_depth=self.order_book_depth,
-                position_choices=self.position_choices,
-                leverage_choice=self.leverage_choices,
-                long_estimated_rate=self.long_estimated_rate,
-                short_estimated_rate=self.short_estimated_rate,
-                commission_rate=self.transcation_cost,
-                maintenance_margin_ratio_dict=self.maintenance_margin_ratio_dict,
-                early_stop=self.early_stop,
-                initial_state=self.initial_state,
-                gamma=self.gamma,
-                max_punishment=1e10,
-            )
-```
-
-with:
+Then replace the current `self.train_df = pd.read_feather(...)` line and initial-state block through `env = initiate_demo_env(...)` with:
 
 ```python
             self.train_df = train_df_cache[df_index]
@@ -247,45 +421,28 @@ with:
                     self.initial_position, self.initial_leverage
                 )
             )
-            env = self._create_demo_env_for_df(self.train_df)
+            env = create_demo_env(self.train_df, env_kwargs, self.initial_state)
 ```
 
-- [ ] **Step 5: Reuse cached qtable in the pretrain branch**
+- [x] **Step 10: Reuse cached qtable in the pretrain branch**
 
-Inside `if pretrain:`, replace:
-
-```python
-                q_table = create_optimal_q_table_from_df(
-                    df=self.train_df,
-                    max_holding_number=self.max_holding_number,
-                    order_book_depth=self.order_book_depth,
-                    position_choices=self.position_choices,
-                    leverage_choice=self.leverage_choices,
-                    long_estimated_rate=self.long_estimated_rate,
-                    short_estimated_rate=self.short_estimated_rate,
-                    commission_rate=self.transcation_cost,
-                    max_punishment=1e10,
-                    gamma=1,
-                )
-```
-
-with:
+Inside `if pretrain:`, replace the existing `q_table = create_optimal_q_table_from_df(...)` call with:
 
 ```python
                 q_table = q_table_cache[df_index]
 ```
 
-- [ ] **Step 6: Run a focused syntax check for the changed script**
+- [x] **Step 11: Run a focused syntax check**
 
 Run:
 
 ```bash
-conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py
+conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py FineFT/RL/DiHFT/low_level/pretrain_qtable_diagnostics.py
 ```
 
 Expected: command exits with status 0 and prints no Python syntax errors.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 2: Verification
 
@@ -294,20 +451,21 @@ Expected: command exits with status 0 and prints no Python syntax errors.
 
 **Files:**
 - Verify: `FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py`
+- Verify: `FineFT/RL/DiHFT/low_level/pretrain_qtable_diagnostics.py`
 - Verify: `openspec/changes/add-pretrain-qtable-profit-check/specs/fineft-stage-i-pretrain/spec.md`
 - Verify: `openspec/changes/add-pretrain-qtable-profit-check/tasks.md`
 
-- [ ] **Step 1: Run Python syntax verification in the requested conda environment**
+- [x] **Step 1: Run Python syntax verification in the requested conda environment**
 
 Run:
 
 ```bash
-conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py
+conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py FineFT/RL/DiHFT/low_level/pretrain_qtable_diagnostics.py
 ```
 
 Expected: command exits with status 0 and produces no `SyntaxError`.
 
-- [ ] **Step 2: Run OpenSpec strict validation**
+- [x] **Step 2: Run OpenSpec strict validation**
 
 Run:
 
@@ -321,7 +479,7 @@ Expected:
 Change 'add-pretrain-qtable-profit-check' is valid
 ```
 
-- [ ] **Step 3: Check whether local training data is available**
+- [x] **Step 3: Check whether local training data is available**
 
 Run:
 
@@ -341,18 +499,61 @@ Use the dataset name from the printed path. For a path like `dataset/BTCUSDT/tra
 conda activate finetf && python FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py --base_path dataset --dataset_name BTCUSDT --num_sample 2 --pretrain_epoch 1
 ```
 
-Expected: before `===== 第 1/2 轮采样 =====`, output includes two qtable diagnostics. Each diagnostic line includes `qtable诊断: sample=`, `df_index=`, `initial_action=`, `episode_reward_sum=`, and `profitable=`.
+Expected: before `===== 第 1/2 轮采样 =====`, output includes two qtable diagnostics. Each diagnostic line includes `qtable诊断`, `sample=`, `df_index=`, `initial_action=`, `episode_reward_sum=`, `profitable=`, and `csv_path=`.
 
-The first diagnostic line starts with `qtable诊断: sample=1`; the second starts with `qtable诊断: sample=2`.
+Expected: `result/BTCUSDT/weights_advantage_pretrain/qtable_diagnostics/` contains two CSV files when the default `--result_path result` is used.
 
-- [ ] **Step 5: Confirm qtable calculation is not duplicated in the pretrain branch**
+- [ ] **Step 5: Inspect one generated CSV**
 
 Run:
 
 ```bash
-rg -n "create_optimal_q_table_from_df|q_table_cache\\[df_index\\]|random\\.choices\\(range\\(self\\.total_df_index_length\\)|random\\.choices\\(range\\(self\\.position_choices\\)" FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py
+python - <<'PY'
+from pathlib import Path
+import pandas as pd
+
+files = sorted(Path("result/BTCUSDT/weights_advantage_pretrain/qtable_diagnostics").glob("sample_*.csv"))
+assert files, "no qtable diagnostic csv files found"
+df = pd.read_csv(files[0])
+required = {
+    "sample_index",
+    "df_index",
+    "initial_action",
+    "step_index",
+    "timestamp",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "mark_price",
+    "action",
+    "previous_action",
+    "position",
+    "leverage",
+    "commission_rate",
+    "step_slippage",
+    "step_reward",
+    "cumulative_profit",
+    "profitable",
+}
+missing = required.difference(df.columns)
+assert not missing, sorted(missing)
+assert len(df) > 0
+print(files[0])
+PY
 ```
 
-Expected: output includes the existing import, the two `random.choices(...)` calls inside `_build_sample_plan()`, one `return create_optimal_q_table_from_df(` inside `_create_q_table_for_df()`, and one `q_table = q_table_cache[df_index]` inside the pretrain branch. The two `random.choices(...)` matches should be inside `_build_sample_plan()`, not inside the sample loop.
+Expected: prints the inspected CSV path and raises no assertion.
+
+- [x] **Step 6: Confirm multiprocessing qtable calculation and cached pretrain use**
+
+Run:
+
+```bash
+rg -n "multiprocessing|mp\\.Pool|build_q_table_cache|q_table_cache\\[df_index\\]|create_optimal_q_table_from_df|random\\.choices\\(range\\(self\\.total_df_index_length\\)|random\\.choices\\(range\\(self\\.position_choices\\)" FineFT/RL/DiHFT/low_level/pretrain_qtable_diagnostics.py FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py
+```
+
+Expected: output shows `mp.Pool` and `create_optimal_q_table_from_df` only in `pretrain_qtable_diagnostics.py`; output shows `q_table = q_table_cache[df_index]` in `weight_advantage_pretrain.py`; the two sample-plan `random.choices(...)` calls are in `pretrain_qtable_diagnostics.py`.
 
 - [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）

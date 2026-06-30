@@ -67,3 +67,17 @@
 - [ ] `episode_reward_sum <= 0` 不会中断训练，只输出亏损诊断。
 - [ ] `conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py` 通过。
 - [ ] 如果本地训练数据可用，小参数 smoke run 能看到训练循环前的 qtable 诊断打印。
+
+## Amendments
+
+### 2026-06-30: 独立诊断模块、多进程 qtable 计算与 sample CSV 导出
+
+原因：训练前 qtable 诊断需要更严格地按 sample 输出独立记录；同时 qtable 计算可能较慢，需要多进程并行；生成 qtable 后需要导出便于人工查阅的 CSV 明细；相关逻辑应从训练主脚本中拆到独立 Python 文件，降低 `weight_advantage_pretrain.py` 的复杂度。
+
+修订摘要：
+
+- 诊断策略改为“预生成 sample 计划 + 每个 sample 独立验证”。即使同一个 `df_index` 重复出现，也必须按 sample 打印独立记录并导出独立 CSV。
+- qtable 仍按唯一 `df_index` 缓存，但唯一 `df_index` 的 qtable 预计算应使用多进程并行执行。
+- 新增独立模块 `FineFT/RL/DiHFT/low_level/pretrain_qtable_diagnostics.py`，承载 sample plan、qtable 多进程预计算、DP 路径回放和 CSV 导出逻辑。
+- 每个 sample 的诊断 CSV 默认输出到 `self.model_path/qtable_diagnostics/`，文件名包含 sample 序号、`df_index` 和 `initial_action`。
+- CSV 以 DP action path 的时间步为行，包含行情 `open`、`high`、`low`、`close`、`volume`、`mark_price`，以及滑点、费率、动作、单步 reward、累计利润等诊断列。

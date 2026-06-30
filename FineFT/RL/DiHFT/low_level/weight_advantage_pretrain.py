@@ -10,7 +10,6 @@ import logging
 import numpy as np
 import torch
 from torch import nn
-import pandas as pd
 from torch.utils.tensorboard import SummaryWriter
 
 logger = logging.getLogger(__name__)
@@ -57,13 +56,13 @@ from RL.util.episode_selector import get_transformation_even_risk
 from model.low_level import ensemble_Qnet
 
 # env
-from env.env_initiate.demo_initiate import initiate_demo_env
-from env.env_class.futures_util import (
-    create_optimal_q_table_from_df,
-    get_dp_action_from_qtable,
-    map_action_to_position_leverage,
-)
+from env.env_class.futures_util import get_dp_action_from_qtable
 from env.env_class.policy_util import get_close_element
+from RL.DiHFT.low_level.pretrain_qtable_diagnostics import (
+    build_initial_state,
+    create_demo_env,
+    prepare_pretrain_qtable_diagnostics,
+)
 import copy
 
 
@@ -725,6 +724,21 @@ class Weighted_Contexts_DQN:
             action = get_close_element(action, avaliable_action_list)
             return action
 
+    def _set_initial_state_from_action(self, train_df, initial_action):
+        (
+            self.initial_position,
+            self.initial_leverage,
+            self.initial_margin,
+            self.initial_state,
+        ) = build_initial_state(
+            train_df,
+            initial_action,
+            self.leverage_choices,
+            self.position_list,
+            self.initial_wallet_balance,
+            self.initial_unrealized_pnL,
+        )
+
     def act_multi_styles(self, state, info, epsilon, rollout_index):
         assert rollout_index in range(self.N)
         action = self.act_single_context(state, info, rollout_index, epsilon)
@@ -764,76 +778,66 @@ class Weighted_Contexts_DQN:
         )
         step_counter_pretrain = 0
         step_counter_diverse = 0
+        qtable_diagnostics_dir = os.path.join(self.model_path, "qtable_diagnostics")
+        qtable_kwargs = {
+            "max_holding_number": self.max_holding_number,
+            "order_book_depth": self.order_book_depth,
+            "position_choices": self.position_choices,
+            "leverage_choice": self.leverage_choices,
+            "long_estimated_rate": self.long_estimated_rate,
+            "short_estimated_rate": self.short_estimated_rate,
+            "commission_rate": self.transcation_cost,
+            "max_punishment": 1e10,
+            "gamma": 1,
+        }
+        env_kwargs = {
+            "feature_list": self.tech_indicator_list,
+            "max_holding_number": self.max_holding_number,
+            "order_book_depth": self.order_book_depth,
+            "position_choices": self.position_choices,
+            "leverage_choices": self.leverage_choices,
+            "position_list": self.position_list,
+            "long_estimated_rate": self.long_estimated_rate,
+            "short_estimated_rate": self.short_estimated_rate,
+            "commission_rate": self.transcation_cost,
+            "maintenance_margin_ratio_dict": self.maintenance_margin_ratio_dict,
+            "early_stop": self.early_stop,
+            "gamma": self.gamma,
+            "initial_wallet_balance": self.initial_wallet_balance,
+            "initial_unrealized_pnl": self.initial_unrealized_pnL,
+        }
+        sample_plan, q_table_cache, train_df_cache, _ = (
+            prepare_pretrain_qtable_diagnostics(
+                num_sample=self.num_sample,
+                total_df_index_length=self.total_df_index_length,
+                position_choices=self.position_choices,
+                train_data_path=self.train_data_path,
+                qtable_kwargs=qtable_kwargs,
+                env_kwargs=env_kwargs,
+                output_dir=qtable_diagnostics_dir,
+                logger=logger,
+            )
+        )
         for sample in range(self.num_sample):
             logger.info("===== 第 %d/%d 轮采样 =====", sample + 1, self.num_sample)
             pretrain = sample < self.pretrain_epoch
             logger.info("当前阶段: %s", "预训练" if pretrain else "多样化训练")
-            df_index = random.choices(range(self.total_df_index_length), k=1)[0]
-            initial_action = random.choices(range(self.position_choices), k=1)[0]
+            df_index, initial_action = sample_plan[sample]
             logger.info(
                 "正在使用 df_%d 进行训练, 初始动作=%d",
                 df_index,
                 initial_action,
             )
-            self.train_df = pd.read_feather(
-                os.path.join(self.train_data_path, "df_{}.feather".format(df_index))
-            )
-            self.initial_position, self.initial_leverage = (
-                map_action_to_position_leverage(
-                    initial_action, self.leverage_choices, self.position_list
-                )
-            )
+            self.train_df = train_df_cache[df_index]
+            self._set_initial_state_from_action(self.train_df, initial_action)
             logger.info(
                 "初始仓位=%s, 初始杠杆=%s",
                 self.initial_position,
                 self.initial_leverage,
             )
-            current_markprice = self.train_df["mark_price"].values[0]
-            self.initial_margin = np.abs(
-                self.initial_position * current_markprice / self.initial_leverage
-            )
-            self.initial_state = (
-                self.initial_wallet_balance,
-                self.initial_margin,
-                self.initial_unrealized_pnL,
-                self.initial_position,
-                self.initial_leverage,
-            )
-            env = initiate_demo_env(
-                df=self.train_df,
-                feature_list=self.tech_indicator_list,
-                max_holding_number=self.max_holding_number,
-                order_book_depth=self.order_book_depth,
-                position_choices=self.position_choices,  # (must be an odd number, the minum of trading equals to (max_holder_number)/((action_dim-1)/2)s))
-                leverage_choice=self.leverage_choices,  # recommend only use one leverage choice, because the leverage does not influence the return directly, the position
-                # itself is enough to show the risk preference
-                long_estimated_rate=self.long_estimated_rate,
-                short_estimated_rate=self.short_estimated_rate,
-                commission_rate=self.transcation_cost,
-                # maten_mar_ratio_dict varies among different perpertual contracts, need to perform a config file for different perpertual
-                # the default is for btcusdt perpetual contract
-                maintenance_margin_ratio_dict=self.maintenance_margin_ratio_dict,
-                early_stop=self.early_stop,
-                # initial_personal_state
-                initial_state=self.initial_state,
-                gamma=self.gamma,
-                max_punishment=1e10,
-            )
+            env = create_demo_env(self.train_df, env_kwargs, self.initial_state)
             if pretrain:
-                q_table = create_optimal_q_table_from_df(
-                    df=self.train_df,
-                    max_holding_number=self.max_holding_number,
-                    order_book_depth=self.order_book_depth,
-                    position_choices=self.position_choices,  # (must be an odd number, the minum of trading equals to (max_holder_number)/((action_dim-1)/2)s))
-                    leverage_choice=self.leverage_choices,  # recommend only use one leverage choice, because the leverage does not influence the return directly, the position
-                    # itself is enough to show the risk preference
-                    long_estimated_rate=self.long_estimated_rate,
-                    short_estimated_rate=self.short_estimated_rate,
-                    commission_rate=self.transcation_cost,
-                    # the default is for btcusdt perpetual contract
-                    max_punishment=1e10,
-                    gamma=1,
-                )
+                q_table = q_table_cache[df_index]
                 self.perfection_action_list = get_dp_action_from_qtable(
                     q_table, initial_action
                 )
