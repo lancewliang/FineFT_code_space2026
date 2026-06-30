@@ -68,11 +68,137 @@ BNBUSDT: 100
 DOTUSDT: 6000
 ```
 
-## 3. 初始化流程
+## 3. 可调参数与含义
+
+脚本通过 `argparse` 暴露训练参数，启动时可用命令行覆盖默认值。例如：
+
+```bash
+python RL/DiHFT/low_level/weight_advantage_pretrain.py \
+    --dataset_name BTCUSDT \
+    --max_holding_number 8 \
+    --batch_size 512
+```
+
+在当前仓库的期货训练脚本中，通常先进入 `finetf` 环境并设置 `PYTHONPATH`：
+
+```bash
+conda activate finetf
+export PYTHONPATH="${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
+python -u FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py ...
+```
+
+### 3.1 Replay Buffer 参数
+
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `--buffer_size` | `1000000` | 每个 replay buffer 最多保存的 transition 数量。脚本会分别创建 `buffer_pretrain` 和 `buffer_diverse`。 |
+| `--n_step` | `1` | n-step TD 的步数。大于 1 时，buffer 会把连续多步 reward 按 `gamma` 折扣累计。 |
+
+### 3.2 数据与交易环境参数
+
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `--base_path` | `dataset` | 数据根目录。脚本会读取 `<base_path>/<dataset_name>/train/df_*.feather`、`state_features.npy` 和 `maintenance_margin_ratio_dict.npy`。 |
+| `--dataset_name` | `BTCUSDT` | 数据集或交易对名称，同时影响输入数据目录、日志目录和模型输出目录。 |
+| `--max_holding_number` | `8` | 最大持仓数量，用来生成离散持仓档位。不同交易对通常需要单独设置。 |
+| `--order_book_depth` | `25` | 环境和专家 Q 表使用的订单簿深度。数据特征需要和该深度匹配。 |
+| `--position_choices` | `9` | 离散持仓档位数量。代码假设它是奇数，因为中间档位表示空仓。 |
+| `--leverage_choices` | `[5]` | 可选杠杆列表。该参数使用 `action="append"`，多次传入会追加，例如 `--leverage_choices 3 --leverage_choices 5`。代码注释建议通常只使用一个杠杆值。 |
+| `--long_estimated_rate` | `0.0005` | 多头 funding/持仓估计费率，传入环境和专家 Q 表计算。 |
+| `--short_estimated_rate` | `0` | 空头 funding/持仓估计费率，传入环境和专家 Q 表计算。 |
+| `--transcation_cost` | `0.0002` | 交易手续费率。参数名沿用代码中的拼写 `transcation_cost`。 |
+| `--early_stop` | `2160` | 环境单个 episode 的提前停止步数上限。 |
+| `--initial_wallet_balance` | `100000.0` | 初始钱包余额，用于构造环境初始账户状态。 |
+| `--initial_margin` | `0` | 初始保证金。训练循环里会根据随机初始动作和首个价格重新计算该值。 |
+| `--initial_unrealized_pnL` | `0` | 初始未实现盈亏。 |
+| `--initial_position` | `0` | 初始持仓。训练循环里会根据随机初始动作重新设置。 |
+| `--initial_leverage` | `5` | 初始杠杆。训练循环里会根据随机初始动作重新设置。 |
+
+动作空间由 `position_choices` 和 `leverage_choices` 共同决定：
+
+```text
+N_ACTIONS = (position_choices - 1) * len(leverage_choices) + 1
+```
+
+因此增加杠杆选项会直接扩大 Q 网络输出维度和环境动作空间。
+
+### 3.3 网络结构参数
+
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `--hidden_nodes` | `128` | 每个子 Q 网络的隐藏层宽度。 |
+| `--N` | `7` | ensemble 中的 context/sub-policy 数量。正式训练阶段每个 sample 会让这 `N` 个 context 分别采样一条 episode。 |
+| `--time_info_dim` | `2` | 时间信息输入维度。当前代码拼接 funding 倒计时的 hour 和 minute，因此默认是 2。 |
+
+### 3.4 强化学习训练参数
+
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `--tau` | `0.005` | target network 软更新系数。每次更新后执行 `target = tau * eval + (1 - tau) * target`。 |
+| `--batch_size` | `512` | 每次从 replay buffer 采样的 transition 数量。 |
+| `--update_times` | `1` | 每次满足更新条件后连续执行的梯度更新次数。 |
+| `--gamma` | `0.9` | TD target 和 n-step return 的 reward 折扣因子。注意预训练阶段专家 Q 表构造时单独使用 `gamma=1`。 |
+| `--epsilon_init` | `1` | 正式训练阶段 epsilon-greedy 的初始随机探索概率。 |
+| `--epsilon_min` | `0.1` | epsilon 衰减下限。 |
+| `--epsilon_step` | `100000.0` | epsilon 从 `epsilon_init` 线性衰减到 `epsilon_min` 需要的步数尺度。每次 `index == 0` 采样动作后衰减一次。 |
+| `--rollout_steps` | `1024` | 采样步数间隔。满足 buffer 足够大且 `step_counter % rollout_steps == 1` 时触发更新。 |
+
+### 3.5 学习率与总训练轮数
+
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `--lr_init` | `0.005` | Adam 优化器初始学习率。 |
+| `--lr_min` | `0.0001` | 学习率线性衰减下限。 |
+| `--lr_step` | `20000.0` | 学习率从 `lr_init` 衰减到 `lr_min` 需要的步数尺度。每次 `index == 0` 采样动作后衰减一次。 |
+| `--num_sample` | `400` | 外层采样轮数，即 `for sample in range(num_sample)` 的总次数。 |
+| `--seed` | `12345` | Python、NumPy、PyTorch 和 CUDA 的随机种子。 |
+
+### 3.6 输出路径参数
+
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `--result_path` | `result/DiHFT/low_level` | 模型和 TensorBoard 日志输出根目录。实际模型目录为 `<result_path>/<dataset_name>/weights_advantage_pretrain/`。 |
+
+脚本还会把普通日志写到：
+
+```text
+log_futures/<dataset_name>/low_level/train/advantage.log
+```
+
+### 3.7 损失函数参数
+
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `--outer_bond` | `4` | `calculate_partial_loss()` 的 context 选择范围参数，用于控制 TD error 动态加权时的外侧边界。 |
+| `--reachout_index` | `1` | `calculate_partial_loss()` 的范围扩展参数，用于在最匹配 context 附近额外扩展可学习区域。 |
+| `--if_use_hubber_loss` | `True` | 是否对 TD error 使用 Huber loss。参数名沿用代码拼写 `hubber`。注意该参数使用 `type=bool`，命令行传入字符串时 Python 会按 `bool("False") == True` 解析；如果要关闭，建议改代码或把参数定义改成明确的布尔开关。 |
+
+### 3.8 专家监督与预训练参数
+
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `--ada_init` | `256` | 专家 KL loss 的初始权重。总损失中使用 `loss = td_loss + ada * KL_div` 或 `partial_td_error_loss + ada * KL_div`。 |
+| `--ada_min` | `0` | 专家 KL loss 权重的衰减下限。 |
+| `--ada_step` | `500000.0` | `ada` 从 `ada_init` 衰减到 `ada_min` 需要的步数尺度。每次 `index == 0` 采样动作后衰减一次。 |
+| `--pretrain_epoch` | `2` | 外层 sample 中用于预训练的轮数。`sample < pretrain_epoch` 时使用专家/规则策略采样。 |
+
+### 3.9 代码内固定参数
+
+以下参数没有暴露为命令行参数，当前只能改代码调整：
+
+| 名称 | 当前值 | 位置与含义 |
+| --- | --- | --- |
+| `grad_clip` | `5` | `Weighted_Contexts_DQN.__init__()` 中固定设置，传给 `update_params(..., grad_cliping=5)`，用于梯度裁剪。 |
+| `epoch_number` | `4` | `train()` 中固定设置。每累计 4 个 sample 聚合一次 epoch 指标并保存一次模型。 |
+| `group_number` | `self.N` | `train()` 中赋值但当前未被后续逻辑使用。 |
+| `max_punishment` | `1e10` | 构造环境和专家 Q 表时传入，用于不可行动作或极端惩罚值。 |
+| 预训练规则策略数量 | `4` | 预训练阶段固定执行专家最优、持多、持空、空仓四种策略。 |
+
+## 4. 初始化流程
 
 初始化发生在 `Weighted_Contexts_DQN.__init__()` 中。
 
-### 3.1 随机种子与设备
+### 4.1 随机种子与设备
 
 先调用 `seed_torch()` 固定 Python、NumPy、PyTorch、CUDA 随机种子。随后根据 CUDA 是否可用选择：
 
@@ -80,7 +206,7 @@ DOTUSDT: 6000
 self.device = "cuda" or "cpu"
 ```
 
-### 3.2 日志与模型路径
+### 4.2 日志与模型路径
 
 模型保存路径：
 
@@ -94,7 +220,7 @@ TensorBoard 日志路径：
 result/DiHFT/low_level/<dataset_name>/weights_advantage_pretrain/log/
 ```
 
-### 3.3 动作空间
+### 4.3 动作空间
 
 低层动作由“目标持仓 + 杠杆”组成。
 
@@ -118,7 +244,7 @@ N_ACTIONS = 9
 [-8, -6, -4, -2, 0, 2, 4, 6, 8]
 ```
 
-### 3.4 网络结构
+### 4.4 网络结构
 
 使用 `model.low_level.ensemble_Qnet`：
 
@@ -144,7 +270,7 @@ batch_size x N x N_ACTIONS
 
 也就是每个 context 都输出一组动作 Q 值。
 
-## 4. 交易环境构造
+## 5. 交易环境构造
 
 每次训练 sample 会随机读取一个训练分块：
 
@@ -191,7 +317,7 @@ avaiable_action_list
 
 这是原代码命名，不是文档笔误。
 
-## 5. Replay Buffer
+## 6. Replay Buffer
 
 脚本使用两个 `Multi_step_ReplayBuffer_multi_info`：
 
@@ -215,7 +341,7 @@ state, info, action, reward, next_state, next_info, done
 
 如果 `n_step > 1`，buffer 会把连续多步 reward 折扣累计成 n-step return；默认 `n_step=1`。
 
-## 6. 训练主循环
+## 7. 训练主循环
 
 训练入口：
 
@@ -239,11 +365,11 @@ pretrain_epoch = 2
 
 因此前 2 个 sample 是预训练阶段，之后进入正式训练阶段。
 
-## 7. 预训练阶段
+## 8. 预训练阶段
 
 预训练阶段的目标是先让 ensemble 网络学习一些“合理动作”和专家 Q 分布，避免一开始完全随机。
 
-### 7.1 构造专家最优动作序列
+### 8.1 构造专家最优动作序列
 
 预训练时会基于当前训练分块重新计算一个动态规划 Q 表：
 
@@ -254,7 +380,7 @@ self.perfection_action_list = get_dp_action_from_qtable(q_table, initial_action)
 
 `get_dp_action_from_qtable()` 会从初始动作出发，每一步选取专家 Q 表中的最大 Q 动作，形成一条 perfect action path。
 
-### 7.2 4 种规则策略采样
+### 8.2 4 种规则策略采样
 
 预训练阶段固定跑 4 种策略：
 
@@ -273,7 +399,7 @@ index = 3: empty position，尽量保持空仓
 
 这些策略产生的 transition 会写入 `buffer_pretrain`。
 
-### 7.3 预训练更新条件
+### 8.3 预训练更新条件
 
 当 buffer 中步数足够，并且达到 rollout 间隔时开始更新：
 
@@ -296,7 +422,7 @@ rollout_steps = 1024
 self.update_pretrain(...)
 ```
 
-## 8. 预训练损失 update_pretrain()
+## 9. 预训练损失 update_pretrain()
 
 `update_pretrain()` 包含两部分损失：
 
@@ -304,7 +430,7 @@ self.update_pretrain(...)
 loss = td_loss + ada * KL_div
 ```
 
-### 8.1 TD loss
+### 9.1 TD loss
 
 当前网络输出：
 
@@ -324,7 +450,7 @@ target = reward + (1 - done) * gamma * target_net_best_q(next_state)
 td_loss = SmoothL1Loss(current_sa_quantiles, target_sa_quantiles)
 ```
 
-### 8.2 专家 KL loss
+### 9.2 专家 KL loss
 
 网络输出所有 context 的动作分布：
 
@@ -347,7 +473,7 @@ KL_div = kl_div(policy_distribution, expert_q_distribution)
 
 这里会先用 `recalculate_q_demonstration()` 对不可用动作施加极大惩罚，使不可用动作不会被专家分布鼓励。
 
-### 8.3 参数更新
+### 9.3 参数更新
 
 更新流程：
 
@@ -367,7 +493,7 @@ target = tau * eval + (1 - tau) * target
 
 默认 `tau=0.005`。
 
-## 9. 正式训练阶段
+## 10. 正式训练阶段
 
 预训练结束后，进入 diverse training。
 
@@ -420,7 +546,7 @@ lr: 5e-3 -> 1e-4
 self.update(...)
 ```
 
-## 10. 正式训练损失 update()
+## 11. 正式训练损失 update()
 
 正式训练同样包含：
 
@@ -430,7 +556,7 @@ loss = partial_td_error_loss + ada * KL_div
 
 和预训练不同的是，正式训练不再简单平均所有 context，而是根据 TD error 动态计算 context 权重。
 
-### 10.1 计算 TD error 矩阵
+### 11.1 计算 TD error 矩阵
 
 当前动作 Q：
 
@@ -452,7 +578,7 @@ td_errors: batch_size x N x N
 
 可以理解为：当前 N 个 context 与目标 N 个 context 两两组合后的 TD error。
 
-### 10.2 calculate_partial_loss()
+### 11.2 calculate_partial_loss()
 
 `calculate_partial_loss()` 会：
 
@@ -470,7 +596,7 @@ reachout_index = 1
 
 直观上，它不是强制所有 context 都平均学习，而是让更匹配当前样本风险/收益形态的 context 权重更高。
 
-### 10.3 加权动作分布与专家 KL
+### 11.3 加权动作分布与专家 KL
 
 正式阶段用 `batch_weights` 对多个 context 的动作输出加权：
 
@@ -488,7 +614,7 @@ KL_div = F.kl_div(...)
 
 随着 `ada` 衰减，KL 约束会逐渐变弱。
 
-## 11. 日志与模型保存
+## 12. 日志与模型保存
 
 训练过程中写入 TensorBoard：
 
@@ -521,7 +647,7 @@ result/DiHFT/low_level/<dataset_name>/weights_advantage_pretrain/epoch_<k>/train
 self.eval_net.state_dict()
 ```
 
-## 12. 整体流程图
+## 13. 整体流程图
 
 ```text
 开始
@@ -566,7 +692,7 @@ for sample in num_sample:
 结束
 ```
 
-## 13. 关键理解
+## 14. 关键理解
 
 这个脚本的名字里有 `advantage_pretrain`，但代码主体不是传统 Dueling DQN 的 advantage head，而是：
 
@@ -580,4 +706,3 @@ for sample in num_sample:
 其中 `weight` 主要体现在正式训练阶段：通过 TD error 计算 `batch_weights`，再用它对不同 context 的动作输出加权。
 
 `pretrain` 体现在训练前几个 sample：先用专家最优、持多、持空、空仓四种策略生成经验，并用 TD loss + 专家 KL loss 预热网络。
-

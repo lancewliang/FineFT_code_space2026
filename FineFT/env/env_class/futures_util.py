@@ -924,7 +924,10 @@ def map_action_to_position_leverage(action, leverage_choices, position_list):
     # 返回对应的仓位和杠杆倍率
     position_index = action // len(leverage_choices)
     leverage_index = action % len(leverage_choices)
+    # print(position_list)
+    # print(position_index)
     position = position_list[position_index]
+
     leverage = leverage_choices[leverage_index]
     return position, leverage
 

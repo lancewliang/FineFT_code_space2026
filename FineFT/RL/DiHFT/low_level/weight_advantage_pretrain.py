@@ -20,6 +20,25 @@ if not logger.handlers:
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
 
+
+def configure_logger(dataset_name):
+    log_dir = os.path.join("log_futures", dataset_name, "low_level", "train")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, "advantage.log")
+    abs_log_path = os.path.abspath(log_path)
+
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    for handler in logger.handlers:
+        if isinstance(handler, logging.FileHandler) and handler.baseFilename == abs_log_path:
+            return abs_log_path
+
+    file_handler = logging.FileHandler(abs_log_path)
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    return abs_log_path
+
 # RL util
 from RL.util.replay_buffer_DQN import Multi_step_ReplayBuffer_multi_info
 import torch.nn.functional as F
@@ -105,7 +124,7 @@ parser.add_argument(
     "--leverage_choices",
     action="append",
     type=int,
-    default=[5],
+    default=[1],
     help="the transaction cost of not holding the same action as before",
 )
 parser.add_argument(
@@ -160,7 +179,7 @@ parser.add_argument(
 parser.add_argument(
     "--initial_leverage",
     type=float,
-    default=5,
+    default=1,
     help="initial leverage",
 )
 
@@ -423,6 +442,34 @@ class Weighted_Contexts_DQN:
         self.loss_func_pretrain = nn.SmoothL1Loss(reduction="none")
         # pretrain
         self.pretrain_epoch = args.pretrain_epoch
+        self._log_internal_parameters("init_end")
+
+    def _format_internal_parameter_value(self, value):
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return str(value)
+        if isinstance(value, np.ndarray):
+            return "ndarray(shape={}, dtype={})".format(value.shape, value.dtype)
+        if torch.is_tensor(value):
+            return "tensor(shape={}, dtype={}, device={})".format(
+                tuple(value.shape), value.dtype, value.device
+            )
+        if isinstance(value, dict):
+            if len(value) <= 10:
+                return repr(value)
+            keys = list(value.keys())[:10]
+            return "dict(len={}, sample_keys={})".format(len(value), repr(keys))
+        if isinstance(value, (list, tuple)):
+            if len(value) <= 20:
+                return repr(value)
+            return "{}(len={}, sample={})".format(
+                type(value).__name__, len(value), repr(list(value[:10]))
+            )
+        return "<{}>".format(type(value).__name__)
+
+    def _log_internal_parameters(self, stage):
+        logger.info("Weighted_Contexts_DQN internal parameters | stage=%s", stage)
+        for name, value in self.__dict__.items():
+            logger.info("%s=%s", name, self._format_internal_parameter_value(value))
 
     def update(
         self,
@@ -479,7 +526,7 @@ class Weighted_Contexts_DQN:
             )
             assert target_sa_quantiles.shape == (self.batch_size, 1, self.N)
         td_errors = target_sa_quantiles - current_sa_quantiles
-        print("td_errors", td_errors)
+        # logger.info("td_errors %s", td_errors)
         assert td_errors.shape == (self.batch_size, self.N, self.N)
         if self.if_use_hubber_loss:
             td_errors = calculate_huber_loss(td_errors)
@@ -684,6 +731,7 @@ class Weighted_Contexts_DQN:
         return action
 
     def train(self):
+        self._log_internal_parameters("train_start")
         logger.info(
             "开始训练 | 数据集=%s | 总采样数=%d | 预训练轮数=%d | 设备=%s",
             self.dataset_name,
@@ -722,10 +770,10 @@ class Weighted_Contexts_DQN:
             logger.info("当前阶段: %s", "预训练" if pretrain else "多样化训练")
             df_index = random.choices(range(self.total_df_index_length), k=1)[0]
             initial_action = random.choices(range(self.position_choices), k=1)[0]
-            print(
-                "正在使用 df_{} 进行训练, 初始动作={}".format(
-                    df_index, initial_action
-                )
+            logger.info(
+                "正在使用 df_%d 进行训练, 初始动作=%d",
+                df_index,
+                initial_action,
             )
             self.train_df = pd.read_feather(
                 os.path.join(self.train_data_path, "df_{}.feather".format(df_index))
@@ -735,10 +783,10 @@ class Weighted_Contexts_DQN:
                     initial_action, self.leverage_choices, self.position_list
                 )
             )
-            print(
-                "初始仓位={}, 初始杠杆={}".format(
-                    self.initial_position, self.initial_leverage
-                )
+            logger.info(
+                "初始仓位=%s, 初始杠杆=%s",
+                self.initial_position,
+                self.initial_leverage,
             )
             current_markprice = self.train_df["mark_price"].values[0]
             self.initial_margin = np.abs(
@@ -794,9 +842,7 @@ class Weighted_Contexts_DQN:
                     s, info = env.reset()
                     optimal_step_counter = 0
                     episode_reward_sum = 0
-                    print(
-                        "预训练阶段: 使用基于规则策略 index={} 采数".format(index)
-                    )
+                    logger.info("预训练阶段: 使用基于规则策略 index=%d 采数", index)
                     while True:
                         a = self.act_multi_styles_pretrain(
                             info, optimal_step_counter, index
@@ -887,9 +933,7 @@ class Weighted_Contexts_DQN:
                 for index in range(self.N):
                     s, info = env.reset()
                     episode_reward_sum = 0
-                    print(
-                        "多样化训练: 使用上下文索引 index={} 采数".format(index)
-                    )
+                    logger.info("多样化训练: 使用上下文索引 index=%d 采数", index)
                     while True:
                         a = self.act_multi_styles(s, info, self.epsilon, index)
                         if index == 0:
@@ -1049,8 +1093,8 @@ class Weighted_Contexts_DQN:
 
 
 if __name__ == "__main__":
-    print('start')
-    logger.info('start')
     args = parser.parse_args()
+    configure_logger(args.dataset_name)
+    logger.info('start')
     trainer = Weighted_Contexts_DQN(args)
     trainer.train()
