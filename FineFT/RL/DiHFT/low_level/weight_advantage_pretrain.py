@@ -38,6 +38,42 @@ def configure_logger(dataset_name):
     logger.addHandler(file_handler)
     return abs_log_path
 
+
+def summarize_rollout_metrics(metrics):
+    return {
+        "mean_return_rate": float(np.mean([item["return_rate"] for item in metrics])),
+        "mean_final_balance": float(
+            np.mean([item["final_balance"] for item in metrics])
+        ),
+        "mean_reward_sum": float(np.mean([item["reward_sum"] for item in metrics])),
+    }
+
+
+def summarize_rollout_diagnostics(actions, positions, preview_limit=20):
+    action_values, action_counts = np.unique(actions, return_counts=True)
+    position_values, position_counts = np.unique(positions, return_counts=True)
+    position_switches = sum(
+        1
+        for previous_position, current_position in zip(positions, positions[1:])
+        if current_position != previous_position
+    )
+    return {
+        "action_counts": [
+            (int(action), int(count))
+            for action, count in zip(action_values.tolist(), action_counts.tolist())
+        ],
+        "position_counts": [
+            (float(position), int(count))
+            for position, count in zip(position_values.tolist(), position_counts.tolist())
+        ],
+        "first_actions": [int(action) for action in actions[:preview_limit]],
+        "first_positions": [
+            float(position) for position in positions[:preview_limit]
+        ],
+        "position_switches": int(position_switches),
+    }
+
+
 # RL util
 from RL.util.replay_buffer_DQN import Multi_step_ReplayBuffer_multi_info
 import torch.nn.functional as F
@@ -208,10 +244,10 @@ parser.add_argument(
 parser.add_argument(
     "--batch_size",
     type=int,
-    default=512,
+    default=128,
     help="the number of transcation we learn at a time",
 )
-parser.add_argument("--update_times", type=int, default=1, help="the update times")
+parser.add_argument("--update_times", type=int, default=20, help="the update times")
 parser.add_argument(
     "--gamma", type=float, default=0.9, help="the gamma for decay reward"
 )
@@ -330,6 +366,7 @@ class Weighted_Contexts_DQN:
             self.device = "cuda"
         else:
             self.device = "cpu"
+        self.device = "cpu"
         # log path
         self.model_path = os.path.join(
             args.result_path, args.dataset_name, "weights_advantage_pretrain"
@@ -806,7 +843,7 @@ class Weighted_Contexts_DQN:
             "initial_wallet_balance": self.initial_wallet_balance,
             "initial_unrealized_pnl": self.initial_unrealized_pnL,
         }
-        sample_plan, q_table_cache, train_df_cache, _ = (
+        sample_plan, q_table_cache, train_df_cache, _, sample_action_cache = (
             prepare_pretrain_qtable_diagnostics(
                 num_sample=self.num_sample,
                 total_df_index_length=self.total_df_index_length,
@@ -836,11 +873,15 @@ class Weighted_Contexts_DQN:
                 self.initial_leverage,
             )
             env = create_demo_env(self.train_df, env_kwargs, self.initial_state)
+            sample_rollout_metrics = []
             if pretrain:
-                q_table = q_table_cache[df_index]
-                self.perfection_action_list = get_dp_action_from_qtable(
-                    q_table, initial_action
-                )
+                if sample in sample_action_cache:
+                    self.perfection_action_list = sample_action_cache[sample]
+                else:
+                    q_table = q_table_cache[df_index]
+                    self.perfection_action_list = get_dp_action_from_qtable(
+                        q_table, initial_action
+                    )
 
                 for index in range(4):
                     s, info = env.reset()
@@ -853,7 +894,7 @@ class Weighted_Contexts_DQN:
                         )
                         optimal_step_counter += 1
                         s_, r, done, info_ = env.step(a)
-
+                        # logger.info("预训练阶段: 动作=%d, 奖励=%f, 状态=%s, 信息=%s", a, r, s_, info_)
                         step_counter_pretrain += 1
                         buffer_pretrain.add(s, info, a, r, s_, info_, done)
                         episode_reward_sum += r
@@ -903,14 +944,15 @@ class Weighted_Contexts_DQN:
                                     global_step=self.update_counter,
                                     walltime=None,
                                 )
-                                logger.info(
-                                    "预训练更新 | 步数=%d | 累计更新次数=%d | 总损失=%.6f | KL损失=%.6f | TD损失=%.6f",
-                                    step_counter_pretrain,
-                                    self.update_counter,
-                                    total_loss,
-                                    KL_loss,
-                                    td_loss,
-                                )
+                            logger.info(
+                                "预训练更新 | 步数=%d | 累计奖励=%.4f | 累计更新次数=%d | 总损失=%.6f | KL损失=%.6f | TD损失=%.6f",
+                                step_counter_pretrain,
+                                episode_reward_sum,
+                                self.update_counter,
+                                total_loss,
+                                KL_loss,
+                                td_loss,
+                            )
                     final_balance = env.unrealized_pnl + env.wallet_balance
                     required_money = self.initial_wallet_balance
                     self.writer.add_scalar(
@@ -933,10 +975,19 @@ class Weighted_Contexts_DQN:
                         final_balance,
                         final_balance / (required_money + 1e-12) - 1,
                     )
+                    sample_rollout_metrics.append(
+                        {
+                            "return_rate": final_balance / (required_money + 1e-12),
+                            "final_balance": final_balance,
+                            "reward_sum": episode_reward_sum,
+                        }
+                    )
             else:
                 for index in range(self.N):
                     s, info = env.reset()
                     episode_reward_sum = 0
+                    rollout_actions = []
+                    rollout_positions = []
                     logger.info("多样化训练: 使用上下文索引 index=%d 采数", index)
                     while True:
                         a = self.act_multi_styles(s, info, self.epsilon, index)
@@ -963,6 +1014,8 @@ class Weighted_Contexts_DQN:
                         step_counter_diverse += 1
                         buffer_diverse.add(s, info, a, r, s_, info_, done)
                         episode_reward_sum += r
+                        rollout_actions.append(a)
+                        rollout_positions.append(info_["personal_state"][-2])
 
                         s, info = s_, info_
                         if done:
@@ -1010,17 +1063,17 @@ class Weighted_Contexts_DQN:
                                     global_step=self.update_counter,
                                     walltime=None,
                                 )
-                                logger.info(
-                                    "多样化训练更新 | 步数=%d | 累计更新次数=%d | 总损失=%.6f | KL损失=%.6f | TD损失=%.6f | 探索率=%.4f | 适配系数=%.4f | 学习率=%.6f",
-                                    step_counter_diverse,
-                                    self.update_counter,
-                                    total_loss,
-                                    KL_loss,
-                                    td_loss,
-                                    self.epsilon,
-                                    self.ada,
-                                    self.lr,
-                                )
+                            logger.info(
+                                "多样化训练更新 | 步数=%d | 累计更新次数=%d | 总损失=%.6f | KL损失=%.6f | TD损失=%.6f | 探索率=%.4f | 适配系数=%.4f | 学习率=%.6f",
+                                step_counter_diverse,
+                                self.update_counter,
+                                total_loss,
+                                KL_loss,
+                                td_loss,
+                                self.epsilon,
+                                self.ada,
+                                self.lr,
+                            )
 
                     final_balance = env.unrealized_pnl + env.wallet_balance
                     required_money = self.initial_wallet_balance
@@ -1044,11 +1097,37 @@ class Weighted_Contexts_DQN:
                         final_balance,
                         final_balance / (required_money + 1e-12) - 1,
                     )
-            epoch_return_rate_train_list.append(
-                final_balance / (required_money + 1e-12)
+                    rollout_diagnostics = summarize_rollout_diagnostics(
+                        rollout_actions,
+                        rollout_positions,
+                    )
+                    logger.info(
+                        "多样化动作诊断 | 上下文索引=%d | 动作计数=%s | 仓位计数=%s | 前20动作=%s | 前20仓位=%s | 仓位切换次数=%d",
+                        index,
+                        rollout_diagnostics["action_counts"],
+                        rollout_diagnostics["position_counts"],
+                        rollout_diagnostics["first_actions"],
+                        rollout_diagnostics["first_positions"],
+                        rollout_diagnostics["position_switches"],
+                    )
+                    sample_rollout_metrics.append(
+                        {
+                            "return_rate": final_balance / (required_money + 1e-12),
+                            "final_balance": final_balance,
+                            "reward_sum": episode_reward_sum,
+                        }
+                    )
+            sample_summary = summarize_rollout_metrics(sample_rollout_metrics)
+            logger.info(
+                "采样汇总 | sample=%d | 平均收益率=%.6f | 平均最终余额=%.4f | 平均累计奖励=%.4f",
+                sample + 1,
+                sample_summary["mean_return_rate"],
+                sample_summary["mean_final_balance"],
+                sample_summary["mean_reward_sum"],
             )
-            epoch_final_balance_train_list.append(final_balance)
-            epoch_reward_sum_train_list.append(episode_reward_sum)
+            epoch_return_rate_train_list.append(sample_summary["mean_return_rate"])
+            epoch_final_balance_train_list.append(sample_summary["mean_final_balance"])
+            epoch_reward_sum_train_list.append(sample_summary["mean_reward_sum"])
             if len(epoch_reward_sum_train_list) == epoch_number:
                 epoch_index = int((sample + 1) / epoch_number)
                 mean_return_rate_train = np.mean(epoch_return_rate_train_list)

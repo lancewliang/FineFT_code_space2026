@@ -1,6 +1,8 @@
+import json
 import multiprocessing as mp
 import os
 import random
+import re
 
 import numpy as np
 import pandas as pd
@@ -11,6 +13,12 @@ from env.env_class.futures_util import (
     map_action_to_position_leverage,
 )
 from env.env_initiate.demo_initiate import initiate_demo_env
+
+
+DIAGNOSTIC_CSV_PATTERN = re.compile(
+    r"^sample_(?P<sample_index>\d{4})_df_(?P<df_index>\d+)_initial_action_(?P<initial_action>\d+)\.csv$"
+)
+DIAGNOSTIC_MANIFEST_NAME = "manifest.json"
 
 
 def build_sample_plan(num_sample, total_df_index_length, position_choices):
@@ -93,6 +101,59 @@ def create_demo_env(train_df, env_kwargs, initial_state):
         gamma=env_kwargs["gamma"],
         max_punishment=1e10,
     )
+
+
+def _normalize_manifest_value(value):
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {
+            str(key): _normalize_manifest_value(value[key])
+            for key in sorted(value, key=str)
+        }
+    if isinstance(value, (list, tuple)):
+        return [_normalize_manifest_value(item) for item in value]
+    return value
+
+
+def _build_diagnostics_manifest(
+    num_sample,
+    total_df_index_length,
+    position_choices,
+    qtable_kwargs,
+    env_kwargs,
+):
+    return _normalize_manifest_value(
+        {
+            "num_sample": num_sample,
+            "total_df_index_length": total_df_index_length,
+            "position_choices": position_choices,
+            "qtable_kwargs": qtable_kwargs,
+            "env_kwargs": env_kwargs,
+        }
+    )
+
+
+def _manifest_matches(output_dir, expected_manifest):
+    manifest_path = os.path.join(output_dir, DIAGNOSTIC_MANIFEST_NAME)
+    if not os.path.isfile(manifest_path):
+        return False
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as manifest_file:
+            existing_manifest = json.load(manifest_file)
+    except (OSError, json.JSONDecodeError):
+        return False
+    return existing_manifest == expected_manifest
+
+
+def _write_diagnostics_manifest(output_dir, manifest):
+    os.makedirs(output_dir, exist_ok=True)
+    manifest_path = os.path.join(output_dir, DIAGNOSTIC_MANIFEST_NAME)
+    with open(manifest_path, "w", encoding="utf-8") as manifest_file:
+        json.dump(manifest, manifest_file, sort_keys=True, indent=2)
+        manifest_file.write("\n")
 
 
 def _value_from_row(row, column):
@@ -200,7 +261,71 @@ def evaluate_and_export_sample(
         "episode_reward_sum": cumulative_profit,
         "profitable": cumulative_profit > 0,
         "csv_path": csv_path,
+        "action_list": [row["action"] for row in rows],
     }
+
+
+def _load_existing_diagnostics(num_sample, train_data_path, output_dir, manifest):
+    if not os.path.isdir(output_dir):
+        return None
+    if not _manifest_matches(output_dir, manifest):
+        return None
+
+    csv_by_sample = {}
+    for file_name in os.listdir(output_dir):
+        match = DIAGNOSTIC_CSV_PATTERN.match(file_name)
+        if match is None:
+            continue
+        sample_number = int(match.group("sample_index"))
+        if 1 <= sample_number <= num_sample:
+            csv_by_sample.setdefault(sample_number, []).append(
+                (
+                    os.path.join(output_dir, file_name),
+                    int(match.group("df_index")),
+                    int(match.group("initial_action")),
+                )
+            )
+
+    expected_sample_numbers = range(1, num_sample + 1)
+    if any(
+        len(csv_by_sample.get(sample_number, [])) != 1
+        for sample_number in expected_sample_numbers
+    ):
+        return None
+
+    sample_plan = []
+    diagnostics = []
+    sample_action_cache = {}
+    train_df_cache = {}
+    for sample_index in range(num_sample):
+        csv_path, df_index, initial_action = csv_by_sample[sample_index + 1][0]
+        diagnostic_df = pd.read_csv(csv_path)
+        if "action" not in diagnostic_df.columns:
+            return None
+        if "cumulative_profit" in diagnostic_df.columns and len(diagnostic_df) > 0:
+            episode_reward_sum = diagnostic_df["cumulative_profit"].iloc[-1]
+        elif "step_reward" in diagnostic_df.columns:
+            episode_reward_sum = diagnostic_df["step_reward"].sum()
+        else:
+            return None
+
+        sample_plan.append((df_index, initial_action))
+        sample_action_cache[sample_index] = diagnostic_df["action"].astype(int).tolist()
+        diagnostics.append(
+            {
+                "sample_index": sample_index + 1,
+                "df_index": df_index,
+                "initial_action": initial_action,
+                "episode_reward_sum": episode_reward_sum,
+                "profitable": episode_reward_sum > 0,
+                "csv_path": csv_path,
+            }
+        )
+        if df_index not in train_df_cache:
+            df_path = os.path.join(train_data_path, "df_{}.feather".format(df_index))
+            train_df_cache[df_index] = pd.read_feather(df_path)
+
+    return sample_plan, {}, train_df_cache, diagnostics, sample_action_cache
 
 
 def prepare_pretrain_qtable_diagnostics(
@@ -214,6 +339,28 @@ def prepare_pretrain_qtable_diagnostics(
     logger=None,
     process_count=None,
 ):
+    manifest = _build_diagnostics_manifest(
+        num_sample,
+        total_df_index_length,
+        position_choices,
+        qtable_kwargs,
+        env_kwargs,
+    )
+    existing = _load_existing_diagnostics(
+        num_sample, train_data_path, output_dir, manifest
+    )
+    if existing is not None:
+        for diagnostic in existing[3]:
+            message = (
+                "qtable诊断 | sample={sample_index} | df_index={df_index} | "
+                "initial_action={initial_action} | episode_reward_sum={episode_reward_sum:.4f} | "
+                "profitable={profitable} | csv_path={csv_path} | source=csv"
+            ).format(**diagnostic)
+            if logger is not None:
+                logger.info(message)
+            print(message.replace(" | ", " "))
+        return existing
+
     sample_plan = build_sample_plan(
         num_sample, total_df_index_length, position_choices
     )
@@ -224,6 +371,7 @@ def prepare_pretrain_qtable_diagnostics(
         process_count=process_count,
     )
     diagnostics = []
+    sample_action_cache = {}
     for sample_index, (df_index, initial_action) in enumerate(sample_plan):
         diagnostic = evaluate_and_export_sample(
             sample_index,
@@ -235,6 +383,7 @@ def prepare_pretrain_qtable_diagnostics(
             output_dir,
         )
         diagnostics.append(diagnostic)
+        sample_action_cache[sample_index] = diagnostic["action_list"]
         message = (
             "qtable诊断 | sample={sample_index} | df_index={df_index} | "
             "initial_action={initial_action} | episode_reward_sum={episode_reward_sum:.4f} | "
@@ -243,4 +392,5 @@ def prepare_pretrain_qtable_diagnostics(
         if logger is not None:
             logger.info(message)
         print(message.replace(" | ", " "))
-    return sample_plan, q_table_cache, train_df_cache, diagnostics
+    _write_diagnostics_manifest(output_dir, manifest)
+    return sample_plan, q_table_cache, train_df_cache, diagnostics, sample_action_cache
