@@ -49,6 +49,41 @@ def summarize_rollout_metrics(metrics):
     }
 
 
+def record_diverse_rollout_latest_metric(
+    metrics_by_df,
+    df_index,
+    rollout_index,
+    reward_sum,
+    final_balance,
+    return_rate,
+):
+    df_metrics = metrics_by_df.setdefault(int(df_index), {})
+    df_metrics[int(rollout_index)] = {
+        "reward_sum": float(reward_sum),
+        "final_balance": float(final_balance),
+        "return_rate": float(return_rate),
+    }
+
+
+def log_diverse_rollout_latest_metrics(epoch_index, metrics_by_df):
+    for df_index in sorted(metrics_by_df):
+        for rollout_index in sorted(metrics_by_df[df_index]):
+            metrics = metrics_by_df[df_index][rollout_index]
+            profit_label = "盈利" if metrics["return_rate"] > 0 else "亏损"
+            logger.info(
+                "第 %d 轮 epoch 训练完成 | 多样化训练最新明细 | "
+                "df_index=%d | rollout_index=%d | 累计奖励=%.4f | "
+                "最终余额=%.4f | 收益率=%.6f | %s",
+                epoch_index,
+                df_index,
+                rollout_index,
+                metrics["reward_sum"],
+                metrics["final_balance"],
+                metrics["return_rate"],
+                profit_label,
+            )
+
+
 def summarize_rollout_diagnostics(actions, positions, preview_limit=20):
     action_values, action_counts = np.unique(actions, return_counts=True)
     position_values, position_counts = np.unique(positions, return_counts=True)
@@ -1000,6 +1035,7 @@ class Weighted_Contexts_DQN:
         epoch_reward_sum_train_list = []
         # epoch_number = int(len(self.train_df) / self.chunk_length)
         epoch_number = 4
+        diverse_rollout_latest_metrics_by_df = {}
         group_number = self.N
         # perfect experience
         buffer_pretrain = Multi_step_ReplayBuffer_multi_info(
@@ -1193,8 +1229,6 @@ class Weighted_Contexts_DQN:
                 for index in range(self.N):
                     s, info = env.reset()
                     episode_reward_sum = 0
-                    rollout_actions = []
-                    rollout_positions = []
                     logger.info("多样化训练: 使用上下文索引 index=%d 采数", index)
                     while True:
                         a = self.act_multi_styles(s, info, self.epsilon, index)
@@ -1221,8 +1255,6 @@ class Weighted_Contexts_DQN:
                         step_counter_diverse += 1
                         buffer_diverse.add(s, info, a, r, s_, info_, done)
                         episode_reward_sum += r
-                        rollout_actions.append(a)
-                        rollout_positions.append(info_["personal_state"][-2])
 
                         s, info = s_, info_
                         if done:
@@ -1270,23 +1302,13 @@ class Weighted_Contexts_DQN:
                                     global_step=self.update_counter,
                                     walltime=None,
                                 )
-                            logger.info(
-                                "多样化训练更新 | 步数=%d | 累计更新次数=%d | 总损失=%.6f | KL损失=%.6f | TD损失=%.6f | 探索率=%.4f | 适配系数=%.4f | 学习率=%.6f",
-                                step_counter_diverse,
-                                self.update_counter,
-                                total_loss,
-                                KL_loss,
-                                td_loss,
-                                self.epsilon,
-                                self.ada,
-                                self.lr,
-                            )
 
                     final_balance = env.unrealized_pnl + env.wallet_balance
                     required_money = self.initial_wallet_balance
+                    diverse_return_rate = final_balance / (required_money + 1e-12) - 1
                     self.writer.add_scalar(
                         tag="return_rate_train_{}".format(index),
-                        scalar_value=final_balance / (required_money + 1e-12) - 1,
+                        scalar_value=diverse_return_rate,
                         global_step=sample,
                         walltime=None,
                     )
@@ -1297,26 +1319,23 @@ class Weighted_Contexts_DQN:
                         global_step=sample,
                         walltime=None,
                     )
+                    record_diverse_rollout_latest_metric(
+                        diverse_rollout_latest_metrics_by_df,
+                        df_index,
+                        index,
+                        episode_reward_sum,
+                        final_balance,
+                        diverse_return_rate,
+                    )
                     logger.info(
                         "多样化回合结束 | 上下文索引=%d | 累计奖励=%.4f | 最终余额=%.4f | 收益率=%.6f",
                         index,
                         episode_reward_sum,
                         final_balance,
-                        final_balance / (required_money + 1e-12) - 1,
+                        diverse_return_rate,
                     )
-                    rollout_diagnostics = summarize_rollout_diagnostics(
-                        rollout_actions,
-                        rollout_positions,
-                    )
-                    logger.info(
-                        "多样化动作诊断 | 上下文索引=%d | 动作计数=%s | 仓位计数=%s | 前20动作=%s | 前20仓位=%s | 仓位切换次数=%d",
-                        index,
-                        rollout_diagnostics["action_counts"],
-                        rollout_diagnostics["position_counts"],
-                        rollout_diagnostics["first_actions"],
-                        rollout_diagnostics["first_positions"],
-                        rollout_diagnostics["position_switches"],
-                    )
+
+
                     sample_rollout_metrics.append(
                         {
                             "return_rate": final_balance / (required_money + 1e-12),
@@ -1367,6 +1386,10 @@ class Weighted_Contexts_DQN:
                 torch.save(
                     self.eval_net.state_dict(),
                     os.path.join(epoch_path, "trained_model.pkl"),
+                )
+                log_diverse_rollout_latest_metrics(
+                    epoch_index,
+                    diverse_rollout_latest_metrics_by_df,
                 )
                 logger.info(
                     "第 %d 轮 epoch 训练完成 | 平均收益率=%.6f | 平均最终余额=%.4f | 平均累计奖励=%.4f | 模型已保存至=%s",

@@ -63,6 +63,105 @@ def test_summarize_rollout_diagnostics_counts_actions_and_positions():
     assert summary["position_switches"] == 2
 
 
+def test_record_diverse_rollout_latest_metric_overwrites_existing_key():
+    from RL.DiHFT.low_level import weight_advantage_pretrain as wap
+
+    metrics_by_df = {}
+
+    wap.record_diverse_rollout_latest_metric(
+        metrics_by_df,
+        df_index=2,
+        rollout_index=1,
+        reward_sum=100.0,
+        final_balance=101000.0,
+        return_rate=0.01,
+    )
+    wap.record_diverse_rollout_latest_metric(
+        metrics_by_df,
+        df_index=2,
+        rollout_index=1,
+        reward_sum=-50.0,
+        final_balance=99500.0,
+        return_rate=-0.005,
+    )
+
+    assert metrics_by_df == {
+        2: {
+            1: {
+                "reward_sum": -50.0,
+                "final_balance": 99500.0,
+                "return_rate": -0.005,
+            }
+        }
+    }
+
+
+def test_log_diverse_rollout_latest_metrics_sorts_and_labels_profit_loss(caplog):
+    from RL.DiHFT.low_level import weight_advantage_pretrain as wap
+
+    metrics_by_df = {
+        2: {
+            1: {
+                "reward_sum": 20.0,
+                "final_balance": 100100.0,
+                "return_rate": 0.001,
+            }
+        },
+        1: {
+            3: {
+                "reward_sum": 0.0,
+                "final_balance": 100000.0,
+                "return_rate": 0.0,
+            },
+            0: {
+                "reward_sum": -30.0,
+                "final_balance": 99900.0,
+                "return_rate": -0.001,
+            },
+        },
+    }
+
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        wap.log_diverse_rollout_latest_metrics(7, metrics_by_df)
+
+    messages = [
+        record.message
+        for record in caplog.records
+        if "多样化训练最新明细" in record.message
+    ]
+    assert messages == [
+        "第 7 轮 epoch 训练完成 | 多样化训练最新明细 | df_index=1 | rollout_index=0 | 累计奖励=-30.0000 | 最终余额=99900.0000 | 收益率=-0.001000 | 亏损",
+        "第 7 轮 epoch 训练完成 | 多样化训练最新明细 | df_index=1 | rollout_index=3 | 累计奖励=0.0000 | 最终余额=100000.0000 | 收益率=0.000000 | 亏损",
+        "第 7 轮 epoch 训练完成 | 多样化训练最新明细 | df_index=2 | rollout_index=1 | 累计奖励=20.0000 | 最终余额=100100.0000 | 收益率=0.001000 | 盈利",
+    ]
+
+
+def test_log_diverse_rollout_latest_metrics_skips_empty_cache(caplog):
+    from RL.DiHFT.low_level import weight_advantage_pretrain as wap
+
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        wap.log_diverse_rollout_latest_metrics(3, {})
+
+    assert "多样化训练最新明细" not in caplog.text
+
+
+def test_train_wires_diverse_rollout_latest_metrics_before_epoch_summary():
+    import inspect
+
+    source = inspect.getsource(Weighted_Contexts_DQN.train)
+
+    assert "diverse_rollout_latest_metrics_by_df = {}" in source
+    assert "record_diverse_rollout_latest_metric(" in source
+    assert "log_diverse_rollout_latest_metrics(" in source
+    diverse_branch_index = source.index("else:\n                for index in range(self.N):")
+    diverse_return_rate_index = source.index("diverse_return_rate =")
+    record_metric_index = source.index("record_diverse_rollout_latest_metric(")
+    assert diverse_branch_index < diverse_return_rate_index < record_metric_index
+    assert source.index("log_diverse_rollout_latest_metrics(") < source.index(
+        '"第 %d 轮 epoch 训练完成 | 平均收益率=%.6f'
+    )
+
+
 def test_parser_defaults_enable_full_df_warmup_and_zero_sample_pretrain():
     from RL.DiHFT.low_level import weight_advantage_pretrain as wap
 
