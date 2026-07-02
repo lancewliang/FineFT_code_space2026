@@ -40,6 +40,35 @@
         }
         ,
         {
+            "name": "weight_advantage_pretrain.py (fu low level)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py",
+            "python": "/home/lanceliang/miniconda3/envs/finetf/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/FineFT"
+            },
+            "args": [
+                "--dataset_name",
+                "fu",
+                "--max_holding_number",
+                "1",
+                "--short_estimated_rate",
+                "0",
+                "--long_estimated_rate",
+                "0",
+                "--position_choices",
+                "3",
+                "--transcation_cost",
+                "0",
+                "--order_book_depth",
+                "5"
+            ]
+        }
+        ,
+        {
             "name": "build_maintenance_margin_dict.py",
             "type": "debugpy",
             "request": "launch",

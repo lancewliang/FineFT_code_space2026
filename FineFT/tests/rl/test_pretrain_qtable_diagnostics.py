@@ -313,3 +313,40 @@ def test_create_demo_env_passes_order_book_depth(monkeypatch):
     diag.create_demo_env(pd.DataFrame(), env_kwargs, (100000, 0, 0, 0, 1))
 
     assert captured_kwargs["order_book_depth"] == 5
+
+
+def test_extend_q_table_cache_only_computes_missing_df_indices(monkeypatch, tmp_path):
+    from RL.DiHFT.low_level import pretrain_qtable_diagnostics as diag
+
+    train_data_path = tmp_path / "train"
+    train_data_path.mkdir()
+    pd.DataFrame({"mark_price": [10.0]}).to_feather(train_data_path / "df_0.feather")
+    pd.DataFrame({"mark_price": [20.0]}).to_feather(train_data_path / "df_1.feather")
+    pd.DataFrame({"mark_price": [30.0]}).to_feather(train_data_path / "df_2.feather")
+
+    existing_q_table = np.ones((1, 3, 3))
+    existing_df = pd.DataFrame({"mark_price": [10.0]})
+    computed = []
+
+    def fake_create_q_table_from_df(df, **kwargs):
+        computed.append(float(df["mark_price"].iloc[0]))
+        return np.zeros((len(df), 3, 3)) + float(df["mark_price"].iloc[0])
+
+    monkeypatch.setattr(
+        diag, "create_optimal_q_table_from_df", fake_create_q_table_from_df
+    )
+
+    q_table_cache, train_df_cache = diag.extend_q_table_cache(
+        df_indices=[0, 1, 2],
+        train_data_path=str(train_data_path),
+        qtable_kwargs={},
+        q_table_cache={0: existing_q_table},
+        train_df_cache={0: existing_df},
+        process_count=1,
+    )
+
+    assert q_table_cache[0] is existing_q_table
+    assert train_df_cache[0] is existing_df
+    assert sorted(q_table_cache) == [0, 1, 2]
+    assert sorted(train_df_cache) == [0, 1, 2]
+    assert computed == [20.0, 30.0]

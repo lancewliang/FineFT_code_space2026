@@ -92,11 +92,15 @@ from RL.util.episode_selector import get_transformation_even_risk
 from model.low_level import ensemble_Qnet
 
 # env
-from env.env_class.futures_util import get_dp_action_from_qtable
+from env.env_class.futures_util import (
+    get_dp_action_from_qtable,
+    map_action_to_position_leverage,
+)
 from env.env_class.policy_util import get_close_element
 from RL.DiHFT.low_level.pretrain_qtable_diagnostics import (
     build_initial_state,
     create_demo_env,
+    extend_q_table_cache,
     prepare_pretrain_qtable_diagnostics,
 )
 import copy
@@ -340,8 +344,21 @@ parser.add_argument(
 parser.add_argument(
     "--pretrain_epoch",
     type=int,
-    default=2,
-    help="the coffient for decay",
+    default=0,
+    help="the number of sample-level pretrain epochs after full df warmup",
+)
+parser.add_argument(
+    "--full_df_warmup",
+    dest="full_df_warmup",
+    action="store_true",
+    default=True,
+    help="run one empty-position pretrain warmup for every training df before sample loop",
+)
+parser.add_argument(
+    "--no_full_df_warmup",
+    dest="full_df_warmup",
+    action="store_false",
+    help="disable full df warmup before sample loop",
 )
 
 
@@ -366,7 +383,7 @@ class Weighted_Contexts_DQN:
             self.device = "cuda"
         else:
             self.device = "cpu"
-        self.device = "cpu"
+        # self.device = "cpu"
         # log path
         self.model_path = os.path.join(
             args.result_path, args.dataset_name, "weights_advantage_pretrain"
@@ -478,6 +495,7 @@ class Weighted_Contexts_DQN:
         self.loss_func_pretrain = nn.SmoothL1Loss(reduction="none")
         # pretrain
         self.pretrain_epoch = args.pretrain_epoch
+        self.full_df_warmup = args.full_df_warmup
         self._log_internal_parameters("init_end")
 
     def _format_internal_parameter_value(self, value):
@@ -776,6 +794,193 @@ class Weighted_Contexts_DQN:
             self.initial_unrealized_pnL,
         )
 
+    def _resolve_empty_initial_action(self):
+        if 0 not in self.position_list:
+            raise ValueError(
+                "Unable to resolve empty position action from position_list={} and "
+                "leverage_choices={}".format(self.position_list, self.leverage_choices)
+            )
+        action_count = getattr(
+            self,
+            "N_ACTIONS",
+            (self.position_choices - 1) * len(self.leverage_choices) + 1,
+        )
+        for action in range(action_count):
+            position, _ = map_action_to_position_leverage(
+                action,
+                self.leverage_choices,
+                self.position_list,
+            )
+            if position == 0:
+                return action
+        raise ValueError(
+            "Unable to resolve empty position action from position_list={} and "
+            "leverage_choices={}".format(self.position_list, self.leverage_choices)
+        )
+
+    def _write_pretrain_loss_scalars(self, total_loss, KL_loss, td_loss):
+        self.writer.add_scalar(
+            tag="total_loss",
+            scalar_value=total_loss,
+            global_step=self.update_counter,
+            walltime=None,
+        )
+        self.writer.add_scalar(
+            tag="KL_loss",
+            scalar_value=KL_loss,
+            global_step=self.update_counter,
+            walltime=None,
+        )
+        self.writer.add_scalar(
+            tag="td_loss",
+            scalar_value=td_loss,
+            global_step=self.update_counter,
+            walltime=None,
+        )
+
+    def _run_pretrain_updates_if_ready(self, buffer_pretrain, step_counter_pretrain):
+        if not (
+            step_counter_pretrain > (self.batch_size * self.update_times + self.n_step)
+            and step_counter_pretrain % self.rollout_steps == 1
+        ):
+            return None
+        last_losses = None
+        for _ in range(self.update_times):
+            (
+                states,
+                infos,
+                actions,
+                rewards,
+                next_states,
+                next_infos,
+                dones,
+            ) = buffer_pretrain.sample()
+            last_losses = self.update_pretrain(
+                states,
+                infos,
+                actions,
+                rewards,
+                next_states,
+                next_infos,
+                dones,
+            )
+            self._write_pretrain_loss_scalars(*last_losses)
+        return last_losses
+
+    def _run_full_df_warmup(
+        self,
+        q_table_cache,
+        train_df_cache,
+        env_kwargs,
+        buffer_pretrain,
+        step_counter_pretrain,
+    ):
+        if not self.full_df_warmup:
+            logger.info("full-df warmup disabled")
+            return {"df_count": 0, "reward_sum": 0.0, "update_count": 0}, step_counter_pretrain
+        if self.total_df_index_length <= 0:
+            raise ValueError("full-df warmup requires total_df_index_length > 0")
+
+        empty_initial_action = self._resolve_empty_initial_action()
+        logger.info(
+            "full-df warmup start | df_count=%d | empty_initial_action=%d",
+            self.total_df_index_length,
+            empty_initial_action,
+        )
+        total_reward_sum = 0.0
+        update_count_before = self.update_counter
+
+        for df_index in range(self.total_df_index_length):
+            train_df = train_df_cache[df_index]
+            q_table = q_table_cache[df_index]
+            self._set_initial_state_from_action(train_df, empty_initial_action)
+            env = create_demo_env(train_df, env_kwargs, self.initial_state)
+            self.perfection_action_list = get_dp_action_from_qtable(
+                q_table,
+                empty_initial_action,
+            )
+            df_reward_sum = 0.0
+            last_losses = None
+            for rollout_index in range(4):
+                s, info = env.reset()
+                optimal_step_counter = 0
+                rollout_reward_sum = 0.0
+                losses = None
+                while True:
+                    a = self.act_multi_styles_pretrain(
+                        info,
+                        optimal_step_counter,
+                        rollout_index,
+                    )
+                    optimal_step_counter += 1
+                    s_, r, done, info_ = env.step(a)
+                    step_counter_pretrain += 1
+                    buffer_pretrain.add(s, info, a, r, s_, info_, done)
+                    rollout_reward_sum += r
+                    s, info = s_, info_
+                    if done:
+                        break
+                    losses = self._run_pretrain_updates_if_ready(
+                        buffer_pretrain,
+                        step_counter_pretrain,
+                    )
+                    if losses is not None:
+                        last_losses = losses
+                if last_losses is not None:
+                    logger.info(
+                        "full-df warmup update | df_index=%d | step=%d | "
+                        "total_loss=%.6f | KL_loss=%.6f | td_loss=%.6f",
+                        df_index,
+                        step_counter_pretrain,
+                        last_losses[0],
+                        last_losses[1],
+                        last_losses[2],
+                    )
+                rollout_final_balance = env.unrealized_pnl + env.wallet_balance
+                rollout_return_rate = rollout_final_balance / self.initial_wallet_balance
+                logger.info(
+                    "full-df warmup rollout complete | df_index=%d | rollout_index=%d | "
+                    "reward_sum=%.4f | final_balance=%.4f | return_rate=%.6f",
+                    df_index,
+                    rollout_index,
+                    rollout_reward_sum,
+                    rollout_final_balance,
+                    rollout_return_rate,
+                )
+                df_reward_sum += rollout_reward_sum
+
+            df_update_count = self.update_counter - update_count_before
+            if df_reward_sum <= 0:
+                logger.warning(
+                    "full-df warmup unprofitable | df_index=%d | reward_sum=%.4f | "
+                    "update_count=%d",
+                    df_index,
+                    df_reward_sum,
+                    df_update_count,
+                )
+            else:
+                logger.info(
+                    "full-df warmup df complete | df_index=%d | reward_sum=%.4f | "
+                    "update_count=%d",
+                    df_index,
+                    df_reward_sum,
+                    df_update_count,
+                )
+            total_reward_sum += df_reward_sum
+
+        update_count = self.update_counter - update_count_before
+        logger.info(
+            "full-df warmup complete | df_count=%d | reward_sum=%.4f | update_count=%d",
+            self.total_df_index_length,
+            total_reward_sum,
+            update_count,
+        )
+        return {
+            "df_count": self.total_df_index_length,
+            "reward_sum": total_reward_sum,
+            "update_count": update_count,
+        }, step_counter_pretrain
+
     def act_multi_styles(self, state, info, epsilon, rollout_index):
         assert rollout_index in range(self.N)
         action = self.act_single_context(state, info, rollout_index, epsilon)
@@ -855,6 +1060,21 @@ class Weighted_Contexts_DQN:
                 logger=logger,
             )
         )
+        if self.full_df_warmup:
+            q_table_cache, train_df_cache = extend_q_table_cache(
+                df_indices=range(self.total_df_index_length),
+                train_data_path=self.train_data_path,
+                qtable_kwargs=qtable_kwargs,
+                q_table_cache=q_table_cache,
+                train_df_cache=train_df_cache,
+            )
+        _, step_counter_pretrain = self._run_full_df_warmup(
+            q_table_cache=q_table_cache,
+            train_df_cache=train_df_cache,
+            env_kwargs=env_kwargs,
+            buffer_pretrain=buffer_pretrain,
+            step_counter_pretrain=step_counter_pretrain,
+        )
         for sample in range(self.num_sample):
             logger.info("===== 第 %d/%d 轮采样 =====", sample + 1, self.num_sample)
             pretrain = sample < self.pretrain_epoch
@@ -926,23 +1146,10 @@ class Weighted_Contexts_DQN:
                                     next_infos,
                                     dones,
                                 )
-                                self.writer.add_scalar(
-                                    tag="total_loss",
-                                    scalar_value=total_loss,
-                                    global_step=self.update_counter,
-                                    walltime=None,
-                                )
-                                self.writer.add_scalar(
-                                    tag="KL_loss",
-                                    scalar_value=KL_loss,
-                                    global_step=self.update_counter,
-                                    walltime=None,
-                                )
-                                self.writer.add_scalar(
-                                    tag="td_loss",
-                                    scalar_value=td_loss,
-                                    global_step=self.update_counter,
-                                    walltime=None,
+                                self._write_pretrain_loss_scalars(
+                                    total_loss,
+                                    KL_loss,
+                                    td_loss,
                                 )
                             logger.info(
                                 "预训练更新 | 步数=%d | 累计奖励=%.4f | 累计更新次数=%d | 总损失=%.6f | KL损失=%.6f | TD损失=%.6f",

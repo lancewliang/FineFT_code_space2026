@@ -61,6 +61,36 @@ def build_q_table_cache(sample_plan, train_data_path, qtable_kwargs, process_cou
     return q_table_cache, train_df_cache
 
 
+def extend_q_table_cache(
+    df_indices,
+    train_data_path,
+    qtable_kwargs,
+    q_table_cache=None,
+    train_df_cache=None,
+    process_count=None,
+):
+    q_table_cache = dict(q_table_cache or {})
+    train_df_cache = dict(train_df_cache or {})
+    missing_df_indices = [
+        df_index
+        for df_index in sorted(set(df_indices))
+        if df_index not in q_table_cache or df_index not in train_df_cache
+    ]
+    if not missing_df_indices:
+        return q_table_cache, train_df_cache
+
+    missing_plan = [(df_index, 0) for df_index in missing_df_indices]
+    missing_q_table_cache, missing_train_df_cache = build_q_table_cache(
+        missing_plan,
+        train_data_path,
+        qtable_kwargs,
+        process_count=process_count,
+    )
+    q_table_cache.update(missing_q_table_cache)
+    train_df_cache.update(missing_train_df_cache)
+    return q_table_cache, train_df_cache
+
+
 def build_initial_state(
     train_df,
     initial_action,
