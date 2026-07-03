@@ -908,6 +908,15 @@ class Weighted_Contexts_DQN:
         for df_index in range(self.total_df_index_length):
             train_df = train_df_cache[df_index]
             q_table = q_table_cache[df_index]
+            first_row_indicators = ", ".join(
+                f"{column}={train_df[column].iloc[0]}"
+                for column in self.tech_indicator_list
+            )
+            logger.info(
+                "full-df warmup first row | df_index=%d | %s",
+                df_index,
+                first_row_indicators,
+            )
             self._set_initial_state_from_action(train_df, empty_initial_action)
             env = create_demo_env(train_df, env_kwargs, self.initial_state)
             self.perfection_action_list = get_dp_action_from_qtable(
