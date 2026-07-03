@@ -247,9 +247,32 @@ def test_diagnostics_ignore_existing_csvs_when_manifest_does_not_match(
 
     recomputed = {"called": False}
 
-    def fake_build_q_table_cache(sample_plan, train_data_path, qtable_kwargs, process_count=None):
+    def fake_build_q_table_cache(
+        sample_plan,
+        train_data_path,
+        qtable_kwargs,
+        env_kwargs=None,
+        output_dir=None,
+        process_count=None,
+    ):
         recomputed["called"] = True
-        return {0: np.zeros((1, 3, 3))}, {0: pd.DataFrame({"mark_price": [10.0]})}
+        return (
+            {0: np.zeros((1, 3, 3))},
+            {0: pd.DataFrame({"mark_price": [10.0]})},
+            [
+                {
+                    "sample_index": 1,
+                    "df_index": 0,
+                    "initial_action": 0,
+                    "episode_reward_sum": 20.0,
+                    "profitable": True,
+                    "csv_path": str(
+                        Path(output_dir) / "sample_0001_df_0_initial_action_0.csv"
+                    ),
+                    "action_list": [2],
+                }
+            ],
+        )
 
     monkeypatch.setattr(
         diag, "build_sample_plan", lambda num_sample, total, choices: [(0, 0)]
@@ -258,15 +281,9 @@ def test_diagnostics_ignore_existing_csvs_when_manifest_does_not_match(
     monkeypatch.setattr(
         diag,
         "evaluate_and_export_sample",
-        lambda *args, **kwargs: {
-            "sample_index": 1,
-            "df_index": 0,
-            "initial_action": 0,
-            "episode_reward_sum": 20.0,
-            "profitable": True,
-            "csv_path": str(output_dir / "sample_0001_df_0_initial_action_0.csv"),
-            "action_list": [2],
-        },
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("diagnostics should be produced by build_q_table_cache")
+        ),
     )
 
     _, _, _, diagnostics, sample_action_cache = diag.prepare_pretrain_qtable_diagnostics(
@@ -283,6 +300,88 @@ def test_diagnostics_ignore_existing_csvs_when_manifest_does_not_match(
     assert recomputed["called"] is True
     assert diagnostics[0]["episode_reward_sum"] == 20.0
     assert sample_action_cache == {0: [2]}
+
+
+def test_prepare_uses_qtable_cache_builder_diagnostics(monkeypatch, tmp_path):
+    from RL.DiHFT.low_level import pretrain_qtable_diagnostics as diag
+
+    output_dir = tmp_path / "diagnostics"
+    env_kwargs = {"initial_wallet_balance": 100000}
+
+    monkeypatch.setattr(
+        diag,
+        "build_sample_plan",
+        lambda num_sample, total, choices: [(2, 1), (3, 0)],
+    )
+
+    def fake_build_q_table_cache(
+        sample_plan,
+        train_data_path,
+        qtable_kwargs,
+        env_kwargs=None,
+        output_dir=None,
+        process_count=None,
+    ):
+        assert sample_plan == [(2, 1), (3, 0)]
+        assert env_kwargs == {"initial_wallet_balance": 100000}
+        assert output_dir == str(output_dir_path)
+        return (
+            {2: "q-table"},
+            {2: "train-df"},
+            [
+                {
+                    "sample_index": 2,
+                    "df_index": 3,
+                    "initial_action": 0,
+                    "episode_reward_sum": -1.0,
+                    "profitable": False,
+                    "csv_path": str(
+                        output_dir_path / "sample_0002_df_3_initial_action_0.csv"
+                    ),
+                    "action_list": [7],
+                },
+                {
+                    "sample_index": 1,
+                    "df_index": 2,
+                    "initial_action": 1,
+                    "episode_reward_sum": 3.0,
+                    "profitable": True,
+                    "csv_path": str(
+                        output_dir_path / "sample_0001_df_2_initial_action_1.csv"
+                    ),
+                    "action_list": [5, 6],
+                },
+            ],
+        )
+
+    output_dir_path = output_dir
+    monkeypatch.setattr(diag, "build_q_table_cache", fake_build_q_table_cache)
+    monkeypatch.setattr(
+        diag,
+        "evaluate_and_export_sample",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("diagnostics should be produced by build_q_table_cache")
+        ),
+    )
+
+    sample_plan, q_table_cache, train_df_cache, diagnostics, sample_action_cache = (
+        diag.prepare_pretrain_qtable_diagnostics(
+            num_sample=2,
+            total_df_index_length=4,
+            position_choices=3,
+            train_data_path=str(tmp_path / "train"),
+            qtable_kwargs={},
+            env_kwargs=env_kwargs,
+            output_dir=str(output_dir),
+            process_count=1,
+        )
+    )
+
+    assert sample_plan == [(2, 1), (3, 0)]
+    assert q_table_cache == {2: "q-table"}
+    assert train_df_cache == {2: "train-df"}
+    assert [diagnostic["sample_index"] for diagnostic in diagnostics] == [1, 2]
+    assert sample_action_cache == {0: [5, 6], 1: [7]}
 
 
 def test_create_demo_env_passes_order_book_depth(monkeypatch):

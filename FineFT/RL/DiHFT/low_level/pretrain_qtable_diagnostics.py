@@ -6,6 +6,7 @@ import re
 
 import numpy as np
 import pandas as pd
+import polars as pl
 
 from env.env_class.futures_util import (
     create_optimal_q_table_from_df,
@@ -31,21 +32,64 @@ def build_sample_plan(num_sample, total_df_index_length, position_choices):
 
 
 def _create_q_table_worker(args):
-    df_index, train_data_path, qtable_kwargs = args
+    (
+        df_index,
+        train_data_path,
+        qtable_kwargs,
+        sample_tasks,
+        env_kwargs,
+        output_dir,
+    ) = args
     df_path = os.path.join(train_data_path, "df_{}.feather".format(df_index))
     train_df = pd.read_feather(df_path)
     q_table = create_optimal_q_table_from_df(df=train_df, **qtable_kwargs)
-    return df_index, train_df, q_table
+    diagnostics = []
+    if sample_tasks and env_kwargs is not None and output_dir is not None:
+        for sample_index, initial_action in sample_tasks:
+            diagnostics.append(
+                evaluate_and_export_sample(
+                    sample_index,
+                    df_index,
+                    initial_action,
+                    train_df,
+                    q_table,
+                    env_kwargs,
+                    output_dir,
+                )
+            )
+    return df_index, train_df, q_table, diagnostics
 
 
-def build_q_table_cache(sample_plan, train_data_path, qtable_kwargs, process_count=None):
+def build_q_table_cache(
+    sample_plan,
+    train_data_path,
+    qtable_kwargs,
+    env_kwargs=None,
+    output_dir=None,
+    process_count=None,
+):
     unique_df_indices = sorted({df_index for df_index, _ in sample_plan})
     if process_count is None:
         process_count = min(len(unique_df_indices), os.cpu_count() or 1)
     process_count = max(1, process_count)
 
+    sample_tasks_by_df = {}
+    if env_kwargs is not None and output_dir is not None:
+        for sample_index, (df_index, initial_action) in enumerate(sample_plan):
+            sample_tasks_by_df.setdefault(df_index, []).append(
+                (sample_index, initial_action)
+            )
+
     worker_args = [
-        (df_index, train_data_path, qtable_kwargs) for df_index in unique_df_indices
+        (
+            df_index,
+            train_data_path,
+            qtable_kwargs,
+            sample_tasks_by_df.get(df_index, []),
+            env_kwargs,
+            output_dir,
+        )
+        for df_index in unique_df_indices
     ]
     if process_count == 1:
         results = [_create_q_table_worker(args) for args in worker_args]
@@ -55,10 +99,12 @@ def build_q_table_cache(sample_plan, train_data_path, qtable_kwargs, process_cou
 
     train_df_cache = {}
     q_table_cache = {}
-    for df_index, train_df, q_table in results:
+    diagnostics = []
+    for df_index, train_df, q_table, worker_diagnostics in results:
         train_df_cache[df_index] = train_df
         q_table_cache[df_index] = q_table
-    return q_table_cache, train_df_cache
+        diagnostics.extend(worker_diagnostics)
+    return q_table_cache, train_df_cache, diagnostics
 
 
 def extend_q_table_cache(
@@ -80,7 +126,7 @@ def extend_q_table_cache(
         return q_table_cache, train_df_cache
 
     missing_plan = [(df_index, 0) for df_index in missing_df_indices]
-    missing_q_table_cache, missing_train_df_cache = build_q_table_cache(
+    missing_q_table_cache, missing_train_df_cache, _ = build_q_table_cache(
         missing_plan,
         train_data_path,
         qtable_kwargs,
@@ -283,7 +329,7 @@ def evaluate_and_export_sample(
             sample_index + 1, df_index, initial_action
         ),
     )
-    pd.DataFrame(rows).to_csv(csv_path, index=False)
+    pl.DataFrame(rows).write_csv(csv_path)
     return {
         "sample_index": sample_index + 1,
         "df_index": df_index,
@@ -329,18 +375,20 @@ def _load_existing_diagnostics(num_sample, train_data_path, output_dir, manifest
     train_df_cache = {}
     for sample_index in range(num_sample):
         csv_path, df_index, initial_action = csv_by_sample[sample_index + 1][0]
-        diagnostic_df = pd.read_csv(csv_path)
+        diagnostic_df = pl.read_csv(csv_path)
         if "action" not in diagnostic_df.columns:
             return None
         if "cumulative_profit" in diagnostic_df.columns and len(diagnostic_df) > 0:
-            episode_reward_sum = diagnostic_df["cumulative_profit"].iloc[-1]
+            episode_reward_sum = diagnostic_df["cumulative_profit"][-1]
         elif "step_reward" in diagnostic_df.columns:
             episode_reward_sum = diagnostic_df["step_reward"].sum()
         else:
             return None
 
         sample_plan.append((df_index, initial_action))
-        sample_action_cache[sample_index] = diagnostic_df["action"].astype(int).tolist()
+        sample_action_cache[sample_index] = (
+            diagnostic_df["action"].cast(pl.Int64).to_list()
+        )
         diagnostics.append(
             {
                 "sample_index": sample_index + 1,
@@ -394,26 +442,18 @@ def prepare_pretrain_qtable_diagnostics(
     sample_plan = build_sample_plan(
         num_sample, total_df_index_length, position_choices
     )
-    q_table_cache, train_df_cache = build_q_table_cache(
+    q_table_cache, train_df_cache, diagnostics = build_q_table_cache(
         sample_plan,
         train_data_path,
         qtable_kwargs,
+        env_kwargs=env_kwargs,
+        output_dir=output_dir,
         process_count=process_count,
     )
-    diagnostics = []
     sample_action_cache = {}
-    for sample_index, (df_index, initial_action) in enumerate(sample_plan):
-        diagnostic = evaluate_and_export_sample(
-            sample_index,
-            df_index,
-            initial_action,
-            train_df_cache[df_index],
-            q_table_cache[df_index],
-            env_kwargs,
-            output_dir,
-        )
-        diagnostics.append(diagnostic)
-        sample_action_cache[sample_index] = diagnostic["action_list"]
+    diagnostics = sorted(diagnostics, key=lambda item: item["sample_index"])
+    for diagnostic in diagnostics:
+        sample_action_cache[diagnostic["sample_index"] - 1] = diagnostic["action_list"]
         message = (
             "qtable诊断 | sample={sample_index} | df_index={df_index} | "
             "initial_action={initial_action} | episode_reward_sum={episode_reward_sum:.4f} | "
