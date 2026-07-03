@@ -296,6 +296,89 @@ def test_run_full_df_warmup_updates_once_per_df(monkeypatch):
     assert summary["df_count"] == 3
 
 
+def test_run_full_df_warmup_logs_first_row_tech_indicators(monkeypatch, caplog):
+    import pandas as pd
+    from RL.DiHFT.low_level import weight_advantage_pretrain as wap
+
+    class TinyBuffer:
+        def add(self, s, info, a, r, s_, info_, done):
+            pass
+
+        def sample(self):
+            raise AssertionError("sample should not be called with large batch threshold")
+
+    class TinyEnv:
+        wallet_balance = 100000.0
+        unrealized_pnl = 0.0
+
+        def reset(self):
+            return "s0", {
+                "avaiable_action_list": [0, 1, 2],
+                "previous_action": 0,
+                "personal_state": [0, 0, 0, 0, 0.0],
+            }
+
+        def step(self, action):
+            return "s1", 1.0, True, {
+                "avaiable_action_list": [0, 1, 2],
+                "previous_action": action,
+                "personal_state": [0, 0, 0, 0, 0.0],
+            }
+
+    trainer = Weighted_Contexts_DQN.__new__(Weighted_Contexts_DQN)
+    trainer.full_df_warmup = True
+    trainer.total_df_index_length = 2
+    trainer.position_choices = 3
+    trainer.leverage_choices = [1]
+    trainer.position_list = [-1.0, 0, 1.0]
+    trainer.N_ACTIONS = 3
+    trainer.initial_wallet_balance = 100000.0
+    trainer.initial_unrealized_pnL = 0.0
+    trainer.batch_size = 999
+    trainer.update_times = 1
+    trainer.n_step = 1
+    trainer.rollout_steps = 1024
+    trainer.writer = type("Writer", (), {"add_scalar": lambda *args, **kwargs: None})()
+    trainer.update_counter = 0
+    trainer.tech_indicator_list = ["rsi", "macd"]
+    trainer._set_initial_state_from_action = lambda train_df, action: setattr(
+        trainer, "initial_state", ("state", int(action))
+    )
+    trainer.act_multi_styles_pretrain = (
+        lambda info, optimal_step_counter, rollout_index: rollout_index
+    )
+    trainer.update_pretrain = lambda *args, **kwargs: (0.0, 0.0, 0.0)
+
+    monkeypatch.setattr(
+        wap, "create_demo_env", lambda train_df, env_kwargs, initial_state: TinyEnv()
+    )
+    monkeypatch.setattr(
+        wap, "get_dp_action_from_qtable", lambda q_table, initial_action: [initial_action]
+    )
+
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        trainer._run_full_df_warmup(
+            q_table_cache={0: "q0", 1: "q1"},
+            train_df_cache={
+                0: pd.DataFrame({"rsi": [12.5], "macd": [-0.1]}),
+                1: pd.DataFrame({"rsi": [20.0], "macd": [0.3]}),
+            },
+            env_kwargs={},
+            buffer_pretrain=TinyBuffer(),
+            step_counter_pretrain=0,
+        )
+
+    messages = [
+        record.message
+        for record in caplog.records
+        if record.message.startswith("full-df warmup first row")
+    ]
+    assert messages == [
+        "full-df warmup first row | df_index=0 | rsi=12.5, macd=-0.1",
+        "full-df warmup first row | df_index=1 | rsi=20.0, macd=0.3",
+    ]
+
+
 def test_full_df_warmup_logs_rollout_balances_without_df_final_balance(
     monkeypatch, caplog
 ):
