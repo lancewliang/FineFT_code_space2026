@@ -436,7 +436,6 @@ def prepare_pretrain_qtable_diagnostics(
             ).format(**diagnostic)
             if logger is not None:
                 logger.info(message)
-            print(message.replace(" | ", " "))
         return existing
 
     sample_plan = build_sample_plan(
@@ -461,6 +460,5 @@ def prepare_pretrain_qtable_diagnostics(
         ).format(**diagnostic)
         if logger is not None:
             logger.info(message)
-        print(message.replace(" | ", " "))
     _write_diagnostics_manifest(output_dir, manifest)
     return sample_plan, q_table_cache, train_df_cache, diagnostics, sample_action_cache
