@@ -26,7 +26,7 @@ worker 通过队列与主进程通信。主进程为每个 worker 维护一个 c
 
 ## 关键决策
 
-- 只改主训练流程的多样性训练路径；`full_df_warmup` 保持前置执行，主 `sample` 循环内的 sample-level pretrain 分支移除。
+- 只改主训练流程的多样性训练路径；`full_df_warmup` 固定前置执行，主 `sample` 循环内的 sample-level pretrain 分支移除。
 - 每个 df 一个 worker，严格按 df 数启动子进程；单 GPU 下 worker 也使用 GPU 推理。
 - 探索和训练同步切换：训练时 worker 暂停，训练后再继续探索。
 - `epsilon`、`ada`、`lr` 只在新 epoch 开始时更新一次，epoch 内固定。
@@ -58,7 +58,7 @@ worker 通过队列与主进程通信。主进程为每个 worker 维护一个 c
 
 ## 验收标准
 
-- [ ] `full_df_warmup` 仍在主 `sample` 循环前按现状执行；主 `sample` 循环内不再通过 `pretrain = sample < self.pretrain_epoch` 执行 sample-level pretrain。
+- [ ] `full_df_warmup` 固定在主 `sample` 循环前执行；CLI 不再提供 `pretrain_epoch` 或禁用 warmup 的参数，主 `sample` 循环内不再执行 sample-level pretrain。
 - [ ] 多样性训练启动时每个 df 创建一个 worker。
 - [ ] 并行多样性训练在 `n_step != 1` 时拒绝启动并给出明确错误。
 - [ ] 每个 epoch 开始时只更新一次 `epsilon`、`ada`、`lr`，epoch 内窗口训练不会改变这些参数。
@@ -77,5 +77,5 @@ worker 通过队列与主进程通信。主进程为每个 worker 维护一个 c
 ### 2026-07-03: 移除主 sample 循环内的 sample-level pretrain
 
 - 原因：预训练已经前置到主训练流程之前，主 `sample` 循环内不需要再按 `sample < self.pretrain_epoch` 区分“预训练/多样化训练”。
-- 需求变化：`full_df_warmup` 保持主循环前置执行；之后 `for sample in range(self.num_sample)` 的每次迭代都进入并行多样性训练，不再执行 sample-level pretrain 分支。
-- 影响：实现和测试需要确认 `pretrain_epoch` 不再 gate 主 `sample` 循环内的训练路径。
+- 需求变化：`full_df_warmup` 固定主循环前置执行；之后 `for sample in range(self.num_sample)` 的每次迭代都进入并行多样性训练，不再执行 sample-level pretrain 分支。
+- 影响：实现和测试需要确认 `pretrain_epoch` 参数已移除，且 warmup 不再可通过 CLI 禁用。

@@ -1,21 +1,22 @@
 ## ADDED Requirements
 
 ### Requirement: Stage I 主 sample 循环 SHALL 不再执行 sample-level pretrain
-系统 SHALL 将预训练保留在主 sample 循环之前的 `full_df_warmup` 路径中；进入 `for sample in range(self.num_sample)` 后，每次 sample 迭代 SHALL 进入多样化训练路径，而不是根据 `sample < self.pretrain_epoch` 执行 sample-level pretrain。
+系统 SHALL 将预训练固定保留在主 sample 循环之前的 `full_df_warmup` 路径中；进入 `for sample in range(self.num_sample)` 后，每次 sample 迭代 SHALL 进入多样化训练路径，系统 SHALL 不再提供 `pretrain_epoch` 或禁用 warmup 的 CLI 参数。
 
 #### Scenario: 前置 warmup 后所有 sample 都进入多样化训练
 - **WHEN** `Weighted_Contexts_DQN.train()` 完成 qtable diagnostics/cache 准备
-- **AND** `full_df_warmup` 已按现有逻辑执行或被配置跳过
+- **AND** `full_df_warmup` 已按现有逻辑执行
 - **THEN** 系统 SHALL 进入 `for sample in range(self.num_sample)` 主循环
 - **AND** 每个 sample 迭代 SHALL 执行并行多样化训练
 - **AND** 系统 SHALL NOT 在主 sample 循环内计算或使用 `pretrain = sample < self.pretrain_epoch` 来选择 sample-level pretrain
 - **AND** 系统 SHALL NOT 从主 sample 循环调用 sample-level pretrain rollout/training 分支
+- **AND** CLI SHALL reject `--pretrain_epoch` and `--no_full_df_warmup`
 
-#### Scenario: full_df_warmup 仍在主 sample 循环前执行
-- **WHEN** 当前配置启用 `full_df_warmup`
+#### Scenario: full_df_warmup 固定在主 sample 循环前执行
+- **WHEN** `Weighted_Contexts_DQN.train()` 完成 qtable diagnostics/cache 准备
 - **THEN** 系统 SHALL 在主 `for sample in range(self.num_sample)` 循环之前执行现有 `full_df_warmup` 行为
 - **AND** 该前置 warmup SHALL NOT 被并行 diverse worker 替代
-- **AND** `pretrain_epoch` SHALL NOT 额外增加主 sample 循环内的 sample-level pretrain 轮次
+- **AND** `pretrain_epoch` SHALL NOT exist as a parser argument or trainer field
 
 ### Requirement: Stage I 多样化训练 SHALL 支持同步窗口式多进程 df 探索
 系统 SHALL 在 `FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py` 的多样化训练阶段并行探索所有训练 df，其中每个 df 使用一个子进程 worker 独立维护 env 时序状态，主进程负责共享 replay buffer 和模型训练。
