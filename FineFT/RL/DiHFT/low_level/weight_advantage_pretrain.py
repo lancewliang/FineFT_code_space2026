@@ -64,26 +64,6 @@ def record_diverse_rollout_latest_metric(
         "return_rate": float(return_rate),
     }
 
-
-def log_diverse_rollout_latest_metrics(epoch_index, metrics_by_df):
-    for df_index in sorted(metrics_by_df):
-        for rollout_index in sorted(metrics_by_df[df_index]):
-            metrics = metrics_by_df[df_index][rollout_index]
-            profit_label = "盈利" if metrics["return_rate"] > 0 else "亏损"
-            logger.info(
-                "第 %d 轮 epoch 训练完成 | 多样化训练最新明细 | "
-                "df_index=%d | rollout_index=%d | 累计奖励=%.4f | "
-                "最终余额=%.4f | 收益率=%.6f | %s",
-                epoch_index,
-                df_index,
-                rollout_index,
-                metrics["reward_sum"],
-                metrics["final_balance"],
-                metrics["return_rate"],
-                profit_label,
-            )
-
-
 def summarize_rollout_diagnostics(actions, positions, preview_limit=20):
     action_values, action_counts = np.unique(actions, return_counts=True)
     position_values, position_counts = np.unique(positions, return_counts=True)
@@ -1035,7 +1015,6 @@ class Weighted_Contexts_DQN:
         epoch_reward_sum_train_list = []
         # epoch_number = int(len(self.train_df) / self.chunk_length)
         epoch_number = 4
-        diverse_rollout_latest_metrics_by_df = {}
         group_number = self.N
         # perfect experience
         buffer_pretrain = Multi_step_ReplayBuffer_multi_info(
@@ -1211,13 +1190,7 @@ class Weighted_Contexts_DQN:
                         global_step=sample,
                         walltime=None,
                     )
-                    logger.info(
-                        "预训练回合结束 | 规则索引=%d | 累计奖励=%.4f | 最终余额=%.4f | 收益率=%.6f",
-                        index,
-                        episode_reward_sum,
-                        final_balance,
-                        final_balance / (required_money + 1e-12) - 1,
-                    )
+                    
                     sample_rollout_metrics.append(
                         {
                             "return_rate": final_balance / (required_money + 1e-12),
@@ -1319,23 +1292,6 @@ class Weighted_Contexts_DQN:
                         global_step=sample,
                         walltime=None,
                     )
-                    record_diverse_rollout_latest_metric(
-                        diverse_rollout_latest_metrics_by_df,
-                        df_index,
-                        index,
-                        episode_reward_sum,
-                        final_balance,
-                        diverse_return_rate,
-                    )
-                    logger.info(
-                        "多样化回合结束 | 上下文索引=%d | 累计奖励=%.4f | 最终余额=%.4f | 收益率=%.6f",
-                        index,
-                        episode_reward_sum,
-                        final_balance,
-                        diverse_return_rate,
-                    )
-
-
                     sample_rollout_metrics.append(
                         {
                             "return_rate": final_balance / (required_money + 1e-12),
@@ -1344,13 +1300,7 @@ class Weighted_Contexts_DQN:
                         }
                     )
             sample_summary = summarize_rollout_metrics(sample_rollout_metrics)
-            logger.info(
-                "采样汇总 | sample=%d | 平均收益率=%.6f | 平均最终余额=%.4f | 平均累计奖励=%.4f",
-                sample + 1,
-                sample_summary["mean_return_rate"],
-                sample_summary["mean_final_balance"],
-                sample_summary["mean_reward_sum"],
-            )
+
             epoch_return_rate_train_list.append(sample_summary["mean_return_rate"])
             epoch_final_balance_train_list.append(sample_summary["mean_final_balance"])
             epoch_reward_sum_train_list.append(sample_summary["mean_reward_sum"])
@@ -1387,19 +1337,6 @@ class Weighted_Contexts_DQN:
                     self.eval_net.state_dict(),
                     os.path.join(epoch_path, "trained_model.pkl"),
                 )
-                log_diverse_rollout_latest_metrics(
-                    epoch_index,
-                    diverse_rollout_latest_metrics_by_df,
-                )
-                logger.info(
-                    "第 %d 轮 epoch 训练完成 | 平均收益率=%.6f | 平均最终余额=%.4f | 平均累计奖励=%.4f | 模型已保存至=%s",
-                    epoch_index,
-                    mean_return_rate_train,
-                    mean_final_balance_train,
-                    mean_reward_sum_train,
-                    epoch_path,
-                )
-                # self.test(epoch_path)
                 epoch_return_rate_train_list = []
                 epoch_final_balance_train_list = []
                 epoch_reward_sum_train_list = []
