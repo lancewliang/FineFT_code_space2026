@@ -1140,217 +1140,124 @@ class Weighted_Contexts_DQN:
             )
             env = create_demo_env(self.train_df, env_kwargs, self.initial_state)
             sample_rollout_metrics = []
-            if pretrain:
-                self.perfection_action_list = get_sample_action_from_cache(
-                    sample_action_cache,
-                    df_index,
-                    initial_action,
+ 
+            for index in range(self.N):
+                s, info = env.reset()
+                episode_reward_sum = 0
+                logger.info("多样化训练: 使用上下文索引 index=%d 采数", index)
+                while True:
+                    a = self.act_multi_styles(s, info, self.epsilon, index)
+                    if index == 0:
+                        self.epsilon = (
+                            self.epsilon - self.epsilon_decay
+                            if self.epsilon - self.epsilon_decay > self.epsilon_min
+                            else self.epsilon_min
+                        )
+                        self.ada = (
+                            self.ada - self.ada_decay
+                            if self.ada - self.ada_decay > self.ada_min
+                            else self.ada_min
+                        )
+                        self.lr = (
+                            self.lr - self.lr_decay
+                            if self.lr - self.lr_decay > self.lr_min
+                            else self.lr_min
+                        )
+                        for p in self.optimizer.param_groups:
+                            p["lr"] = self.lr
+                    s_, r, done, info_ = env.step(a)
+
+                    step_counter_diverse += 1
+                    buffer_diverse.add(s, info, a, r, s_, info_, done)
+                    episode_reward_sum += r
+
+                    s, info = s_, info_
+                    if done:
+                        break
+                    if (
+                        step_counter_diverse
+                        > (self.batch_size * self.update_times + self.n_step)
+                        and step_counter_diverse % self.rollout_steps == 1
+                    ):
+                        for _ in range(self.update_times):
+                            (
+                                states,
+                                infos,
+                                actions,
+                                rewards,
+                                next_states,
+                                next_infos,
+                                dones,
+                            ) = buffer_diverse.sample()
+                            total_loss, KL_loss, td_loss = self.update(
+                                states,
+                                infos,
+                                actions,
+                                rewards,
+                                next_states,
+                                next_infos,
+                                dones,
+                            )
+
+                            self.writer.add_scalar(
+                                tag="total_loss",
+                                scalar_value=total_loss,
+                                global_step=self.update_counter,
+                                walltime=None,
+                            )
+                            self.writer.add_scalar(
+                                tag="KL_loss",
+                                scalar_value=KL_loss,
+                                global_step=self.update_counter,
+                                walltime=None,
+                            )
+                            self.writer.add_scalar(
+                                tag="td_loss",
+                                scalar_value=td_loss,
+                                global_step=self.update_counter,
+                                walltime=None,
+                            )
+
+                final_balance = env.unrealized_pnl + env.wallet_balance
+                required_money = self.initial_wallet_balance
+                diverse_return_rate = final_balance / (required_money + 1e-12) - 1
+                self.writer.add_scalar(
+                    tag="return_rate_train_{}".format(index),
+                    scalar_value=diverse_return_rate,
+                    global_step=sample,
+                    walltime=None,
                 )
 
-                for index in range(4):
-                    s, info = env.reset()
-                    optimal_step_counter = 0
-                    episode_reward_sum = 0
-                    logger.info("预训练阶段: 使用基于规则策略 index=%d 采数", index)
-                    while True:
-                        a = self.act_multi_styles_pretrain(
-                            info, optimal_step_counter, index
-                        )
-                        optimal_step_counter += 1
-                        s_, r, done, info_ = env.step(a)
-                        # logger.info("预训练阶段: 动作=%d, 奖励=%f, 状态=%s, 信息=%s", a, r, s_, info_)
-                        step_counter_pretrain += 1
-                        buffer_pretrain.add(s, info, a, r, s_, info_, done)
-                        episode_reward_sum += r
-
-                        s, info = s_, info_
-                        if done:
-                            break
-                        if (
-                            step_counter_pretrain
-                            > (self.batch_size * self.update_times + self.n_step)
-                            and step_counter_pretrain % self.rollout_steps == 1
-                        ):
-                            for _ in range(self.update_times):
-                                (
-                                    states,
-                                    infos,
-                                    actions,
-                                    rewards,
-                                    next_states,
-                                    next_infos,
-                                    dones,
-                                ) = buffer_pretrain.sample()
-                                total_loss, KL_loss, td_loss = self.update_pretrain(
-                                    states,
-                                    infos,
-                                    actions,
-                                    rewards,
-                                    next_states,
-                                    next_infos,
-                                    dones,
-                                )
-                                self._write_pretrain_loss_scalars(
-                                    total_loss,
-                                    KL_loss,
-                                    td_loss,
-                                )
-                            logger.info(
-                                "预训练更新 | 步数=%d | 累计奖励=%.4f | 累计更新次数=%d | 总损失=%.6f | KL损失=%.6f | TD损失=%.6f",
-                                step_counter_pretrain,
-                                episode_reward_sum,
-                                self.update_counter,
-                                total_loss,
-                                KL_loss,
-                                td_loss,
-                            )
-                    final_balance = env.unrealized_pnl + env.wallet_balance
-                    required_money = self.initial_wallet_balance
-                    self.writer.add_scalar(
-                        tag="return_rate_train_{}".format(index),
-                        scalar_value=final_balance / (required_money + 1e-12) - 1,
-                        global_step=sample,
-                        walltime=None,
-                    )
-
-                    self.writer.add_scalar(
-                        tag="reward_sum_train_{}".format(index),
-                        scalar_value=episode_reward_sum,
-                        global_step=sample,
-                        walltime=None,
-                    )
-                    logger.info(
-                        "预训练回合结束 | 规则索引=%d | 累计奖励=%.4f | 最终余额=%.4f | 收益率=%.6f",
-                        index,
-                        episode_reward_sum,
-                        final_balance,
-                        final_balance / (required_money + 1e-12) - 1,
-                    )
-                    sample_rollout_metrics.append(
-                        {
-                            "return_rate": final_balance / (required_money + 1e-12),
-                            "final_balance": final_balance,
-                            "reward_sum": episode_reward_sum,
-                        }
-                    )
-            else:
-                for index in range(self.N):
-                    s, info = env.reset()
-                    episode_reward_sum = 0
-                    logger.info("多样化训练: 使用上下文索引 index=%d 采数", index)
-                    while True:
-                        a = self.act_multi_styles(s, info, self.epsilon, index)
-                        if index == 0:
-                            self.epsilon = (
-                                self.epsilon - self.epsilon_decay
-                                if self.epsilon - self.epsilon_decay > self.epsilon_min
-                                else self.epsilon_min
-                            )
-                            self.ada = (
-                                self.ada - self.ada_decay
-                                if self.ada - self.ada_decay > self.ada_min
-                                else self.ada_min
-                            )
-                            self.lr = (
-                                self.lr - self.lr_decay
-                                if self.lr - self.lr_decay > self.lr_min
-                                else self.lr_min
-                            )
-                            for p in self.optimizer.param_groups:
-                                p["lr"] = self.lr
-                        s_, r, done, info_ = env.step(a)
-
-                        step_counter_diverse += 1
-                        buffer_diverse.add(s, info, a, r, s_, info_, done)
-                        episode_reward_sum += r
-
-                        s, info = s_, info_
-                        if done:
-                            break
-                        if (
-                            step_counter_diverse
-                            > (self.batch_size * self.update_times + self.n_step)
-                            and step_counter_diverse % self.rollout_steps == 1
-                        ):
-                            for _ in range(self.update_times):
-                                (
-                                    states,
-                                    infos,
-                                    actions,
-                                    rewards,
-                                    next_states,
-                                    next_infos,
-                                    dones,
-                                ) = buffer_diverse.sample()
-                                total_loss, KL_loss, td_loss = self.update(
-                                    states,
-                                    infos,
-                                    actions,
-                                    rewards,
-                                    next_states,
-                                    next_infos,
-                                    dones,
-                                )
-
-                                self.writer.add_scalar(
-                                    tag="total_loss",
-                                    scalar_value=total_loss,
-                                    global_step=self.update_counter,
-                                    walltime=None,
-                                )
-                                self.writer.add_scalar(
-                                    tag="KL_loss",
-                                    scalar_value=KL_loss,
-                                    global_step=self.update_counter,
-                                    walltime=None,
-                                )
-                                self.writer.add_scalar(
-                                    tag="td_loss",
-                                    scalar_value=td_loss,
-                                    global_step=self.update_counter,
-                                    walltime=None,
-                                )
-
-                    final_balance = env.unrealized_pnl + env.wallet_balance
-                    required_money = self.initial_wallet_balance
-                    diverse_return_rate = final_balance / (required_money + 1e-12) - 1
-                    self.writer.add_scalar(
-                        tag="return_rate_train_{}".format(index),
-                        scalar_value=diverse_return_rate,
-                        global_step=sample,
-                        walltime=None,
-                    )
-
-                    self.writer.add_scalar(
-                        tag="reward_sum_train_{}".format(index),
-                        scalar_value=episode_reward_sum,
-                        global_step=sample,
-                        walltime=None,
-                    )
-                    record_diverse_rollout_latest_metric(
-                        diverse_rollout_latest_metrics_by_df,
-                        df_index,
-                        index,
-                        episode_reward_sum,
-                        final_balance,
-                        diverse_return_rate,
-                    )
-                    logger.info(
-                        "多样化回合结束 | 上下文索引=%d | 累计奖励=%.4f | 最终余额=%.4f | 收益率=%.6f",
-                        index,
-                        episode_reward_sum,
-                        final_balance,
-                        diverse_return_rate,
-                    )
+                self.writer.add_scalar(
+                    tag="reward_sum_train_{}".format(index),
+                    scalar_value=episode_reward_sum,
+                    global_step=sample,
+                    walltime=None,
+                )
+                record_diverse_rollout_latest_metric(
+                    diverse_rollout_latest_metrics_by_df,
+                    df_index,
+                    index,
+                    episode_reward_sum,
+                    final_balance,
+                    diverse_return_rate,
+                )
+                logger.info(
+                    "多样化回合结束 | 上下文索引=%d | 累计奖励=%.4f | 最终余额=%.4f | 收益率=%.6f",
+                    index,
+                    episode_reward_sum,
+                    final_balance,
+                    diverse_return_rate,
+                )
 
 
-                    sample_rollout_metrics.append(
-                        {
-                            "return_rate": final_balance / (required_money + 1e-12),
-                            "final_balance": final_balance,
-                            "reward_sum": episode_reward_sum,
-                        }
-                    )
+                sample_rollout_metrics.append(
+                    {
+                        "return_rate": final_balance / (required_money + 1e-12),
+                        "final_balance": final_balance,
+                        "reward_sum": episode_reward_sum,
+                    }
+                )
             sample_summary = summarize_rollout_metrics(sample_rollout_metrics)
             logger.info(
                 "采样汇总 | sample=%d | 平均收益率=%.6f | 平均最终余额=%.4f | 平均累计奖励=%.4f",
