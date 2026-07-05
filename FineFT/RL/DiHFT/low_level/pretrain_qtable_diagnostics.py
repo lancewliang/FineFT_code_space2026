@@ -17,18 +17,32 @@ from env.env_initiate.demo_initiate import initiate_demo_env
 
 
 DIAGNOSTIC_CSV_PATTERN = re.compile(
-    r"^sample_(?P<sample_index>\d{4})_df_(?P<df_index>\d+)_initial_action_(?P<initial_action>\d+)\.csv$"
+    r"^df_(?P<df_index>\d+)_initial_action_(?P<initial_action>\d+)\.csv$"
 )
 DIAGNOSTIC_MANIFEST_NAME = "manifest.json"
 
 
-def build_sample_plan(num_sample, total_df_index_length, position_choices):
-    sample_plan = []
-    for _ in range(num_sample):
-        df_index = random.choices(range(total_df_index_length), k=1)[0]
-        initial_action = random.choices(range(position_choices), k=1)[0]
-        sample_plan.append((df_index, initial_action))
-    return sample_plan
+def build_sample_plan(total_df_index_length, position_choices):
+    return [
+        (df_index, initial_action)
+        for df_index in range(total_df_index_length)
+        for initial_action in range(position_choices)
+    ]
+
+
+def select_sample_from_plan(sample_plan):
+    return random.choice(sample_plan)
+
+
+def get_sample_action_from_cache(sample_action_cache_by_plan, df_index, initial_action):
+    sample_key = (df_index, initial_action)
+    if sample_key not in sample_action_cache_by_plan:
+        raise KeyError(
+            "sample_action_cache missing for df_index={} initial_action={}".format(
+                df_index, initial_action
+            )
+        )
+    return sample_action_cache_by_plan[sample_key]
 
 
 def _create_q_table_worker(args):
@@ -45,10 +59,9 @@ def _create_q_table_worker(args):
     q_table = create_optimal_q_table_from_df(df=train_df, **qtable_kwargs)
     diagnostics = []
     if sample_tasks and env_kwargs is not None and output_dir is not None:
-        for sample_index, initial_action in sample_tasks:
+        for initial_action in sample_tasks:
             diagnostics.append(
                 evaluate_and_export_sample(
-                    sample_index,
                     df_index,
                     initial_action,
                     train_df,
@@ -75,10 +88,8 @@ def build_q_table_cache(
 
     sample_tasks_by_df = {}
     if env_kwargs is not None and output_dir is not None:
-        for sample_index, (df_index, initial_action) in enumerate(sample_plan):
-            sample_tasks_by_df.setdefault(df_index, []).append(
-                (sample_index, initial_action)
-            )
+        for df_index, initial_action in sample_plan:
+            sample_tasks_by_df.setdefault(df_index, []).append(initial_action)
 
     worker_args = [
         (
@@ -195,7 +206,7 @@ def _normalize_manifest_value(value):
 
 
 def _build_diagnostics_manifest(
-    num_sample,
+    diagnostic_count,
     total_df_index_length,
     position_choices,
     qtable_kwargs,
@@ -203,7 +214,7 @@ def _build_diagnostics_manifest(
 ):
     return _normalize_manifest_value(
         {
-            "num_sample": num_sample,
+            "diagnostic_count": diagnostic_count,
             "total_df_index_length": total_df_index_length,
             "position_choices": position_choices,
             "qtable_kwargs": qtable_kwargs,
@@ -239,7 +250,6 @@ def _value_from_row(row, column):
 def _diagnostic_row(
     train_df,
     env,
-    sample_index,
     df_index,
     initial_action,
     step_index,
@@ -252,7 +262,6 @@ def _diagnostic_row(
     source_row = train_df.iloc[min(step_index, len(train_df) - 1)]
     step_slippage = env.slippage_sum - previous_slippage_sum
     return {
-        "sample_index": sample_index + 1,
         "df_index": df_index,
         "initial_action": initial_action,
         "step_index": step_index,
@@ -276,7 +285,6 @@ def _diagnostic_row(
 
 
 def evaluate_and_export_sample(
-    sample_index,
     df_index,
     initial_action,
     train_df,
@@ -307,7 +315,6 @@ def evaluate_and_export_sample(
             _diagnostic_row(
                 train_df,
                 env,
-                sample_index,
                 df_index,
                 initial_action,
                 step_index,
@@ -325,13 +332,10 @@ def evaluate_and_export_sample(
     os.makedirs(output_dir, exist_ok=True)
     csv_path = os.path.join(
         output_dir,
-        "sample_{:04d}_df_{}_initial_action_{}.csv".format(
-            sample_index + 1, df_index, initial_action
-        ),
+        "df_{}_initial_action_{}.csv".format(df_index, initial_action),
     )
     pl.DataFrame(rows).write_csv(csv_path)
     return {
-        "sample_index": sample_index + 1,
         "df_index": df_index,
         "initial_action": initial_action,
         "episode_reward_sum": cumulative_profit,
@@ -341,40 +345,40 @@ def evaluate_and_export_sample(
     }
 
 
-def _load_existing_diagnostics(num_sample, train_data_path, output_dir, manifest):
+def _load_existing_diagnostics(
+    train_data_path,
+    output_dir,
+    manifest,
+    total_df_index_length,
+    position_choices,
+):
     if not os.path.isdir(output_dir):
         return None
     if not _manifest_matches(output_dir, manifest):
         return None
 
-    csv_by_sample = {}
+    csv_by_plan = {}
     for file_name in os.listdir(output_dir):
         match = DIAGNOSTIC_CSV_PATTERN.match(file_name)
         if match is None:
             continue
-        sample_number = int(match.group("sample_index"))
-        if 1 <= sample_number <= num_sample:
-            csv_by_sample.setdefault(sample_number, []).append(
-                (
-                    os.path.join(output_dir, file_name),
-                    int(match.group("df_index")),
-                    int(match.group("initial_action")),
-                )
-            )
+        df_index = int(match.group("df_index"))
+        initial_action = int(match.group("initial_action"))
+        csv_by_plan[(df_index, initial_action)] = os.path.join(output_dir, file_name)
 
-    expected_sample_numbers = range(1, num_sample + 1)
-    if any(
-        len(csv_by_sample.get(sample_number, [])) != 1
-        for sample_number in expected_sample_numbers
-    ):
+    sample_plan = [
+        (df_index, initial_action)
+        for df_index in range(total_df_index_length)
+        for initial_action in range(position_choices)
+    ]
+    if any(plan_item not in csv_by_plan for plan_item in sample_plan):
         return None
 
-    sample_plan = []
     diagnostics = []
     sample_action_cache = {}
     train_df_cache = {}
-    for sample_index in range(num_sample):
-        csv_path, df_index, initial_action = csv_by_sample[sample_index + 1][0]
+    for df_index, initial_action in sample_plan:
+        csv_path = csv_by_plan[(df_index, initial_action)]
         diagnostic_df = pl.read_csv(csv_path)
         if "action" not in diagnostic_df.columns:
             return None
@@ -385,13 +389,11 @@ def _load_existing_diagnostics(num_sample, train_data_path, output_dir, manifest
         else:
             return None
 
-        sample_plan.append((df_index, initial_action))
-        sample_action_cache[sample_index] = (
+        sample_action_cache[(df_index, initial_action)] = (
             diagnostic_df["action"].cast(pl.Int64).to_list()
         )
         diagnostics.append(
             {
-                "sample_index": sample_index + 1,
                 "df_index": df_index,
                 "initial_action": initial_action,
                 "episode_reward_sum": episode_reward_sum,
@@ -407,7 +409,6 @@ def _load_existing_diagnostics(num_sample, train_data_path, output_dir, manifest
 
 
 def prepare_pretrain_qtable_diagnostics(
-    num_sample,
     total_df_index_length,
     position_choices,
     train_data_path,
@@ -417,20 +418,25 @@ def prepare_pretrain_qtable_diagnostics(
     logger=None,
     process_count=None,
 ):
+    sample_count = total_df_index_length * position_choices
     manifest = _build_diagnostics_manifest(
-        num_sample,
+        sample_count,
         total_df_index_length,
         position_choices,
         qtable_kwargs,
         env_kwargs,
     )
     existing = _load_existing_diagnostics(
-        num_sample, train_data_path, output_dir, manifest
+        train_data_path,
+        output_dir,
+        manifest,
+        total_df_index_length,
+        position_choices,
     )
     if existing is not None:
         for diagnostic in existing[3]:
             message = (
-                "qtable诊断 | sample={sample_index} | df_index={df_index} | "
+                "qtable诊断 | df_index={df_index} | "
                 "initial_action={initial_action} | episode_reward_sum={episode_reward_sum:.4f} | "
                 "profitable={profitable} | csv_path={csv_path} | source=csv"
             ).format(**diagnostic)
@@ -438,9 +444,7 @@ def prepare_pretrain_qtable_diagnostics(
                 logger.info(message)
         return existing
 
-    sample_plan = build_sample_plan(
-        num_sample, total_df_index_length, position_choices
-    )
+    sample_plan = build_sample_plan(total_df_index_length, position_choices)
     q_table_cache, train_df_cache, diagnostics = build_q_table_cache(
         sample_plan,
         train_data_path,
@@ -450,11 +454,15 @@ def prepare_pretrain_qtable_diagnostics(
         process_count=process_count,
     )
     sample_action_cache = {}
-    diagnostics = sorted(diagnostics, key=lambda item: item["sample_index"])
+    diagnostics = sorted(
+        diagnostics, key=lambda item: (item["df_index"], item["initial_action"])
+    )
     for diagnostic in diagnostics:
-        sample_action_cache[diagnostic["sample_index"] - 1] = diagnostic["action_list"]
+        sample_action_cache[
+            (diagnostic["df_index"], diagnostic["initial_action"])
+        ] = diagnostic["action_list"]
         message = (
-            "qtable诊断 | sample={sample_index} | df_index={df_index} | "
+            "qtable诊断 | df_index={df_index} | "
             "initial_action={initial_action} | episode_reward_sum={episode_reward_sum:.4f} | "
             "profitable={profitable} | csv_path={csv_path}"
         ).format(**diagnostic)

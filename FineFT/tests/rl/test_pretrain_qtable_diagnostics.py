@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -31,7 +32,46 @@ class FakeEnv:
         return None, reward, done, {"previous_action": action}
 
 
-def test_diagnostics_cache_qtables_once_and_export_one_csv_per_sample(
+def test_build_sample_plan_traverses_every_df_and_position():
+    from RL.DiHFT.low_level import pretrain_qtable_diagnostics as diag
+
+    sample_plan = diag.build_sample_plan(
+        total_df_index_length=2,
+        position_choices=3,
+    )
+
+    assert sample_plan == [
+        (0, 0),
+        (0, 1),
+        (0, 2),
+        (1, 0),
+        (1, 1),
+        (1, 2),
+    ]
+
+
+def test_select_sample_from_plan_randomly_picks_one_combination(monkeypatch):
+    from RL.DiHFT.low_level import pretrain_qtable_diagnostics as diag
+
+    sample_plan = [(0, 0), (0, 1), (1, 0), (1, 1)]
+    monkeypatch.setattr(diag.random, "choice", lambda choices: choices[3])
+
+    assert diag.select_sample_from_plan(sample_plan) == (1, 1)
+
+
+def test_get_sample_action_from_cache_raises_when_combination_missing():
+    from RL.DiHFT.low_level import pretrain_qtable_diagnostics as diag
+
+    sample_action_cache_by_plan = {(0, 0): [1, 2]}
+
+    assert diag.get_sample_action_from_cache(
+        sample_action_cache_by_plan, 0, 0
+    ) == [1, 2]
+    with pytest.raises(KeyError, match="df_index=0.*initial_action=1"):
+        diag.get_sample_action_from_cache(sample_action_cache_by_plan, 0, 1)
+
+
+def test_diagnostics_cache_qtables_once_and_export_one_csv_per_df_action(
     monkeypatch, tmp_path
 ):
     from RL.DiHFT.low_level import pretrain_qtable_diagnostics as diag
@@ -65,7 +105,7 @@ def test_diagnostics_cache_qtables_once_and_export_one_csv_per_sample(
     )
     monkeypatch.setattr(diag, "initiate_demo_env", lambda **kwargs: FakeEnv())
     monkeypatch.setattr(
-        diag, "build_sample_plan", lambda num_sample, total, choices: [(0, 0), (0, 1)]
+        diag, "build_sample_plan", lambda total, choices: [(0, 0), (0, 1)]
     )
 
     sample_plan, q_table_cache, train_df_cache, diagnostics, sample_action_cache = (
@@ -111,13 +151,16 @@ def test_diagnostics_cache_qtables_once_and_export_one_csv_per_sample(
     assert list(train_df_cache) == [0]
     assert len(calls) == 1
     assert len(diagnostics) == 2
-    assert sample_action_cache == {0: [1, 2], 1: [1, 2]}
+    assert sample_action_cache == {(0, 0): [1, 2], (0, 1): [1, 2]}
 
-    csv_files = sorted((tmp_path / "diagnostics").glob("sample_*.csv"))
+    csv_files = sorted((tmp_path / "diagnostics").glob("df_*_initial_action_*.csv"))
     assert len(csv_files) == 2
+    assert [path.name for path in csv_files] == [
+        "df_0_initial_action_0.csv",
+        "df_0_initial_action_1.csv",
+    ]
     first = pd.read_csv(csv_files[0])
     required_columns = {
-        "sample_index",
         "df_index",
         "initial_action",
         "step_index",
@@ -139,6 +182,7 @@ def test_diagnostics_cache_qtables_once_and_export_one_csv_per_sample(
         "profitable",
     }
     assert required_columns.issubset(first.columns)
+    assert "sample_index" not in first.columns
     assert first["cumulative_profit"].tolist() == [10.0, 30.0]
     assert first["step_slippage"].tolist() == [0.5, 0.5]
 
@@ -159,20 +203,20 @@ def test_diagnostics_read_existing_csvs_without_recomputing(monkeypatch, tmp_pat
             "step_reward": [10.0, 20.0],
             "cumulative_profit": [10.0, 30.0],
         }
-    ).to_csv(output_dir / "sample_0001_df_0_initial_action_0.csv", index=False)
+    ).to_csv(output_dir / "df_0_initial_action_0.csv", index=False)
     pd.DataFrame(
         {
             "action": [3],
             "step_reward": [-5.0],
             "cumulative_profit": [-5.0],
         }
-    ).to_csv(output_dir / "sample_0002_df_1_initial_action_2.csv", index=False)
+    ).to_csv(output_dir / "df_1_initial_action_0.csv", index=False)
     (output_dir / "manifest.json").write_text(
         json.dumps(
             {
-                "num_sample": 2,
+                "diagnostic_count": 2,
                 "total_df_index_length": 2,
-                "position_choices": 3,
+                "position_choices": 1,
                 "qtable_kwargs": {},
                 "env_kwargs": {},
             }
@@ -198,7 +242,7 @@ def test_diagnostics_read_existing_csvs_without_recomputing(monkeypatch, tmp_pat
         diag.prepare_pretrain_qtable_diagnostics(
             num_sample=2,
             total_df_index_length=2,
-            position_choices=3,
+            position_choices=1,
             train_data_path=str(train_data_path),
             qtable_kwargs={},
             env_kwargs={},
@@ -207,10 +251,10 @@ def test_diagnostics_read_existing_csvs_without_recomputing(monkeypatch, tmp_pat
         )
     )
 
-    assert sample_plan == [(0, 0), (1, 2)]
+    assert sample_plan == [(0, 0), (1, 0)]
     assert q_table_cache == {}
     assert sorted(train_df_cache) == [0, 1]
-    assert sample_action_cache == {0: [1, 2], 1: [3]}
+    assert sample_action_cache == {(0, 0): [1, 2], (1, 0): [3]}
     assert [item["episode_reward_sum"] for item in diagnostics] == [30.0, -5.0]
     assert [item["profitable"] for item in diagnostics] == [True, False]
 
@@ -232,11 +276,11 @@ def test_diagnostics_ignore_existing_csvs_when_manifest_does_not_match(
             "step_reward": [10.0],
             "cumulative_profit": [10.0],
         }
-    ).to_csv(output_dir / "sample_0001_df_0_initial_action_0.csv", index=False)
+    ).to_csv(output_dir / "df_0_initial_action_0.csv", index=False)
     (output_dir / "manifest.json").write_text(
         json.dumps(
             {
-                "num_sample": 1,
+                "diagnostic_count": 1,
                 "total_df_index_length": 1,
                 "position_choices": 3,
                 "qtable_kwargs": {"commission_rate": 0.0002},
@@ -261,21 +305,20 @@ def test_diagnostics_ignore_existing_csvs_when_manifest_does_not_match(
             {0: pd.DataFrame({"mark_price": [10.0]})},
             [
                 {
-                    "sample_index": 1,
                     "df_index": 0,
                     "initial_action": 0,
                     "episode_reward_sum": 20.0,
                     "profitable": True,
                     "csv_path": str(
-                        Path(output_dir) / "sample_0001_df_0_initial_action_0.csv"
+                        Path(output_dir) / "df_0_initial_action_0.csv"
                     ),
                     "action_list": [2],
                 }
             ],
-        )
+    )
 
     monkeypatch.setattr(
-        diag, "build_sample_plan", lambda num_sample, total, choices: [(0, 0)]
+        diag, "build_sample_plan", lambda total, choices: [(0, 0)]
     )
     monkeypatch.setattr(diag, "build_q_table_cache", fake_build_q_table_cache)
     monkeypatch.setattr(
@@ -299,7 +342,7 @@ def test_diagnostics_ignore_existing_csvs_when_manifest_does_not_match(
 
     assert recomputed["called"] is True
     assert diagnostics[0]["episode_reward_sum"] == 20.0
-    assert sample_action_cache == {0: [2]}
+    assert sample_action_cache == {(0, 0): [2]}
 
 
 def test_prepare_uses_qtable_cache_builder_diagnostics(monkeypatch, tmp_path):
@@ -311,7 +354,7 @@ def test_prepare_uses_qtable_cache_builder_diagnostics(monkeypatch, tmp_path):
     monkeypatch.setattr(
         diag,
         "build_sample_plan",
-        lambda num_sample, total, choices: [(2, 1), (3, 0)],
+        lambda total, choices: [(2, 1), (3, 0)],
     )
 
     def fake_build_q_table_cache(
@@ -330,24 +373,22 @@ def test_prepare_uses_qtable_cache_builder_diagnostics(monkeypatch, tmp_path):
             {2: "train-df"},
             [
                 {
-                    "sample_index": 2,
                     "df_index": 3,
                     "initial_action": 0,
                     "episode_reward_sum": -1.0,
                     "profitable": False,
                     "csv_path": str(
-                        output_dir_path / "sample_0002_df_3_initial_action_0.csv"
+                        output_dir_path / "df_3_initial_action_0.csv"
                     ),
                     "action_list": [7],
                 },
                 {
-                    "sample_index": 1,
                     "df_index": 2,
                     "initial_action": 1,
                     "episode_reward_sum": 3.0,
                     "profitable": True,
                     "csv_path": str(
-                        output_dir_path / "sample_0001_df_2_initial_action_1.csv"
+                        output_dir_path / "df_2_initial_action_1.csv"
                     ),
                     "action_list": [5, 6],
                 },
@@ -380,8 +421,11 @@ def test_prepare_uses_qtable_cache_builder_diagnostics(monkeypatch, tmp_path):
     assert sample_plan == [(2, 1), (3, 0)]
     assert q_table_cache == {2: "q-table"}
     assert train_df_cache == {2: "train-df"}
-    assert [diagnostic["sample_index"] for diagnostic in diagnostics] == [1, 2]
-    assert sample_action_cache == {0: [5, 6], 1: [7]}
+    assert [(item["df_index"], item["initial_action"]) for item in diagnostics] == [
+        (2, 1),
+        (3, 0),
+    ]
+    assert sample_action_cache == {(2, 1): [5, 6], (3, 0): [7]}
 
 
 def test_create_demo_env_passes_order_book_depth(monkeypatch):

@@ -56,6 +56,24 @@ COMMODITY_CONFIGS: Dict[str, CommodityConfig] = {
             TradingSession(time(21, 0), time(23, 0)),
         ),
         maintenance_margin_rate=0.5,
+    ) , "al": CommodityConfig(
+        symbol="al",
+        display_name="铝",
+        dataset_name="al",
+        orderbook_depth=5,
+        funding_enabled=False,
+        buy_fee_rate=0.0004,
+        sell_fee_rate=0.0004,
+        main_contract_months=tuple(range(1, 13)),
+        contract_unit=10,
+        use_contract_multiplier=False,
+        trading_sessions=(
+            TradingSession(time(9, 0), time(10, 15)),
+            TradingSession(time(10, 30), time(11, 30)),
+            TradingSession(time(13, 30), time(15, 0)),
+            TradingSession(time(21, 0), time(23, 0)),
+        ),
+        maintenance_margin_rate=0.8,
     )
 }
 

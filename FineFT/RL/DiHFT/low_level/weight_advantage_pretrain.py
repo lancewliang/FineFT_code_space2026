@@ -136,7 +136,9 @@ from RL.DiHFT.low_level.pretrain_qtable_diagnostics import (
     build_initial_state,
     create_demo_env,
     extend_q_table_cache,
+    get_sample_action_from_cache,
     prepare_pretrain_qtable_diagnostics,
+    select_sample_from_plan,
 )
 import copy
 
@@ -1094,8 +1096,7 @@ class Weighted_Contexts_DQN:
             "initial_unrealized_pnl": self.initial_unrealized_pnL,
         }
         sample_plan, q_table_cache, train_df_cache, _, sample_action_cache = (
-            prepare_pretrain_qtable_diagnostics(
-                num_sample=self.num_sample,
+            prepare_pretrain_qtable_diagnostics(             
                 total_df_index_length=self.total_df_index_length,
                 position_choices=self.position_choices,
                 train_data_path=self.train_data_path,
@@ -1124,7 +1125,7 @@ class Weighted_Contexts_DQN:
             logger.info("===== 第 %d/%d 轮采样 =====", sample + 1, self.num_sample)
             pretrain = sample < self.pretrain_epoch
             logger.info("当前阶段: %s", "预训练" if pretrain else "多样化训练")
-            df_index, initial_action = sample_plan[sample]
+            df_index, initial_action = select_sample_from_plan(sample_plan)
             logger.info(
                 "正在使用 df_%d 进行训练, 初始动作=%d",
                 df_index,
@@ -1140,13 +1141,11 @@ class Weighted_Contexts_DQN:
             env = create_demo_env(self.train_df, env_kwargs, self.initial_state)
             sample_rollout_metrics = []
             if pretrain:
-                if sample in sample_action_cache:
-                    self.perfection_action_list = sample_action_cache[sample]
-                else:
-                    q_table = q_table_cache[df_index]
-                    self.perfection_action_list = get_dp_action_from_qtable(
-                        q_table, initial_action
-                    )
+                self.perfection_action_list = get_sample_action_from_cache(
+                    sample_action_cache,
+                    df_index,
+                    initial_action,
+                )
 
                 for index in range(4):
                     s, info = env.reset()
