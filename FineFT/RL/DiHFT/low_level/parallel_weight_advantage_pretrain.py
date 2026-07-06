@@ -7,8 +7,10 @@ import os
 import random
 import argparse
 import logging
+import traceback
 import numpy as np
 import torch
+import torch.multiprocessing as tmp
 from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 
@@ -327,6 +329,12 @@ parser.add_argument(
     help="the overall number of sampling",
 )
 parser.add_argument(
+    "--num_epoch",
+    type=int,
+    default=None,
+    help="number of parallel diverse-training epochs; one epoch explores every effective df once",
+)
+parser.add_argument(
     "--seed",
     type=int,
     default=12345,
@@ -410,6 +418,326 @@ def seed_torch(seed):
     torch.backends.cudnn.deterministic = True
 
 
+def build_effective_df_indices(total_df_index_length):
+    return list(range(total_df_index_length))
+
+
+def iter_parallel_rollout_tasks(num_epoch, context_count, position_choices):
+    for epoch_index in range(num_epoch):
+        for context_index in range(context_count):
+            for initial_action in range(position_choices):
+                yield {
+                    "epoch_index": epoch_index,
+                    "context_index": context_index,
+                    "initial_action": initial_action,
+                }
+
+
+def _linear_value(start, end, index, total_count):
+    if total_count <= 1:
+        return float(start)
+    progress = min(max(index, 0), total_count - 1) / float(total_count - 1)
+    return float(max(end, start - (start - end) * progress))
+
+
+def _held_then_linear_value(start, end, epoch_index, num_epoch):
+    if num_epoch <= 1:
+        return float(start)
+    hold_epochs = num_epoch // 2
+    if epoch_index < hold_epochs:
+        return float(start)
+    decay_epochs = max(num_epoch - hold_epochs - 1, 1)
+    decay_index = min(max(epoch_index - hold_epochs, 0), decay_epochs)
+    return float(max(end, start - (start - end) * decay_index / float(decay_epochs)))
+
+
+def compute_epoch_training_params(
+    epoch_index,
+    num_epoch,
+    epsilon_init,
+    epsilon_min,
+    ada_init,
+    ada_min,
+    lr_init,
+    lr_min,
+):
+    return {
+        "epsilon": _linear_value(epsilon_init, epsilon_min, epoch_index, num_epoch),
+        "ada": _held_then_linear_value(ada_init, ada_min, epoch_index, num_epoch),
+        "lr": _held_then_linear_value(lr_init, lr_min, epoch_index, num_epoch),
+    }
+
+
+def make_cpu_state_dict(module):
+    return {
+        name: tensor.detach().cpu().clone()
+        for name, tensor in module.state_dict().items()
+    }
+
+
+def sort_round_transitions(round_results):
+    ordered = []
+    for result in sorted(round_results, key=lambda item: item["df_index"]):
+        ordered.extend(
+            item["transition"]
+            for item in sorted(
+                result.get("transitions", []),
+                key=lambda transition: transition["step_index"],
+            )
+        )
+    return ordered
+
+
+def raise_for_worker_error(message):
+    if message.get("type") != "worker_error":
+        return
+    raise RuntimeError(
+        "worker_error df_index={df_index} epoch_index={epoch_index} "
+        "context_index={context_index} initial_action={initial_action} "
+        "round_counter={round_counter}: {traceback}".format(**message)
+    )
+
+
+def df_rollout_worker(worker_config, input_queue, result_queue):
+    df_index = worker_config["df_index"]
+    message = {}
+    try:
+        runner_factory = worker_config.get("runner_factory", DfRolloutWorkerRunner)
+        runner = runner_factory(worker_config)
+        while True:
+            message = input_queue.get()
+            message_type = message["type"]
+            if message_type == "shutdown":
+                return
+            if message_type == "reset_task":
+                runner.reset_task(message)
+                continue
+            if message_type == "explore_round":
+                result_queue.put(runner.explore_round(message))
+                continue
+            raise ValueError("unknown worker message type: {}".format(message_type))
+    except Exception:
+        result_queue.put(
+            {
+                "type": "worker_error",
+                "df_index": df_index,
+                "epoch_index": message.get("epoch_index", -1),
+                "context_index": message.get("context_index", -1),
+                "initial_action": message.get("initial_action", -1),
+                "round_counter": message.get("round_counter", -1),
+                "traceback": traceback.format_exc(),
+            }
+        )
+
+
+class DfRolloutWorkerRunner:
+    def __init__(self, worker_config):
+        self.df_index = worker_config["df_index"]
+        self.train_df = worker_config["train_df"]
+        self.env_kwargs = worker_config["env_kwargs"]
+        self.model_factory = worker_config.get("model_factory", create_parallel_worker_model)
+        self.device = worker_config["device"]
+        self.leverage_choices = worker_config["leverage_choices"]
+        self.position_list = worker_config["position_list"]
+        self.initial_wallet_balance = worker_config["initial_wallet_balance"]
+        self.initial_unrealized_pnL = worker_config["initial_unrealized_pnL"]
+        if self.model_factory is create_parallel_worker_model:
+            self.model = self.model_factory(worker_config).to(self.device)
+        else:
+            self.model = self.model_factory().to(self.device)
+        self.env = None
+        self.state = None
+        self.info = None
+        self.done = True
+        self.reward_sum = 0.0
+        self.transition_count = 0
+
+    def reset_task(self, message):
+        _, _, _, initial_state = build_initial_state(
+            self.train_df,
+            message["initial_action"],
+            self.leverage_choices,
+            self.position_list,
+            self.initial_wallet_balance,
+            self.initial_unrealized_pnL,
+        )
+        self.env = create_demo_env(self.train_df, self.env_kwargs, initial_state)
+        self.state, self.info = self.env.reset()
+        self.done = False
+        self.reward_sum = 0.0
+        self.transition_count = 0
+
+    def _act(self, state, info, context_index, epsilon):
+        if np.random.uniform() <= epsilon:
+            return np.random.choice(info["avaiable_action_list"])
+        with torch.no_grad():
+            state_tensor = torch.unsqueeze(torch.FloatTensor(state).reshape(-1), 0).to(
+                self.device
+            )
+            previous_action = torch.unsqueeze(
+                torch.tensor([info["previous_action"]]).float().to(self.device), 0
+            )
+            avaliable_action = torch.unsqueeze(
+                torch.tensor(info["avaliable_action"]).to(self.device), 0
+            )
+            hour_count_down = torch.unsqueeze(
+                torch.tensor([info["funding_count_down_hour"]]).float().to(self.device),
+                0,
+            )
+            minute_count_down = torch.unsqueeze(
+                torch.tensor([info["funding_count_down_minute"]]).float().to(self.device),
+                0,
+            )
+            time_input = torch.cat([hour_count_down, minute_count_down], dim=1)
+            q_values = self.model(
+                state=state_tensor,
+                time=time_input,
+                previous_action=previous_action,
+                avaliable_action=avaliable_action,
+            )
+            return int(torch.max(q_values[:, context_index, :], 1)[1].data.cpu().numpy()[0])
+
+    def explore_round(self, message):
+        self.model.load_state_dict(message["state_dict"])
+        self.model.eval()
+        transitions = []
+        step_index = 0
+        while not self.done and step_index < message["rollout_steps"]:
+            action = self._act(
+                self.state,
+                self.info,
+                message["context_index"],
+                message["epsilon"],
+            )
+            next_state, reward, done, next_info = self.env.step(action)
+            transitions.append(
+                {
+                    "step_index": self.transition_count,
+                    "transition": (
+                        self.state,
+                        self.info,
+                        action,
+                        reward,
+                        next_state,
+                        next_info,
+                        done,
+                    ),
+                }
+            )
+            self.reward_sum += reward
+            self.transition_count += 1
+            step_index += 1
+            self.state, self.info, self.done = next_state, next_info, done
+        final_balance = self.env.unrealized_pnl + self.env.wallet_balance
+        return {
+            "type": "round_result",
+            "df_index": self.df_index,
+            "epoch_index": message["epoch_index"],
+            "context_index": message["context_index"],
+            "initial_action": message["initial_action"],
+            "round_counter": message["round_counter"],
+            "worker_steps": len(transitions),
+            "transitions": transitions,
+            "rollout_metrics": [
+                {
+                    "epoch_index": message["epoch_index"],
+                    "context_index": message["context_index"],
+                    "initial_action": message["initial_action"],
+                    "df_index": self.df_index,
+                    "transition_count": self.transition_count,
+                    "reward_sum": float(self.reward_sum),
+                    "final_balance": float(final_balance),
+                    "return_rate": float(
+                        final_balance / (self.initial_wallet_balance + 1e-12) - 1
+                    ),
+                }
+            ],
+            "done": self.done,
+            "progress": {"transition_count": self.transition_count},
+        }
+
+
+def create_worker_context():
+    return tmp.get_context("spawn")
+
+runner
+def shutdown_workers(input_queues, processes):
+    for queue in input_queues:
+        queue.put({"type": "shutdown"})
+    for process in processes:
+        process.join(timeout=10)
+        if process.is_alive():
+            process.terminate()
+
+
+def write_round_transitions_to_buffer(buffer_diverse, round_results):
+    for transition in sort_round_transitions(round_results):
+        buffer_diverse.add(*transition)
+
+
+def run_fixed_diverse_updates(trainer, buffer_diverse, update_times, round_counter):
+    last_losses = None
+    for _ in range(update_times):
+        (
+            states,
+            infos,
+            actions,
+            rewards,
+            next_states,
+            next_infos,
+            dones,
+        ) = buffer_diverse.sample()
+        last_losses = trainer.update(
+            states,
+            infos,
+            actions,
+            rewards,
+            next_states,
+            next_infos,
+            dones,
+        )
+        total_loss, KL_loss, td_loss = last_losses
+        trainer.writer.add_scalar("total_loss", total_loss, round_counter)
+        trainer.writer.add_scalar("KL_loss", KL_loss, round_counter)
+        trainer.writer.add_scalar("td_loss", td_loss, round_counter)
+    return last_losses
+
+
+def create_parallel_worker_model(worker_config):
+    return ensemble_Qnet(
+        N_STATES=worker_config["state_dim"],
+        N_ACTIONS=worker_config["action_count"],
+        hidden_nodes=worker_config["hidden_nodes"],
+        TIME_INFO_DIM=worker_config["time_info_dim"],
+        ensemble_number=worker_config["ensemble_number"],
+    )
+
+
+def summarize_parallel_round(
+    round_counter,
+    epoch_index,
+    context_index,
+    initial_action,
+    round_results,
+    buffer_size,
+    update_count,
+):
+    return {
+        "round_counter": int(round_counter),
+        "epoch_index": int(epoch_index),
+        "context_index": int(context_index),
+        "initial_action": int(initial_action),
+        "round_steps": int(sum(result["worker_steps"] for result in round_results)),
+        "active_worker_count": int(len(round_results)),
+        "buffer_size": int(buffer_size),
+        "update_count": int(update_count),
+    }
+
+
+def build_epoch_model_path(model_path, epoch_index):
+    return os.path.join(model_path, "epoch_{}".format(epoch_index + 1))
+
+
 class Weighted_Contexts_DQN:
     def __init__(self, args):
         # seed
@@ -455,6 +783,7 @@ class Weighted_Contexts_DQN:
         self.lr_decay = (self.lr_init - self.lr_min) / self.lr_step
         self.lr = self.lr_init
         self.num_sample = args.num_sample
+        self.num_epoch = args.num_epoch if args.num_epoch is not None else args.num_sample
         # trading environment setting
         self.base_path = args.base_path
         self.dataset_name = args.dataset_name
@@ -759,44 +1088,6 @@ class Weighted_Contexts_DQN:
         self.update_counter += 1
         return loss.item(), KL_div.item(), td_loss.item()
 
-    def act_single_context(self, state, info, context_index, epsilon):
-        if np.random.uniform() > epsilon:
-            state = torch.unsqueeze(torch.FloatTensor(state).reshape(-1), 0).to(
-                self.device
-            )
-            previous_action = torch.unsqueeze(
-                torch.tensor([info["previous_action"]]).float().to(self.device), 0
-            ).to(self.device)
-            avaliable_action = torch.unsqueeze(
-                torch.tensor(info["avaliable_action"]).to(self.device), 0
-            ).to(self.device)
-            hour_count_down = (
-                torch.unsqueeze(torch.tensor([info["funding_count_down_hour"]]), 0)
-                .to(self.device)
-                .float()
-            )
-            minute_count_down = (
-                torch.unsqueeze(torch.tensor([info["funding_count_down_minute"]]), 0)
-                .to(self.device)
-                .float()
-            )
-            time_input = torch.cat([hour_count_down, minute_count_down], dim=1).to(
-                self.device
-            )
-            actions_value = self.eval_net(
-                state=state,
-                time=time_input,
-                previous_action=previous_action,
-                avaliable_action=avaliable_action,
-            )
-            action_value_chosen_index = actions_value[:, context_index, :]
-            action = torch.max(action_value_chosen_index, 1)[1].data.cpu().numpy()
-            action = action[0]
-        else:
-            action = np.random.choice(info["avaiable_action_list"])
-
-        return action
-
     def act_multi_styles_pretrain(self, info, optimal_step_counter, rollout_index):
         assert rollout_index in range(4)
         avaliable_action_list = info["avaiable_action_list"]
@@ -1027,10 +1318,256 @@ class Weighted_Contexts_DQN:
             "update_count": update_count,
         }, step_counter_pretrain
 
-    def act_multi_styles(self, state, info, epsilon, rollout_index):
-        assert rollout_index in range(self.N)
-        action = self.act_single_context(state, info, rollout_index, epsilon)
-        return action
+
+    def _start_parallel_workers(self, train_df_cache, env_kwargs):
+        worker_context = create_worker_context()
+        self.worker_result_queue = worker_context.Queue()
+        self.worker_input_queues = {}
+        self.worker_processes = []
+        for df_index in build_effective_df_indices(self.total_df_index_length):
+            input_queue = worker_context.Queue()
+            worker_config = {
+                "df_index": df_index,
+                "train_df": train_df_cache[df_index],
+                "env_kwargs": env_kwargs,
+                "device": self.device,
+                "leverage_choices": self.leverage_choices,
+                "position_list": self.position_list,
+                "initial_wallet_balance": self.initial_wallet_balance,
+                "initial_unrealized_pnL": self.initial_unrealized_pnL,
+                "state_dim": len(self.tech_indicator_list),
+                "action_count": self.N_ACTIONS,
+                "hidden_nodes": self.hidden_nodes,
+                "time_info_dim": self.time_info_dim,
+                "ensemble_number": self.N,
+            }
+            process = worker_context.Process(
+                target=df_rollout_worker,
+                args=(worker_config, input_queue, self.worker_result_queue),
+            )
+            process.start()
+            self.worker_input_queues[df_index] = input_queue
+            self.worker_processes.append(process)
+
+    def _shutdown_parallel_workers(self):
+        shutdown_workers(
+            self.worker_input_queues.values(),
+            self.worker_processes,
+        )
+        self.worker_input_queues = {}
+        self.worker_processes = []
+        self.worker_result_queue = None
+
+    def _reset_worker_task(
+        self,
+        epoch_index,
+        context_index,
+        initial_action,
+        active_df_indices,
+    ):
+        for df_index in sorted(active_df_indices):
+            self.worker_input_queues[df_index].put(
+                {
+                    "type": "reset_task",
+                    "epoch_index": epoch_index,
+                    "context_index": context_index,
+                    "initial_action": initial_action,
+                }
+            )
+
+    def _send_worker_rounds(
+        self,
+        active_df_indices,
+        epoch_index,
+        context_index,
+        initial_action,
+        round_counter,
+        state_dict,
+    ):
+        for df_index in sorted(active_df_indices):
+            self.worker_input_queues[df_index].put(
+                {
+                    "type": "explore_round",
+                    "epoch_index": epoch_index,
+                    "context_index": context_index,
+                    "initial_action": initial_action,
+                    "round_counter": round_counter,
+                    "state_dict": state_dict,
+                    "epsilon": self.epsilon,
+                    "rollout_steps": self.rollout_steps,
+                }
+            )
+
+    def _collect_worker_rounds(self, active_df_indices, round_counter):
+        expected_count = len(active_df_indices)
+        results = []
+        while len(results) < expected_count:
+            message = self.worker_result_queue.get()
+            if message.get("type") == "worker_error":
+                return [message]
+            if message.get("round_counter") != round_counter:
+                raise RuntimeError(
+                    "unexpected worker round_counter={} expected={}".format(
+                        message.get("round_counter"),
+                        round_counter,
+                    )
+                )
+            if message.get("df_index") not in active_df_indices:
+                raise RuntimeError(
+                    "unexpected worker df_index={} active={}".format(
+                        message.get("df_index"),
+                        sorted(active_df_indices),
+                    )
+                )
+            results.append(message)
+        return sorted(results, key=lambda result: result["df_index"])
+
+    def _run_parallel_rollout_task(
+        self,
+        epoch_index,
+        context_index,
+        initial_action,
+        train_df_cache,
+        env_kwargs,
+        buffer_diverse,
+        step_counter_diverse,
+        round_counter,
+    ):
+        active_df_indices = set(build_effective_df_indices(self.total_df_index_length))
+        self._reset_worker_task(
+            epoch_index,
+            context_index,
+            initial_action,
+            active_df_indices,
+        )
+        while active_df_indices:
+            self._send_worker_rounds(
+                active_df_indices=active_df_indices,
+                epoch_index=epoch_index,
+                context_index=context_index,
+                initial_action=initial_action,
+                round_counter=round_counter,
+                state_dict=make_cpu_state_dict(self.eval_net),
+            )
+            round_results = self._collect_worker_rounds(active_df_indices, round_counter)
+            for result in round_results:
+                raise_for_worker_error(result)
+            write_round_transitions_to_buffer(buffer_diverse, round_results)
+            round_steps = sum(result["worker_steps"] for result in round_results)
+            step_counter_diverse += round_steps
+            update_count = 0
+            if step_counter_diverse > (self.batch_size * self.update_times + self.n_step):
+                run_fixed_diverse_updates(
+                    self,
+                    buffer_diverse,
+                    self.update_times,
+                    round_counter,
+                )
+                update_count = self.update_times
+            round_summary = summarize_parallel_round(
+                round_counter=round_counter,
+                epoch_index=epoch_index,
+                context_index=context_index,
+                initial_action=initial_action,
+                round_results=round_results,
+                buffer_size=len(buffer_diverse),
+                update_count=update_count,
+            )
+            logger.info(
+                "parallel rollout round complete | round_counter=%d | epoch_index=%d | "
+                "context_index=%d | initial_action=%d | round_steps=%d | "
+                "active_worker_count=%d | buffer_size=%d | update_count=%d",
+                round_summary["round_counter"],
+                round_summary["epoch_index"],
+                round_summary["context_index"],
+                round_summary["initial_action"],
+                round_summary["round_steps"],
+                round_summary["active_worker_count"],
+                round_summary["buffer_size"],
+                round_summary["update_count"],
+            )
+            for result in round_results:
+                for metrics in result.get("rollout_metrics", []):
+                    logger.info(
+                        "parallel rollout metrics | epoch_index=%d | context_index=%d | "
+                        "initial_action=%d | df_index=%d | transition_count=%d | "
+                        "reward_sum=%.4f | final_balance=%.4f | return_rate=%.6f",
+                        metrics["epoch_index"],
+                        metrics["context_index"],
+                        metrics["initial_action"],
+                        metrics["df_index"],
+                        metrics["transition_count"],
+                        metrics["reward_sum"],
+                        metrics["final_balance"],
+                        metrics["return_rate"],
+                    )
+            active_df_indices = {
+                result["df_index"]
+                for result in round_results
+                if not result.get("done", False)
+            }
+            round_counter += 1
+        return round_counter, step_counter_diverse
+
+    def _save_parallel_epoch_model(self, epoch_index):
+        epoch_path = build_epoch_model_path(self.model_path, epoch_index)
+        if not os.path.exists(epoch_path):
+            os.makedirs(epoch_path)
+        torch.save(
+            self.eval_net.state_dict(),
+            os.path.join(epoch_path, "trained_model.pkl"),
+        )
+        logger.info(
+            "第 %d 轮 epoch 训练完成 | 模型已保存至=%s",
+            epoch_index + 1,
+            epoch_path,
+        )
+
+    def _run_parallel_diverse_training(
+        self,
+        train_df_cache,
+        env_kwargs,
+        buffer_diverse,
+        step_counter_diverse,
+    ):
+        if self.total_df_index_length <= 0:
+            raise ValueError("parallel diverse training requires total_df_index_length > 0")
+        round_counter = 0
+        self._start_parallel_workers(train_df_cache, env_kwargs)
+        try:
+            for epoch_index in range(self.num_epoch):
+                params = compute_epoch_training_params(
+                    epoch_index=epoch_index,
+                    num_epoch=self.num_epoch,
+                    epsilon_init=self.epsilon_init,
+                    epsilon_min=self.epsilon_min,
+                    ada_init=self.ada_init,
+                    ada_min=self.ada_min,
+                    lr_init=self.lr_init,
+                    lr_min=self.lr_min,
+                )
+                self.epsilon = params["epsilon"]
+                self.ada = params["ada"]
+                self.lr = params["lr"]
+                for param_group in self.optimizer.param_groups:
+                    param_group["lr"] = self.lr
+
+                for context_index in range(self.N):
+                    for initial_action in range(self.position_choices):
+                        round_counter, step_counter_diverse = self._run_parallel_rollout_task(
+                            epoch_index=epoch_index,
+                            context_index=context_index,
+                            initial_action=initial_action,
+                            train_df_cache=train_df_cache,
+                            env_kwargs=env_kwargs,
+                            buffer_diverse=buffer_diverse,
+                            step_counter_diverse=step_counter_diverse,
+                            round_counter=round_counter,
+                        )
+                self._save_parallel_epoch_model(epoch_index)
+        finally:
+            self._shutdown_parallel_workers()
+        return step_counter_diverse
 
     def train(self):
         self._log_internal_parameters("train_start")
@@ -1121,203 +1658,20 @@ class Weighted_Contexts_DQN:
             buffer_pretrain=buffer_pretrain,
             step_counter_pretrain=step_counter_pretrain,
         )
-        for sample in range(self.num_sample):
-            logger.info("===== 第 %d/%d 轮采样 =====", sample + 1, self.num_sample)
-            pretrain = sample < self.pretrain_epoch
-            logger.info("当前阶段: %s", "预训练" if pretrain else "多样化训练")
-            df_index, initial_action = select_sample_from_plan(sample_plan)
-            logger.info(
-                "正在使用 df_%d 进行训练, 初始动作=%d",
-                df_index,
-                initial_action,
+        if not self.full_df_warmup:
+            q_table_cache, train_df_cache = extend_q_table_cache(
+                df_indices=range(self.total_df_index_length),
+                train_data_path=self.train_data_path,
+                qtable_kwargs=qtable_kwargs,
+                q_table_cache=q_table_cache,
+                train_df_cache=train_df_cache,
             )
-            self.train_df = train_df_cache[df_index]
-            self._set_initial_state_from_action(self.train_df, initial_action)
-            logger.info(
-                "初始仓位=%s, 初始杠杆=%s",
-                self.initial_position,
-                self.initial_leverage,
-            )
-            env = create_demo_env(self.train_df, env_kwargs, self.initial_state)
-            sample_rollout_metrics = []
- 
-            for index in range(self.N):
-                s, info = env.reset()
-                episode_reward_sum = 0
-                logger.info("多样化训练: 使用上下文索引 index=%d 采数", index)
-                while True:
-                    a = self.act_multi_styles(s, info, self.epsilon, index)
-                    if index == 0:
-                        self.epsilon = (
-                            self.epsilon - self.epsilon_decay
-                            if self.epsilon - self.epsilon_decay > self.epsilon_min
-                            else self.epsilon_min
-                        )
-                        self.ada = (
-                            self.ada - self.ada_decay
-                            if self.ada - self.ada_decay > self.ada_min
-                            else self.ada_min
-                        )
-                        self.lr = (
-                            self.lr - self.lr_decay
-                            if self.lr - self.lr_decay > self.lr_min
-                            else self.lr_min
-                        )
-                        for p in self.optimizer.param_groups:
-                            p["lr"] = self.lr
-                    s_, r, done, info_ = env.step(a)
-
-                    step_counter_diverse += 1
-                    buffer_diverse.add(s, info, a, r, s_, info_, done)
-                    episode_reward_sum += r
-
-                    s, info = s_, info_
-                    if done:
-                        break
-                    if (
-                        step_counter_diverse
-                        > (self.batch_size * self.update_times + self.n_step)
-                        and step_counter_diverse % self.rollout_steps == 1
-                    ):
-                        for _ in range(self.update_times):
-                            (
-                                states,
-                                infos,
-                                actions,
-                                rewards,
-                                next_states,
-                                next_infos,
-                                dones,
-                            ) = buffer_diverse.sample()
-                            total_loss, KL_loss, td_loss = self.update(
-                                states,
-                                infos,
-                                actions,
-                                rewards,
-                                next_states,
-                                next_infos,
-                                dones,
-                            )
-
-                            self.writer.add_scalar(
-                                tag="total_loss",
-                                scalar_value=total_loss,
-                                global_step=self.update_counter,
-                                walltime=None,
-                            )
-                            self.writer.add_scalar(
-                                tag="KL_loss",
-                                scalar_value=KL_loss,
-                                global_step=self.update_counter,
-                                walltime=None,
-                            )
-                            self.writer.add_scalar(
-                                tag="td_loss",
-                                scalar_value=td_loss,
-                                global_step=self.update_counter,
-                                walltime=None,
-                            )
-
-                final_balance = env.unrealized_pnl + env.wallet_balance
-                required_money = self.initial_wallet_balance
-                diverse_return_rate = final_balance / (required_money + 1e-12) - 1
-                self.writer.add_scalar(
-                    tag="return_rate_train_{}".format(index),
-                    scalar_value=diverse_return_rate,
-                    global_step=sample,
-                    walltime=None,
-                )
-
-                self.writer.add_scalar(
-                    tag="reward_sum_train_{}".format(index),
-                    scalar_value=episode_reward_sum,
-                    global_step=sample,
-                    walltime=None,
-                )
-                record_diverse_rollout_latest_metric(
-                    diverse_rollout_latest_metrics_by_df,
-                    df_index,
-                    index,
-                    episode_reward_sum,
-                    final_balance,
-                    diverse_return_rate,
-                )
-                logger.info(
-                    "多样化回合结束 | 上下文索引=%d | 累计奖励=%.4f | 最终余额=%.4f | 收益率=%.6f",
-                    index,
-                    episode_reward_sum,
-                    final_balance,
-                    diverse_return_rate,
-                )
-
-
-                sample_rollout_metrics.append(
-                    {
-                        "return_rate": final_balance / (required_money + 1e-12),
-                        "final_balance": final_balance,
-                        "reward_sum": episode_reward_sum,
-                    }
-                )
-            sample_summary = summarize_rollout_metrics(sample_rollout_metrics)
-            logger.info(
-                "采样汇总 | sample=%d | 平均收益率=%.6f | 平均最终余额=%.4f | 平均累计奖励=%.4f",
-                sample + 1,
-                sample_summary["mean_return_rate"],
-                sample_summary["mean_final_balance"],
-                sample_summary["mean_reward_sum"],
-            )
-            epoch_return_rate_train_list.append(sample_summary["mean_return_rate"])
-            epoch_final_balance_train_list.append(sample_summary["mean_final_balance"])
-            epoch_reward_sum_train_list.append(sample_summary["mean_reward_sum"])
-            if len(epoch_reward_sum_train_list) == epoch_number:
-                epoch_index = int((sample + 1) / epoch_number)
-                mean_return_rate_train = np.mean(epoch_return_rate_train_list)
-                mean_final_balance_train = np.mean(epoch_final_balance_train_list)
-                mean_reward_sum_train = np.mean(epoch_reward_sum_train_list)
-                self.writer.add_scalar(
-                    tag="epoch_return_rate_train",
-                    scalar_value=mean_return_rate_train,
-                    global_step=epoch_index,
-                    walltime=None,
-                )
-                self.writer.add_scalar(
-                    tag="epoch_final_balance_train",
-                    scalar_value=mean_final_balance_train,
-                    global_step=epoch_index,
-                    walltime=None,
-                )
-
-                self.writer.add_scalar(
-                    tag="epoch_reward_sum_train",
-                    scalar_value=mean_reward_sum_train,
-                    global_step=epoch_index,
-                    walltime=None,
-                )
-                epoch_path = os.path.join(
-                    self.model_path, "epoch_{}".format(epoch_index)
-                )
-                if not os.path.exists(epoch_path):
-                    os.makedirs(epoch_path)
-                torch.save(
-                    self.eval_net.state_dict(),
-                    os.path.join(epoch_path, "trained_model.pkl"),
-                )
-                log_diverse_rollout_latest_metrics(
-                    epoch_index,
-                    diverse_rollout_latest_metrics_by_df,
-                )
-                logger.info(
-                    "第 %d 轮 epoch 训练完成 | 平均收益率=%.6f | 平均最终余额=%.4f | 平均累计奖励=%.4f | 模型已保存至=%s",
-                    epoch_index,
-                    mean_return_rate_train,
-                    mean_final_balance_train,
-                    mean_reward_sum_train,
-                    epoch_path,
-                )
-                # self.test(epoch_path)
-                epoch_return_rate_train_list = []
-                epoch_final_balance_train_list = []
-                epoch_reward_sum_train_list = []
+        step_counter_diverse = self._run_parallel_diverse_training(
+            train_df_cache=train_df_cache,
+            env_kwargs=env_kwargs,
+            buffer_diverse=buffer_diverse,
+            step_counter_diverse=step_counter_diverse,
+        )
 
 
 if __name__ == "__main__":

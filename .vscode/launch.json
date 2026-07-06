@@ -77,7 +77,7 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/data_preprocess"
             },
-            "args": "--dataset_name fu"
+            "args": "--dataset_name al"
         }
     ]
 }
