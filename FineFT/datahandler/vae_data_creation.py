@@ -50,6 +50,9 @@ def make_data(args):
                 df = pd.read_feather(df_path)
                 single_label_data = df[state_features].values
                 single_label_data_list.append(single_label_data)
+        if not single_label_data_list:
+            print(f"skip empty label: {label}")
+            continue
         single_label_data_all = np.concatenate(single_label_data_list, axis=0)
         np.save(os.path.join(save_path, "{}.npy".format(label)), single_label_data_all)
     test_path=os.path.join(args.base_path, args.dataset_name, "test.feather")

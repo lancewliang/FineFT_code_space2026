@@ -344,7 +344,7 @@ parser.add_argument(
 parser.add_argument(
     "--result_path",
     type=str,
-    default="result/DiHFT/low_level",
+    default="result/DiHFT/low_level/parallel",
     help="the path for storing the test result",
 )
 # loss setting
@@ -660,7 +660,7 @@ class DfRolloutWorkerRunner:
 def create_worker_context():
     return tmp.get_context("spawn")
 
-runner
+
 def shutdown_workers(input_queues, processes):
     for queue in input_queues:
         queue.put({"type": "shutdown"})

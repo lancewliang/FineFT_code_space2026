@@ -62,7 +62,7 @@ parser.add_argument(
 parser.add_argument(
     "--windows",
     type=str,
-    default="2,6,12,16",
+    default="2,6,12,16,24,48",
     help="List of windows sizes as comma-separated values",
 )
 

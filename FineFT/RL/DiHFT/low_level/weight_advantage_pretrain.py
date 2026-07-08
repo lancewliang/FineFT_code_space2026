@@ -20,10 +20,42 @@ if not logger.handlers:
     )
 
 
-def configure_logger(dataset_name):
-    log_dir = os.path.join("log_futures", dataset_name, "low_level", "train")
+def build_train_log_path(dataset_name, experiment_name):
+    return os.path.join(
+        "log_futures",
+        dataset_name,
+        "low_level",
+        "train",
+        experiment_name,
+        "advantage.log",
+    )
+
+
+def build_serial_model_path(result_path, dataset_name, experiment_name):
+    return os.path.join(
+        result_path,
+        dataset_name,
+        experiment_name,
+        "weights_advantage_pretrain",
+    )
+
+
+def build_training_data_paths(base_path, dataset_name):
+    dataset_root = os.path.join(base_path, dataset_name)
+    return {
+        "train_data_path": os.path.join(dataset_root, "train"),
+        "state_features_path": os.path.join(dataset_root, "state_features.npy"),
+        "maintenance_margin_ratio_path": os.path.join(
+            dataset_root,
+            "maintenance_margin_ratio_dict.npy",
+        ),
+    }
+
+
+def configure_logger(dataset_name, experiment_name):
+    log_path = build_train_log_path(dataset_name, experiment_name)
+    log_dir = os.path.dirname(log_path)
     os.makedirs(log_dir, exist_ok=True)
-    log_path = os.path.join(log_dir, "advantage.log")
     abs_log_path = os.path.abspath(log_path)
 
     logger.setLevel(logging.INFO)
@@ -176,6 +208,12 @@ parser.add_argument(
     type=str,
     default="BTCUSDT",
     help="training data chunk",
+)
+parser.add_argument(
+    "--experiment_name",
+    type=str,
+    default="default",
+    help="experiment name used to namespace serial training outputs",
 )
 
 parser.add_argument(
@@ -422,8 +460,11 @@ class Weighted_Contexts_DQN:
             self.device = "cpu"
         # self.device = "cpu"
         # log path
-        self.model_path = os.path.join(
-            args.result_path, args.dataset_name, "weights_advantage_pretrain"
+        self.experiment_name = args.experiment_name
+        self.model_path = build_serial_model_path(
+            args.result_path,
+            args.dataset_name,
+            args.experiment_name,
         )
         self.log_path = os.path.join(self.model_path, "log")
         if not os.path.exists(self.log_path):
@@ -458,15 +499,15 @@ class Weighted_Contexts_DQN:
         # trading environment setting
         self.base_path = args.base_path
         self.dataset_name = args.dataset_name
-        self.train_data_path = os.path.join(self.base_path, self.dataset_name, "train")
-        self.total_df_index_length = len(os.listdir(self.train_data_path)) - 1
-        self.tech_indicator_list = np.load(
-            os.path.join(self.base_path, self.dataset_name, "state_features.npy")
+        training_data_paths = build_training_data_paths(
+            self.base_path,
+            self.dataset_name,
         )
+        self.train_data_path = training_data_paths["train_data_path"]
+        self.total_df_index_length = len(os.listdir(self.train_data_path)) - 1
+        self.tech_indicator_list = np.load(training_data_paths["state_features_path"])
         self.maintenance_margin_ratio_dict = np.load(
-            os.path.join(
-                self.base_path, self.dataset_name, "maintenance_margin_ratio_dict.npy"
-            ),
+            training_data_paths["maintenance_margin_ratio_path"],
             allow_pickle=True,
         ).item()
         self.max_holding_number = args.max_holding_number
@@ -1415,7 +1456,7 @@ class Weighted_Contexts_DQN:
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    configure_logger(args.dataset_name)
+    configure_logger(args.dataset_name, args.experiment_name)
     logger.info('start')
     trainer = Weighted_Contexts_DQN(args)
     trainer.train()

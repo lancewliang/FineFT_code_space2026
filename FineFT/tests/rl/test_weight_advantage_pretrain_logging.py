@@ -252,6 +252,7 @@ def test_run_full_df_warmup_updates_once_per_df(monkeypatch):
     trainer.update_times = 1
     trainer.n_step = 1
     trainer.rollout_steps = 1024
+    trainer.tech_indicator_list = ["mark_price"]
     trainer.writer = type("Writer", (), {"add_scalar": lambda *args, **kwargs: None})()
     trainer.update_counter = 0
     trainer._set_initial_state_from_action = lambda train_df, action: setattr(
@@ -437,6 +438,7 @@ def test_full_df_warmup_logs_rollout_balances_without_df_final_balance(
     trainer.update_times = 1
     trainer.n_step = 1
     trainer.rollout_steps = 1024
+    trainer.tech_indicator_list = ["mark_price"]
     trainer.writer = type("Writer", (), {"add_scalar": lambda *args, **kwargs: None})()
     trainer.update_counter = 0
     trainer._set_initial_state_from_action = lambda train_df, action: setattr(
@@ -473,3 +475,50 @@ def test_full_df_warmup_logs_rollout_balances_without_df_final_balance(
         if record.message.startswith("full-df warmup df complete")
     ][0]
     assert "final_balance" not in df_summary
+
+
+def test_parser_defaults_experiment_name_to_default():
+    from RL.DiHFT.low_level import weight_advantage_pretrain as wap
+
+    args = wap.parser.parse_args([])
+
+    assert args.experiment_name == "default"
+
+
+def test_parser_accepts_explicit_experiment_name():
+    from RL.DiHFT.low_level import weight_advantage_pretrain as wap
+
+    args = wap.parser.parse_args(["--experiment_name", "5min_gamma097"])
+
+    assert args.experiment_name == "5min_gamma097"
+
+
+def test_build_serial_model_path_includes_experiment_name():
+    from RL.DiHFT.low_level import weight_advantage_pretrain as wap
+
+    assert wap.build_serial_model_path(
+        result_path="result/DiHFT/low_level",
+        dataset_name="fu",
+        experiment_name="5min_gamma097",
+    ) == "result/DiHFT/low_level/fu/5min_gamma097/weights_advantage_pretrain"
+
+
+def test_build_train_data_paths_keep_base_path_dataset_name_semantics():
+    from RL.DiHFT.low_level import weight_advantage_pretrain as wap
+
+    paths = wap.build_training_data_paths(base_path="dataset_5min", dataset_name="fu")
+
+    assert paths == {
+        "train_data_path": "dataset_5min/fu/train",
+        "state_features_path": "dataset_5min/fu/state_features.npy",
+        "maintenance_margin_ratio_path": "dataset_5min/fu/maintenance_margin_ratio_dict.npy",
+    }
+
+
+def test_build_file_log_path_includes_experiment_name():
+    from RL.DiHFT.low_level import weight_advantage_pretrain as wap
+
+    assert wap.build_train_log_path(
+        dataset_name="fu",
+        experiment_name="5min_gamma097",
+    ) == "log_futures/fu/low_level/train/5min_gamma097/advantage.log"
