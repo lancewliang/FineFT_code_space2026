@@ -68,7 +68,7 @@ parser.add_argument(
     "--leverage_choices",
     action="append",
     type=int,
-    default=[5],
+    default=[1],
     help="the transaction cost of not holding the same action as before",
 )
 parser.add_argument(
@@ -126,7 +126,12 @@ parser.add_argument(
     default=5,
     help="initial leverage",
 )
-
+parser.add_argument(
+    "--order_book_depth",
+    type=int,
+    default=25,
+    help="number of bid/ask price levels available in the order book",
+)
 # network setting
 parser.add_argument(
     "--hidden_nodes",
@@ -159,8 +164,20 @@ parser.add_argument(
     default="result/DiHFT/low_level",
     help="the path for storing the test result",
 )
+parser.add_argument(
+    "--experiment_name",
+    type=str,
+    default="default",
+    help="experiment name used to namespace serial training outputs",
+)
 
-
+def build_serial_model_path(result_path, dataset_name, experiment_name):
+    return os.path.join(
+        result_path,
+        dataset_name,
+        experiment_name,
+        "weights_advantage_pretrain",
+    )
 def seed_torch(seed):
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
@@ -181,8 +198,10 @@ class weighted_trader:
         else:
             self.device = "cpu"
         # log path
-        self.model_path = os.path.join(
-            args.result_path, args.dataset_name, "weights_advantage_pretrain"
+        self.model_path = build_serial_model_path(
+            args.result_path,
+            args.dataset_name,
+            args.experiment_name,
         )
   
         # trading environment setting
