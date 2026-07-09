@@ -69,6 +69,29 @@
         }
         ,
         {
+            "name": "FineFT_single_agent_with_different_position.py (fu 5min_nstep6_costw5)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/FineFT/analysis/pick_agent/FineFT_single_agent_with_different_position.py",
+            "python": "/home/lanceliang/miniconda3/envs/finetf/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/FineFT"
+            },
+            "args": [
+                "--dataset_name",
+                "fu",
+                "--experiment_name",
+                "10min_nstep6_costw5",
+                "--base_path",
+                "dataset/10min",
+                "--position_choices",
+                "3" 
+            ]
+        }
+        ,
+        {
             "name": "build_maintenance_margin_dict.py",
             "type": "debugpy",
             "request": "launch",

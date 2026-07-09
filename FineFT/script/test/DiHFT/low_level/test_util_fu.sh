@@ -11,7 +11,7 @@ function run_ddqn_context {
     log_dir="log/DiHFT/${dataset_name}/low_level/test/${experiment_name}"
     mkdir -p "${log_dir}"
     export PYTHONPATH="${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
-    local max_parallel=25
+    local max_parallel=4
     # 保存PID的数组
     pids=()
 
@@ -19,7 +19,7 @@ function run_ddqn_context {
     for epoch in $(seq $epoch_start $epoch_end); do
 
         local gpu_index=$(((epoch - 1) % 4))
-        CUDA_VISIBLE_DEVICES=${gpu_index} nohup python FineFT/RL/DiHFT/low_level/test_agent_index.py \
+        nohup python FineFT/RL/DiHFT/low_level/test_agent_index.py \
             --base_path "${base_path}" \
             --dataset_name "${dataset_name}" --experiment_name "${experiment_name}" \
             --max_holding_number "${max_holding_number}" --initial_wallet_balance 10000 --order_book_depth 5 \
@@ -88,6 +88,7 @@ function run_ddqn_average {
 
 # # #DOTUSDT
 # # run_ddqn_average DOTUSDT 6000 1 100
+# run_ddqn_context fu 1 1 2 dataset/5min 5min_nstep6_costw5
 run_ddqn_context fu 1 1 100 dataset/5min 5min_nstep6_costw5
 
 # # # ETHUSDT

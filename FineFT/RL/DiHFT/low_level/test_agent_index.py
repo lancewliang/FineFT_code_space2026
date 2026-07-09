@@ -218,6 +218,7 @@ class weighted_trader:
             allow_pickle=True,
         ).item()
         self.max_holding_number = args.max_holding_number
+        self.order_book_depth = args.order_book_depth
         self.position_choices = args.position_choices
         self.single_side_action_num = int((self.position_choices - 1) / 2)
         self.position_list = (
@@ -301,23 +302,25 @@ class weighted_trader:
         time_input = torch.cat([hour_count_down, minute_count_down], dim=1).to(
             self.device
         )
-        actions_value = self.eval_net(
-            state=state,
-            time=time_input,
-            previous_action=previous_action,
-            avaliable_action=avaliable_action,
-        )
-        action_value_chosen_index = actions_value[:, context_index, :]
-        action = torch.max(action_value_chosen_index, 1)[1].data.cpu().numpy()
+        with torch.inference_mode():
+            action_value_chosen_index = self.eval_net.qnet_list[context_index](
+                state=state,
+                time=time_input,
+                previous_action=previous_action,
+                avaliable_action=avaliable_action,
+            )
+            action = torch.max(action_value_chosen_index, 1)[1].data.cpu().numpy()
         action = action[0]
 
         return action
 
     def test(self):
+        print('start')
         overall_result = []
         self.eval_net.eval()
         label_list = os.listdir(self.valid_data_path)
         for label in label_list:
+            print('start label {}'.format(label))
             df_list = os.listdir(os.path.join(self.valid_data_path, label))
             for initial_action in self.initial_action_list:
                 for bin_index in range(self.N):
@@ -350,6 +353,7 @@ class weighted_trader:
                             df=self.test_df,
                             feature_list=self.tech_indicator_list,
                             max_holding_number=self.max_holding_number,
+                            order_book_depth=self.order_book_depth,
                             position_choices=self.position_choices,  # (must be an odd number, the minum of trading equals to (max_holder_number)/((action_dim-1)/2)s))
                             leverage_choice=self.leverage_choices,  # recommend only use one leverage choice, because the leverage does not influence the return directly, the position
                             # itself is enough to show the risk preference
@@ -455,16 +459,19 @@ class weighted_trader:
                         single_label_initial_action_bin_index_turnover_result.append(
                             turn_over
                         )
-                    overall_result.append(
-                        {
+                    _overall_result = {
                             "label": label,
                             "initial_action": initial_action,
                             "bin_index": bin_index,
                             "reward_sum": single_label_initial_action_bin_index_reward_sum_result,
                             "df_length": single_label_initial_action_bin_index_df_length_result,
                             "turnover": single_label_initial_action_bin_index_turnover_result,
-                        }
+                    }    
+                    print(_overall_result)
+                    overall_result.append(
+                        _overall_result
                     )
+        
         np.save(os.path.join(self.epoch_path, "analysis_result.npy"), overall_result)
 
 

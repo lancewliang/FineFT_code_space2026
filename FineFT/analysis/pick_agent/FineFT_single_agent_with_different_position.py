@@ -62,19 +62,49 @@ parser.add_argument(
     help="the number of initial_position",
 )
 
+parser.add_argument(
+    "--experiment_name",
+    type=str,
+    default="default",
+    help="experiment name used to namespace serial training outputs",
+)
+parser.add_argument(
+    "--base_path",
+    type=str,
+    default="dataset",
+    help="the number of action we have in the training and testing env",
+)
+parser.add_argument(
+    "--position_choices",
+    type=int,
+    default=3,
+    help="the transcation cost of not holding the same action as before",
+)
+parser.add_argument(
+    "--hidden_nodes",
+    type=int,
+    default=128,
+    help="the number of the hidden nodes",
+)
 
 class picker:
     def __init__(self, args) -> None:
+        self.base_path = args.base_path
         self.dataset_name = args.dataset_name
         self.num_label = args.num_label
+        print(self.num_label)
         self.num_initial_position = args.initial_position
         self.label_list = ["label_{}".format(i) for i in range(self.num_label)]
+        print(self.label_list)
         self.initial_position_list = range(self.num_initial_position)
-
+        self.position_choices = args.position_choices
+        self.hidden_nodes = args.hidden_nodes
+        
         self.epoch_num = args.epoch_num
         self.save_path = args.save_path
-        self.model_save_path = os.path.join(args.model_save_path, args.dataset_name)
+        self.model_save_path = os.path.join(args.model_save_path, args.dataset_name, args.experiment_name)
         self.std_preference = args.std_preference
+        self.experiment_name = args.experiment_name
 
     def transform_single_epoch_result(self, result, epoch_path):
         # calculate the mean and std of the normalized return for each record and throw away the original return and length record
@@ -114,6 +144,7 @@ class picker:
         epoch_path,
     ):
         # 找到这个epoch各种dynamics和initial position下最好的agent
+        print("pick_best_index_from_single_epoch {} {}", self.label_list, len(self.label_list))
         max_result = []
         for label in self.label_list:
             for initial_action in self.initial_position_list:
@@ -124,6 +155,8 @@ class picker:
                         and single_result["label"] == label
                     ):
                         single_condition_result.append(single_result)
+                if not single_condition_result:
+                    continue
                 max_item = max(
                     single_condition_result,
                     key=lambda x: x["trans_reward_mean"]
@@ -160,7 +193,7 @@ class picker:
         return all_parameter_result_all, all_parameter_result_best
 
     def get_all_parameter_result(self):
-        root_path = os.path.join("result", "DiHFT", "low_level", self.dataset_name)
+        root_path = os.path.join("result", "DiHFT", "low_level", self.dataset_name, self.experiment_name)
         all_parameter_result, all_parameter_result_best = self.conclude_all_parameter(
             root_path
         )
@@ -176,10 +209,10 @@ class picker:
         )
         df_all = df_all.drop(columns="epoch_number")
 
-        if not os.path.exists(os.path.join(self.save_path, self.dataset_name)):
-            os.makedirs(os.path.join(self.save_path, self.dataset_name))
-        df_best.to_csv(os.path.join(self.save_path, self.dataset_name, "result.csv"))
-        df_all.to_csv(os.path.join(self.save_path, self.dataset_name, "result_all.csv"))
+        if not os.path.exists(os.path.join(self.save_path, self.dataset_name, self.experiment_name)):
+            os.makedirs(os.path.join(self.save_path, self.dataset_name, self.experiment_name))
+        df_best.to_csv(os.path.join(self.save_path, self.dataset_name, self.experiment_name, "result.csv"))
+        df_all.to_csv(os.path.join(self.save_path, self.dataset_name, self.experiment_name, "result_all.csv"))
         self.result_df_best = df_best
         self.result_df_all = df_all
         return df_best, df_all
@@ -192,11 +225,14 @@ class picker:
         for label in result_all["label"].unique():
             print(label)
             selected_df = result_all[result_all["label"] == label]
-            reward_mean_info = selected_information_based_reward_sum = (
+            reward_mean_info = (
                 selected_df.groupby(["label", "bin_index", "epoch_path"])[
                     "trans_reward_mean"
                 ].mean()
             )
+            reward_mean_info = reward_mean_info.dropna()
+            if reward_mean_info.empty:
+                continue
             selected_information_based_reward_sum = reward_mean_info.idxmax()
             label = selected_information_based_reward_sum[0]
             bin_index = selected_information_based_reward_sum[1]
@@ -218,6 +254,7 @@ class picker:
             os.path.join(
                 self.save_path,
                 self.dataset_name,
+                self.experiment_name,
                 "best_index_info_by_dynamics_with_different_position.csv",
             )
         )
@@ -225,10 +262,10 @@ class picker:
 
     def create_potential_result(self, best_agent_df):
         n_state = len(
-            np.load(os.path.join("dataset", self.dataset_name, "state_features.npy"))
+            np.load(os.path.join(self.base_path, self.dataset_name, "state_features.npy"))
         )
-        n_action = 9
-        n_hidden = 128
+        n_action = self.position_choices
+        n_hidden = self.hidden_nodes
         label_list = best_agent_df["label"].unique().tolist()
         epoch_path_list = best_agent_df["epoch_path"].tolist()
         epoch_path_list = [
@@ -237,6 +274,10 @@ class picker:
         ]
         bin_index_list = best_agent_df["bin_index"].tolist()
         assert len(label_list) == len(epoch_path_list) == len(bin_index_list)
+        # print(label_list)
+        # print(epoch_path_list)        
+        # print(bin_index_list)      
+        # print(f"self.model_save_path: {self.model_save_path}")
         new_ensemble = create_new_ensemble_qnet_from_different_save_path(
             n_state,
             n_action,
@@ -262,11 +303,11 @@ if __name__ == "__main__":
     )
 
     df = pd.read_csv(
-        "analysis_result/DiHFT/low_level/{}/result.csv".format(dataset_name),
+        "analysis_result/DiHFT/low_level/{}/{}/result.csv".format(dataset_name, p.experiment_name),
         index_col=0,
     )
     df_all = pd.read_csv(
-        "analysis_result/DiHFT/low_level/{}/result_all.csv".format(dataset_name),
+        "analysis_result/DiHFT/low_level/{}/{}/result_all.csv".format(dataset_name, p.experiment_name),
         index_col=0,
     )
     best_agent_info = p.pick_best_agent_regarding_dynamics_bin_index_path(df_all)

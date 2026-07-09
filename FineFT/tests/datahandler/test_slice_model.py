@@ -45,3 +45,26 @@ def test_prepare_raw_data_reports_loaded_columns_and_missing_required_columns(ca
         model.prepare_raw_data(raw_data)
 
     assert "loaded columns:" in capsys.readouterr().out
+
+
+def test_prepare_raw_data_preserves_datetime_timestamp_column():
+    module = _load_slice_model()
+    args = _args()
+    args.timestamp = "timestamp"
+    model = module.Linear_Market_Dynamics_Model(args)
+    timestamps = pd.Series(
+        pd.to_datetime(["2024-08-21 22:00:00", "2024-08-21 22:10:00"]),
+        name="timestamp",
+    )
+    raw_data = pd.DataFrame(
+        {
+            "symbol": ["fu", "fu"],
+            "timestamp": timestamps,
+            "bid1_price": [100.0, 101.0],
+        }
+    )
+
+    prepared = model.prepare_raw_data(raw_data)
+
+    assert str(prepared["timestamp"].dtype).startswith("datetime64")
+    assert prepared["timestamp"].equals(timestamps)

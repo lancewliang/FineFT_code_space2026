@@ -124,7 +124,9 @@ class Linear_Market_Dynamics_Model(object):
 
     def prepare_raw_data(self, raw_data):
         print(f"loaded columns: {list(raw_data.columns)}")
-        required_columns = ["bid1_price", self.timestamp]
+        required_columns = ["bid1_price"]
+        if self.timestamp != "index":
+            required_columns.append(self.timestamp)
         missing_columns = [
             column for column in required_columns if column not in raw_data.columns
         ]
@@ -135,7 +137,8 @@ class Linear_Market_Dynamics_Model(object):
 
         raw_data[self.tic] = raw_data["symbol"]
         raw_data[self.key_indicator] = raw_data["bid1_price"]
-        raw_data[self.timestamp] = raw_data.index
+        if self.timestamp == "index":
+            raw_data[self.timestamp] = raw_data.index
         return raw_data
 
     def run(self):
