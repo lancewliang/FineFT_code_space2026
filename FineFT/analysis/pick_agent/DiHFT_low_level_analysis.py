@@ -93,10 +93,10 @@ class picker:
                 single_result["normalized_reward"]
             )
             single_result["mean_turnover"] = np.mean(single_result["turnover"])
-            single_result.pop("normalized_reward")
-            single_result.pop("reward_sum")
-            single_result.pop("df_length")
-            single_result.pop("turnover")
+            # single_result.pop("normalized_reward")
+            # single_result.pop("reward_sum")
+            # single_result.pop("df_length")
+            # single_result.pop("turnover")
             single_result["epoch_path"] = epoch_path
             new_result.append(single_result)
         return new_result

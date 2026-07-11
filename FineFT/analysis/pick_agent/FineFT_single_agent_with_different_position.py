@@ -120,10 +120,10 @@ class picker:
                 single_result["normalized_reward"]
             )
             single_result["mean_turnover"] = np.mean(single_result["turnover"])
-            single_result.pop("normalized_reward")
-            single_result.pop("reward_sum")
-            single_result.pop("df_length")
-            single_result.pop("turnover")
+            # single_result.pop("normalized_reward")
+            # single_result.pop("reward_sum")
+            # single_result.pop("df_length")
+            # single_result.pop("turnover")
             single_result["epoch_path"] = epoch_path
             new_result.append(single_result)
         return new_result
@@ -131,7 +131,7 @@ class picker:
     def conclude_single_parameter(self, parameter_path):
         single_parameter_result = []
         single_parameter_best_result = []
-        for i in range(self.epoch_num):
+        for i in range(11,self.epoch_num):
             epoch_path = os.path.join(parameter_path, "epoch_{}".format(i + 1))
             best_result, result = self.analysis_single_epoch(epoch_path)
             single_parameter_result.extend(result)
