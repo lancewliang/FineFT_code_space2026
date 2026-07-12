@@ -89,11 +89,11 @@ function run_ddqn_average {
 # # #DOTUSDT
 # # run_ddqn_average DOTUSDT 6000 1 100
 # run_ddqn_context fu 1 1 2 dataset/5min 5min_nstep6_costw5
-run_ddqn_context fu 1 1 100 dataset/5min 5min_nstep6_costw5
+run_ddqn_context fu 1 30 100 dataset/5min 5min_nstep6_costw5
 
 # # # ETHUSDT
 # # run_ddqn_average ETHUSDT 160 1 100
-run_ddqn_context fu 1 1 100 dataset/10min 10min_nstep6_costw5
+run_ddqn_context fu 1 30 100 dataset/10min 10min_nstep6_costw5
 
 # BTCUSDT
 # run_ddqn_context BTCUSDT 8 45 100

@@ -6,6 +6,7 @@ sys.path.append(".")
 import os
 import random
 import argparse
+import json
 import numpy as np
 import torch
 from torch import nn
@@ -170,6 +171,12 @@ parser.add_argument(
     default="default",
     help="experiment name used to namespace serial training outputs",
 )
+parser.add_argument(
+    "--save_trading_detail_csv",
+    default=True,
+    action="store_true",
+    help="write per-step trading detail CSV for the tested epoch",
+)
 
 def build_serial_model_path(result_path, dataset_name, experiment_name):
     return os.path.join(
@@ -178,6 +185,166 @@ def build_serial_model_path(result_path, dataset_name, experiment_name):
         experiment_name,
         "weights_advantage_pretrain",
     )
+
+
+AGGREGATE_JSON_COLUMNS = ["df_path", "reward_sum", "df_length", "turnover"]
+
+CSV_HEADER_LABELS = {
+    "label": "标签",
+    "initial_action": "初始动作",
+    "bin_index": "分箱索引",
+    "df_path": "数据文件",
+    "reward_sum": "奖励总和",
+    "df_length": "数据长度",
+    "turnover": "换手率",
+    "timestep": "时间步",
+    "timestamp": "时间戳",
+    "open": "开盘价",
+    "high": "最高价",
+    "low": "最低价",
+    "close": "收盘价",
+    "volume": "成交量",
+    "mark_price": "标记价格",
+    "action": "动作",
+    "target_position": "目标仓位",
+    "target_leverage": "目标杠杆",
+    "position_before": "执行前仓位",
+    "leverage_before": "执行前杠杆",
+    "position_after": "执行后仓位",
+    "leverage_after": "执行后杠杆",
+    "action_change_step": "动作变化",
+    "trade_count_step": "交易计数",
+    "cumulative_action_change_count": "累计动作变化次数",
+    "cumulative_trade_count": "累计交易次数",
+    "step_reward": "单步奖励",
+    "realized_pnl_step": "单步实现盈亏",
+    "cumulative_realized_pnl": "累计已实现盈亏",
+    "commission_fee_step": "单步手续费",
+    "cumulative_commission_fee": "累计手续费",
+    "slippage_step": "单步滑点",
+    "cumulative_slippage": "累计滑点",
+    "wallet_balance": "结算总价值",
+    "unrealized_pnl": "浮动盈亏",
+    "margin_balance": "保证金余额",
+    "notional_asset_value": "持仓资产",
+    "cash_balance": "结算总价值",
+    "total_value": "浮动总价值",
+}
+
+
+def _bilingual_csv_columns(df):
+    return df.rename(columns=CSV_HEADER_LABELS)
+
+
+def _json_default(value):
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def _json_array(value):
+    return json.dumps(list(value), default=_json_default)
+
+
+def write_analysis_csv(overall_result, csv_path):
+    analysis_df = pd.DataFrame(overall_result)
+    for column in AGGREGATE_JSON_COLUMNS:
+        analysis_df[column] = analysis_df[column].apply(_json_array)
+    _bilingual_csv_columns(analysis_df).to_csv(csv_path, index=False)
+
+
+def trading_detail_csv_path(epoch_path, epoch_num):
+    return os.path.join(epoch_path, f"trading_action_detail_epoch_{epoch_num}.csv")
+
+
+def write_trading_detail_csv(detail_rows, csv_path):
+    _bilingual_csv_columns(pd.DataFrame(detail_rows)).to_csv(csv_path, index=False)
+
+
+DETAIL_MARKET_COLUMNS = ["timestamp", "open", "high", "low", "close", "volume", "mark_price"]
+
+
+def _market_fields(test_df, timestep):
+    row = test_df.iloc[timestep]
+    return {
+        column: row[column]
+        for column in DETAIL_MARKET_COLUMNS
+        if column in test_df.columns
+    }
+
+
+def _personal_state_from_env(test_env):
+    return {
+        "wallet_balance": getattr(test_env, "wallet_balance", np.nan),
+        "unrealized_pnl": getattr(test_env, "unrealized_pnl", np.nan),
+        "position": getattr(test_env, "position", np.nan),
+        "leverage": getattr(test_env, "leverage", np.nan),
+    }
+
+
+def build_trading_detail_row(
+    *,
+    label,
+    df_path,
+    initial_action,
+    bin_index,
+    timestep,
+    test_df,
+    action,
+    target_position,
+    target_leverage,
+    position_before,
+    leverage_before,
+    test_env,
+    info,
+    step_reward,
+    action_change_step,
+    trade_count_step,
+    cumulative_action_change_count,
+    cumulative_trade_count,
+):
+    state_after = _personal_state_from_env(test_env)
+    market_fields = _market_fields(test_df, timestep)
+    mark_price = market_fields.get("mark_price", np.nan)
+    wallet_balance = state_after["wallet_balance"]
+    unrealized_pnl = state_after["unrealized_pnl"]
+    position_after = state_after["position"]
+    margin_balance = wallet_balance + unrealized_pnl
+    row = {
+        "label": label,
+        "df_path": df_path,
+        "initial_action": initial_action,
+        "bin_index": bin_index,
+        "timestep": timestep,
+        **market_fields,
+        "action": action,
+        "target_position": target_position,
+        "target_leverage": target_leverage,
+        "position_before": position_before,
+        "leverage_before": leverage_before,
+        "position_after": position_after,
+        "leverage_after": state_after["leverage"],
+        "action_change_step": action_change_step,
+        "trade_count_step": trade_count_step,
+        "cumulative_action_change_count": cumulative_action_change_count,
+        "cumulative_trade_count": cumulative_trade_count,
+        "step_reward": step_reward,
+        "realized_pnl_step": info["realized_pnl_step"],
+        "cumulative_realized_pnl": info["cumulative_realized_pnl"],
+        "commission_fee_step": info["commission_fee_step"],
+        "cumulative_commission_fee": info["cumulative_commission_fee"],
+        "slippage_step": info["slippage_step"],
+        "cumulative_slippage": info["cumulative_slippage"],
+        "wallet_balance": wallet_balance,
+        "unrealized_pnl": unrealized_pnl,
+        "margin_balance": margin_balance,
+        "notional_asset_value": mark_price * position_after,
+        "cash_balance": wallet_balance,
+        "total_value": margin_balance,
+    }
+    return row
+
+
 def seed_torch(seed):
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
@@ -265,6 +432,7 @@ class weighted_trader:
         ).to(self.device)
 
         self.epoch_num = args.epoch_num
+        self.save_trading_detail_csv = args.save_trading_detail_csv
         self.epoch_path = os.path.join(
             self.model_path,
             "epoch_" + str(self.epoch_num),
@@ -317,6 +485,7 @@ class weighted_trader:
     def test(self):
         print('start')
         overall_result = []
+        trading_detail_rows = []
         self.eval_net.eval()
         label_list = os.listdir(self.valid_data_path)
         for label in label_list:
@@ -327,6 +496,7 @@ class weighted_trader:
                     single_label_initial_action_bin_index_reward_sum_result = []
                     single_label_initial_action_bin_index_df_length_result = []
                     single_label_initial_action_bin_index_turnover_result = []
+                    single_label_initial_action_bin_index_df_path_result = []
                     for df_path in df_list:
                         initial_position, initial_leverage = (
                             map_action_to_position_leverage(
@@ -374,10 +544,62 @@ class weighted_trader:
                         action_list = []
                         turn_over = 0
                         previous_action = initial_action
+                        cumulative_action_change_count = 0
+                        cumulative_trade_count = 0
                         while not done:
+                            timestep = len(action_list)
+                            position_before = getattr(
+                                test_env, "position", initial_position
+                            )
+                            leverage_before = getattr(
+                                test_env, "leverage", initial_leverage
+                            )
                             a = self.act_test(s, info, bin_index)
+                            target_position, target_leverage = (
+                                map_action_to_position_leverage(
+                                    a,
+                                    self.leverage_choices,
+                                    self.position_list,
+                                )
+                            )
+                            action_change_step = int(a != previous_action)
                             turn_over += np.abs(a - previous_action) / 4
                             s_, r, done, info = test_env.step(a)
+                            position_after = getattr(
+                                test_env, "position", position_before
+                            )
+                            leverage_after = getattr(
+                                test_env, "leverage", leverage_before
+                            )
+                            trade_count_step = int(
+                                position_after != position_before
+                                or leverage_after != leverage_before
+                            )
+                            cumulative_action_change_count += action_change_step
+                            cumulative_trade_count += trade_count_step
+                            if self.save_trading_detail_csv:
+                                trading_detail_rows.append(
+                                    build_trading_detail_row(
+                                        label=label,
+                                        df_path=df_path,
+                                        initial_action=initial_action,
+                                        bin_index=bin_index,
+                                        timestep=timestep,
+                                        test_df=self.test_df,
+                                        action=a,
+                                        target_position=target_position,
+                                        target_leverage=target_leverage,
+                                        position_before=position_before,
+                                        leverage_before=leverage_before,
+                                        test_env=test_env,
+                                        info=info,
+                                        step_reward=r,
+                                        action_change_step=action_change_step,
+                                        trade_count_step=trade_count_step,
+                                        cumulative_action_change_count=cumulative_action_change_count,
+                                        cumulative_trade_count=cumulative_trade_count,
+                                    )
+                                )
                             action_list.append(a)
                             reward_list.append(r)
                             s = s_
@@ -459,10 +681,14 @@ class weighted_trader:
                         single_label_initial_action_bin_index_turnover_result.append(
                             turn_over
                         )
+                        single_label_initial_action_bin_index_df_path_result.append(
+                            df_path
+                        )
                     _overall_result = {
                             "label": label,
                             "initial_action": initial_action,
                             "bin_index": bin_index,
+                            "df_path": single_label_initial_action_bin_index_df_path_result,
                             "reward_sum": single_label_initial_action_bin_index_reward_sum_result,
                             "df_length": single_label_initial_action_bin_index_df_length_result,
                             "turnover": single_label_initial_action_bin_index_turnover_result,
@@ -473,6 +699,15 @@ class weighted_trader:
                     )
         
         np.save(os.path.join(self.epoch_path, "analysis_result.npy"), overall_result)
+        write_analysis_csv(
+            overall_result,
+            os.path.join(self.epoch_path, "analysis_result.csv"),
+        )
+        if self.save_trading_detail_csv:
+            write_trading_detail_csv(
+                trading_detail_rows,
+                trading_detail_csv_path(self.epoch_path, self.epoch_num),
+            )
 
 
 if __name__ == "__main__":

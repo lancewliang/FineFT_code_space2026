@@ -100,3 +100,20 @@
 - **AND** focused tests SHALL verify that commission fee, realized PnL, and slippage values used in detail CSV rows come from explicit environment metrics
 - **AND** `openspec validate add-test-agent-csv-outputs --strict` SHALL pass
 
+### Requirement: Low-level test agent CSV headers SHALL use the current Chinese semantic labels
+系统 SHALL 为低层测试导出的 CSV 使用当前实现中的中文语义表头，并保持 CSV 单元格内容、字段语义和行粒度不变。
+
+#### Scenario: Aggregate CSV uses Chinese semantic headers
+- **WHEN** the system writes `analysis_result.csv`
+- **THEN** the CSV header row SHALL use these exact columns in order: `标签`, `初始动作`, `分箱索引`, `数据文件`, `奖励总和`, `数据长度`, and `换手率`
+- **AND** the JSON array cells under `数据文件`, `奖励总和`, `数据长度`, and `换手率` SHALL remain parseable by `json.loads`
+
+#### Scenario: Detail CSV uses Chinese semantic headers
+- **WHEN** the system writes `trading_action_detail_epoch_<epoch_num>.csv`
+- **THEN** every detail CSV column emitted by the implementation SHALL use the current Chinese semantic label from `CSV_HEADER_LABELS`
+- **AND** the required context headers SHALL include `标签`, `数据文件`, `初始动作`, `分箱索引`, `时间步`, and `时间戳`
+- **AND** the required action-state headers SHALL include `动作`, `目标仓位`, `目标杠杆`, `执行前仓位`, `执行前杠杆`, `执行后仓位`, and `执行后杠杆`
+- **AND** the required count headers SHALL include `动作变化`, `交易计数`, `累计动作变化次数`, and `累计交易次数`
+- **AND** the required execution metric headers SHALL include `单步实现盈亏`, `累计已实现盈亏`, `单步手续费`, `累计手续费`, `单步滑点`, and `累计滑点`
+- **AND** the required account value headers SHALL include `结算总价值`, `浮动盈亏`, `保证金余额`, `持仓资产`, and `浮动总价值`
+- **AND** existing row values for action state, trade counts, execution economics, and account values SHALL NOT be changed by the header translation

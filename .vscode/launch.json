@@ -101,6 +101,74 @@
                 "PYTHONPATH": "${workspaceFolder}/data_preprocess"
             },
             "args": "--dataset_name al"
+        },
+        {
+            "name": "test_agent_index.py (fu low level)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/FineFT/RL/DiHFT/low_level/test_agent_index.py",
+            "python": "/home/lanceliang/miniconda3/envs/finetf/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/FineFT"
+            },
+            "args": [
+                "--base_path",
+                "dataset/10min",
+                "--dataset_name",
+                "fu",
+                "--experiment_name",
+                "10min_nstep6_costw5",
+                "--max_holding_number",
+                "1",
+                "--initial_wallet_balance",
+                "10000",
+                "--order_book_depth",
+                "5",
+                "--epoch_num",
+                "50",
+                "--position_choices",
+                "3",
+                "--transcation_cost",
+                "0.0005",
+                "--short_estimated_rate",
+                "0",
+                "--long_estimated_rate",
+                "0"
+            ]
+        }
+    ],
+    "inputs": [
+        {
+            "id": "base_path",
+            "type": "promptString",
+            "description": "base_path",
+            "default": "dataset/5min"
+        },
+        {
+            "id": "dataset_name",
+            "type": "promptString",
+            "description": "dataset_name",
+            "default": "fu"
+        },
+        {
+            "id": "experiment_name",
+            "type": "promptString",
+            "description": "experiment_name",
+            "default": "default"
+        },
+        {
+            "id": "max_holding_number",
+            "type": "promptString",
+            "description": "max_holding_number",
+            "default": "1"
+        },
+        {
+            "id": "epoch",
+            "type": "promptString",
+            "description": "epoch_num",
+            "default": "1"
         }
     ]
 }

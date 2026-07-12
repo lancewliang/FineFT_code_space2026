@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
 
@@ -6,6 +8,37 @@ if markprice can be guranateed to be between ask1_price and bid1_price, the open
 calculation function and make the overall process faster.
 """
 min_orderbook = 1e-5
+
+
+@dataclass(frozen=True)
+class WalletChangeResult:
+    leverage: float
+    position: float
+    initial_margin: float
+    unrealized_pnl: float
+    wallet_balance: float
+    slippage_step: float
+    commission_fee_step: float = 0.0
+    realized_pnl_step: float = 0.0
+
+    def legacy_tuple(self):
+        return (
+            self.leverage,
+            self.position,
+            self.initial_margin,
+            self.unrealized_pnl,
+            self.wallet_balance,
+            self.slippage_step,
+        )
+
+    def __iter__(self):
+        return iter(self.legacy_tuple())
+
+    def __getitem__(self, index):
+        return self.legacy_tuple()[index]
+
+    def __len__(self):
+        return len(self.legacy_tuple())
 
 
 def change_of_wallet(
@@ -51,13 +84,15 @@ def change_of_wallet(
             current_leverage,
             silent=silent,
         )
-        return (
-            previous_leverage,
-            previous_position,
-            previous_initial_margine,
-            previous_unrealized_pnL,
-            previous_wallet_balance,
-            slippage,
+        return WalletChangeResult(
+            leverage=previous_leverage,
+            position=previous_position,
+            initial_margin=previous_initial_margine,
+            unrealized_pnl=previous_unrealized_pnL,
+            wallet_balance=previous_wallet_balance,
+            slippage_step=slippage,
+            commission_fee_step=0,
+            realized_pnl_step=0,
         )
     else:
         if current_position * previous_position < 0:
@@ -65,13 +100,15 @@ def change_of_wallet(
                 print(
                     "You can not turn over the position in just one step, the position will stick to the previous situation (the position and the leverage)"
                 )
-            return (
-                previous_leverage,
-                previous_position,
-                previous_initial_margine,
-                previous_unrealized_pnL,
-                previous_wallet_balance,
-                0,
+            return WalletChangeResult(
+                leverage=previous_leverage,
+                position=previous_position,
+                initial_margin=previous_initial_margine,
+                unrealized_pnl=previous_unrealized_pnL,
+                wallet_balance=previous_wallet_balance,
+                slippage_step=0,
+                commission_fee_step=0,
+                realized_pnl_step=0,
             )
         elif max(current_position, previous_position) > 0:
             # 多头情况，分close long 和 open long
@@ -112,14 +149,7 @@ def change_of_wallet(
                 )
             else:
                 # close long position and then change the leverage
-                (
-                    previous_leverage,
-                    previous_position,
-                    previous_initial_margine,
-                    previous_unrealized_pnL,
-                    previous_wallet_balance,
-                    slippage,
-                ) = close_long_position(
+                close_result = close_long_position(
                     markprice,
                     bid_prices,
                     bid_qtys,
@@ -133,15 +163,26 @@ def change_of_wallet(
                     current_position,
                     silent=silent,
                 )
-                return change_of_leverage(
+                leverage_result = change_of_leverage(
                     markprice,
-                    previous_leverage,
-                    previous_position,
-                    previous_initial_margine,
-                    previous_unrealized_pnL,
-                    previous_wallet_balance,
+                    close_result.leverage,
+                    close_result.position,
+                    close_result.initial_margin,
+                    close_result.unrealized_pnl,
+                    close_result.wallet_balance,
                     current_leverage,
                     silent=silent,
+                )
+                return WalletChangeResult(
+                    leverage=leverage_result.leverage,
+                    position=leverage_result.position,
+                    initial_margin=leverage_result.initial_margin,
+                    unrealized_pnl=leverage_result.unrealized_pnl,
+                    wallet_balance=leverage_result.wallet_balance,
+                    slippage_step=close_result.slippage_step
+                    + leverage_result.slippage_step,
+                    commission_fee_step=close_result.commission_fee_step,
+                    realized_pnl_step=close_result.realized_pnl_step,
                 )
         elif min(current_position, previous_position) < 0:
             # 空头情况, 分close short 和 open short
@@ -183,14 +224,7 @@ def change_of_wallet(
             else:
                 # close short position
                 # first close the position, then change the leverage
-                (
-                    previous_leverage,
-                    previous_position,
-                    previous_initial_margine,
-                    previous_unrealized_pnL,
-                    previous_wallet_balance,
-                    slippage,
-                ) = close_short_position(
+                close_result = close_short_position(
                     markprice,
                     ask_prices,
                     ask_qtys,
@@ -204,15 +238,26 @@ def change_of_wallet(
                     current_position,
                     silent=silent,
                 )
-                return change_of_leverage(
+                leverage_result = change_of_leverage(
                     markprice,
-                    previous_leverage,
-                    previous_position,
-                    previous_initial_margine,
-                    previous_unrealized_pnL,
-                    previous_wallet_balance,
+                    close_result.leverage,
+                    close_result.position,
+                    close_result.initial_margin,
+                    close_result.unrealized_pnl,
+                    close_result.wallet_balance,
                     current_leverage,
                     silent=silent,
+                )
+                return WalletChangeResult(
+                    leverage=leverage_result.leverage,
+                    position=leverage_result.position,
+                    initial_margin=leverage_result.initial_margin,
+                    unrealized_pnl=leverage_result.unrealized_pnl,
+                    wallet_balance=leverage_result.wallet_balance,
+                    slippage_step=close_result.slippage_step
+                    + leverage_result.slippage_step,
+                    commission_fee_step=close_result.commission_fee_step,
+                    realized_pnl_step=close_result.realized_pnl_step,
                 )
 
 
@@ -253,13 +298,15 @@ def change_of_leverage(
     current_unrealized_pnL = previous_unrealized_pnL
     current_wallet_balance = previous_wallet_balance
     slippage = 0
-    return (
-        current_leverage,
-        current_position,
-        current_initial_margine,
-        current_unrealized_pnL,
-        current_wallet_balance,
-        slippage,
+    return WalletChangeResult(
+        leverage=current_leverage,
+        position=current_position,
+        initial_margin=current_initial_margine,
+        unrealized_pnl=current_unrealized_pnL,
+        wallet_balance=current_wallet_balance,
+        slippage_step=slippage,
+        commission_fee_step=0,
+        realized_pnl_step=0,
     )
 
 
@@ -333,13 +380,15 @@ def open_short_position(
         )
         # notice that is loss is not natrual and not directly deducted from the wallet balance, yet it is viewed as a part of of unrealized pnl
         slippage = openinig_margine * current_leverage - open_value
-    return (
-        current_leverage,
-        current_position,
-        current_initial_margine,
-        current_unrealized_pnL,
-        current_wallet_balance,
-        slippage,
+    return WalletChangeResult(
+        leverage=current_leverage,
+        position=current_position,
+        initial_margin=current_initial_margine,
+        unrealized_pnl=current_unrealized_pnL,
+        wallet_balance=current_wallet_balance,
+        slippage_step=slippage,
+        commission_fee_step=commission_fee if current_position != previous_position else 0,
+        realized_pnl_step=0,
     )
 
 
@@ -390,13 +439,15 @@ def close_short_position(
     current_initial_margine = np.abs(markprice * current_position / current_leverage)
     current_wallet_balance = previous_wallet_balance + realized_pnL - commission_fee
     slippage = value - markprice * close_short_position
-    return (
-        current_leverage,
-        current_position,
-        current_initial_margine,
-        current_unrealized_pnL,
-        current_wallet_balance,
-        slippage,
+    return WalletChangeResult(
+        leverage=current_leverage,
+        position=current_position,
+        initial_margin=current_initial_margine,
+        unrealized_pnl=current_unrealized_pnL,
+        wallet_balance=current_wallet_balance,
+        slippage_step=slippage,
+        commission_fee_step=commission_fee,
+        realized_pnl_step=realized_pnL,
     )
 
 
@@ -466,13 +517,15 @@ def open_long_position(
         current_unrealized_pnL = previous_unrealized_pnL + opening_pnL
         current_initial_margine = current_position * markprice / current_leverage
         slippage = open_value - openinig_margine
-    return (
-        current_leverage,
-        current_position,
-        current_initial_margine,
-        current_unrealized_pnL,
-        current_wallet_balance,
-        slippage,
+    return WalletChangeResult(
+        leverage=current_leverage,
+        position=current_position,
+        initial_margin=current_initial_margine,
+        unrealized_pnl=current_unrealized_pnL,
+        wallet_balance=current_wallet_balance,
+        slippage_step=slippage,
+        commission_fee_step=commission_fee if current_position != previous_position else 0,
+        realized_pnl_step=0,
     )
 
 
@@ -522,13 +575,15 @@ def close_long_position(
     current_initial_margine = markprice * current_position / current_leverage
     current_wallet_balance = previous_wallet_balance + realized_pnL - commission_fee
     slippage = markprice * close_long_position - value
-    return (
-        current_leverage,
-        current_position,
-        current_initial_margine,
-        current_unrealized_pnL,
-        current_wallet_balance,
-        slippage,
+    return WalletChangeResult(
+        leverage=current_leverage,
+        position=current_position,
+        initial_margin=current_initial_margine,
+        unrealized_pnl=current_unrealized_pnL,
+        wallet_balance=current_wallet_balance,
+        slippage_step=slippage,
+        commission_fee_step=commission_fee,
+        realized_pnl_step=realized_pnL,
     )
 
 
@@ -752,6 +807,7 @@ def judge_liquidation(
         "10000000": [0.01, 2550],
     },
 ):
+    """ 当前账户是否已经触发强平 """
     margine_balance = wallet_balance + unrealized_pnL
     esitmated_holding = np.abs(markprice * position)
     ratio, sub = get_maintenance_margin(

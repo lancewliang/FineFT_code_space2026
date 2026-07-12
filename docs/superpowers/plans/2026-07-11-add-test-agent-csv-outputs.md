@@ -24,7 +24,7 @@
 - Modify: `FineFT/env/env_class/futures_util.py`
 - Modify: `FineFT/tests/env/test_commodity_env.py`
 
-- [ ] **Step 1: Add a failing wallet-change test for named execution metrics**
+- [x] **Step 1: Add a failing wallet-change test for named execution metrics**
 
 Add this assertion block to `FineFT/tests/env/test_commodity_env.py::test_wallet_change_can_use_buy_and_sell_fee_rates` after the existing `opened` call:
 
@@ -42,7 +42,7 @@ Add this assertion block after the existing `closed` call:
     assert closed.slippage_step == pytest.approx(100.0 - 99.0)
 ```
 
-- [ ] **Step 2: Run the focused test and verify it fails for missing attributes**
+- [x] **Step 2: Run the focused test and verify it fails for missing attributes**
 
 Run:
 
@@ -52,7 +52,7 @@ conda activate finetf && pytest FineFT/tests/env/test_commodity_env.py::test_wal
 
 Expected: failure mentioning that the returned tuple has no attribute `commission_fee_step`.
 
-- [ ] **Step 3: Add a tuple-compatible result class in `futures_util.py`**
+- [x] **Step 3: Add a tuple-compatible result class in `futures_util.py`**
 
 Add near the top of `FineFT/env/env_class/futures_util.py` after imports:
 
@@ -88,7 +88,7 @@ class WalletChangeResult:
         return self.legacy_tuple()[index]
 ```
 
-- [ ] **Step 4: Return `WalletChangeResult` from no-trade and leverage-only paths**
+- [x] **Step 4: Return `WalletChangeResult` from no-trade and leverage-only paths**
 
 In `change_of_wallet(...)`, replace the direct tuple returned for rejected side flips with:
 
@@ -120,7 +120,7 @@ In `change_of_leverage(...)`, replace the final tuple return with:
     )
 ```
 
-- [ ] **Step 5: Return true execution metrics from open/close helpers**
+- [x] **Step 5: Return true execution metrics from open/close helpers**
 
 In each helper final return, use named values. For `open_short_position(...)`, successful open returns `commission_fee` and zero realized PnL:
 
@@ -152,7 +152,7 @@ Apply the same shape to `open_long_position(...)`. For `close_short_position(...
     )
 ```
 
-- [ ] **Step 6: Preserve close-then-leverage metrics in `change_of_wallet(...)`**
+- [x] **Step 6: Preserve close-then-leverage metrics in `change_of_wallet(...)`**
 
 In the close-long and close-short branches where code currently returns `change_of_leverage(...)` after closing, assign the close result first, then combine it with the leverage result:
 
@@ -195,7 +195,7 @@ In the close-long and close-short branches where code currently returns `change_
 
 Use the same pattern for the close-short branch with `close_short_position(...)`.
 
-- [ ] **Step 7: Run the focused wallet-change test**
+- [x] **Step 7: Run the focused wallet-change test**
 
 Run:
 
@@ -205,7 +205,7 @@ conda activate finetf && pytest FineFT/tests/env/test_commodity_env.py::test_wal
 
 Expected: pass.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 2: Update `Base_Env` and `Simple_Env` callers to consume the explicit wallet-change result and expose/reset per-step and cumulative execution metrics.
 
@@ -217,7 +217,7 @@ Expected: pass.
 - Modify: `FineFT/env/env_class/simple_env.py`
 - Modify: `FineFT/tests/env/test_commodity_env.py`
 
-- [ ] **Step 1: Add a failing env info test for execution metrics**
+- [x] **Step 1: Add a failing env info test for execution metrics**
 
 Add to `FineFT/tests/env/test_commodity_env.py`:
 
@@ -246,7 +246,7 @@ def test_commodity_env_step_exposes_execution_metrics():
     assert info["cumulative_commission_fee"] == env.cumulative_commission_fee
 ```
 
-- [ ] **Step 2: Run the env info test and verify it fails**
+- [x] **Step 2: Run the env info test and verify it fails**
 
 Run:
 
@@ -256,7 +256,7 @@ conda activate finetf && pytest FineFT/tests/env/test_commodity_env.py::test_com
 
 Expected: failure because execution metric keys are missing from `info`.
 
-- [ ] **Step 3: Add metric reset and info helpers to `Base_Env`**
+- [x] **Step 3: Add metric reset and info helpers to `Base_Env`**
 
 In `FineFT/env/env_class/base_env.py`, add methods inside `Base_Env`:
 
@@ -290,7 +290,7 @@ In `FineFT/env/env_class/base_env.py`, add methods inside `Base_Env`:
 
 Call `self._reset_execution_metrics()` in `__init__` after `self.slippage_sum = 0` and in `reset()` after resetting `self.slippage_sum`.
 
-- [ ] **Step 4: Use named wallet-change result in `Base_Env.step()`**
+- [x] **Step 4: Use named wallet-change result in `Base_Env.step()`**
 
 Replace the tuple unpack around `change_of_wallet(...)` with:
 
@@ -332,7 +332,7 @@ In every `info` dictionary returned by `Base_Env.step()`, add:
 
 In the `reset()` info dictionary, add the same expansion so initial info is consistent.
 
-- [ ] **Step 5: Apply the same wallet-change consumption pattern to `Simple_Env`**
+- [x] **Step 5: Apply the same wallet-change consumption pattern to `Simple_Env`**
 
 In `FineFT/env/env_class/simple_env.py`, add `_reset_execution_metrics`, `_update_execution_metrics`, and `_execution_metric_info` with the same bodies as `Base_Env`. Replace the tuple unpack around `change_of_wallet(...)` with named attributes:
 
@@ -366,7 +366,7 @@ In `FineFT/env/env_class/simple_env.py`, add `_reset_execution_metrics`, `_updat
 
 Add `**self._execution_metric_info()` to every returned info dictionary in `Simple_Env`.
 
-- [ ] **Step 6: Run relevant env tests**
+- [x] **Step 6: Run relevant env tests**
 
 Run:
 
@@ -376,7 +376,7 @@ conda activate finetf && pytest FineFT/tests/env/test_commodity_env.py -q
 
 Expected: pass.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 3: Update `test_agent_index.py` aggregate result collection to include `df_path` and write default `analysis_result.csv` with JSON array fields while preserving `analysis_result.npy`.
 
@@ -387,7 +387,7 @@ Expected: pass.
 - Modify: `FineFT/RL/DiHFT/low_level/test_agent_index.py`
 - Modify: `FineFT/tests/rl/test_test_agent_index.py`
 
-- [ ] **Step 1: Add a failing aggregate CSV test**
+- [x] **Step 1: Add a failing aggregate CSV test**
 
 Add imports to `FineFT/tests/rl/test_test_agent_index.py`:
 
@@ -424,7 +424,7 @@ Extend `test_weighted_trader_passes_order_book_depth_to_base_env` after `trader.
     assert json.loads(csv_df.loc[0, "turnover"]) == [0.0]
 ```
 
-- [ ] **Step 2: Run the aggregate CSV test and verify it fails**
+- [x] **Step 2: Run the aggregate CSV test and verify it fails**
 
 Run:
 
@@ -434,7 +434,7 @@ conda activate finetf && pytest FineFT/tests/rl/test_test_agent_index.py::test_w
 
 Expected: failure because `analysis_result.csv` does not exist or `df_path` is absent.
 
-- [ ] **Step 3: Add JSON CSV helpers to `test_agent_index.py`**
+- [x] **Step 3: Add JSON CSV helpers to `test_agent_index.py`**
 
 In `FineFT/RL/DiHFT/low_level/test_agent_index.py`, add imports:
 
@@ -465,7 +465,7 @@ def write_analysis_csv(overall_result, csv_path):
     analysis_df.to_csv(csv_path, index=False)
 ```
 
-- [ ] **Step 4: Collect `df_path` alongside aggregate metrics**
+- [x] **Step 4: Collect `df_path` alongside aggregate metrics**
 
 Inside `weighted_trader.test()`, add the list before the `for df_path in df_list:` loop:
 
@@ -487,7 +487,7 @@ Add the field to `_overall_result`:
                             "df_path": single_label_initial_action_bin_index_df_path_result,
 ```
 
-- [ ] **Step 5: Write aggregate CSV after saving npy**
+- [x] **Step 5: Write aggregate CSV after saving npy**
 
 At the end of `weighted_trader.test()`, replace the single `np.save(...)` with:
 
@@ -499,7 +499,7 @@ At the end of `weighted_trader.test()`, replace the single `np.save(...)` with:
         )
 ```
 
-- [ ] **Step 6: Run the aggregate CSV test**
+- [x] **Step 6: Run the aggregate CSV test**
 
 Run:
 
@@ -509,7 +509,7 @@ conda activate finetf && pytest FineFT/tests/rl/test_test_agent_index.py::test_w
 
 Expected: pass.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 4: Add `--save_trading_detail_csv` to `test_agent_index.py` and write `trading_action_detail_epoch_<epoch_num>.csv` only when the flag is provided.
 
@@ -520,7 +520,7 @@ Expected: pass.
 - Modify: `FineFT/RL/DiHFT/low_level/test_agent_index.py`
 - Modify: `FineFT/tests/rl/test_test_agent_index.py`
 
-- [ ] **Step 1: Add failing tests for the detail CSV switch**
+- [x] **Step 1: Add failing tests for the detail CSV switch**
 
 Add a helper factory in `FineFT/tests/rl/test_test_agent_index.py` so both detail tests can create a trader:
 
@@ -581,7 +581,7 @@ def test_trading_detail_csv_is_written_when_enabled(monkeypatch, tmp_path):
     assert (tmp_path / "trading_action_detail_epoch_1.csv").exists()
 ```
 
-- [ ] **Step 2: Run the detail switch tests and verify the enabled case fails**
+- [x] **Step 2: Run the detail switch tests and verify the enabled case fails**
 
 Run:
 
@@ -591,7 +591,7 @@ conda activate finetf && pytest FineFT/tests/rl/test_test_agent_index.py::test_t
 
 Expected: enabled case fails because the flag and file writer are not implemented.
 
-- [ ] **Step 3: Add the CLI flag and trader attribute**
+- [x] **Step 3: Add the CLI flag and trader attribute**
 
 In `test_agent_index.py`, add parser argument near result options:
 
@@ -609,7 +609,7 @@ In `weighted_trader.__init__`, add:
         self.save_trading_detail_csv = args.save_trading_detail_csv
 ```
 
-- [ ] **Step 4: Add a detail CSV file helper**
+- [x] **Step 4: Add a detail CSV file helper**
 
 Add near the aggregate CSV helper:
 
@@ -622,7 +622,7 @@ def write_trading_detail_csv(detail_rows, csv_path):
     pd.DataFrame(detail_rows).to_csv(csv_path, index=False)
 ```
 
-- [ ] **Step 5: Initialize and conditionally write detail rows**
+- [x] **Step 5: Initialize and conditionally write detail rows**
 
 At the start of `weighted_trader.test()`, after `overall_result = []`, add:
 
@@ -642,7 +642,7 @@ At the end of `weighted_trader.test()`, after `write_analysis_csv(...)`, add:
 
 This task only establishes the switch and file creation. Task 5 fills the row payload.
 
-- [ ] **Step 6: Run the detail switch tests**
+- [x] **Step 6: Run the detail switch tests**
 
 Run:
 
@@ -652,7 +652,7 @@ conda activate finetf && pytest FineFT/tests/rl/test_test_agent_index.py::test_t
 
 Expected: pass. The enabled file may be empty until Task 5.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 5: Build detail CSV rows with context, optional OHLCV fields, action target state, actual pre/post execution state, action-change counts, trade counts, execution economics, and account value columns.
 
@@ -663,7 +663,7 @@ Expected: pass. The enabled file may be empty until Task 5.
 - Modify: `FineFT/RL/DiHFT/low_level/test_agent_index.py`
 - Modify: `FineFT/tests/rl/test_test_agent_index.py`
 
-- [ ] **Step 1: Replace the simple fake env with a multi-step detail fake**
+- [x] **Step 1: Replace the simple fake env with a multi-step detail fake**
 
 Add to `FineFT/tests/rl/test_test_agent_index.py`:
 
@@ -723,7 +723,7 @@ class DetailFakeEnv:
         }
 ```
 
-- [ ] **Step 2: Add a failing detail row content test**
+- [x] **Step 2: Add a failing detail row content test**
 
 Add to `FineFT/tests/rl/test_test_agent_index.py`:
 
@@ -775,7 +775,7 @@ def test_trading_detail_csv_records_actions_trades_and_execution_metrics(monkeyp
     assert detail_df.loc[1, "notional_asset_value"] == 101.0
 ```
 
-- [ ] **Step 3: Run the detail row content test and verify it fails**
+- [x] **Step 3: Run the detail row content test and verify it fails**
 
 Run:
 
@@ -785,7 +785,7 @@ conda activate finetf && pytest FineFT/tests/rl/test_test_agent_index.py::test_t
 
 Expected: failure because detail rows are empty or required columns are absent.
 
-- [ ] **Step 4: Add market and account helper functions**
+- [x] **Step 4: Add market and account helper functions**
 
 Add to `test_agent_index.py`:
 
@@ -811,7 +811,7 @@ def _personal_state_from_env(test_env):
     }
 ```
 
-- [ ] **Step 5: Add a detail row builder**
+- [x] **Step 5: Add a detail row builder**
 
 Add to `test_agent_index.py`:
 
@@ -878,7 +878,7 @@ def build_trading_detail_row(
     return row
 ```
 
-- [ ] **Step 6: Append detail rows inside the step loop**
+- [x] **Step 6: Append detail rows inside the step loop**
 
 Inside the `while not done:` loop in `weighted_trader.test()`, capture before-state before `self.act_test(...)` and append after `test_env.step(a)`:
 
@@ -935,7 +935,7 @@ Initialize the trajectory-local counters just before the `while not done:` loop:
                         cumulative_trade_count = 0
 ```
 
-- [ ] **Step 7: Run the detail row content test**
+- [x] **Step 7: Run the detail row content test**
 
 Run:
 
@@ -945,7 +945,7 @@ conda activate finetf && pytest FineFT/tests/rl/test_test_agent_index.py::test_t
 
 Expected: pass.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 6: Add focused unit tests for aggregate CSV output, detail CSV opt-in behavior, execution metric exposure, and action-change versus actual-trade counting.
 
@@ -956,7 +956,7 @@ Expected: pass.
 - Modify: `FineFT/tests/rl/test_test_agent_index.py`
 - Modify: `FineFT/tests/env/test_commodity_env.py`
 
-- [ ] **Step 1: Run the full focused RL test file**
+- [x] **Step 1: Run the full focused RL test file**
 
 Run:
 
@@ -966,7 +966,7 @@ conda activate finetf && pytest FineFT/tests/rl/test_test_agent_index.py -q
 
 Expected: pass. Failures should identify only issues in the CSV helpers or fake env setup.
 
-- [ ] **Step 2: Run the full focused environment test file**
+- [x] **Step 2: Run the full focused environment test file**
 
 Run:
 
@@ -976,7 +976,7 @@ conda activate finetf && pytest FineFT/tests/env/test_commodity_env.py -q
 
 Expected: pass. Failures should identify only metric exposure or wallet-change result shape issues.
 
-- [ ] **Step 3: Confirm tests cover all requested boundaries**
+- [x] **Step 3: Confirm tests cover all requested boundaries**
 
 Run:
 
@@ -997,7 +997,7 @@ trade_count_step increments only when actual position or leverage changes
 execution economics come from explicit env info fields
 ```
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 7: Run focused pytest for `FineFT/tests/rl/test_test_agent_index.py` and relevant environment tests.
 
@@ -1008,7 +1008,7 @@ execution economics come from explicit env info fields
 - Verify: `FineFT/tests/rl/test_test_agent_index.py`
 - Verify: `FineFT/tests/env/test_commodity_env.py`
 
-- [ ] **Step 1: Run focused pytest**
+- [x] **Step 1: Run focused pytest**
 
 Run:
 
@@ -1018,7 +1018,7 @@ conda activate finetf && pytest FineFT/tests/rl/test_test_agent_index.py FineFT/
 
 Expected: all tests pass.
 
-- [ ] **Step 2: Record any environment limitation in the final implementation response**
+- [x] **Step 2: Record any environment limitation in the final implementation response**
 
 If the command cannot run because `conda` or the `finetf` environment is unavailable, run the nearest available project Python command and record the exact limitation and fallback command in the final response.
 
@@ -1028,7 +1028,7 @@ Expected fallback shape:
 python -m pytest FineFT/tests/rl/test_test_agent_index.py FineFT/tests/env/test_commodity_env.py -q
 ```
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 8: Run `conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/test_agent_index.py FineFT/env/env_class/base_env.py FineFT/env/env_class/simple_env.py FineFT/env/env_class/futures_util.py`.
 
@@ -1041,7 +1041,7 @@ python -m pytest FineFT/tests/rl/test_test_agent_index.py FineFT/tests/env/test_
 - Verify: `FineFT/env/env_class/simple_env.py`
 - Verify: `FineFT/env/env_class/futures_util.py`
 
-- [ ] **Step 1: Run py_compile**
+- [x] **Step 1: Run py_compile**
 
 Run:
 
@@ -1051,7 +1051,7 @@ conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/test_age
 
 Expected: command exits 0 with no syntax errors.
 
-- [ ] **Step 2: Record any environment limitation in the final implementation response**
+- [x] **Step 2: Record any environment limitation in the final implementation response**
 
 If the conda environment cannot be activated, run:
 
@@ -1061,7 +1061,7 @@ python -m py_compile FineFT/RL/DiHFT/low_level/test_agent_index.py FineFT/env/en
 
 Expected: command exits 0, or the final response reports the exact import/syntax failure.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 9: Run `openspec validate add-test-agent-csv-outputs --strict`.
 
@@ -1075,7 +1075,7 @@ Expected: command exits 0, or the final response reports the exact import/syntax
 - Verify: `openspec/changes/add-test-agent-csv-outputs/tasks.md`
 - Verify: `openspec/changes/add-test-agent-csv-outputs/plan-ready.md`
 
-- [ ] **Step 1: Run strict OpenSpec validation**
+- [x] **Step 1: Run strict OpenSpec validation**
 
 Run:
 
@@ -1089,7 +1089,7 @@ Expected:
 Change 'add-test-agent-csv-outputs' is valid
 ```
 
-- [ ] **Step 2: Check changed files before handoff**
+- [x] **Step 2: Check changed files before handoff**
 
 Run:
 
@@ -1099,7 +1099,278 @@ git status --short
 
 Expected: changed files are limited to the implementation files, tests, and the sddflow tracking documents for `add-test-agent-csv-outputs`.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+
+### Task 10: Change aggregate and detail CSV headers to English/Chinese bilingual names while preserving row values and JSON array cells.
+
+> **trace:** plan-ready.md → `### Task 10: Change aggregate and detail CSV headers to English/Chinese bilingual names while preserving row values and JSON array cells.` | tasks.md → `- [ ] 1.7 Change aggregate and detail CSV headers to English/Chinese bilingual names while preserving row values and JSON array cells.`
+> **sync:** tasks.md → `- [ ] 1.7 Change aggregate and detail CSV headers to English/Chinese bilingual names while preserving row values and JSON array cells.` | plan-ready.md → `### Task 10: Change aggregate and detail CSV headers to English/Chinese bilingual names while preserving row values and JSON array cells.`
+
+**Files:**
+- Modify: `FineFT/RL/DiHFT/low_level/test_agent_index.py`
+- Modify: `FineFT/tests/rl/test_test_agent_index.py`
+
+- [x] **Step 1: Add failing aggregate CSV bilingual-header assertions**
+
+In `FineFT/tests/rl/test_test_agent_index.py::test_weighted_trader_passes_order_book_depth_to_base_env`, replace the aggregate CSV column assertion with:
+
+```python
+    assert list(csv_df.columns) == [
+        "label/标签",
+        "initial_action/初始动作",
+        "bin_index/分箱索引",
+        "df_path/数据文件",
+        "reward_sum/奖励总和",
+        "df_length/数据长度",
+        "turnover/换手率",
+    ]
+    assert json.loads(csv_df.loc[0, "df_path/数据文件"]) == ["df_0.feather"]
+    assert json.loads(csv_df.loc[0, "reward_sum/奖励总和"]) == [1.0]
+    assert json.loads(csv_df.loc[0, "df_length/数据长度"]) == [1]
+    assert json.loads(csv_df.loc[0, "turnover/换手率"]) == [0.0]
+```
+
+- [x] **Step 2: Add failing detail CSV bilingual-header assertions**
+
+In `FineFT/tests/rl/test_test_agent_index.py::test_trading_detail_csv_records_actions_trades_and_execution_metrics`, replace the required-column loop and detail column reads with bilingual names:
+
+```python
+    for column in [
+        "label/标签",
+        "df_path/数据文件",
+        "timestamp/时间戳",
+        "target_position/目标仓位",
+        "target_leverage/目标杠杆",
+        "realized_pnl_step/单步已实现盈亏",
+        "cumulative_realized_pnl/累计已实现盈亏",
+        "commission_fee_step/单步手续费",
+        "cumulative_commission_fee/累计手续费",
+        "slippage_step/单步滑点",
+        "cumulative_slippage/累计滑点",
+    ]:
+        assert column in detail_df.columns
+    assert detail_df.loc[0, "label/标签"] == "label"
+    assert detail_df.loc[0, "df_path/数据文件"] == "df_0.feather"
+    assert detail_df.loc[0, "target_position/目标仓位"] == 1
+    assert detail_df.loc[0, "target_leverage/目标杠杆"] == 1
+    assert detail_df.loc[0, "action_change_step/动作变化"] == 1
+    assert detail_df.loc[0, "trade_count_step/交易计数"] == 0
+    assert detail_df.loc[1, "action_change_step/动作变化"] == 0
+    assert detail_df.loc[1, "trade_count_step/交易计数"] == 1
+    assert detail_df.loc[1, "cumulative_action_change_count/累计动作变化次数"] == 1
+    assert detail_df.loc[1, "cumulative_trade_count/累计交易次数"] == 1
+    assert detail_df.loc[1, "commission_fee_step/单步手续费"] == 0.7
+    assert detail_df.loc[1, "cumulative_commission_fee/累计手续费"] == 1.2
+    assert detail_df.loc[1, "realized_pnl_step/单步已实现盈亏"] == 5.0
+    assert detail_df.loc[1, "cumulative_realized_pnl/累计已实现盈亏"] == 5.0
+    assert detail_df.loc[1, "slippage_step/单步滑点"] == 0.2
+    assert detail_df.loc[1, "cumulative_slippage/累计滑点"] == 0.3
+    assert detail_df.loc[1, "margin_balance/保证金余额"] == 1004.0
+    assert detail_df.loc[1, "total_value/总价值"] == 1004.0
+    assert detail_df.loc[1, "notional_asset_value/名义资产价值"] == 101.0
+```
+
+- [x] **Step 3: Run the RL CSV tests and verify they fail for old English-only headers**
+
+Run:
+
+```bash
+conda activate finetf && PYTHONPATH=FineFT pytest FineFT/tests/rl/test_test_agent_index.py::test_weighted_trader_passes_order_book_depth_to_base_env FineFT/tests/rl/test_test_agent_index.py::test_trading_detail_csv_records_actions_trades_and_execution_metrics -q
+```
+
+Expected: fail because `analysis_result.csv` and detail CSV currently emit English-only headers.
+
+- [x] **Step 4: Add a bilingual CSV header mapping helper**
+
+In `FineFT/RL/DiHFT/low_level/test_agent_index.py`, add near the CSV helper constants:
+
+```python
+CSV_HEADER_LABELS = {
+    "label": "label/标签",
+    "initial_action": "initial_action/初始动作",
+    "bin_index": "bin_index/分箱索引",
+    "df_path": "df_path/数据文件",
+    "reward_sum": "reward_sum/奖励总和",
+    "df_length": "df_length/数据长度",
+    "turnover": "turnover/换手率",
+    "timestep": "timestep/时间步",
+    "timestamp": "timestamp/时间戳",
+    "open": "open/开盘价",
+    "high": "high/最高价",
+    "low": "low/最低价",
+    "close": "close/收盘价",
+    "volume": "volume/成交量",
+    "mark_price": "mark_price/标记价格",
+    "action": "action/动作",
+    "target_position": "target_position/目标仓位",
+    "target_leverage": "target_leverage/目标杠杆",
+    "position_before": "position_before/执行前仓位",
+    "leverage_before": "leverage_before/执行前杠杆",
+    "position_after": "position_after/执行后仓位",
+    "leverage_after": "leverage_after/执行后杠杆",
+    "action_change_step": "action_change_step/动作变化",
+    "trade_count_step": "trade_count_step/交易计数",
+    "cumulative_action_change_count": "cumulative_action_change_count/累计动作变化次数",
+    "cumulative_trade_count": "cumulative_trade_count/累计交易次数",
+    "step_reward": "step_reward/单步奖励",
+    "realized_pnl_step": "realized_pnl_step/单步已实现盈亏",
+    "cumulative_realized_pnl": "cumulative_realized_pnl/累计已实现盈亏",
+    "commission_fee_step": "commission_fee_step/单步手续费",
+    "cumulative_commission_fee": "cumulative_commission_fee/累计手续费",
+    "slippage_step": "slippage_step/单步滑点",
+    "cumulative_slippage": "cumulative_slippage/累计滑点",
+    "wallet_balance": "wallet_balance/钱包余额",
+    "unrealized_pnl": "unrealized_pnl/未实现盈亏",
+    "margin_balance": "margin_balance/保证金余额",
+    "notional_asset_value": "notional_asset_value/名义资产价值",
+    "cash_balance": "cash_balance/现金余额",
+    "total_value": "total_value/总价值",
+}
+
+
+def _bilingual_csv_columns(df):
+    return df.rename(columns=CSV_HEADER_LABELS)
+```
+
+- [x] **Step 5: Apply bilingual headers to both CSV writers**
+
+In `write_analysis_csv(...)`, change the final write to:
+
+```python
+    _bilingual_csv_columns(analysis_df).to_csv(csv_path, index=False)
+```
+
+In `write_trading_detail_csv(...)`, change the final write to:
+
+```python
+    _bilingual_csv_columns(pd.DataFrame(detail_rows)).to_csv(csv_path, index=False)
+```
+
+- [x] **Step 6: Run the RL CSV tests**
+
+Run:
+
+```bash
+conda activate finetf && PYTHONPATH=FineFT pytest FineFT/tests/rl/test_test_agent_index.py::test_weighted_trader_passes_order_book_depth_to_base_env FineFT/tests/rl/test_test_agent_index.py::test_trading_detail_csv_records_actions_trades_and_execution_metrics -q
+```
+
+Expected: pass.
+
+- [x] **Step 7: Run the full focused verification**
+
+Run:
+
+```bash
+conda activate finetf && PYTHONPATH=FineFT pytest FineFT/tests/rl/test_test_agent_index.py FineFT/tests/env/test_commodity_env.py -q
+conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/test_agent_index.py
+openspec validate add-test-agent-csv-outputs --strict
+```
+
+Expected: all commands pass.
+
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+
+### Task 11: Align CSV header tests and close verification with the current Chinese semantic headers.
+
+> **trace:** plan-ready.md → `### Task 11: Align CSV header tests and close verification with the current Chinese semantic headers.` | tasks.md → `- [ ] 1.8 Align CSV header tests and close verification with the current Chinese semantic headers.`
+> **sync:** tasks.md → `- [ ] 1.8 Align CSV header tests and close verification with the current Chinese semantic headers.` | plan-ready.md → `### Task 11: Align CSV header tests and close verification with the current Chinese semantic headers.`
+
+**Files:**
+- Modify: `FineFT/tests/rl/test_test_agent_index.py`
+- Modify: `openspec/changes/add-test-agent-csv-outputs/close-issues.md`
+
+- [x] **Step 1: Update aggregate CSV header assertions to Chinese semantic names**
+
+In `FineFT/tests/rl/test_test_agent_index.py::test_weighted_trader_passes_order_book_depth_to_base_env`, replace the aggregate header assertion and JSON column reads with:
+
+```python
+    assert list(csv_df.columns) == [
+        "标签",
+        "初始动作",
+        "分箱索引",
+        "数据文件",
+        "奖励总和",
+        "数据长度",
+        "换手率",
+    ]
+    assert json.loads(csv_df.loc[0, "数据文件"]) == ["df_0.feather"]
+    assert json.loads(csv_df.loc[0, "奖励总和"]) == [1.0]
+    assert json.loads(csv_df.loc[0, "数据长度"]) == [1]
+    assert json.loads(csv_df.loc[0, "换手率"]) == [0.0]
+```
+
+- [x] **Step 2: Update detail CSV required-column assertions to Chinese semantic names**
+
+In `FineFT/tests/rl/test_test_agent_index.py::test_trading_detail_csv_records_actions_trades_and_execution_metrics`, replace the required-column loop and detail column reads with:
+
+```python
+    for column in [
+        "标签",
+        "数据文件",
+        "时间戳",
+        "目标仓位",
+        "目标杠杆",
+        "单步实现盈亏",
+        "累计已实现盈亏",
+        "单步手续费",
+        "累计手续费",
+        "单步滑点",
+        "累计滑点",
+    ]:
+        assert column in detail_df.columns
+    assert detail_df.loc[0, "标签"] == "label"
+    assert detail_df.loc[0, "数据文件"] == "df_0.feather"
+    assert detail_df.loc[0, "目标仓位"] == 1
+    assert detail_df.loc[0, "目标杠杆"] == 1
+    assert detail_df.loc[0, "动作变化"] == 1
+    assert detail_df.loc[0, "交易计数"] == 0
+    assert detail_df.loc[1, "动作变化"] == 0
+    assert detail_df.loc[1, "交易计数"] == 1
+    assert detail_df.loc[1, "累计动作变化次数"] == 1
+    assert detail_df.loc[1, "累计交易次数"] == 1
+    assert detail_df.loc[1, "单步手续费"] == 0.7
+    assert detail_df.loc[1, "累计手续费"] == 1.2
+    assert detail_df.loc[1, "单步实现盈亏"] == 5.0
+    assert detail_df.loc[1, "累计已实现盈亏"] == 5.0
+    assert detail_df.loc[1, "单步滑点"] == 0.2
+    assert detail_df.loc[1, "累计滑点"] == 0.3
+    assert detail_df.loc[1, "保证金余额"] == 1004.0
+    assert detail_df.loc[1, "浮动总价值"] == 1004.0
+    assert detail_df.loc[1, "持仓资产"] == 101.0
+```
+
+- [x] **Step 3: Run the focused RL CSV tests**
+
+Run:
+
+```bash
+source /home/lanceliang/miniconda3/etc/profile.d/conda.sh && conda activate finetf && PYTHONPATH=FineFT pytest FineFT/tests/rl/test_test_agent_index.py -q
+```
+
+Expected: all tests in `FineFT/tests/rl/test_test_agent_index.py` pass.
+
+- [x] **Step 4: Re-run combined focused close verification**
+
+Run:
+
+```bash
+source /home/lanceliang/miniconda3/etc/profile.d/conda.sh && conda activate finetf && PYTHONPATH=FineFT pytest FineFT/tests/rl/test_test_agent_index.py FineFT/tests/env/test_commodity_env.py -q
+```
+
+Expected: all focused RL/env tests pass.
+
+- [x] **Step 5: Update close issue status after tests pass**
+
+In `openspec/changes/add-test-agent-csv-outputs/close-issues.md`, append:
+
+```markdown
+## Resolution
+
+- Updated tests to match the amended Chinese semantic header requirement.
+- Re-ran focused pytest; result: pass.
+```
+
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ---
 
@@ -1111,9 +1382,11 @@ Spec coverage:
 - Detail row fields, action-change counting, trade-count counting, and account value fields are covered by Task 5.
 - True commission fee, realized PnL, and slippage exposure are covered by Tasks 1 and 2.
 - Verification requirements are covered by Tasks 6 through 9.
+- The earlier bilingual CSV header requirement is historical context from Task 10 and is superseded by the 2026-07-12 Chinese semantic header amendment in Task 11.
 
 Placeholder scan:
 - The plan contains concrete file paths, commands, expected results, and code snippets for each implementation task.
 
 Type consistency:
 - The execution metric field names are consistently `commission_fee_step`, `realized_pnl_step`, `slippage_step`, `cumulative_commission_fee`, `cumulative_realized_pnl`, and `cumulative_slippage`.
+- Header requirements now use the current Chinese semantic labels confirmed by the user on 2026-07-12.

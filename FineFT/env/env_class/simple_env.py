@@ -120,6 +120,33 @@ class Simple_Env(gym.Env):
         self.maintain_marigine_history = []
         self.new_position_required_money_history = []
         self.slippage_sum = 0
+        self._reset_execution_metrics()
+
+    def _reset_execution_metrics(self):
+        self.commission_fee_step = 0
+        self.realized_pnl_step = 0
+        self.slippage_step = 0
+        self.cumulative_commission_fee = 0
+        self.cumulative_realized_pnl = 0
+        self.cumulative_slippage = 0
+
+    def _update_execution_metrics(self, wallet_change):
+        self.commission_fee_step = wallet_change.commission_fee_step
+        self.realized_pnl_step = wallet_change.realized_pnl_step
+        self.slippage_step = wallet_change.slippage_step
+        self.cumulative_commission_fee += self.commission_fee_step
+        self.cumulative_realized_pnl += self.realized_pnl_step
+        self.cumulative_slippage += self.slippage_step
+
+    def _execution_metric_info(self):
+        return {
+            "commission_fee_step": self.commission_fee_step,
+            "realized_pnl_step": self.realized_pnl_step,
+            "slippage_step": self.slippage_step,
+            "cumulative_commission_fee": self.cumulative_commission_fee,
+            "cumulative_realized_pnl": self.cumulative_realized_pnl,
+            "cumulative_slippage": self.cumulative_slippage,
+        }
 
     def env_map_action_to_position_leverage(self, action):
         return map_action_to_position_leverage(
@@ -199,6 +226,7 @@ class Simple_Env(gym.Env):
             calculate_maintenance_margin(np.abs(self.current_markprice * self.position))
         ]
         self.slippage_sum = 0
+        self._reset_execution_metrics()
         self.new_position_required_money_history = [0]
         return (
             state,
@@ -213,6 +241,7 @@ class Simple_Env(gym.Env):
                 "previous_action": self.env_map_position_leverage_to_action(
                     self.position, self.leverage
                 ),
+                **self._execution_metric_info(),
             },
         )
 
@@ -225,14 +254,7 @@ class Simple_Env(gym.Env):
         previous_funding_rate = self.funding_rate_array[self.day]
         previous_funding_timestamp = self.funding_timestamp_array[self.day]
         previous_markprice = self.current_markprice
-        (
-            leverage,
-            position,
-            initial_margin,
-            unrealized_pnL,
-            wallet_balance,
-            slippage,
-        ) = change_of_wallet(
+        wallet_change = change_of_wallet(
             markprice=self.current_markprice,
             ask_prices=self.ask_prices,
             ask_qtys=self.ask_qtys,
@@ -252,6 +274,13 @@ class Simple_Env(gym.Env):
             current_position=target_position,
             silent=False,
         )
+        leverage = wallet_change.leverage
+        position = wallet_change.position
+        initial_margin = wallet_change.initial_margin
+        unrealized_pnL = wallet_change.unrealized_pnl
+        wallet_balance = wallet_change.wallet_balance
+        slippage = wallet_change.slippage_step
+        self._update_execution_metrics(wallet_change)
         self.slippage_sum += slippage
         ##history related
         self.micro_action_history.append(action)
@@ -343,6 +372,7 @@ class Simple_Env(gym.Env):
                     "previous_action": self.env_map_position_leverage_to_action(
                         self.position, self.leverage
                     ),
+                    **self._execution_metric_info(),
                 },
             )
         else:
@@ -443,6 +473,7 @@ class Simple_Env(gym.Env):
                         "previous_action": self.env_map_position_leverage_to_action(
                             self.position, self.leverage
                         ),
+                        **self._execution_metric_info(),
                     },
                 )
             else:
@@ -518,5 +549,6 @@ class Simple_Env(gym.Env):
                         "previous_action": self.env_map_position_leverage_to_action(
                             self.position, self.leverage
                         ),
+                        **self._execution_metric_info(),
                     },
                 )

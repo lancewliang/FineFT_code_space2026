@@ -55,6 +55,30 @@ def test_commodity_env_step_uses_configured_fees_and_no_funding():
     assert "funding_count_down_hour" not in info
 
 
+def test_commodity_env_step_exposes_execution_metrics():
+    env = initiate_commodity_env(
+        _df(),
+        ["feature_a"],
+        max_holding_number=1,
+        position_choices=3,
+        buy_fee_rate=0.0001,
+        sell_fee_rate=0.0003,
+    )
+    env.reset()
+    _, _, _, info = env.step(
+        env.env_map_position_leverage_to_action(1, env.leverage_choices[0])
+    )
+
+    assert "commission_fee_step" in info
+    assert "realized_pnl_step" in info
+    assert "slippage_step" in info
+    assert "cumulative_commission_fee" in info
+    assert "cumulative_realized_pnl" in info
+    assert "cumulative_slippage" in info
+    assert info["commission_fee_step"] == env.commission_fee_step
+    assert info["cumulative_commission_fee"] == env.cumulative_commission_fee
+
+
 def test_wallet_change_can_use_buy_and_sell_fee_rates():
     opened = change_of_wallet(
         markprice=100.0,
@@ -76,7 +100,11 @@ def test_wallet_change_can_use_buy_and_sell_fee_rates():
         current_position=1,
     )
 
+    assert len(opened) == 6
     assert opened[4] == 1000.0 - 101.0 * 0.1
+    assert opened.commission_fee_step == pytest.approx(101.0 * 0.1)
+    assert opened.realized_pnl_step == 0
+    assert opened.slippage_step == pytest.approx(101.0 - 100.0 / 5)
 
     closed = change_of_wallet(
         markprice=100.0,
@@ -100,3 +128,6 @@ def test_wallet_change_can_use_buy_and_sell_fee_rates():
 
     expected_wallet = opened[4] - 1.0 + 99.0 - 100.0 - 99.0 * 0.3
     assert closed[4] == pytest.approx(expected_wallet)
+    assert closed.commission_fee_step == pytest.approx(99.0 * 0.3)
+    assert closed.realized_pnl_step == pytest.approx(-1.0 + 99.0 - 100.0)
+    assert closed.slippage_step == pytest.approx(100.0 - 99.0)

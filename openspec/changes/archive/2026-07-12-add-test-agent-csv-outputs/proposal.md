@@ -149,3 +149,14 @@ total_value
 - [ ] 轻量单元测试覆盖汇总 CSV 和交易明细 CSV 的核心字段与边界。
 - [ ] 按项目要求在 `conda activate finetf` 环境中运行相关 python/pytest 验证。
 
+## Amendments
+
+### 2026-07-11: CSV 表头改为中英文双语
+- 原因：用户要求 CSV 表头同时包含中文和英文，便于中文使用者直接阅读导出的汇总和交易明细文件。
+- 摘要：`analysis_result.csv` 与 `trading_action_detail_epoch_<epoch_num>.csv` 的列名 SHALL 使用 `英文/中文` 格式；字段语义、行粒度、JSON 数组单元格和数值内容保持不变。
+- 影响范围：`FineFT/RL/DiHFT/low_level/test_agent_index.py` 的 CSV 写入逻辑与 `FineFT/tests/rl/test_test_agent_index.py` 的表头断言。
+
+### 2026-07-12: CSV 表头语义改为当前中文表头
+- 原因：用户确认当前实现中的中文-only 表头才是正确含义，不应要求 `英文/中文` 双语格式。
+- 摘要：`analysis_result.csv` 与 `trading_action_detail_epoch_<epoch_num>.csv` 的列名 SHALL 使用当前 `CSV_HEADER_LABELS` 中定义的中文语义表头；字段语义、行粒度、JSON 数组单元格和数值内容保持不变。
+- 影响范围：`specs/fineft-low-level-test-results/spec.md` 的表头 requirement、测试断言和 close 验证记录。
