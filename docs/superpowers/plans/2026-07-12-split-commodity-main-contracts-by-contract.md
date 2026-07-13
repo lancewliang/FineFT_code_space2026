@@ -17,7 +17,7 @@
 - 2026-07-12: Add typed summary model bean construction before final verification. External `main_contract_summary.json` schema stays unchanged.
 - 2026-07-12: Add typed summary model bean deserialization for readers. External `main_contract_summary.json` schema stays unchanged.
 - 2026-07-12: Add `daily_volume` to each `contracts[].trading_days[]` summary entry. External `main_contract_summary.json` schema gains this required day-level numeric field.
-- 2026-07-13: Clip each selected contract's summary trading days from the first selected month start through the inclusive cutoff 10 contract trading days before raw last trading day.
+- 2026-07-13: Clip each selected contract's summary trading days from the first selected month start through the inclusive cutoff 10 contract trading days before the last trading day in the requested date range.
 - 2026-07-13: Add configured high-volume-day selection rule. A contract is selected for a month if it is monthly top 2 or has at least 10 actual trading days with `daily_volume > threshold`; `fu` threshold is `15000`.
 
 ---
@@ -1755,11 +1755,11 @@ def test_build_main_contract_summary_starts_contract_on_first_selected_month(tmp
     assert all(day["trading_day"] >= "20260201" for day in contract["trading_days"])
 ```
 
-Keep the data minimal but ensure `fu2601` has at least 11 raw trading days after its first selected month start, so the end clipping rule still leaves retained days.
+Keep the data minimal but ensure `fu2601` has at least 11 in-range trading days after its first selected month start, so the end clipping rule still leaves retained days.
 
-- [x] **Step 2: Add failing tests for last-trading-day minus 10 clipping**
+- [x] **Step 2: Add failing tests for date-range last-trading-day minus 10 clipping**
 
-Add a test where a selected contract has an ordered raw trading-day sequence and assert the summary excludes the final 10 raw contract trading days:
+Add a test where a selected contract has an ordered in-range trading-day sequence and assert the summary excludes the final 10 in-range contract trading days:
 
 ```python
 def test_build_main_contract_summary_ends_contract_ten_trading_days_before_last_raw_day(tmp_path):
@@ -1783,7 +1783,7 @@ def test_build_main_contract_summary_ends_contract_ten_trading_days_before_last_
     ]
 ```
 
-The expected end is the retained cutoff where the raw last trading day is `20260115` and the final 10 trading days `20260106` through `20260115` are excluded.
+The expected end is the retained cutoff where the last trading day in the requested date range is `20260115` and the final 10 in-range trading days `20260106` through `20260115` are excluded.
 
 - [x] **Step 3: Add failing empty-window fail-fast test**
 
@@ -1816,7 +1816,7 @@ window_start = datetime.strptime(f"{first_selected_month}-01", "%Y-%m-%d").date(
 raw_days = sorted(contract_days[contract], key=lambda item: item.trading_day)
 if len(raw_days) <= 10:
     raise ValueError(f"No retained trading days for contract {contract}: fewer than 11 raw trading days")
-end_cutoff = raw_days[-11].trading_day
+end_cutoff = date_range_days[-11].trading_day
 retained_days = [
     day
     for day in raw_days
@@ -2642,7 +2642,7 @@ Spec coverage:
 - Post-deserialization pytest, shell syntax, OpenSpec, and diff checks: Task 8.
 - Summary trading-day `daily_volume` schema, model serialization/deserialization, builder persistence, and fixture updates: Task 9.
 - Daily-volume pytest, shell syntax, OpenSpec, and diff checks: Task 10.
-- Contract trading-window clipping by first selected month and 10 trading days before raw last trading day: Task 11.
+- Contract trading-window clipping by first selected month and 10 trading days before the last trading day in the requested date range: Task 11.
 - Contract trading-window pytest, shell syntax, OpenSpec, and diff checks: Task 12.
 - High-volume-day configured main-contract selection rule: Task 13.
 - High-volume-day pytest, shell syntax, OpenSpec, and diff checks: Task 14.
@@ -2658,7 +2658,7 @@ Type consistency:
 - `contract` is a string CLI option across Python and shell.
 - Summary field names match the OpenSpec delta: `contract`, `start_trading_day`, `end_trading_day`, `trading_day_count`, `selected_months`, `trading_days`, `source_file`.
 - Summary trading-day field names match the OpenSpec delta: `trading_day`, `date`, `source_file`, `daily_volume`.
-- Contract summary dates use retained trading days after clipping, while raw last trading day is only used to compute the inclusive cutoff before the final 10 raw trading days.
+- Contract summary dates use retained trading days after clipping, while the last trading day in the requested date range is used to compute the inclusive cutoff before the final 10 in-range trading days.
 - High-volume-day selection uses configured thresholds, `fu=15000`, strict `daily_volume > threshold`, and any 10 actual trading days in a month.
 - Path helper signature is consistently `symbol_contract_path_parts(symbol: str, contract: str | None = None) -> tuple[str, ...]`.
 - Feature union output path is consistently `PREPROCESS_DATASET/commodity-futures/FEATURE_UNION/{symbol}/{target_freq}/{start_date}-{end_date}`.

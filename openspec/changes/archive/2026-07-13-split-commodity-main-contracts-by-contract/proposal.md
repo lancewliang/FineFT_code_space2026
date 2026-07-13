@@ -48,7 +48,7 @@
 - summary 使用 JSON，不使用 CSV，以便记录合约级信息和日级源文件明细。
 - summary 文件路径为 `PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/{symbol}/main_contract_summary.json`。
 - 每个合约的 `start_trading_day` 来自首次入选月份月初之后该合约实际存在的第一个 `TradingDay`。
-- 每个合约的 `end_trading_day` 来自该合约原始最后交易日前第 10 个交易日对应的裁剪后最后保留 `TradingDay`。
+- 每个合约的 `end_trading_day` 来自请求日期范围内该合约最后交易日前第 10 个交易日对应的裁剪后最后保留 `TradingDay`。
 - 因子生成只处理该合约实际有原始数据的交易日，缺失日期不生成占位文件。
 - 所有下游输出路径在传 `--contract` 时统一扩展为 `{symbol}/{contract}/{target_freq}`。
 - 未传 `--contract` 的后续 Python 入口保留旧路径行为。
@@ -74,7 +74,7 @@
 
 ### 2026-07-13: Selected contract trading window clipping
 - 原因：合约一旦入选后不应再把完整日期范围内的全部交易日写入 summary；有效训练窗口应从该合约首次作为主力的月份开始，并避开临近最后交易日的尾部交易日。
-- 摘要：每个入选合约的 summary 交易日窗口改为：开始下限为该合约首次入选月份的月初，结束上限为该合约原始最后交易日前第 10 个交易日；summary 仅写入该窗口内实际存在的合约交易日。
+- 摘要：每个入选合约的 summary 交易日窗口改为：开始下限为该合约首次入选月份的月初，结束上限为请求日期范围内该合约最后交易日前第 10 个交易日；summary 仅写入该窗口内实际存在的合约交易日。
 - 行为影响：`start_trading_day`、`end_trading_day`、`trading_day_count` 和 `trading_days` 的取值会变窄；JSON 字段名不变。
 
 ### 2026-07-13: High-volume-day main contract rule
@@ -86,6 +86,11 @@
 - 原因：多合约分开做 feature selection / scale save 后，每个合约最终 state feature 集合可能不同；这些合约用于训练同一个模型时，需要一个品种级统一特征合集。
 - 摘要：在所有合约完成单合约因子处理后新增最终步骤，读取 summary 中所有合约的 `state_features.npy`，生成稳定去重后的品种级 union feature list 和 manifest。
 - 行为影响：新增 `PREPROCESS_DATASET/commodity-futures/FEATURE_UNION/{symbol}/{target_freq}/{start_date}-{end_date}/` 输出；不改变单合约因子文件路径和文件粒度。
+
+### 2026-07-13: Date-range-relative final-10-day cutoff
+- 原因：close 阶段代码审查确认当前实现是在请求日期范围过滤后的合约交易日序列上计算最后 10 个交易日 cutoff；用户决定规格采用当前实现语义。
+- 摘要：`end_trading_day` 的结束上限从“合约原始完整交易日序列的最后交易日前第 10 个交易日”调整为“请求日期范围内该合约最后交易日前第 10 个交易日”。
+- 行为影响：当合约在 `end_date` 之后仍有原始交易日时，summary 仍会排除本次请求日期范围内的最后 10 个合约交易日。
 
 ## 范围边界
 
@@ -126,7 +131,7 @@
 - [ ] summary 按自然月成交量 top 2 规则选出合约集合，成交量口径为日 `Volume.max - Volume.min` 后月内求和。
 - [ ] summary 额外纳入每月内至少 10 个实际交易日 `daily_volume > 配置阈值` 的合约，且 `fu` 阈值为 `15000`。
 - [ ] summary 每个合约包含 `contract`、`start_trading_day`、`end_trading_day`、`trading_day_count`、`selected_months` 和 `trading_days`，且 `trading_day_count == len(trading_days)`。
-- [ ] summary 每个合约的 `trading_days` 只包含从首次入选月份月初到原始最后交易日前第 10 个交易日之间实际存在的合约交易日。
+- [ ] summary 每个合约的 `trading_days` 只包含从首次入选月份月初到请求日期范围内该合约最后交易日前第 10 个交易日之间实际存在的合约交易日。
 - [ ] summary 每个 `trading_days` 条目包含 `daily_volume`，且等于该合约该 `TradingDay` 源文件的 `Volume.max - Volume.min`。
 - [ ] `downscale_continuous_by_trading_day.py` 可从 summary 处理所有合约，并可选用 `--contract` 过滤单合约。
 - [ ] downscale 四类输出写到 `{FEATURE_FOLDER}/{symbol}/{contract}/{target_freq}/{date}.feather`。

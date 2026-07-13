@@ -32,7 +32,7 @@
 - **WHEN** 某合约在任意自然月进入成交量前 2
 - **THEN** 系统 SHALL 将该合约加入主力合约集合
 - **AND** 系统 SHALL 以该合约首次入选月份的月初作为交易日窗口开始下限
-- **AND** 系统 SHALL 以该合约原始最后交易日前第 10 个合约交易日作为交易日窗口结束上限，且结束上限为包含式
+- **AND** 系统 SHALL 以请求日期范围内该合约最后交易日前第 10 个合约交易日作为交易日窗口结束上限，且结束上限为包含式
 - **AND** 系统 SHALL 为该合约只记录上述窗口内实际存在的 `TradingDay` 源文件
 - **AND** 系统 SHALL NOT 要求该合约连续入选或连续交易
 
@@ -53,10 +53,10 @@
 - **AND** `daily_volume` SHALL 等于该合约该 `TradingDay` 源文件的 `Volume.max - Volume.min`
 
 #### Scenario: 合约交易日窗口裁剪
-- **WHEN** 合约 `fu2605` 首次入选月份为 `2026-03`，且该合约原始交易日序列最后 11 个 `TradingDay` 为 `20260318` 到 `20260401`
+- **WHEN** 合约 `fu2605` 首次入选月份为 `2026-03`，且该合约在请求日期范围内的最后 11 个 `TradingDay` 为 `20260318` 到 `20260401`
 - **THEN** summary SHALL 只保留该合约 `TradingDay >= 20260301` 的实际交易日
-- **AND** summary SHALL 排除该合约最后 10 个原始交易日
-- **AND** summary 中该合约 `end_trading_day` SHALL 等于最后交易日前第 10 个交易日对应的 `TradingDay`
+- **AND** summary SHALL 排除该合约在请求日期范围内的最后 10 个交易日
+- **AND** summary 中该合约 `end_trading_day` SHALL 等于请求日期范围内最后交易日前第 10 个交易日对应的 `TradingDay`
 - **AND** 如果裁剪后该合约没有任何可保留交易日，系统 SHALL 报错并停止 summary 生成
 
 #### Scenario: 夜盘时间戳语义保留

@@ -12,7 +12,7 @@ This change affects commodity preprocessing only: main-contract discovery, commo
 
 - Replace continuous main-contract daily CSV output with `CONTINUOUS_RAW/{symbol}/main_contract_summary.json`.
 - Select main contracts by natural month: sum each contract's daily `Volume.max - Volume.min` and choose the top 2 contracts per month, then union with contracts that have at least 10 days above the configured daily-volume threshold in that month.
-- Treat selected contracts as a set, then clip each contract's trading-day window from its first selected month through the tenth trading day before its raw last trading day.
+- Treat selected contracts as a set, then clip each contract's trading-day window from its first selected month through the tenth trading day before its last trading day in the requested date range.
 - Generate downscale and downstream factors under `{symbol}/{contract}/{target_freq}` while preserving current daily versus date-range file granularity.
 - Update all commodity shell entrypoints and validation scripts to understand the contract dimension.
 - Generate a symbol-level union of selected state features across all selected contracts for downstream single-model training.
@@ -39,7 +39,7 @@ This change affects commodity preprocessing only: main-contract discovery, commo
    - Interface: the two rules are combined as a set union. `fu` uses `main_contract_daily_volume_threshold=15000`; other symbols must read their threshold from commodity config before using this rule.
 
 3. Selected contracts use a clipped actual-source trading window.
-   - Decision: if a contract is selected in any month, the contract enters the summary set. Its raw source days are then clipped to actual `TradingDay` values that are on or after the first calendar day of the earliest selected month and on or before the cutoff trading day that is 10 contract trading days before that contract's raw max `TradingDay`. `start_trading_day` and `end_trading_day` are the min/max retained actual `TradingDay` values, and `trading_day_count == len(trading_days)`.
+   - Decision: if a contract is selected in any month, the contract enters the summary set. Its date-range-filtered source days are then clipped to actual `TradingDay` values that are on or after the first calendar day of the earliest selected month and on or before the cutoff trading day that is 10 contract trading days before that contract's max `TradingDay` within the requested date range. `start_trading_day` and `end_trading_day` are the min/max retained actual `TradingDay` values, and `trading_day_count == len(trading_days)`.
    - Rationale: the user refined the valid per-contract period: start when the contract first becomes a selected main contract month, and avoid the last 10 trading days before the contract's final trading day.
 
 4. The contract dimension is optional in shared Python scripts.
@@ -70,7 +70,7 @@ This change affects commodity preprocessing only: main-contract discovery, commo
    - Interface: `daily_volume` is a required numeric field on each summary trading-day entry and equals that contract source file's `Volume.max - Volume.min`.
 
 10. Contract last-trading-day clipping uses raw contract trading-day order.
-   - Decision: "last trading day minus 10 trading days" is computed from that contract's actual raw `TradingDay` sequence after the requested date-range scan, not from a separate exchange calendar. The retained end cutoff is inclusive; the final 10 raw trading days are excluded from summary `trading_days`.
+   - Decision: "last trading day minus 10 trading days" is computed from that contract's actual `TradingDay` sequence after the requested date-range scan, not from a separate exchange calendar or from the contract's full raw lifecycle outside the requested range. The retained end cutoff is inclusive; the final 10 in-range trading days are excluded from summary `trading_days`.
    - Rationale: the current pipeline has no trading calendar and already relies on actual source files as the authoritative available trading days.
    - Interface: if the first-selected-month start boundary and the 10-trading-day end boundary leave no retained trading days for a selected contract, summary generation fails fast instead of emitting an empty contract.
 

@@ -27,57 +27,82 @@
 - **AND** 系统 SHALL NOT 将跨 session、跨自然日、周末或休市时间的自然时间间隔视为缺失 quote snapshot
 
 ### Requirement: 主力合约拼接
-系统 SHALL 从本地五档 CSV 文件构建商品期货连续主力日文件，日归属使用 `TradingDay`，事件
-时间戳使用 `ActionDay + UpdateTime`。
+系统 SHALL 从本地五档 CSV 文件生成商品期货主力合约 summary，日归属使用 `TradingDay`，事件时间戳语义使用 `ActionDay + UpdateTime`。
 
 #### Scenario: 扫描原始下载目录
 - **WHEN** 用户将燃料油原始数据放置在 `data/原始下载/燃料油/2026`
 - **THEN** 系统从 `data/原始下载/{品种中文名}/{YYYY}` 开始扫描数据
 - **AND** 默认识别 `{MM}/{YYYYMMDD}/{合约}.csv` 层级下的合约 CSV 文件
-- **AND** 系统按年份、月份和交易日顺序处理，以支持跨月和跨年的前一交易日主力识别
 - **AND** 当 `START_DATE` 和 `END_DATE` 跨越多个年份时，系统 SHALL 自动扫描该日期范围覆盖到的所有年份目录
+- **AND** 系统 SHALL 使用左闭右开日期范围筛选 `TradingDay`
 
-#### Scenario: 使用前一交易日成交量选择主力
-- **WHEN** 参考 `TradingDay` 存在燃料油候选合约源文件
-- **THEN** 系统基于前一交易日成交量最大的合格主力月份合约选择目标 `TradingDay` 主力
-- **AND** 目标 `TradingDay` 的每行输出包含 `main_contract`、`source_contract` 和 `source_file` 元数据
-- **AND** 跨年连续运行时，系统 SHALL 保留前一交易日主力选择状态，不在年边界重置
+#### Scenario: 按自然月选择主力合约集合
+- **WHEN** 日期范围内存在多个燃料油候选合约源文件
+- **THEN** 系统 SHALL 按自然月统计每个合约的月成交量
+- **AND** 单日成交量 SHALL 使用该合约该 `TradingDay` 源文件的 `Volume.max - Volume.min`
+- **AND** 月成交量 SHALL 为该自然月内单日成交量之和
+- **AND** 系统 SHALL 为每个自然月选择月成交量最高的前 2 个合约
+- **AND** 系统 SHALL 额外选择同一自然月内至少 10 个实际交易日单日成交量大于配置阈值的合约
+- **AND** 高成交量天数规则 SHALL 使用严格大于：`daily_volume > threshold`
+- **AND** `fu` 的高成交量天数配置阈值 SHALL 为 `15000`
+- **AND** 两条选择规则 SHALL 取并集；同一合约同一月份重复命中时只记录一次该月份
+- **AND** 月成交量并列时 SHALL 按合约名升序稳定排序
 
-#### Scenario: 前一日主力不可用时 fallback
-- **WHEN** 前一日选出的主力合约在目标日缺失或目标日成交量为 0
-- **THEN** 系统回退到目标日成交量最大的合格主力月份合约
-- **AND** fallback 决策记录目标 `TradingDay` 和被选合约
+#### Scenario: 配置化高成交量天数入选
+- **WHEN** 燃料油合约 `fu2609` 在 `2026-03` 有 10 个实际交易日的 `daily_volume > 15000`
+- **AND** `fu2609` 不是 `2026-03` 月成交量最高的前 2 个合约
+- **THEN** 系统 SHALL 仍将 `fu2609` 加入 `2026-03` 主力合约集合
+- **AND** summary 中 `fu2609.selected_months` SHALL 包含 `2026-03`
 
-#### Scenario: 夜盘时间戳归属
+#### Scenario: 入选合约集合语义
+- **WHEN** 某合约在任意自然月进入成交量前 2
+- **THEN** 系统 SHALL 将该合约加入主力合约集合
+- **AND** 系统 SHALL 以该合约首次入选月份的月初作为交易日窗口开始下限
+- **AND** 系统 SHALL 以请求日期范围内该合约最后交易日前第 10 个合约交易日作为交易日窗口结束上限，且结束上限为包含式
+- **AND** 系统 SHALL 为该合约只记录上述窗口内实际存在的 `TradingDay` 源文件
+- **AND** 系统 SHALL NOT 要求该合约连续入选或连续交易
+
+#### Scenario: 写出主力合约 summary JSON
+- **WHEN** 用户运行 `stitch_main_contract.py` 并设置 `--output_dir PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu --start_date 2026-01-01 --end_date 2026-04-01 --symbol fu`
+- **THEN** 系统 SHALL 写出 `PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu/main_contract_summary.json`
+- **AND** summary SHALL 包含 `symbol`、`commodity_name`、`start_date`、`end_date`、`selection_rule` 和 `contracts`
+- **AND** 系统 MUST NOT 写出 `PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu/{YYYY-MM-DD}.csv` 连续主力日文件
+- **AND** 系统 MUST NOT 生成 `fu_2026-01-01_2026-04-01.csv` 或其他日期范围大 CSV
+
+#### Scenario: summary contract 字段
+- **WHEN** summary 中包含合约 `fu2601`
+- **THEN** 该合约对象 SHALL 包含 `contract`、`start_trading_day`、`end_trading_day`、`trading_day_count`、`selected_months` 和 `trading_days`
+- **AND** `start_trading_day` SHALL 等于该合约裁剪后 `trading_days` 中最小 `TradingDay`
+- **AND** `end_trading_day` SHALL 等于该合约裁剪后 `trading_days` 中最大 `TradingDay`
+- **AND** `trading_day_count` SHALL 等于 `len(trading_days)`
+- **AND** 每个 `trading_days` 条目 SHALL 包含 `trading_day`、ISO `date`、`source_file` 和 `daily_volume`
+- **AND** `daily_volume` SHALL 等于该合约该 `TradingDay` 源文件的 `Volume.max - Volume.min`
+
+#### Scenario: 合约交易日窗口裁剪
+- **WHEN** 合约 `fu2605` 首次入选月份为 `2026-03`，且该合约在请求日期范围内的最后 11 个 `TradingDay` 为 `20260318` 到 `20260401`
+- **THEN** summary SHALL 只保留该合约 `TradingDay >= 20260301` 的实际交易日
+- **AND** summary SHALL 排除该合约在请求日期范围内的最后 10 个交易日
+- **AND** summary 中该合约 `end_trading_day` SHALL 等于请求日期范围内最后交易日前第 10 个交易日对应的 `TradingDay`
+- **AND** 如果裁剪后该合约没有任何可保留交易日，系统 SHALL 报错并停止 summary 生成
+
+#### Scenario: 夜盘时间戳语义保留
 - **WHEN** 某行数据为 `TradingDay=20230104`、`ActionDay=20230103`、`UpdateTime=21:00:00.500`
-- **THEN** 输出事件时间戳基于 `2023-01-03 21:00:00.500`
-- **AND** 该行仍归属于日文件和主力选择键 `20230104`
+- **THEN** summary 和后续读取 SHALL 继续将该源文件归属于 `TradingDay=20230104`
+- **AND** 后续 downscale 仍基于 `2023-01-03 21:00:00.500` 生成事件时间戳
 
-#### Scenario: 换月不复权
-- **WHEN** 相邻 `TradingDay` 的主力合约发生变化
-- **THEN** 系统直接拼接被选合约，不做价格复权
-
-#### Scenario: 按 TradingDay 写出连续主力日文件
-- **WHEN** 用户运行 `stitch_main_contract.py` 并设置 `--output_dir PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu --start_date 2026-01-01 --end_date 2026-01-04 --symbol fu`
-- **THEN** 系统 SHALL 为每个有源数据的 `TradingDay` 写出一个 CSV 文件
-- **AND** 文件路径 SHALL 为 `PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu/{YYYY-MM-DD}.csv`
-- **AND** 系统 MUST NOT 生成 `fu_2026-01-01_2026-01-04.csv` 或其他日期范围大 CSV
-
-#### Scenario: stitch 跳过无源数据日期
-- **WHEN** 日期范围包含 `2026-01-02` 但本地原始下载目录没有该交易日的候选合约 CSV
-- **THEN** 系统不为 `2026-01-02` 生成 `CONTINUOUS_RAW/fu/2026-01-02.csv`
-- **AND** 日志记录被跳过的日期
-- **AND** 其他有源数据的日期继续生成日文件
-
-#### Scenario: stitch 覆盖已有日文件
-- **WHEN** `CONTINUOUS_RAW/fu/2026-01-05.csv` 已存在且用户重新运行覆盖该日期的 stitch 日期范围
-- **THEN** 系统默认覆盖该日文件
-- **AND** 日志记录被覆盖的输出路径
-
-#### Scenario: stitch 坏数据 fail-fast
-- **WHEN** 某个存在的合约源 CSV 缺少 `InstrumentID`、`TradingDay`、`ActionDay` 或 `UpdateTime`，或目标日没有可交易主力合约
-- **THEN** 系统 SHALL 报错并停止本次 stitch
+#### Scenario: summary 坏数据 fail-fast
+- **WHEN** 某个存在的合约源 CSV 缺少 `InstrumentID`、`TradingDay`、`ActionDay`、`UpdateTime` 或 `Volume`
+- **THEN** 系统 SHALL 报错并停止本次 summary 生成
 - **AND** 系统 MUST NOT 将该错误当作缺失日期静默跳过
+
+#### Scenario: summary 冲突数据 fail-fast
+- **WHEN** 同一个 `TradingDay + contract` 命中多个源文件
+- **THEN** 系统 SHALL 报错并停止本次 summary 生成
+- **AND** 错误信息 SHALL 包含冲突的 `TradingDay`、contract 和源文件路径
+
+#### Scenario: 无入选合约 fail-fast
+- **WHEN** 日期范围内没有可交易候选合约或没有任何合约进入月度 top 2
+- **THEN** 系统 SHALL 报错并停止本次 summary 生成
 
 ### Requirement: 商品期货参考价下采样
 系统 SHALL 从五档快照流派生商品期货环境参考价输出，并关闭 funding 行为。
@@ -221,14 +246,14 @@
 - **THEN** 流程输出 FineFT 可读的商品数据集文件，并初始化可执行 `reset()` 和一次 `step()` 的商品环境
 
 ### Requirement: 商品期货脚本入口支持日期范围
-系统 SHALL 允许商品期货主流程通过 `START_DATE` / `END_DATE` 指定跨年的日期范围，并自动
-生成该范围所需的连续主力日文件与后续处理文件。
+系统 SHALL 允许商品期货主流程通过 `START_DATE` / `END_DATE` 指定跨年的日期范围，并自动生成该范围所需的主力合约 summary 与后续按合约处理文件。
 
 #### Scenario: 日期范围驱动主流程
-- **WHEN** 用户运行 `main.sh` 并设置 `START_DATE=2023-01-01`、`END_DATE=2026-03-01`
-- **THEN** 系统自动覆盖 2023、2024、2025 和 2026 的原始目录扫描与主力拼接
-- **AND** 系统输出按 `TradingDay` 拆分的连续主力日文件供后续下采样使用
+- **WHEN** 用户运行商品期货主流程并设置 `START_DATE=2023-01-01`、`END_DATE=2026-03-01`
+- **THEN** 系统自动覆盖 2023、2024、2025 和 2026 的原始目录扫描与 summary 生成
+- **AND** 系统输出 `CONTINUOUS_RAW/{symbol}/main_contract_summary.json` 供后续下采样使用
 - **AND** 系统 MUST NOT 构造或依赖单条跨年连续主力大 CSV
+- **AND** 系统 MUST NOT 构造或依赖 `CONTINUOUS_RAW/{symbol}/{YYYY-MM-DD}.csv` 连续主力日文件
 
 #### Scenario: 保持左闭右开语义
 - **WHEN** 用户希望覆盖到 2026-02-28 的训练窗口
@@ -240,23 +265,35 @@
 - **THEN** 系统可以保留该参数作为兼容输入
 - **AND** 主流程不再把单一年份作为唯一运行约束
 
-#### Scenario: full process 传递日文件目录
-- **WHEN** `fu_full_process.sh` 调用连续主力拼接和连续主力下采样
-- **THEN** stitch 调用 SHALL 传递 `--output_dir PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu`
-- **AND** downscale 调用 SHALL 传递 `--input_dir PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu --start_date <START_DATE> --end_date <END_DATE>`
+#### Scenario: full process 传递 summary
+- **WHEN** `fu_full_process.sh` 调用主力合约 summary 生成和下采样
+- **THEN** stitch 调用 SHALL 传递 `--output_dir PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/{symbol}`
+- **AND** downscale 调用 SHALL 传递 `--summary PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/{symbol}/main_contract_summary.json`
 - **AND** shell 脚本 MUST NOT 构造 `continuous_file="${symbol}_${start_date}_${end_date}.csv"` 作为 handoff
+- **AND** shell 脚本 MUST NOT 把 `CONTINUOUS_RAW/{symbol}` 当作日文件目录传给 downscale
+
+#### Scenario: full process 按 summary 合约循环后续阶段
+- **WHEN** `main_contract_summary.json` 中包含合约 `fu2601` 和 `fu2605`
+- **THEN** `fu_full_process.sh` SHALL 从 summary 读取合约列表
+- **AND** `fu_full_process.sh` SHALL 分别为 `fu2601` 和 `fu2605` 调用 `cross_section`、`merge`、`concat`、`time_feature`、`merge_clean`、`ic_correlation` 和 `scale_save`
+- **AND** 每次调用 SHALL 传递 `--symbols fu --contract <contract>`
+
+#### Scenario: commodity shell 脚本支持 contract 维度
+- **WHEN** 维护者检查 `main_fu.sh`、`main_al.sh`、`commodity_process.sh`、`validate_features.sh` 和 `flatten_aluminum_raw_csv.sh`
+- **THEN** 这些脚本 SHALL 被增强为支持 summary 驱动的 contract 维度，或被明确验证为不消费按合约输出且无需修改
+- **AND** `validate_features.sh` 在验证商品期货输出时 SHALL 能够从 summary 读取合约列表并逐合约验证 `{symbol}/{contract}/{target_freq}` 路径
 
 ### Requirement: 商品期货 Polars 预处理兼容性
 系统 SHALL 将 `data_preprocess/operator_futures/commodity` 商品期货核心预处理迁移到 Polars，并保持既有商品期货数据契约。
 
-#### Scenario: 主力合约拼接输出兼容
-- **WHEN** 商品期货主力合约拼接读取本地五档 CSV 文件
-- **THEN** 系统使用 Polars 处理 CSV 读取、成交量计算、合格主力合约筛选、连续主力拼接和输出写入
-- **AND** 输出继续包含 `main_contract`、`source_contract`、`source_file`、`main_contract_trading_day` 和 `main_contract_selection_reason` 元数据
-- **AND** `TradingDay` 日归属和 `ActionDay + UpdateTime` 事件时间戳语义保持不变
+#### Scenario: 主力合约 summary 输出兼容
+- **WHEN** 商品期货主力合约 summary 生成读取本地五档 CSV 文件
+- **THEN** 系统使用 Polars 处理 CSV 读取、成交量计算、合格合约筛选、月度 top 2 选择和 summary 写入
+- **AND** summary SHALL 保留 `TradingDay` 日归属和 `ActionDay + UpdateTime` 事件时间戳语义所需的源文件信息
+- **AND** summary SHALL 提供后续 downscale 所需的 contract、date 和 source_file 明细
 
 #### Scenario: 商品 downscale 输出兼容
-- **WHEN** 商品期货连续主力数据运行单日或按 `TradingDay` 下采样
+- **WHEN** 商品期货 summary 源文件运行单日或按合约下采样
 - **THEN** 系统使用 Polars 生成 derivative reference、五档 orderbook、base features 和 quote features
 - **AND** depth=5 输出不合成第 6 到第 25 档
 - **AND** `LastPrice` 回退、funding 兼容列、Volume/Turnover 差分、tick rule 估计方向、右闭窗口聚合和 fail-fast 校验语义保持不变
@@ -267,29 +304,37 @@
 - **AND** 输出列集合和列顺序继续满足商品期货现有 tests 和 downstream readers
 
 ### Requirement: 商品期货连续主力日文件下采样
-系统 SHALL 从 `CONTINUOUS_RAW/{symbol}/{YYYY-MM-DD}.csv` 日文件目录按日期范围逐日生成商品期货下采样输出。
+系统 SHALL 从 `main_contract_summary.json` 记录的源文件按合约和交易日生成商品期货下采样输出。
 
-#### Scenario: downscale 逐日读取连续主力日文件
-- **WHEN** 用户运行 `downscale_continuous_by_trading_day.py --input_dir PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu --start_date 2026-01-01 --end_date 2026-01-04 --output_root PREPROCESS_DATASET/commodity-futures --symbol fu --target_freq 5min`
-- **THEN** 系统按左闭右开范围查找 `2026-01-01.csv`、`2026-01-02.csv` 和 `2026-01-03.csv`
-- **AND** 对每个存在的日文件生成当天 `DOWNSCALE_DERTIC`、`DOWNSCALE_ORDERBOOK_25`、`BASE_FEATURE` 和 `COMMODITY_QUOTE_FEATURE` 输出
-- **AND** 输出目录、Feather 文件名、列集合和商品期货特征语义保持不变
+#### Scenario: downscale 读取 summary 处理全部合约
+- **WHEN** 用户运行 `downscale_continuous_by_trading_day.py --summary PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu/main_contract_summary.json --output_root PREPROCESS_DATASET/commodity-futures --symbol fu --target_freq 5min`
+- **THEN** 系统 SHALL 读取 summary 中全部 `contracts`
+- **AND** 系统 SHALL 按每个合约的 `trading_days[].source_file` 读取原始 CSV
+- **AND** 系统 SHALL 为每个合约实际存在的交易日生成 `DOWNSCALE_DERTIC`、`DOWNSCALE_ORDERBOOK_25`、`BASE_FEATURE` 和 `COMMODITY_QUOTE_FEATURE` 输出
 
-#### Scenario: downscale 缺失日文件 warning 后跳过
-- **WHEN** 日期范围内 `CONTINUOUS_RAW/fu/2026-01-02.csv` 不存在
-- **THEN** 系统记录 warning 并跳过该日期
-- **AND** 系统继续处理其他存在的日文件
-- **AND** 日志记录被跳过的日期汇总
+#### Scenario: downscale 输出 contract-scoped 日文件
+- **WHEN** summary 中合约 `fu2601` 包含 `date=2026-01-05`
+- **THEN** downscale 输出路径 SHALL 使用 `{FEATURE_FOLDER}/fu/fu2601/5min/2026-01-05.feather`
+- **AND** 输出列集合、窗口语义、depth=5 行为、商品价格口径和 fail-fast 校验 SHALL 保持现有商品期货特征语义
 
-#### Scenario: downscale 坏日文件 fail-fast
-- **WHEN** 日期范围内存在的连续主力日文件缺少必需列、包含非法盘口、包含无效成交额差分或触发空 quote 窗口错误
+#### Scenario: downscale 单合约过滤
+- **WHEN** 用户运行 `downscale_continuous_by_trading_day.py` 并传入 `--contract fu2601`
+- **THEN** 系统 SHALL 只处理 summary 中 contract 为 `fu2601` 的源文件
+- **AND** 如果 `fu2601` 不存在于 summary，系统 SHALL 报错
+
+#### Scenario: downscale summary 校验 fail-fast
+- **WHEN** summary 文件不存在、JSON 结构不合法、缺少必需字段或 `trading_day_count != len(trading_days)`
 - **THEN** 系统 SHALL 报错并停止本次 downscale
-- **AND** 系统 MUST NOT 将该错误当作缺失日文件 warning 跳过
 
-#### Scenario: downscale CLI 不再接受大文件输入
-- **WHEN** 用户调用 `downscale_continuous_by_trading_day.py` 时只传递旧的 `--input PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu/fu_2026-01-01_2026-01-04.csv`
+#### Scenario: downscale source_file 缺失 fail-fast
+- **WHEN** summary 中任一待处理 `source_file` 不存在
+- **THEN** 系统 SHALL 报错并停止本次 downscale
+- **AND** 系统 MUST NOT 将 summary 中列出的源文件缺失当作普通无交易日跳过
+
+#### Scenario: downscale CLI 不再接受 input_dir 日文件目录
+- **WHEN** 用户调用 `downscale_continuous_by_trading_day.py` 时只传递旧的 `--input_dir PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu --start_date 2026-01-01 --end_date 2026-01-04`
 - **THEN** CLI 参数解析失败
-- **AND** 用户必须改用 `--input_dir --start_date --end_date`
+- **AND** 用户必须改用 `--summary PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu/main_contract_summary.json`
 
 ### Requirement: 商品期货主流程步骤日志
 系统 SHALL 为商品期货 preprocess 主流程的主要阶段生成独立步骤日志，并在总日志中记录阶段状态。
@@ -316,4 +361,89 @@
 - **WHEN** `cross_section` 或 `merge` 阶段继续按日期启动子任务日志
 - **THEN** 系统 SHALL 保留现有按日期子日志目录和文件
 - **AND** 新增步骤日志 MUST NOT 删除、重命名或替代这些子日志
+
+### Requirement: 商品期货按合约生成因子文件
+系统 SHALL 在商品期货多合约流程中按具体合约生成独立因子文件，并在未传 contract 时保留共享脚本旧路径行为。
+
+#### Scenario: cross-section 按 contract 读写日文件
+- **WHEN** `cross_section/create_feature.py` 以 `--symbols fu --contract fu2601 --target_freq 5min --date 2026-01-05` 运行
+- **THEN** 系统 SHALL 从 `BASE_FEATURE/fu/fu2601/5min/2026-01-05.feather` 和 `DOWNSCALE_ORDERBOOK_25/fu/fu2601/5min/2026-01-05.feather` 读取输入
+- **AND** 系统 SHALL 写出 `CROSS_SECTION/KLINE_FEATURE/fu/fu2601/5min/2026-01-05.feather`
+- **AND** 系统 SHALL 写出 `CROSS_SECTION/QUOTES_FEATURE/fu/fu2601/5min/2026-01-05.feather`
+- **AND** 系统 SHALL 写出 `CROSS_SECTION/SNAPSHOT_FEATURE/fu/fu2601/5min/2026-01-05.feather`
+
+#### Scenario: merge 按 contract 读写日文件
+- **WHEN** `merge_concat/merge.py` 以 `--symbols fu --contract fu2601 --target_freq 5min --date 2026-01-05` 运行
+- **THEN** 系统 SHALL 从 downscale 和 cross-section 的 `fu/fu2601/5min` 日文件读取输入
+- **AND** 系统 SHALL 写出 `MERGE_CONCAT/MERGED_FEATURE/fu/fu2601/5min/CONCURRENT_FEATURE/2026-01-05.feather`
+- **AND** 系统 SHALL 写出 `MERGE_CONCAT/MERGED_FEATURE/fu/fu2601/5min/FUTURE_FEATURE/2026-01-05.feather`
+
+#### Scenario: concat 按 contract 生成日期范围文件
+- **WHEN** `merge_concat/concat.py` 以 `--symbols fu --contract fu2601 --target_freq 5min --start_date 2026-01-01 --end_date 2026-04-01` 运行
+- **THEN** 系统 SHALL 从 `MERGE_CONCAT/MERGED_FEATURE/fu/fu2601/5min/...` 读取日文件
+- **AND** 系统 SHALL 写出 `MERGE_CONCAT/CONCAT_FEATURE/fu/fu2601/5min/2026-01-01-2026-04-01.feather`
+
+#### Scenario: time feature 按 contract 生成日期范围文件
+- **WHEN** `time_operator/create_feature_multi_processing.py` 以 `--symbols fu --contract fu2601 --target_freq 5min --start_date 2026-01-01 --end_date 2026-04-01` 运行
+- **THEN** 系统 SHALL 从 `MERGE_CONCAT/CONCAT_FEATURE/fu/fu2601/5min/2026-01-01-2026-04-01.feather` 读取输入
+- **AND** 系统 SHALL 写出 `TIME_FEATURE/fu/fu2601/5min/2026-01-01-2026-04-01.feather`
+
+#### Scenario: merge clean 按 contract 生成 all feature
+- **WHEN** `merge_all/merge_clean.py` 以 `--symbols fu --contract fu2601 --target_freq 5min --start_date 2026-01-01 --end_date 2026-04-01` 运行
+- **THEN** 系统 SHALL 从 `MERGE_CONCAT/CONCAT_FEATURE/fu/fu2601/5min/2026-01-01-2026-04-01.feather` 和 `TIME_FEATURE/fu/fu2601/5min/2026-01-01-2026-04-01.feather` 读取输入
+- **AND** 系统 SHALL 写出 `ALL_FEATURE/fu/fu2601/5min/2026-01-01-2026-04-01.feather`
+
+#### Scenario: feature selection 和 scale save 按 contract 生成日期范围目录
+- **WHEN** `feature_selection/ic_correlation.py` 和 `scale_describe_save/scale_save.py` 以 `--symbols fu --contract fu2601 --target_freq 5min --start_date 2026-01-01 --end_date 2026-04-01` 运行
+- **THEN** feature selection SHALL 读取 `ALL_FEATURE/fu/fu2601/5min/2026-01-01-2026-04-01.feather`
+- **AND** feature selection SHALL 写出 `IC_RESULT/fu/fu2601/5min/2026-01-01-2026-04-01/`
+- **AND** scale save SHALL 读取 `IC_RESULT/fu/fu2601/5min/2026-01-01-2026-04-01/`
+- **AND** scale save SHALL 写出 `SCALE_SAVE/fu/fu2601/5min/2026-01-01-2026-04-01/`
+
+#### Scenario: 未传 contract 时保留旧路径
+- **WHEN** 共享 operator-futures 脚本未传入 `--contract`
+- **THEN** 系统 SHALL 继续读写现有 `{symbol}/{target_freq}` 路径
+- **AND** 系统 SHALL NOT 要求非商品期货或旧调用方提供 contract 参数
+
+#### Scenario: 多合约日志和 skip 检查包含 contract
+- **WHEN** 商品 full process 对多个合约运行后续阶段
+- **THEN** 步骤日志文件名、skip 消息和输出存在性检查 SHALL 包含 `symbol` 和 `contract`
+- **AND** 一个合约的日志或输出 SHALL NOT 覆盖另一个合约的日志或输出
+
+### Requirement: 商品期货跨合约训练特征合集
+系统 SHALL 在所有入选合约完成单合约特征选择和 scale save 后，生成品种级统一 state feature 合集，供后续同模型训练读取。
+
+#### Scenario: 生成品种级 state feature union
+- **WHEN** `main_contract_summary.json` 中包含合约 `fu2601` 和 `fu2605`
+- **AND** `SCALE_SAVE/fu/fu2601/5min/2026-01-01-2026-04-01/state_features.npy` 包含 `["alpha", "beta"]`
+- **AND** `SCALE_SAVE/fu/fu2605/5min/2026-01-01-2026-04-01/state_features.npy` 包含 `["beta", "gamma"]`
+- **THEN** 系统 SHALL 写出 `FEATURE_UNION/fu/5min/2026-01-01-2026-04-01/state_features.npy`
+- **AND** 该合集 SHALL 包含 `["alpha", "beta", "gamma"]`
+- **AND** 系统 SHALL 写出同目录下的 `feature_union_manifest.json`
+- **AND** manifest SHALL 包含 `symbol`、`target_freq`、`start_date`、`end_date`、`contracts`、`state_feature_count`、`state_features` 和每个合约的输入 `state_features.npy` 路径
+
+#### Scenario: feature union 顺序稳定
+- **WHEN** 系统生成跨合约 state feature union
+- **THEN** 系统 SHALL 按 summary 中 `contracts` 的顺序读取每个合约
+- **AND** 系统 SHALL 按每个合约 `state_features.npy` 内的原始顺序追加特征
+- **AND** 重复 state feature SHALL 只保留第一次出现的位置
+- **AND** 多次运行相同输入 SHALL 生成相同顺序的 union feature list
+
+#### Scenario: feature union 缺失合约产物 fail-fast
+- **WHEN** summary 中包含合约 `fu2605`
+- **AND** `SCALE_SAVE/fu/fu2605/5min/2026-01-01-2026-04-01/state_features.npy` 不存在
+- **THEN** 系统 SHALL 报错并停止 feature union 生成
+- **AND** 错误信息 SHALL 包含缺失合约 `fu2605` 和缺失的 `state_features.npy` 路径
+
+#### Scenario: full process 最后生成 feature union
+- **WHEN** `fu_full_process.sh` 已对 summary 中所有合约完成 `scale_save`
+- **THEN** `fu_full_process.sh` SHALL 调用品种级 feature union 生成步骤
+- **AND** 该步骤 SHALL 使用同一次运行的 `summary_path`、`symbol`、`target_freq`、`start_date` 和 `end_date`
+- **AND** feature union 日志、skip 检查和验证输出 SHALL 使用 symbol 级别，不绑定单个 contract
+
+#### Scenario: validation 检查 feature union
+- **WHEN** `validate_features.sh` 验证商品期货输出
+- **THEN** 脚本 SHALL 检查 `FEATURE_UNION/{symbol}/{target_freq}/{start_date}-{end_date}/state_features.npy`
+- **AND** 脚本 SHALL 检查 `FEATURE_UNION/{symbol}/{target_freq}/{start_date}-{end_date}/feature_union_manifest.json`
+- **AND** 缺少任一 feature union 产物时验证 SHALL 失败
 

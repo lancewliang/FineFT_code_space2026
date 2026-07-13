@@ -70,8 +70,8 @@
 
 ## 11. Contract trading-window clipping
 
-- [x] 11.0 Contract trading-window clipping complete（与 plan-ready.md Task 11 和 superpowers plan Task 11 同步） <!-- 已实现: selected contract summary trading days are clipped by first selected month and final-10-day cutoff -->
-- [x] 11.1 Add focused tests proving selected contracts retain only actual trading days from the first selected month start through the inclusive cutoff 10 contract trading days before raw last trading day.
+- [x] 11.0 Contract trading-window clipping complete（与 plan-ready.md Task 11 和 superpowers plan Task 11 同步） <!-- 已实现: selected contract summary trading days are clipped by first selected month and date-range-relative final-10-day cutoff -->
+- [x] 11.1 Add focused tests proving selected contracts retain only actual trading days from the first selected month start through the inclusive cutoff 10 contract trading days before the last trading day in the requested date range.
 - [x] 11.2 Update `data_preprocess/operator_futures/commodity/main_contract.py` so selected-contract summary entries are clipped after monthly top-2 selection but before `MainContractSummaryContract` construction.
 - [x] 11.3 Add fail-fast coverage for selected contracts whose clipped trading window is empty.
 

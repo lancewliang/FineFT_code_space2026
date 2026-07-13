@@ -24,9 +24,13 @@
 - 影响任务：新增 `tasks.md` Task 9 和 Task 10。
 
 ### 2026-07-13: Contract trading-window clipping
-- 原因：入选合约不应输出完整日期范围内所有交易日；有效窗口需要从首次入选月份开始，并排除最后交易日前 10 个交易日。
+- 原因：入选合约不应输出完整日期范围内所有交易日；有效窗口需要从首次入选月份开始，并排除请求日期范围内该合约最后交易日前 10 个交易日。
 - 影响规格：`commodity-futures-support/spec.md` 的入选合约集合语义和 summary contract 字段。
 - 影响任务：新增 `tasks.md` Task 11 和 Task 12。
+
+### 2026-07-13: Date-range-relative final-10-day cutoff
+- 来源：close 阶段代码审查发现实现使用请求日期范围内的合约交易日序列计算最后 10 个交易日 cutoff；用户要求将 spec 修改为当前实现语义。
+- 影响：规格和计划文档中的 cutoff 描述改为“请求日期范围内该合约最后交易日前第 10 个交易日”；无需新增代码实现任务。
 
 ### 2026-07-13: High-volume-day main contract rule
 - 原因：除月成交量 top 2 外，一个月内有足够多高成交量交易日的合约也应被视为主力合约。
@@ -102,7 +106,7 @@
 
 ### Task 11: Contract trading-window clipping
 - [x] **任务完成**（与 superpowers plan `Task 11`、`tasks.md` 对应条目同步勾选）
-- 目标：修改 summary 生成规则：合约入选集合仍由自然月 top 2 决定；每个入选合约的 `trading_days` 只保留从首次入选月份月初开始，到该合约原始最后交易日前第 10 个交易日为止的实际交易日。
+- 目标：修改 summary 生成规则：合约入选集合仍由自然月 top 2 决定；每个入选合约的 `trading_days` 只保留从首次入选月份月初开始，到请求日期范围内该合约最后交易日前第 10 个交易日为止的实际交易日。
 - 改动文件：`data_preprocess/operator_futures/commodity/main_contract.py`、`data_preprocess/tests/test_commodity_main_contract.py`、必要时更新 CLI/downscale summary fixture。
 - 验证方式：运行 `conda run -n finetf pytest data_preprocess/tests/test_commodity_main_contract.py data_preprocess/tests/test_commodity_main_contract_cli.py data_preprocess/tests/test_commodity_downscale.py -q`，确认起止边界、`start_trading_day`、`end_trading_day`、`trading_day_count`、`daily_volume` 和空窗口 fail-fast 均符合新规则。
 
