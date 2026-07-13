@@ -515,6 +515,20 @@ def test_build_train_data_paths_keep_base_path_dataset_name_semantics():
     }
 
 
+def test_build_train_data_paths_prefers_train_slice_when_present(tmp_path):
+    from RL.DiHFT.low_level import weight_advantage_pretrain as wap
+
+    dataset_root = tmp_path / "dataset_5min" / "fu"
+    (dataset_root / "train" / "slice").mkdir(parents=True)
+
+    paths = wap.build_training_data_paths(
+        base_path=str(tmp_path / "dataset_5min"),
+        dataset_name="fu",
+    )
+
+    assert paths["train_data_path"] == str(dataset_root / "train" / "slice")
+
+
 def test_build_file_log_path_includes_experiment_name():
     from RL.DiHFT.low_level import weight_advantage_pretrain as wap
 

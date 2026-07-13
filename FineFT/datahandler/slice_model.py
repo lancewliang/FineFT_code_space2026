@@ -1,5 +1,7 @@
 import os
 import sys
+import shutil
+import json
 from pathlib import Path
 
 ROOT = str(Path(__file__).resolve().parents[3])
@@ -141,16 +143,71 @@ class Linear_Market_Dynamics_Model(object):
             raw_data[self.timestamp] = raw_data.index
         return raw_data
 
+    def _contract_name(self):
+        stem = Path(self.data_path).stem
+        if stem.startswith("df_"):
+            return stem[3:]
+        return stem
+
+    def _write_slice_manifest(self, manifest_path, valid_root, contract_name, processed_path, contract_labels):
+        if manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        else:
+            manifest = {"valid_path": str(valid_root), "contracts": {}, "labels": {}}
+
+        contract_file_count = sum(
+            label_info["file_count"] for label_info in contract_labels.values()
+        )
+        contract_total_rows = sum(
+            label_info["total_row_count"] for label_info in contract_labels.values()
+        )
+        if contract_file_count:
+            manifest.setdefault("contracts", {})[contract_name] = {
+                "contract": contract_name,
+                "processed_path": str(processed_path),
+                "file_count": contract_file_count,
+                "total_row_count": contract_total_rows,
+                "labels": contract_labels,
+            }
+        else:
+            manifest.setdefault("contracts", {}).pop(contract_name, None)
+
+        labels = {}
+        for contract_record in manifest.get("contracts", {}).values():
+            for label, label_info in contract_record.get("labels", {}).items():
+                target = labels.setdefault(
+                    label, {"label": label, "file_count": 0, "total_row_count": 0, "files": []}
+                )
+                target["file_count"] += label_info["file_count"]
+                target["total_row_count"] += label_info["total_row_count"]
+                for file_info in label_info["files"]:
+                    target["files"].append(
+                        {
+                            "contract": contract_record["contract"],
+                            "path": file_info["path"],
+                            "output_row_count": file_info["output_row_count"],
+                        }
+                    )
+        manifest["labels"] = dict(sorted(labels.items()))
+        manifest["contracts"] = dict(sorted(manifest.get("contracts", {}).items()))
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
     def run(self):
         print("labeling start")
-        path_names = Path(self.data_path).resolve().parents
-        ticker_name_path = path_names[0]
+        input_path = Path(self.data_path).resolve()
+        ticker_name_path = input_path.parent
+        contract_name = self._contract_name()
         output_path = self.data_path
         raw_data = pd.read_feather(self.data_path)
         raw_data = self.prepare_raw_data(raw_data)
-        process_data_path = os.path.join(ticker_name_path, "valid_processed.feather")
+        processed_dir = ticker_name_path / "processed"
+        processed_dir.mkdir(parents=True, exist_ok=True)
+        process_data_path = processed_dir / f"valid_processed_{contract_name}.feather"
         raw_data.to_feather(process_data_path)
-        self.data_path = process_data_path
+        self.data_path = str(process_data_path)
 
         worker = util.Worker(
             self.data_path,
@@ -199,26 +256,54 @@ class Linear_Market_Dynamics_Model(object):
         # elif extension == "feather":
         #     merged_data.to_feather(process_datafile_path)
         print("labeling done")
-        if not os.path.exists(os.path.join(ticker_name_path, "valid")):
-            os.makedirs(os.path.join(ticker_name_path, "valid"))
+        output_root = ticker_name_path / contract_name
+        if output_root.exists():
+            shutil.rmtree(output_root)
+        output_root.mkdir(parents=True, exist_ok=True)
         for i in range(self.dynamic_number):
-            os.makedirs(os.path.join(ticker_name_path, "valid", "label_{}".format(i)))
-        previous_label = merged_data.label[0]
+            (output_root / "label_{}".format(i)).mkdir(parents=True, exist_ok=True)
+        previous_label = int(merged_data.label.iloc[0])
         previous_start = 0
         label_counter = [0] * self.dynamic_number
+        contract_labels = {}
+
+        def write_segment(label, start, end):
+            if end <= start:
+                return
+            segment = merged_data.iloc[start:end].reset_index(drop=True)
+            label_name = "label_{}".format(label)
+            output_file = (
+                output_root
+                / label_name
+                / "df_{}.feather".format(label_counter[label])
+            )
+            segment.to_feather(output_file)
+            label_info = contract_labels.setdefault(
+                label_name,
+                {"label": label_name, "file_count": 0, "total_row_count": 0, "files": []},
+            )
+            output_row_count = int(len(segment))
+            label_info["file_count"] += 1
+            label_info["total_row_count"] += output_row_count
+            label_info["files"].append(
+                {"path": str(output_file), "output_row_count": output_row_count}
+            )
+            label_counter[label] += 1
+
         for i in range(len(merged_data)):
-            if merged_data.label[i] != previous_label:
-                merged_data.iloc[previous_start:i].reset_index(drop=True).to_feather(
-                    os.path.join(
-                        ticker_name_path,
-                        "valid",
-                        "label_{}".format(previous_label),
-                        "df_{}.feather".format(label_counter[previous_label]),
-                    )
-                )
-                label_counter[previous_label]+=1
+            current_label = int(merged_data.label.iloc[i])
+            if current_label != previous_label:
+                write_segment(previous_label, previous_start, i)
                 previous_start = i
-                previous_label = merged_data.label[i]
+                previous_label = current_label
+        write_segment(previous_label, previous_start, len(merged_data))
+        self._write_slice_manifest(
+            ticker_name_path / "slice_manifest.json",
+            ticker_name_path,
+            contract_name,
+            process_data_path,
+            dict(sorted(contract_labels.items())),
+        )
                 
         # print("plotting start")
         # # a list the path to all the modeling visulizations
@@ -240,6 +325,7 @@ class Linear_Market_Dynamics_Model(object):
         #     os.path.abspath(process_datafile_path),
         #     market_dynamic_labeling_visualization_paths,
         # )
+
 
 
 if __name__ == "__main__":

@@ -44,11 +44,30 @@ class Dynamic_labeler:
             #     normalized_coef_list, 1 - risk_bond / 2
             # )
             sorted_normalized_coef_list=sorted(normalized_coef_list)
-            low=sorted_normalized_coef_list[int(len(normalized_coef_list)*risk_bond / 2)+2]
-            high=sorted_normalized_coef_list[int(len(normalized_coef_list)*(1-risk_bond / 2))]
+            if not sorted_normalized_coef_list:
+                raise ValueError("cannot build slope dynamic labels without segments")
+            if len(sorted_normalized_coef_list) <= 4:
+                low = sorted_normalized_coef_list[0]
+                high = sorted_normalized_coef_list[-1]
+            else:
+                low_index = min(
+                    int(len(normalized_coef_list)*risk_bond / 2)+2,
+                    len(sorted_normalized_coef_list) - 1,
+                )
+                high_index = min(
+                    int(len(normalized_coef_list)*(1-risk_bond / 2)),
+                    len(sorted_normalized_coef_list) - 1,
+                )
+                if high_index < low_index:
+                    low_index = 0
+                    high_index = len(sorted_normalized_coef_list) - 1
+                low=sorted_normalized_coef_list[low_index]
+                high=sorted_normalized_coef_list[high_index]
             self.segments = []
             for i in range(1, self.dynamic_num):
-                self.segments.append(low + (high - low) / (dynamic_num-2) * (i-1))
+                self.segments.append(
+                    low + (high - low) / max(dynamic_num-2, 1) * (i-1)
+                )
         elif self.labeling_method == "quantile":
             self.segments = []
             # find the quantile of normalized_coef_list

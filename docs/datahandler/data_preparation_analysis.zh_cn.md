@@ -701,3 +701,55 @@ dataset/<symbol>/valid_processed.feather
 ```
 
 否则已有 `label_*` 目录可能导致创建目录时报错。
+
+## 商品期货多合约 FineFT 数据集
+
+商品期货数据不再通过单个 `df.feather` 直接生成 `train.feather`、`valid.feather` 和 `test.feather`。商品入口读取 `main_contract_summary.json`、合约级 `SCALE_SAVE/{symbol}/{contract}/{target_freq}/{start_date}-{end_date}/df.feather` 和品种级 `FEATURE_UNION/{symbol}/{target_freq}/{start_date}-{end_date}/state_features.npy`。
+
+数据集生成先基于 summary 中所有合约有效交易日的去重有序并集，按 `train:valid:test = 5:3:2` 计算全局边界：
+
+```text
+train: [start, a)
+valid: [a, b)
+test:  [b, c)
+```
+
+然后每个合约用自身有效交易日与全局区间求交，写入 `dataset/{target_freq}/{symbol}/dataset_manifest.json`。阶段数据集按合约落盘：
+
+```text
+dataset/{target_freq}/{symbol}/train/df_<contract>.feather
+dataset/{target_freq}/{symbol}/valid/df_<contract>.feather
+dataset/{target_freq}/{symbol}/test/df_<contract>.feather
+```
+
+manifest 中每个合约阶段记录包含 `output_row_count`，表示该 `output_path` feather 文件实际写出的行数。每个集合包含 `contracts_total_count`，表示该集合内所有合约阶段文件的总行数，因此可以直接从 manifest 查看单个文件行数和 train/valid/test 总行数。
+
+训练实际读取 `train/slice/df_*.feather`。这些 slice 连续编号，且单个 slice 不跨合约、不跨 train 日期边界。合约 train 数据少于 `chunk_length`，或完整切片后剩余尾部少于 `chunk_length` 时，也会写出短 slice 参与训练；manifest 的 `slice_outputs[]` 会记录每个 slice 的 `output_row_count`。
+
+`commodity_contract_dataset.py` 不调用 `slice_model.py`，也不直接生成 valid 动态切片。商品入口脚本 `commodity_data_handler_fu.sh` 和 `commodity_data_handler_al.sh` 在阶段数据生成后，通过 shell 循环逐个调用：
+
+```bash
+python FineFT/datahandler/slice_model.py --data_path "dataset/${TARGET_FREQ}/${SYMBOL}/valid/df_<contract>.feather" --timestamp timestamp
+```
+
+这样验证动态切片仍逐合约执行，不会把多个合约拼接后再切片。`slice_model.py` 会写出合约隔离的 processed 和 label 文件：
+
+```text
+dataset/{target_freq}/{symbol}/valid/processed/valid_processed_<contract>.feather
+dataset/{target_freq}/{symbol}/valid/<contract>/label_<k>/df_*.feather
+dataset/{target_freq}/{symbol}/valid/slice_manifest.json
+```
+
+`valid/slice_manifest.json` 会记录两个视角：`contracts` 描述每个合约下非空 label 的文件、文件数、文件行数和合约总行数；`labels` 描述每个非空 label 跨合约的文件、文件数、文件行数和 label 总行数。没有生成文件的空 label 不会写入 manifest。
+
+`vae_data_creation.py` 会递归读取 `valid/<contract>/label_*/df_*.feather`，并按合约写入对应动态类别数组：
+
+```text
+dataset/{target_freq}/{symbol}/VAE_data/<contract>/label_<k>.npy
+```
+
+商品多合约 test 数据不会合并成一个 `VAE_data/test.npy`，而是按合约写入：
+
+```text
+dataset/{target_freq}/{symbol}/VAE_data/test/test_<contract>.npy
+```

@@ -42,8 +42,11 @@ def build_serial_model_path(result_path, dataset_name, experiment_name):
 
 def build_training_data_paths(base_path, dataset_name):
     dataset_root = os.path.join(base_path, dataset_name)
+    train_root = os.path.join(dataset_root, "train")
+    train_slice_root = os.path.join(train_root, "slice")
+    train_data_path = train_slice_root if os.path.isdir(train_slice_root) else train_root
     return {
-        "train_data_path": os.path.join(dataset_root, "train"),
+        "train_data_path": train_data_path,
         "state_features_path": os.path.join(dataset_root, "state_features.npy"),
         "maintenance_margin_ratio_path": os.path.join(
             dataset_root,

@@ -717,7 +717,8 @@ def test_commodity_full_process_shell_exposes_expected_functions():
     assert "summary_path" in text
     assert "--summary" in text
     assert "--contract" in text
-    assert "run_commodity_feature_union" in text
+    assert "run_commodity_ic_union_finalize" in text
+    assert "run_commodity_feature_union" not in text
     assert "${symbol}_${start_date}_${end_date}.csv" not in text
     assert "continuous_file" not in text
     assert "run_merge_process " not in text
@@ -794,16 +795,16 @@ run_commodity_merge_process() {
 run_commodity_concat_process() { echo "concat stdout"; }
 run_commodity_time_feature() { echo "time feature stdout"; }
 run_commodity_merge_and_clean() { echo "merge clean stdout"; }
-run_commodity_ic_correlation() { echo "ic stdout"; }
-run_commodity_scale_save() { echo "scale stdout"; }
-run_commodity_feature_union() {
+run_commodity_ic_candidate() { echo "ic candidate stdout"; }
+run_commodity_ic_union_finalize() {
     local summary_path=$1
     local target_freq=$2
     local start_date=$3
     local end_date=$4
     local symbol=$5
-    echo "feature_union:${symbol}:${target_freq}:${start_date}:${end_date}:${summary_path}"
+    echo "ic_union_finalize:${symbol}:${target_freq}:${start_date}:${end_date}:${summary_path}"
 }
+run_commodity_scale_save() { echo "scale stdout"; }
 run_commodity_maintenance_margin_dict() { echo "maintenance stdout"; }
 """,
         encoding="utf-8",
@@ -844,9 +845,9 @@ run_commodity_maintenance_margin_dict() { echo "maintenance stdout"; }
         "concat": "fu_fu2601",
         "time_feature": "fu_fu2601",
         "merge_clean": "fu_fu2601",
-        "ic_correlation": "fu_fu2601",
+        "ic_candidate": "fu_fu2601",
+        "ic_union_finalize": "fu",
         "scale_save": "fu_fu2601",
-        "feature_union": "fu",
         "maintenance_margin_dict": "fu",
     }
     for step_name, step_symbol in symbol_by_step.items():
@@ -871,16 +872,16 @@ run_commodity_maintenance_margin_dict() { echo "maintenance stdout"; }
         / "fu_5min_2026-01-05_2026-01-07_downscale_continuous_by_trading_day.log"
     )
     assert "downscale stderr" in downscale_log.read_text(encoding="utf-8")
-    feature_union_log = (
+    union_log = (
         tmp_path
         / "log_futures"
         / "ticker_result"
         / "commodity"
         / "steps"
-        / "fu_5min_2026-01-05_2026-01-07_feature_union.log"
+        / "fu_5min_2026-01-05_2026-01-07_ic_union_finalize.log"
     )
-    assert "feature_union:fu:5min:2026-01-05:2026-01-07:" in (
-        feature_union_log.read_text(encoding="utf-8")
+    assert "ic_union_finalize:fu:5min:2026-01-05:2026-01-07:" in (
+        union_log.read_text(encoding="utf-8")
     )
     assert (
         tmp_path / "log_futures/downscale/cross_section/5min/fu/fu2601/2026-01-05.log"
@@ -1168,6 +1169,21 @@ def test_commodity_full_process_shell_scales_ic_selection_output():
 
     assert "scale_describe_save/scale_save.py" in text
     assert "--ic_choice ic" in text
+
+
+def test_commodity_full_process_shell_runs_scale_after_ic_union_finalize():
+    script = (
+        REPO_ROOT
+        / "data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
+    )
+    text = script.read_text(encoding="utf-8")
+
+    assert "run_commodity_ic_candidate()" in text
+    assert "run_commodity_ic_union_finalize()" in text
+    assert '"ic_candidate"' in text
+    assert '"ic_union_finalize"' in text
+    assert '"feature_union"' not in text
+    assert text.index('"ic_union_finalize"') < text.rindex('"scale_save"')
 
 
 def test_validate_features_checks_feature_union_outputs():

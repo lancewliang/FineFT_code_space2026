@@ -1,7 +1,9 @@
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import pytest
 
 from operator_futures.util import symbol_contract_path_parts
@@ -105,6 +107,53 @@ def test_build_union_state_features_preserves_first_seen_order():
     assert result == ["alpha", "beta", "gamma", "delta"]
 
 
+def _write_two_contract_summary(path):
+    path.write_text(
+        json.dumps(
+            {
+                "symbol": "fu",
+                "commodity_name": "燃料油",
+                "start_date": "2026-01-01",
+                "end_date": "2026-04-01",
+                "contracts": [
+                    {
+                        "contract": "fu2601",
+                        "start_trading_day": "20260101",
+                        "end_trading_day": "20260102",
+                        "trading_day_count": 1,
+                        "selected_months": ["2026-01"],
+                        "trading_days": [
+                            {
+                                "trading_day": "20260101",
+                                "date": "2026-01-01",
+                                "source_file": "fu2601.csv",
+                                "daily_volume": 1.0,
+                            }
+                        ],
+                    },
+                    {
+                        "contract": "fu2605",
+                        "start_trading_day": "20260201",
+                        "end_trading_day": "20260202",
+                        "trading_day_count": 1,
+                        "selected_months": ["2026-02"],
+                        "trading_days": [
+                            {
+                                "trading_day": "20260201",
+                                "date": "2026-02-01",
+                                "source_file": "fu2605.csv",
+                                "daily_volume": 1.0,
+                            }
+                        ],
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_write_contract_feature_union_writes_symbol_level_manifest(tmp_path):
     summary_path = tmp_path / "main_contract_summary.json"
     summary_path.write_text(
@@ -184,6 +233,89 @@ def test_write_contract_feature_union_writes_symbol_level_manifest(tmp_path):
     assert manifest["state_feature_count"] == 3
 
 
+def test_write_contract_feature_union_finalizes_ic_result_from_candidates(tmp_path):
+    summary_path = tmp_path / "main_contract_summary.json"
+    _write_two_contract_summary(summary_path)
+    base = tmp_path / "PREPROCESS_DATASET" / "commodity-futures"
+    date_range = "2026-01-01-2026-04-01"
+
+    first_candidate = base / "IC_RESULT" / "fu" / "fu2601" / "5min" / date_range
+    second_candidate = base / "IC_RESULT" / "fu" / "fu2605" / "5min" / date_range
+    first_candidate.mkdir(parents=True)
+    second_candidate.mkdir(parents=True)
+    np.save(first_candidate / "state_features_candidate.npy", np.array(["alpha", "beta"]))
+    np.save(second_candidate / "state_features_candidate.npy", np.array(["beta", "gamma"]))
+
+    for contract in ["fu2601", "fu2605"]:
+        all_feature_dir = base / "ALL_FEATURE" / "fu" / contract / "5min"
+        all_feature_dir.mkdir(parents=True)
+        pl.DataFrame(
+            {
+                "timestamp": [1, 2],
+                "mark_price": [100.0, 101.0],
+                "index_price": [100.0, 101.0],
+                "funding_timestamp": [1, 2],
+                "funding_rate": [0.0, 0.0],
+                "ask1_price": [101.0, 102.0],
+                "ask1_size": [10.0, 11.0],
+                "bid1_price": [99.0, 100.0],
+                "bid1_size": [12.0, 13.0],
+                "alpha": [1.0, 2.0],
+                "beta": [3.0, 4.0],
+                "gamma": [5.0, 6.0],
+            }
+        ).write_ipc(all_feature_dir / f"{date_range}.feather")
+
+    output_dir = write_contract_feature_union(
+        root_path=tmp_path,
+        summary_path=summary_path,
+        symbol="fu",
+        target_freq="5min",
+        start_date="2026-01-01",
+        end_date="2026-04-01",
+        candidate_path="PREPROCESS_DATASET/commodity-futures/IC_RESULT",
+        all_feature_path="PREPROCESS_DATASET/commodity-futures/ALL_FEATURE",
+        ic_result_path="PREPROCESS_DATASET/commodity-futures/IC_RESULT",
+        finalize_filtered_df=True,
+        market_type="commodity_futures",
+        orderbook_depth=5,
+    )
+
+    assert np.load(output_dir / "state_features.npy", allow_pickle=True).tolist() == [
+        "alpha",
+        "beta",
+        "gamma",
+    ]
+    for contract in ["fu2601", "fu2605"]:
+        contract_dir = base / "IC_RESULT" / "fu" / contract / "5min" / date_range
+        assert np.load(contract_dir / "state_features.npy", allow_pickle=True).tolist() == [
+            "alpha",
+            "beta",
+            "gamma",
+        ]
+        frame = pl.read_ipc(contract_dir / "df.feather")
+        expected_reward_columns = [
+            column
+            for column in get_reward_execution_columns(depth=5)
+            if column in frame.columns
+        ]
+        assert frame.columns == [*expected_reward_columns, "alpha", "beta", "gamma"]
+
+    manifest = json.loads(
+        (output_dir / "feature_union_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["state_feature_count"] == 3
+    assert manifest["per_contract_output_shapes"]["fu2601"]["rows"] == 2
+    assert manifest["per_contract_output_shapes"]["fu2605"]["columns"] == 12
+    assert manifest["candidate_source_path"] == "PREPROCESS_DATASET/commodity-futures/IC_RESULT"
+    assert manifest["all_feature_path"] == "PREPROCESS_DATASET/commodity-futures/ALL_FEATURE"
+    assert manifest["ic_result_path"] == "PREPROCESS_DATASET/commodity-futures/IC_RESULT"
+    assert manifest["finalize_filtered_df"] is True
+    assert set(manifest["per_contract_output_paths"]) == {"fu2601", "fu2605"}
+    for output_path in manifest["per_contract_output_paths"].values():
+        assert Path(output_path).exists()
+
+
 def test_write_contract_feature_union_fails_when_contract_state_features_missing(
     tmp_path,
 ):
@@ -226,8 +358,102 @@ def test_write_contract_feature_union_fails_when_contract_state_features_missing
             target_freq="5min",
             start_date="2026-01-01",
             end_date="2026-04-01",
+            candidate_path="PREPROCESS_DATASET/commodity-futures/IC_RESULT",
+            finalize_filtered_df=True,
         )
 
     message = str(excinfo.value)
     assert "fu2605" in message
-    assert "state_features.npy" in message
+    assert "state_features_candidate.npy" in message
+
+
+def test_write_contract_feature_union_fails_when_candidate_union_empty(tmp_path):
+    summary_path = tmp_path / "main_contract_summary.json"
+    _write_two_contract_summary(summary_path)
+    date_range = "2026-01-01-2026-04-01"
+    for contract in ["fu2601", "fu2605"]:
+        candidate_dir = (
+            tmp_path
+            / "PREPROCESS_DATASET/commodity-futures/IC_RESULT/fu"
+            / contract
+            / "5min"
+            / date_range
+        )
+        candidate_dir.mkdir(parents=True)
+        np.save(candidate_dir / "state_features_candidate.npy", np.array([]))
+
+    with pytest.raises(ValueError) as excinfo:
+        write_contract_feature_union(
+            root_path=tmp_path,
+            summary_path=summary_path,
+            symbol="fu",
+            target_freq="5min",
+            start_date="2026-01-01",
+            end_date="2026-04-01",
+            candidate_path="PREPROCESS_DATASET/commodity-futures/IC_RESULT",
+            finalize_filtered_df=True,
+        )
+
+    assert "Feature union is empty" in str(excinfo.value)
+
+
+def test_write_contract_feature_union_fails_when_union_feature_missing_from_contract(
+    tmp_path,
+):
+    summary_path = tmp_path / "main_contract_summary.json"
+    _write_two_contract_summary(summary_path)
+    base = tmp_path / "PREPROCESS_DATASET" / "commodity-futures"
+    date_range = "2026-01-01-2026-04-01"
+
+    for contract, features in {
+        "fu2601": ["alpha", "gamma"],
+        "fu2605": ["gamma"],
+    }.items():
+        candidate_dir = base / "IC_RESULT" / "fu" / contract / "5min" / date_range
+        candidate_dir.mkdir(parents=True)
+        np.save(candidate_dir / "state_features_candidate.npy", np.array(features))
+
+    all_feature_dir = base / "ALL_FEATURE" / "fu" / "fu2601" / "5min"
+    all_feature_dir.mkdir(parents=True)
+    pl.DataFrame(
+        {
+            "timestamp": [1],
+            "mark_price": [100.0],
+            "alpha": [1.0],
+            "gamma": [2.0],
+        }
+    ).write_ipc(all_feature_dir / f"{date_range}.feather")
+
+    missing_dir = base / "ALL_FEATURE" / "fu" / "fu2605" / "5min"
+    missing_dir.mkdir(parents=True)
+    pl.DataFrame(
+        {
+            "timestamp": [1],
+            "mark_price": [100.0],
+            "gamma": [2.0],
+        }
+    ).write_ipc(missing_dir / f"{date_range}.feather")
+
+    with pytest.raises(ValueError) as excinfo:
+        write_contract_feature_union(
+            root_path=tmp_path,
+            summary_path=summary_path,
+            symbol="fu",
+            target_freq="5min",
+            start_date="2026-01-01",
+            end_date="2026-04-01",
+            candidate_path="PREPROCESS_DATASET/commodity-futures/IC_RESULT",
+            finalize_filtered_df=True,
+            market_type="commodity_futures",
+            orderbook_depth=5,
+        )
+
+    message = str(excinfo.value)
+    assert "fu2605" in message
+    assert "alpha" in message
+    first_output_dir = base / "IC_RESULT" / "fu" / "fu2601" / "5min" / date_range
+    union_output_dir = base / "FEATURE_UNION" / "fu" / "5min" / date_range
+    assert not (first_output_dir / "df.feather").exists()
+    assert not (first_output_dir / "state_features.npy").exists()
+    assert not (union_output_dir / "state_features.npy").exists()
+    assert not (union_output_dir / "feature_union_manifest.json").exists()

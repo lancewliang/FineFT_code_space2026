@@ -314,7 +314,7 @@ run_commodity_merge_and_clean() {
         --save_path "PREPROCESS_DATASET/commodity-futures/ALL_FEATURE"
 }
 
-run_commodity_ic_correlation() {
+run_commodity_ic_candidate() {
     local target_freq=$1
     local start_date=$2
     local end_date=$3
@@ -336,10 +336,11 @@ run_commodity_ic_correlation() {
         --data_path "PREPROCESS_DATASET/commodity-futures/ALL_FEATURE/" \
         --save_path "PREPROCESS_DATASET/commodity-futures/IC_RESULT/" \
         --market_type commodity_futures \
-        --orderbook_depth 5
+        --orderbook_depth 5 \
+        --candidate_only
 }
 
-run_commodity_feature_union() {
+run_commodity_ic_union_finalize() {
     local summary_path=$1
     local target_freq=$2
     local start_date=$3
@@ -353,7 +354,14 @@ run_commodity_feature_union() {
         --target_freq "${target_freq}" \
         --start_date "${start_date}" \
         --end_date "${end_date}" \
-        --root_path "${root_path}"
+        --root_path "${root_path}" \
+        --candidate_path "PREPROCESS_DATASET/commodity-futures/IC_RESULT" \
+        --all_feature_path "PREPROCESS_DATASET/commodity-futures/ALL_FEATURE" \
+        --ic_result_path "PREPROCESS_DATASET/commodity-futures/IC_RESULT" \
+        --save_path "PREPROCESS_DATASET/commodity-futures/FEATURE_UNION" \
+        --finalize_filtered_df \
+        --market_type commodity_futures \
+        --orderbook_depth 5
 }
 
 run_commodity_maintenance_margin_dict() {
@@ -412,18 +420,22 @@ run_commodity_full_process() {
             run_commodity_merge_and_clean "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
         run_commodity_logged_step \
             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-            "ic_correlation" \
-            run_commodity_ic_correlation "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
+            "ic_candidate" \
+            run_commodity_ic_candidate "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
+    done < <(run_commodity_summary_contracts "$summary_path")
+
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "ic_union_finalize" \
+        run_commodity_ic_union_finalize "$summary_path" "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
+
+    while IFS= read -r contract; do
+        [ -n "$contract" ] || continue
         run_commodity_logged_step \
             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
             "scale_save" \
             run_commodity_scale_save "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
     done < <(run_commodity_summary_contracts "$summary_path")
-
-    run_commodity_logged_step \
-        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-        "feature_union" \
-        run_commodity_feature_union "$summary_path" "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
 
     run_commodity_logged_step \
         "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \

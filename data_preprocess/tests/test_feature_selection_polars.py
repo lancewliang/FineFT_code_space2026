@@ -24,6 +24,26 @@ def _write_ic_fixture(path: Path) -> None:
     frame.write_ipc(path)
 
 
+def _write_contract_ic_fixture(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame = pl.DataFrame(
+        {
+            "timestamp": list(range(12)),
+            "mark_price": [100.0 + i for i in range(12)],
+            "index_price": [100.0 + i for i in range(12)],
+            "funding_timestamp": list(range(12)),
+            "funding_rate": [0.0 for _ in range(12)],
+            "ask1_price": [101.0 + i for i in range(12)],
+            "ask1_size": [10.0 for _ in range(12)],
+            "bid1_price": [99.0 + i for i in range(12)],
+            "bid1_size": [11.0 for _ in range(12)],
+            "feature_a": [float(i) for i in range(12)],
+            "feature_b": [float(12 - i) for i in range(12)],
+        }
+    )
+    frame.write_ipc(path)
+
+
 def test_feature_selection_targets_do_not_import_pandas():
     targets = [
         REPO_ROOT / "data_preprocess/operator_futures/feature_selection/ic_correlation.py",
@@ -176,6 +196,60 @@ def test_ic_correlation_cli_writes_expected_files(tmp_path):
     assert (output_dir / "state_features.npy").exists()
     assert (output_dir / "correlation.csv").exists()
     assert np.load(output_dir / "state_features.npy", allow_pickle=True).size >= 0
+
+
+def test_ic_correlation_candidate_only_writes_candidate_artifacts(tmp_path):
+    input_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/ALL_FEATURE/fu/fu2601/5min"
+        / "2026-01-05-2026-01-06.feather"
+    )
+    _write_contract_ic_fixture(input_file)
+
+    subprocess.run(
+        [
+            sys.executable,
+            "data_preprocess/operator_futures/feature_selection/ic_correlation.py",
+            "--root_path",
+            str(tmp_path),
+            "--data_path",
+            "PREPROCESS_DATASET/commodity-futures/ALL_FEATURE/",
+            "--save_path",
+            "PREPROCESS_DATASET/commodity-futures/IC_RESULT/",
+            "--symbols",
+            "fu",
+            "--contract",
+            "fu2601",
+            "--target_freq",
+            "5min",
+            "--start_date",
+            "2026-01-05",
+            "--end_date",
+            "2026-01-06",
+            "--market_type",
+            "commodity_futures",
+            "--orderbook_depth",
+            "5",
+            "--windows_list",
+            "1",
+            "--candidate_only",
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "data_preprocess")},
+        check=True,
+    )
+
+    output_dir = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/IC_RESULT/fu/fu2601/5min"
+        / "2026-01-05-2026-01-06"
+    )
+    assert (output_dir / "state_features_candidate.npy").exists()
+    assert (output_dir / "candidate_manifest.json").exists()
+    assert (output_dir / "ic_window_1.json").exists()
+    assert (output_dir / "correlation.csv").exists()
+    assert not (output_dir / "df.feather").exists()
+    assert not (output_dir / "state_features.npy").exists()
 
 
 def _write_lasso_fixture(path: Path) -> None:

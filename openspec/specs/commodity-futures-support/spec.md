@@ -272,16 +272,14 @@
 - **AND** shell 脚本 MUST NOT 构造 `continuous_file="${symbol}_${start_date}_${end_date}.csv"` 作为 handoff
 - **AND** shell 脚本 MUST NOT 把 `CONTINUOUS_RAW/{symbol}` 当作日文件目录传给 downscale
 
-#### Scenario: full process 按 summary 合约循环后续阶段
+#### Scenario: full process 按 summary 合约循环并在 union 后执行 scale save
 - **WHEN** `main_contract_summary.json` 中包含合约 `fu2601` 和 `fu2605`
 - **THEN** `fu_full_process.sh` SHALL 从 summary 读取合约列表
-- **AND** `fu_full_process.sh` SHALL 分别为 `fu2601` 和 `fu2605` 调用 `cross_section`、`merge`、`concat`、`time_feature`、`merge_clean`、`ic_correlation` 和 `scale_save`
-- **AND** 每次调用 SHALL 传递 `--symbols fu --contract <contract>`
-
-#### Scenario: commodity shell 脚本支持 contract 维度
-- **WHEN** 维护者检查 `main_fu.sh`、`main_al.sh`、`commodity_process.sh`、`validate_features.sh` 和 `flatten_aluminum_raw_csv.sh`
-- **THEN** 这些脚本 SHALL 被增强为支持 summary 驱动的 contract 维度，或被明确验证为不消费按合约输出且无需修改
-- **AND** `validate_features.sh` 在验证商品期货输出时 SHALL 能够从 summary 读取合约列表并逐合约验证 `{symbol}/{contract}/{target_freq}` 路径
+- **AND** `fu_full_process.sh` SHALL 分别为 `fu2601` 和 `fu2605` 调用 `cross_section`、`merge`、`concat`、`time_feature`、`merge_clean` 和 `ic_candidate`
+- **AND** 每次合约级调用 SHALL 传递 `--symbols fu --contract <contract>`
+- **AND** 所有合约 `ic_candidate` 完成后，`fu_full_process.sh` SHALL 调用品种级 `ic_union_finalize`
+- **AND** `ic_union_finalize` 完成后，`fu_full_process.sh` SHALL 分别为每个合约调用 `scale_save`
+- **AND** `fu_full_process.sh` SHALL NOT 保留独立后置的旧 `feature_union` 步骤
 
 ### Requirement: 商品期货 Polars 预处理兼容性
 系统 SHALL 将 `data_preprocess/operator_futures/commodity` 商品期货核心预处理迁移到 Polars，并保持既有商品期货数据契约。
@@ -446,4 +444,45 @@
 - **THEN** 脚本 SHALL 检查 `FEATURE_UNION/{symbol}/{target_freq}/{start_date}-{end_date}/state_features.npy`
 - **AND** 脚本 SHALL 检查 `FEATURE_UNION/{symbol}/{target_freq}/{start_date}-{end_date}/feature_union_manifest.json`
 - **AND** 缺少任一 feature union 产物时验证 SHALL 失败
+
+### Requirement: 商品期货多合约 feature selection union
+系统 SHALL 将商品期货多合约 feature selection 拆分为 candidate 和 union finalize 两个阶段，确保所有合约使用同一份 union state feature 列表，并为每个合约生成按 union 过滤后的标准 `IC_RESULT` 数据文件。
+
+#### Scenario: 单合约 candidate 阶段不写最终数据文件
+- **WHEN** 商品期货合约 `fu2601` 运行 IC candidate 阶段，输入为 `PREPROCESS_DATASET/commodity-futures/ALL_FEATURE/fu/fu2601/5min/2026-01-01-2026-04-01.feather`
+- **THEN** 系统 SHALL 写出 `PREPROCESS_DATASET/commodity-futures/IC_RESULT/fu/fu2601/5min/2026-01-01-2026-04-01/state_features_candidate.npy`
+- **AND** 系统 SHALL 写出 `ic_window_<window>.json` 和 `correlation.csv`
+- **AND** 系统 SHALL NOT 在 candidate 阶段写出标准 `df.feather`
+- **AND** 系统 SHALL NOT 在 candidate 阶段写出标准 `state_features.npy`
+
+#### Scenario: union finalize 生成品种级 state features
+- **WHEN** `main_contract_summary.json` 包含合约 `fu2601` 和 `fu2605`
+- **AND** 两个合约均已生成 `state_features_candidate.npy`
+- **THEN** union finalize 阶段 SHALL 按 summary 合约列表读取所有 candidate feature 文件
+- **AND** 系统 SHALL 去重合并候选特征并保持稳定顺序
+- **AND** 系统 SHALL 写出 `PREPROCESS_DATASET/commodity-futures/FEATURE_UNION/fu/5min/2026-01-01-2026-04-01/state_features.npy`
+- **AND** 系统 SHALL 写出 `feature_union_manifest.json`，记录每个合约 candidate 路径、candidate 特征数、union 特征数和最终合约输出路径
+
+#### Scenario: union finalize 生成每个合约过滤后的 IC_RESULT
+- **WHEN** union state features 为 `["f1", "f2", "f3"]`
+- **AND** 合约 `fu2601` 和 `fu2605` 的 `ALL_FEATURE` 均包含 reward/execution 列和 `f1`、`f2`、`f3`
+- **THEN** 系统 SHALL 为每个合约读取对应 `ALL_FEATURE/{symbol}/{contract}/{target_freq}/{start_date}-{end_date}.feather`
+- **AND** 系统 SHALL 为每个合约写出 `IC_RESULT/{symbol}/{contract}/{target_freq}/{start_date}-{end_date}/df.feather`
+- **AND** 每个合约的 `df.feather` SHALL 包含 `reward_features + union_state_features`
+- **AND** 系统 SHALL 为每个合约写出标准 `state_features.npy`
+- **AND** 每个合约标准 `state_features.npy` SHALL 与品种级 `FEATURE_UNION/state_features.npy` 内容一致
+
+#### Scenario: union 特征缺列 fail-fast
+- **WHEN** union state features 包含 `f3`
+- **AND** 合约 `fu2605` 的 `ALL_FEATURE` 不包含 `f3`
+- **THEN** union finalize SHALL 报错并停止
+- **AND** 错误信息 SHALL 包含合约 `fu2605` 和缺失特征 `f3`
+- **AND** 系统 SHALL NOT 静默丢弃 `f3`
+- **AND** 系统 SHALL NOT 降级为使用 `fu2605` 自身 candidate 特征
+
+#### Scenario: scale save 继续消费标准 IC_RESULT
+- **WHEN** union finalize 已为合约 `fu2601` 写出标准 `IC_RESULT/fu/fu2601/5min/2026-01-01-2026-04-01/df.feather` 和 `state_features.npy`
+- **THEN** `scale_save.py` SHALL 按现有接口读取该合约标准 `IC_RESULT` 输出
+- **AND** `scale_save.py` SHALL 继续只负责缩放 state features 并保存 `SCALE_SAVE`
+- **AND** `scale_save.py` SHALL NOT 负责生成 union、补齐缺列或降级选择合约自身 candidate 特征
 
