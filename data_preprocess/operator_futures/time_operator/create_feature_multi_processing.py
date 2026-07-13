@@ -5,7 +5,11 @@ import sys
 import time
 
 sys.path.append(".")
-from operator_futures.util import find_ohlcv_groups, find_ohlc_groups
+from operator_futures.util import (
+    find_ohlcv_groups,
+    find_ohlc_groups,
+    symbol_contract_path_parts,
+)
 import polars as pl
 from operator_futures.time_operator.multi_processing_util import (
     get_multi_window_ohlcv,
@@ -47,6 +51,7 @@ parser.add_argument(
 parser.add_argument(
     "--symbols", type=str, default="BTCUSDT", help="the name of the ticker"
 )
+parser.add_argument("--contract", type=str, default=None, help="the contract of the ticker")
 # date
 parser.add_argument(
     "--start_date",
@@ -89,6 +94,7 @@ def main(args):
     windows = list(map(int, args.windows.split(",")))
     args.data_path = os.path.join(args.root_path, args.data_path)
     args.save_path = os.path.join(args.root_path, args.save_path)
+    symbol_parts = symbol_contract_path_parts(args.symbols, args.contract)
     logger.info(
         "Starting time feature process: symbol=%s start_date=%s end_date=%s target_freq=%s windows=%s data_path=%s save_path=%s orderbook_depth=%d",
         args.symbols,
@@ -102,7 +108,7 @@ def main(args):
     )
     input_path = os.path.join(
         args.data_path,
-        args.symbols,
+        *symbol_parts,
         args.target_freq,
         args.start_date + "-" + args.end_date + ".feather",
     )
@@ -195,11 +201,11 @@ def main(args):
         time_feature_list_all.append(p_process_ohlc)
 
     time_df = _inner_join_on_timestamp(time_feature_list_all)
-    if not os.path.exists(os.path.join(args.save_path, args.symbols, args.target_freq)):
-        os.makedirs(os.path.join(args.save_path, args.symbols, args.target_freq))
+    if not os.path.exists(os.path.join(args.save_path, *symbol_parts, args.target_freq)):
+        os.makedirs(os.path.join(args.save_path, *symbol_parts, args.target_freq))
     output_path = os.path.join(
         args.save_path,
-        args.symbols,
+        *symbol_parts,
         args.target_freq,
         args.start_date + "-" + args.end_date + ".feather",
     )

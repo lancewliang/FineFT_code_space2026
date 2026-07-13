@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 import time
 
-from .main_contract import write_main_contract_daily_files_for_date_range
+from .main_contract import write_main_contract_summary_for_date_range
 
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ def configure_logging() -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Stitch local commodity futures contracts into daily main-contract files"
+        description="Build local commodity futures main-contract summary JSON"
     )
     parser.add_argument("--raw_root", required=True)
     parser.add_argument("--commodity_name", required=True)
@@ -35,7 +35,7 @@ def main() -> None:
     started_at = time.monotonic()
     output_dir = Path(args.output_dir)
     logger.info(
-        "Starting commodity main-contract daily stitch: raw_root=%s commodity=%s symbol=%s start_date=%s end_date=%s output_dir=%s",
+        "Starting commodity main-contract summary build: raw_root=%s commodity=%s symbol=%s start_date=%s end_date=%s output_dir=%s",
         args.raw_root,
         args.commodity_name,
         args.symbol,
@@ -43,7 +43,7 @@ def main() -> None:
         args.end_date,
         output_dir,
     )
-    written = write_main_contract_daily_files_for_date_range(
+    summary_path = write_main_contract_summary_for_date_range(
         raw_root=Path(args.raw_root),
         commodity_name=args.commodity_name,
         output_dir=output_dir,
@@ -52,9 +52,8 @@ def main() -> None:
         symbol=args.symbol,
     )
     logger.info(
-        "Wrote stitched commodity main-contract daily files: output_dir=%s files=%d elapsed_seconds=%.2f",
-        output_dir,
-        len(written),
+        "Wrote commodity main-contract summary: output=%s elapsed_seconds=%.2f",
+        summary_path,
         time.monotonic() - started_at,
     )
 

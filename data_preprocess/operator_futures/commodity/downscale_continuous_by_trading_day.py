@@ -1,5 +1,6 @@
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime
+from dataclasses import dataclass
 import logging
 from pathlib import Path
 import time
@@ -13,6 +14,7 @@ from .downscale import (
     downscale_orderbook,
     downscale_quote_features,
 )
+from .main_contract import MainContractSummary, load_main_contract_summary
 
 
 logger = logging.getLogger(__name__)
@@ -25,24 +27,6 @@ def configure_logging() -> None:
     )
 
 
-def _parse_date(value: str):
-    return datetime.strptime(value, "%Y-%m-%d").date()
-
-
-def _iter_iso_dates(start_date: str, end_date: str):
-    current = _parse_date(start_date)
-    end = _parse_date(end_date)
-    if end <= current:
-        raise ValueError(
-            f"end_date must be greater than start_date for left-open range: "
-            f"{start_date} -> {end_date}"
-        )
-
-    while current < end:
-        yield current.isoformat()
-        current += timedelta(days=1)
-
-
 def _trading_day_output_name(trading_day: str) -> str:
     trading_day = str(trading_day)
     if len(trading_day) == 8 and trading_day.isdigit():
@@ -50,11 +34,41 @@ def _trading_day_output_name(trading_day: str) -> str:
     return trading_day
 
 
+@dataclass(frozen=True)
+class SummaryTradingDaySource:
+    contract: str
+    date: str
+    source_file: Path
+
+
+def iter_summary_trading_days(
+    summary: MainContractSummary, contract_filter: str | None = None
+):
+    matched = False
+    for contract in summary.contracts:
+        contract_name = contract.contract
+        if contract_filter is not None and contract_name != contract_filter:
+            continue
+        matched = True
+        for day in contract.trading_days:
+            source_file = Path(day.source_file)
+            if not source_file.exists():
+                raise FileNotFoundError(f"source_file does not exist: {source_file}")
+            yield SummaryTradingDaySource(
+                contract=contract_name,
+                date=day.date,
+                source_file=source_file,
+            )
+    if contract_filter is not None and not matched:
+        raise ValueError(f"contract {contract_filter!r} not found in summary")
+
+
 def _write_downscaled_day(
     day_frame: pl.DataFrame,
     output_root: Path,
     target_freq: str,
     symbol: str,
+    contract: str,
     depth: int,
 ) -> str:
     trading_days = (
@@ -80,78 +94,67 @@ def _write_downscaled_day(
     }
     output_name = _trading_day_output_name(trading_day)
     for folder, frame in outputs.items():
-        path = output_root / folder / symbol / target_freq
+        path = output_root / folder / symbol / contract / target_freq
         path.mkdir(parents=True, exist_ok=True)
         frame.write_ipc(path / f"{output_name}.feather")
     return trading_day
 
 
 def downscale_continuous_by_trading_day(
-    input_dir: Path,
+    summary_path: Path,
     output_root: Path,
     target_freq: str,
     symbol: str,
-    start_date: str,
-    end_date: str,
     depth: int = 5,
+    contract: str | None = None,
 ) -> None:
     started_at = time.monotonic()
     logger.info(
-        "Starting commodity continuous downscale: input_dir=%s output_root=%s target_freq=%s symbol=%s start_date=%s end_date=%s depth=%d",
-        input_dir,
+        "Starting commodity summary downscale: summary=%s output_root=%s target_freq=%s symbol=%s contract=%s depth=%d",
+        summary_path,
         output_root,
         target_freq,
         symbol,
-        start_date,
-        end_date,
+        contract,
         depth,
     )
+    summary = load_main_contract_summary(summary_path)
     processed = []
-    skipped = []
-    for date in _iter_iso_dates(start_date, end_date):
-        daily_file = input_dir / f"{date}.csv"
-        if not daily_file.exists():
-            logger.warning(
-                "Missing commodity continuous daily file: date=%s input=%s",
-                date,
-                daily_file,
-            )
-            skipped.append(date)
-            continue
-
-        raw = pl.read_csv(daily_file)
+    for item in iter_summary_trading_days(summary, contract):
+        raw = pl.read_csv(item.source_file)
         logger.info(
-            "Downscaling commodity continuous daily file: date=%s input=%s rows=%d",
-            date,
-            daily_file,
+            "Downscaling commodity contract source file: contract=%s date=%s input=%s rows=%d",
+            item.contract,
+            item.date,
+            item.source_file,
             raw.height,
         )
-        trading_day = _write_downscaled_day(raw, output_root, target_freq, symbol, depth)
-        processed.append(trading_day)
-
-    if skipped:
-        logger.warning(
-            "Skipped commodity continuous daily files: dates=%s",
-            ",".join(skipped),
+        trading_day = _write_downscaled_day(
+            raw,
+            output_root,
+            target_freq,
+            symbol,
+            item.contract,
+            depth,
         )
+        processed.append((item.contract, trading_day))
+
     logger.info(
-        "Finished commodity continuous downscale: trading_days=%d skipped_dates=%d elapsed_seconds=%.2f",
+        "Finished commodity summary downscale: contract_days=%d elapsed_seconds=%.2f",
         len(processed),
-        len(skipped),
         time.monotonic() - started_at,
     )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Downscale continuous commodity main-contract daily files by TradingDay"
+        description="Downscale commodity main-contract source files from summary"
     )
-    parser.add_argument("--input_dir", required=True)
-    parser.add_argument("--start_date", required=True)
-    parser.add_argument("--end_date", required=True)
+    parser.add_argument("--summary", required=True)
     parser.add_argument("--output_root", required=True)
     parser.add_argument("--target_freq", default="5min")
     parser.add_argument("--symbol", default="fu")
+    parser.add_argument("--contract")
     parser.add_argument("--depth", type=int, default=5)
     return parser.parse_args()
 
@@ -160,13 +163,12 @@ def main() -> None:
     configure_logging()
     args = parse_args()
     downscale_continuous_by_trading_day(
-        input_dir=Path(args.input_dir),
+        summary_path=Path(args.summary),
         output_root=Path(args.output_root),
         target_freq=args.target_freq,
         symbol=args.symbol,
-        start_date=args.start_date,
-        end_date=args.end_date,
         depth=args.depth,
+        contract=args.contract,
     )
 
 

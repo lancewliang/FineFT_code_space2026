@@ -7,6 +7,8 @@ import time
 import numpy as np
 import polars as pl
 
+from operator_futures.util import symbol_contract_path_parts
+
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,7 @@ parser.add_argument(
     help="the path of storing the data",
 )
 parser.add_argument("--symbols", type=str, default="BTCUSDT", help="the name of the ticker")
+parser.add_argument("--contract", type=str, default=None, help="the contract of the ticker")
 parser.add_argument("--start_date", type=str, default="2023-01-01", help="the path to save the data")
 parser.add_argument("--end_date", type=str, default="2023-02-01", help="the path to save the data")
 parser.add_argument(
@@ -97,6 +100,7 @@ def main(args):
     started_at = time.monotonic()
     args.data_path = os.path.join(args.root_path, args.data_path)
     args.save_path = os.path.join(args.root_path, args.save_path)
+    symbol_parts = symbol_contract_path_parts(args.symbols, args.contract)
     assert args.ic_choice in ["ic", "rank_ic", "catboost"]
     if args.ic_choice == "ic":
         df_name = "df"
@@ -108,8 +112,8 @@ def main(args):
         df_name = "df_catboost"
         state_name = "state_features_catboost"
 
-    input_dir = Path(args.data_path) / args.symbols / args.target_freq / f"{args.start_date}-{args.end_date}"
-    output_dir = Path(args.save_path) / args.symbols / args.target_freq / f"{args.start_date}-{args.end_date}"
+    input_dir = Path(args.data_path).joinpath(*symbol_parts, args.target_freq) / f"{args.start_date}-{args.end_date}"
+    output_dir = Path(args.save_path).joinpath(*symbol_parts, args.target_freq) / f"{args.start_date}-{args.end_date}"
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info(
         "Starting scale-save process: symbol=%s start_date=%s end_date=%s target_freq=%s input_dir=%s output_dir=%s ic_choice=%s market_type=%s orderbook_depth=%d base=%s clip_threshold=%s",

@@ -12,6 +12,7 @@ import time
 import polars as pl
 
 sys.path.append(".")
+from operator_futures.util import symbol_contract_path_parts
 from operator_futures.feature_selection.cor_util import select_feature
 
 
@@ -48,6 +49,7 @@ parser.add_argument(
 parser.add_argument(
     "--symbols", type=str, default="BTCUSDT", help="the name of the ticker"
 )
+parser.add_argument("--contract", type=str, default=None, help="the contract of the ticker")
 # date
 parser.add_argument(
     "--start_date",
@@ -177,10 +179,11 @@ def main(args):
     started_at = time.monotonic()
     args.data_path = os.path.join(args.root_path, args.data_path)
     args.save_path = os.path.join(args.root_path, args.save_path)
-    input_path = Path(args.data_path) / args.symbols / args.target_freq / (
+    symbol_parts = symbol_contract_path_parts(args.symbols, args.contract)
+    input_path = Path(args.data_path).joinpath(*symbol_parts, args.target_freq) / (
         "{}-{}.feather".format(args.start_date, args.end_date)
     )
-    output_dir = Path(args.save_path) / args.symbols / args.target_freq / (
+    output_dir = Path(args.save_path).joinpath(*symbol_parts, args.target_freq) / (
         "{}-{}".format(args.start_date, args.end_date)
     )
     output_dir.mkdir(parents=True, exist_ok=True)

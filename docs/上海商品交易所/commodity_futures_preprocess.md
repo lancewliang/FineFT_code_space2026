@@ -30,8 +30,8 @@ docs/上海商品交易所/fu2302.csv
 
 - 训练时间戳使用真实 `ActionDay + UpdateTime`。
 - 日文件归属和主力识别使用 `TradingDay`。
-- 主力合约按每个 `TradingDay` 固定选择，不做日内切换，不做复权。
-- 主力选择优先使用上一交易日成交量，若选中合约当日缺失或无成交量，则回退到当前交易日成交量最高的合格主力月份合约。
+- 主力合约按自然月统计，每个自然月按日 `Volume.max - Volume.min` 求和后选择成交量最高的前 2 个合约。
+- 合约只要任意自然月入选，就会进入 `main_contract_summary.json`；后续因子按真实合约分别输出，不拼成连续主力日 CSV。
 
 ## 商品期货缺失数据
 
@@ -68,17 +68,23 @@ YEAR=2026 START_DATE=2026-01-01 END_DATE=2026-02-01 TARGET_FREQ=5min \
   bash data_preprocess/script_preprocess/future_upgraded/commodity/main.sh
 ```
 
-该入口会先从日期范围覆盖的 `data/原始下载/燃料油/{YYYY}` 目录扫描所有合约 CSV，按 `TradingDay` 选择每日主力合约，生成连续主力原始日文件：
+该入口会先从日期范围覆盖的 `data/原始下载/燃料油/{YYYY}` 目录扫描所有合约 CSV，生成主力合约 summary：
 
 ```text
-PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu/2026-01-05.csv
-PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu/2026-01-06.csv
+PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu/main_contract_summary.json
 ```
 
-然后继续执行商品期货下采样、cross-section、merge/concat、time feature、merge clean、IC feature selection 和 scale/save。最终训练入口数据写入：
+然后继续执行商品期货下采样、cross-section、merge/concat、time feature、merge clean、IC feature selection 和 scale/save。下游输出按合约增加一层目录。最终训练入口数据写入：
 
 ```text
-PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/5min/2026-01-01-2026-02-01/
+PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/fu2601/5min/2026-01-01-2026-02-01/
+```
+
+所有合约完成 scale/save 后，流程还会生成品种级 state feature 合集。该合集按 summary 合约顺序和各合约特征顺序稳定去重，用于后续同一个模型训练时读取统一特征清单：
+
+```text
+PREPROCESS_DATASET/commodity-futures/FEATURE_UNION/fu/5min/2026-01-01-2026-02-01/state_features.npy
+PREPROCESS_DATASET/commodity-futures/FEATURE_UNION/fu/5min/2026-01-01-2026-02-01/feature_union_manifest.json
 ```
 
 直接运行连续主力拼接和下采样 CLI：
@@ -93,9 +99,7 @@ PYTHONPATH=data_preprocess python -m operator_futures.commodity.stitch_main_cont
   --output_dir PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu
 
 PYTHONPATH=data_preprocess python -m operator_futures.commodity.downscale_continuous_by_trading_day \
-  --input_dir PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu \
-  --start_date 2026-01-01 \
-  --end_date 2026-02-01 \
+  --summary PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu/main_contract_summary.json \
   --output_root PREPROCESS_DATASET/commodity-futures \
   --symbol fu \
   --target_freq 5min \

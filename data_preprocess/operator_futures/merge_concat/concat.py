@@ -11,7 +11,7 @@ import time
 sys.path.append(".")
 from memory_profiler import profile
 from concurrent.futures import ThreadPoolExecutor
-from operator_futures.util import find_strings_in_range
+from operator_futures.util import find_strings_in_range, symbol_contract_path_parts
 
 
 logger = logging.getLogger(__name__)
@@ -46,6 +46,7 @@ parser.add_argument(
 parser.add_argument(
     "--symbols", type=str, default="BTCUSDT", help="the name of the ticker"
 )
+parser.add_argument("--contract", type=str, default=None, help="the contract of the ticker")
 # date
 parser.add_argument(
     "--start_date",
@@ -100,6 +101,7 @@ def main(args):
     started_at = time.monotonic()
     args.data_path = os.path.join(args.root_path, args.data_path)
     args.save_path = os.path.join(args.root_path, args.save_path)
+    symbol_parts = symbol_contract_path_parts(args.symbols, args.contract)
     logger.info(
         "Starting concat process: symbol=%s start_date=%s end_date=%s target_freq=%s data_path=%s save_path=%s",
         args.symbols,
@@ -109,15 +111,11 @@ def main(args):
         args.data_path,
         args.save_path,
     )
-    cocurrent_path = "{}/MERGED_FEATURE/{}/{}/CONCURRENT_FEATURE".format(
-        args.data_path,
-        args.symbols,
-        args.target_freq,
+    cocurrent_path = os.path.join(
+        args.data_path, "MERGED_FEATURE", *symbol_parts, args.target_freq, "CONCURRENT_FEATURE"
     )
-    future_path = "{}/MERGED_FEATURE/{}/{}/FUTURE_FEATURE".format(
-        args.data_path,
-        args.symbols,
-        args.target_freq,
+    future_path = os.path.join(
+        args.data_path, "MERGED_FEATURE", *symbol_parts, args.target_freq, "FUTURE_FEATURE"
     )
     file_list = os.listdir(cocurrent_path)
     file_list.sort()
@@ -149,9 +147,7 @@ def main(args):
         future_df.height,
     )
     df = concat_concurrent_future_frames(cocurrent_df, future_df)
-    save_path = "{}/CONCAT_FEATURE/{}/{}".format(
-        args.save_path, args.symbols, args.target_freq
-    )
+    save_path = os.path.join(args.save_path, "CONCAT_FEATURE", *symbol_parts, args.target_freq)
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     output_path = os.path.join(save_path, "{}-{}.feather".format(args.start_date, args.end_date))

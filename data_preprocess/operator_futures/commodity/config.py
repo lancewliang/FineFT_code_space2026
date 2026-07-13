@@ -27,6 +27,7 @@ class CommodityConfig:
     use_contract_multiplier: bool
     trading_sessions: Tuple[TradingSession, ...]
     maintenance_margin_rate: float
+    main_contract_daily_volume_threshold: float | None = None
 
     def __post_init__(self) -> None:
         if self.contract_unit <= 0:
@@ -35,6 +36,11 @@ class CommodityConfig:
             raise ValueError("trading_sessions must not be empty")
         if not 0 <= self.maintenance_margin_rate < 1:
             raise ValueError("maintenance_margin_rate must be in [0, 1)")
+        if (
+            self.main_contract_daily_volume_threshold is not None
+            and self.main_contract_daily_volume_threshold <= 0
+        ):
+            raise ValueError("main_contract_daily_volume_threshold must be positive")
 
 
 COMMODITY_CONFIGS: Dict[str, CommodityConfig] = {
@@ -56,6 +62,7 @@ COMMODITY_CONFIGS: Dict[str, CommodityConfig] = {
             TradingSession(time(21, 0), time(23, 0)),
         ),
         maintenance_margin_rate=0.5,
+        main_contract_daily_volume_threshold=15000,
     ) , "al": CommodityConfig(
         symbol="al",
         display_name="铝",

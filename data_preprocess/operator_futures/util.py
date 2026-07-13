@@ -3,6 +3,12 @@ import re
 import os
 
 
+def symbol_contract_path_parts(symbol: str, contract: str | None = None) -> tuple[str, ...]:
+    if contract:
+        return (symbol, contract)
+    return (symbol,)
+
+
 def find_ohlcv_groups(features):
     # Initialize an empty dictionary to store the groups
     pattern = re.compile(r"^(.*?)(open|high|low|close|volume)(.*)$")

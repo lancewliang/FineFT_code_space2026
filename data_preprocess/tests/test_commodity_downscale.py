@@ -3,6 +3,10 @@ from datetime import datetime
 import polars as pl
 import pytest
 
+from operator_futures.commodity.main_contract import MainContractSummary
+from operator_futures.commodity.downscale_continuous_by_trading_day import (
+    iter_summary_trading_days,
+)
 from operator_futures.commodity.downscale import (
     create_second_level_snapshots,
     downscale_base_features,
@@ -14,6 +18,43 @@ from operator_futures.commodity.downscale import (
 
 
 SAMPLE_PATH = "docs/上海商品交易所/fu2302.csv"
+
+
+def test_iter_summary_trading_days_accepts_summary_model(tmp_path):
+    source_file = tmp_path / "fu2601.csv"
+    source_file.write_text("placeholder\n", encoding="utf-8")
+    summary = MainContractSummary.from_dict(
+        {
+            "symbol": "fu",
+            "commodity_name": "燃料油",
+            "start_date": "2026-01-05",
+            "end_date": "2026-01-06",
+            "selection_rule": "monthly_top_2_by_sum_daily_volume_delta",
+            "contracts": [
+                {
+                    "contract": "fu2601",
+                    "start_trading_day": "20260105",
+                    "end_trading_day": "20260105",
+                    "trading_day_count": 1,
+                    "selected_months": ["2026-01"],
+                    "trading_days": [
+                        {
+                            "trading_day": "20260105",
+                            "date": "2026-01-05",
+                            "source_file": str(source_file),
+                            "daily_volume": 100.0,
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    days = list(iter_summary_trading_days(summary))
+
+    assert days[0].contract == "fu2601"
+    assert days[0].date == "2026-01-05"
+    assert days[0].source_file == source_file
 
 
 def test_sample_file_can_create_depth_five_outputs():

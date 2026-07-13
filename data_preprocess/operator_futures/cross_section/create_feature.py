@@ -6,7 +6,7 @@ import sys
 import time
 
 sys.path.append(".")
-from operator_futures.util import match_strings_in_range
+from operator_futures.util import match_strings_in_range, symbol_contract_path_parts
 from memory_profiler import profile
 from operator_futures.cross_section.base_feature_util import *
 
@@ -43,6 +43,7 @@ parser.add_argument(
 parser.add_argument(
     "--symbols", type=str, default="BTCUSDT", help="the name of the ticker"
 )
+parser.add_argument("--contract", type=str, default=None, help="the contract of the ticker")
 # date
 parser.add_argument(
     "--date",
@@ -77,6 +78,7 @@ def main(args):
     started_at = time.monotonic()
     args.data_path = os.path.join(args.root_path, args.data_path)
     args.save_path = os.path.join(args.root_path, args.save_path)
+    symbol_parts = symbol_contract_path_parts(args.symbols, args.contract)
     logger.info(
         "Starting cross-section feature process: symbol=%s date=%s target_freq=%s data_path=%s save_path=%s orderbook_depth=%d",
         args.symbols,
@@ -89,14 +91,14 @@ def main(args):
     base_feature_path = os.path.join(
         args.data_path,
         "BASE_FEATURE",
-        args.symbols,
+        *symbol_parts,
         args.target_freq,
         args.date + ".feather",
     )
     snapshot_path = os.path.join(
         args.data_path,
         "DOWNSCALE_ORDERBOOK_25",
-        args.symbols,
+        *symbol_parts,
         args.target_freq,
         args.date + ".feather",
     )
@@ -116,47 +118,41 @@ def main(args):
     )
 
     if not os.path.exists(
-        os.path.join(args.save_path, "KLINE_FEATURE", args.symbols, args.target_freq)
+        os.path.join(args.save_path, "KLINE_FEATURE", *symbol_parts, args.target_freq)
     ):
         os.makedirs(
-            os.path.join(
-                args.save_path, "KLINE_FEATURE", args.symbols, args.target_freq
-            )
+            os.path.join(args.save_path, "KLINE_FEATURE", *symbol_parts, args.target_freq)
         )
     if not os.path.exists(
-        os.path.join(args.save_path, "QUOTES_FEATURE", args.symbols, args.target_freq)
+        os.path.join(args.save_path, "QUOTES_FEATURE", *symbol_parts, args.target_freq)
     ):
         os.makedirs(
-            os.path.join(
-                args.save_path, "QUOTES_FEATURE", args.symbols, args.target_freq
-            )
+            os.path.join(args.save_path, "QUOTES_FEATURE", *symbol_parts, args.target_freq)
         )
     if not os.path.exists(
-        os.path.join(args.save_path, "SNAPSHOT_FEATURE", args.symbols, args.target_freq)
+        os.path.join(args.save_path, "SNAPSHOT_FEATURE", *symbol_parts, args.target_freq)
     ):
         os.makedirs(
-            os.path.join(
-                args.save_path, "SNAPSHOT_FEATURE", args.symbols, args.target_freq
-            )
+            os.path.join(args.save_path, "SNAPSHOT_FEATURE", *symbol_parts, args.target_freq)
         )
     kline_output_path = os.path.join(
         args.save_path,
         "KLINE_FEATURE",
-        args.symbols,
+        *symbol_parts,
         args.target_freq,
         args.date + ".feather",
     )
     quotes_output_path = os.path.join(
         args.save_path,
         "QUOTES_FEATURE",
-        args.symbols,
+        *symbol_parts,
         args.target_freq,
         args.date + ".feather",
     )
     snapshot_output_path = os.path.join(
         args.save_path,
         "SNAPSHOT_FEATURE",
-        args.symbols,
+        *symbol_parts,
         args.target_freq,
         args.date + ".feather",
     )

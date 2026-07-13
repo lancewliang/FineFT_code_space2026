@@ -9,7 +9,7 @@ import sys
 import time
 
 sys.path.append(".")
-from operator_futures.util import match_strings_in_range
+from operator_futures.util import match_strings_in_range, symbol_contract_path_parts
 from memory_profiler import profile
 
 
@@ -45,6 +45,7 @@ parser.add_argument(
 parser.add_argument(
     "--symbols", type=str, default="BTCUSDT", help="the name of the ticker"
 )
+parser.add_argument("--contract", type=str, default=None, help="the contract of the ticker")
 # date
 parser.add_argument(
     "--date",
@@ -86,6 +87,7 @@ def main(args):
     started_at = time.monotonic()
     args.data_path = os.path.join(args.root_path, args.data_path)
     args.save_path = os.path.join(args.root_path, args.save_path)
+    symbol_parts = symbol_contract_path_parts(args.symbols, args.contract)
     logger.info(
         "Starting daily merge process: symbol=%s date=%s target_freq=%s data_path=%s save_path=%s",
         args.symbols,
@@ -94,23 +96,50 @@ def main(args):
         args.data_path,
         args.save_path,
     )
-    snapshot_path = "{}/DOWNSCALE_ORDERBOOK_25/{}/{}/{}.feather".format(
-        args.data_path, args.symbols, args.target_freq, args.date
+    snapshot_path = os.path.join(
+        args.data_path,
+        "DOWNSCALE_ORDERBOOK_25",
+        *symbol_parts,
+        args.target_freq,
+        args.date + ".feather",
     )
-    der_path = "{}/DOWNSCALE_DERTIC/{}/{}/{}.feather".format(
-        args.data_path, args.symbols, args.target_freq, args.date
+    der_path = os.path.join(
+        args.data_path,
+        "DOWNSCALE_DERTIC",
+        *symbol_parts,
+        args.target_freq,
+        args.date + ".feather",
     )
-    base_feature_path = "{}/BASE_FEATURE/{}/{}/{}.feather".format(
-        args.data_path, args.symbols, args.target_freq, args.date
+    base_feature_path = os.path.join(
+        args.data_path,
+        "BASE_FEATURE",
+        *symbol_parts,
+        args.target_freq,
+        args.date + ".feather",
     )
-    snapshot_feature_path = "{}/CROSS_SECTION/SNAPSHOT_FEATURE/{}/{}/{}.feather".format(
-        args.data_path, args.symbols, args.target_freq, args.date
+    snapshot_feature_path = os.path.join(
+        args.data_path,
+        "CROSS_SECTION",
+        "SNAPSHOT_FEATURE",
+        *symbol_parts,
+        args.target_freq,
+        args.date + ".feather",
     )
-    quotes_feature_path = "{}/CROSS_SECTION/QUOTES_FEATURE/{}/{}/{}.feather".format(
-        args.data_path, args.symbols, args.target_freq, args.date
+    quotes_feature_path = os.path.join(
+        args.data_path,
+        "CROSS_SECTION",
+        "QUOTES_FEATURE",
+        *symbol_parts,
+        args.target_freq,
+        args.date + ".feather",
     )
-    kline_feature_path = "{}/CROSS_SECTION/KLINE_FEATURE/{}/{}/{}.feather".format(
-        args.data_path, args.symbols, args.target_freq, args.date
+    kline_feature_path = os.path.join(
+        args.data_path,
+        "CROSS_SECTION",
+        "KLINE_FEATURE",
+        *symbol_parts,
+        args.target_freq,
+        args.date + ".feather",
     )
     logger.info(
         "Reading daily merge inputs: snapshot=%s der=%s base=%s snapshot_feature=%s quotes_feature=%s kline_feature=%s",
@@ -164,7 +193,7 @@ def main(args):
         os.path.join(
             args.save_path,
             "MERGED_FEATURE",
-            args.symbols,
+            *symbol_parts,
             args.target_freq,
             "CONCURRENT_FEATURE",
         )
@@ -173,7 +202,7 @@ def main(args):
             os.path.join(
                 args.save_path,
                 "MERGED_FEATURE",
-                args.symbols,
+                *symbol_parts,
                 args.target_freq,
                 "CONCURRENT_FEATURE",
             )
@@ -182,7 +211,7 @@ def main(args):
         os.path.join(
             args.save_path,
             "MERGED_FEATURE",
-            args.symbols,
+            *symbol_parts,
             args.target_freq,
             "FUTURE_FEATURE",
         )
@@ -191,7 +220,7 @@ def main(args):
             os.path.join(
                 args.save_path,
                 "MERGED_FEATURE",
-                args.symbols,
+                *symbol_parts,
                 args.target_freq,
                 "FUTURE_FEATURE",
             )
@@ -199,7 +228,7 @@ def main(args):
     reward_output_path = os.path.join(
         args.save_path,
         "MERGED_FEATURE",
-        args.symbols,
+        *symbol_parts,
         args.target_freq,
         "CONCURRENT_FEATURE",
         args.date + ".feather",
@@ -207,7 +236,7 @@ def main(args):
     future_output_path = os.path.join(
         args.save_path,
         "MERGED_FEATURE",
-        args.symbols,
+        *symbol_parts,
         args.target_freq,
         "FUTURE_FEATURE",
         args.date + ".feather",

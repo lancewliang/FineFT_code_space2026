@@ -9,6 +9,7 @@ import sys
 import time
 
 sys.path.append(".")
+from operator_futures.util import symbol_contract_path_parts
 
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ parser.add_argument(
 parser.add_argument(
     "--symbols", type=str, default="BTCUSDT", help="the name of the ticker"
 )
+parser.add_argument("--contract", type=str, default=None, help="the contract of the ticker")
 # date
 parser.add_argument(
     "--start_date",
@@ -79,6 +81,7 @@ def main(args):
     args.data_path_1= os.path.join(args.root_path, args.data_path_1)
     args.data_path_2 = os.path.join(args.root_path, args.data_path_2)
     args.save_path = os.path.join(args.root_path, args.save_path)
+    symbol_parts = symbol_contract_path_parts(args.symbols, args.contract)
     logger.info(
         "Starting merge-clean process: symbol=%s start_date=%s end_date=%s target_freq=%s concat_path=%s time_path=%s save_path=%s",
         args.symbols,
@@ -91,13 +94,13 @@ def main(args):
     )
     time_feature_path = os.path.join(
         args.data_path_2,
-        args.symbols,
+        *symbol_parts,
         args.target_freq,
         "{}-{}.feather".format(args.start_date, args.end_date),
     )
     cross_section_path = os.path.join(
         args.data_path_1,
-        args.symbols,
+        *symbol_parts,
         args.target_freq,
         "{}-{}.feather".format(args.start_date, args.end_date),
     )
@@ -111,11 +114,11 @@ def main(args):
     )
     all_feature_df = cross_section_df.join(time_feature_df, on="timestamp", how="inner")
 
-    if not os.path.exists(os.path.join(args.save_path, args.symbols, args.target_freq)):
-        os.makedirs(os.path.join(args.save_path, args.symbols, args.target_freq))
+    if not os.path.exists(os.path.join(args.save_path, *symbol_parts, args.target_freq)):
+        os.makedirs(os.path.join(args.save_path, *symbol_parts, args.target_freq))
     output_path = os.path.join(
         args.save_path,
-        args.symbols,
+        *symbol_parts,
         args.target_freq,
         "{}-{}.feather".format(args.start_date, args.end_date),
     )
