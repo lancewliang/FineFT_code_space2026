@@ -153,7 +153,13 @@ class Linear_Market_Dynamics_Model(object):
         if manifest_path.exists():
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         else:
-            manifest = {"valid_path": str(valid_root), "contracts": {}, "labels": {}}
+            manifest = {
+                "valid_path": str(valid_root),
+                "contracts": {},
+                "labels": {},
+                "skipped_contracts": {},
+            }
+        manifest.setdefault("skipped_contracts", {}).pop(contract_name, None)
 
         contract_file_count = sum(
             label_info["file_count"] for label_info in contract_labels.values()
@@ -172,6 +178,14 @@ class Linear_Market_Dynamics_Model(object):
         else:
             manifest.setdefault("contracts", {}).pop(contract_name, None)
 
+        manifest["labels"] = self._build_label_manifest(manifest)
+        manifest["contracts"] = dict(sorted(manifest.get("contracts", {}).items()))
+        manifest["skipped_contracts"] = dict(
+            sorted(manifest.get("skipped_contracts", {}).items())
+        )
+        self._write_manifest(manifest_path, manifest)
+
+    def _build_label_manifest(self, manifest):
         labels = {}
         for contract_record in manifest.get("contracts", {}).values():
             for label, label_info in contract_record.get("labels", {}).items():
@@ -188,12 +202,48 @@ class Linear_Market_Dynamics_Model(object):
                             "output_row_count": file_info["output_row_count"],
                         }
                     )
-        manifest["labels"] = dict(sorted(labels.items()))
-        manifest["contracts"] = dict(sorted(manifest.get("contracts", {}).items()))
+        return dict(sorted(labels.items()))
+
+    def _write_manifest(self, manifest_path, manifest):
         manifest_path.write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+
+    def _write_skip_manifest(
+        self,
+        manifest_path,
+        valid_root,
+        contract_name,
+        processed_path,
+        reason,
+        input_row_count,
+    ):
+        if manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        else:
+            manifest = {
+                "valid_path": str(valid_root),
+                "contracts": {},
+                "labels": {},
+                "skipped_contracts": {},
+            }
+        manifest.setdefault("contracts", {}).pop(contract_name, None)
+        manifest.setdefault("skipped_contracts", {})[contract_name] = {
+            "contract": contract_name,
+            "processed_path": str(processed_path),
+            "reason": reason,
+            "input_row_count": int(input_row_count),
+        }
+        manifest["labels"] = self._build_label_manifest(manifest)
+        manifest["contracts"] = dict(sorted(manifest.get("contracts", {}).items()))
+        manifest["skipped_contracts"] = dict(
+            sorted(manifest.get("skipped_contracts", {}).items())
+        )
+        self._write_manifest(manifest_path, manifest)
+
+    def _filter_padlen(self):
+        return 15
 
     def run(self):
         print("labeling start")
@@ -208,6 +258,25 @@ class Linear_Market_Dynamics_Model(object):
         process_data_path = processed_dir / f"valid_processed_{contract_name}.feather"
         raw_data.to_feather(process_data_path)
         self.data_path = str(process_data_path)
+        output_root = ticker_name_path / contract_name
+        filter_padlen = self._filter_padlen()
+        if len(raw_data) <= filter_padlen:
+            if output_root.exists():
+                shutil.rmtree(output_root)
+            reason = (
+                f"insufficient rows for dynamic slicing: "
+                f"{len(raw_data)} <= filter padlen {filter_padlen}"
+            )
+            print(f"skip {contract_name}: {reason}")
+            self._write_skip_manifest(
+                ticker_name_path / "slice_manifest.json",
+                ticker_name_path,
+                contract_name,
+                process_data_path,
+                reason,
+                len(raw_data),
+            )
+            return
 
         worker = util.Worker(
             self.data_path,
@@ -256,7 +325,6 @@ class Linear_Market_Dynamics_Model(object):
         # elif extension == "feather":
         #     merged_data.to_feather(process_datafile_path)
         print("labeling done")
-        output_root = ticker_name_path / contract_name
         if output_root.exists():
             shutil.rmtree(output_root)
         output_root.mkdir(parents=True, exist_ok=True)

@@ -740,7 +740,7 @@ dataset/{target_freq}/{symbol}/valid/<contract>/label_<k>/df_*.feather
 dataset/{target_freq}/{symbol}/valid/slice_manifest.json
 ```
 
-`valid/slice_manifest.json` 会记录两个视角：`contracts` 描述每个合约下非空 label 的文件、文件数、文件行数和合约总行数；`labels` 描述每个非空 label 跨合约的文件、文件数、文件行数和 label 总行数。没有生成文件的空 label 不会写入 manifest。
+`valid/slice_manifest.json` 会记录两个视角：`contracts` 描述每个合约下非空 label 的文件、文件数、文件行数和合约总行数；`labels` 描述每个非空 label 跨合约的文件、文件数、文件行数和 label 总行数。没有生成文件的空 label 不会写入 manifest。若某个 valid 合约行数不足以执行动态切片，`slice_model.py` 会跳过该合约并写入 `skipped_contracts`，不会为了凑长度跨合约拼接。
 
 `vae_data_creation.py` 会递归读取 `valid/<contract>/label_*/df_*.feather`，并按合约写入对应动态类别数组：
 

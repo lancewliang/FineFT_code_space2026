@@ -20,6 +20,18 @@ def _load_slice_model():
     return importlib.import_module("slice_model")
 
 
+def _load_slice_model_with_real_label_util():
+    datahandler_path = Path(__file__).resolve().parents[2] / "datahandler"
+    sys.path.insert(0, str(datahandler_path))
+    sys.modules.setdefault(
+        "market_dynamics_modeling_analysis",
+        types.ModuleType("market_dynamics_modeling_analysis"),
+    )
+    sys.modules.pop("label_util", None)
+    sys.modules.pop("slice_model", None)
+    return importlib.import_module("slice_model")
+
+
 def _args():
     return SimpleNamespace(
         data_path="dataset/fu/valid.feather",
@@ -113,6 +125,7 @@ def test_run_writes_contract_scoped_processed_and_label_outputs(tmp_path, monkey
     args.timestamp = "timestamp"
     args.dynamic_number = 2
     model = module.Linear_Market_Dynamics_Model(args)
+    model._filter_padlen = lambda: 0
 
     model.run()
 
@@ -155,6 +168,7 @@ def test_run_writes_contract_scoped_processed_and_label_outputs(tmp_path, monkey
     ).to_feather(second_data_path)
     args.data_path = str(second_data_path)
     model = module.Linear_Market_Dynamics_Model(args)
+    model._filter_padlen = lambda: 0
 
     model.run()
 
@@ -168,6 +182,43 @@ def test_run_writes_contract_scoped_processed_and_label_outputs(tmp_path, monkey
         "fu2505",
         "fu2509",
     ]
+
+
+def test_run_skips_and_records_contract_with_insufficient_rows(tmp_path):
+    module = _load_slice_model_with_real_label_util()
+    valid_dir = tmp_path / "dataset" / "10min" / "fu" / "valid"
+    data_path = valid_dir / "df_fu2401.feather"
+    stale_output = valid_dir / "fu2401" / "label_0"
+    stale_output.mkdir(parents=True)
+    (stale_output / "df_0.feather").write_text("stale", encoding="utf-8")
+    valid_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        {
+            "symbol": ["fu2401"] * 4,
+            "timestamp": pd.to_datetime(
+                [
+                    "2024-01-01 09:00:00",
+                    "2024-01-01 09:10:00",
+                    "2024-01-01 09:20:00",
+                    "2024-01-01 09:30:00",
+                ]
+            ),
+            "bid1_price": [100.0, 101.0, 102.0, 103.0],
+        }
+    ).to_feather(data_path)
+    args = _args()
+    args.data_path = str(data_path)
+    args.timestamp = "timestamp"
+
+    module.Linear_Market_Dynamics_Model(args).run()
+
+    manifest = json.loads((valid_dir / "slice_manifest.json").read_text())
+    assert "fu2401" not in manifest["contracts"]
+    assert manifest["labels"] == {}
+    assert manifest["skipped_contracts"]["fu2401"]["input_row_count"] == 4
+    assert "insufficient rows" in manifest["skipped_contracts"]["fu2401"]["reason"]
+    assert not (valid_dir / "fu2401").exists()
+    assert (valid_dir / "processed" / "valid_processed_fu2401.feather").exists()
 
 
 def test_dynamic_labeler_handles_small_slope_segment_count():
