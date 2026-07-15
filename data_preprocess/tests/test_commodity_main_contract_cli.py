@@ -366,6 +366,16 @@ def test_downscale_continuous_cli_reads_summary_and_writes_contract_outputs(tmp_
         / "5min"
         / "2026-01-05.feather"
     ).exists()
+    base_csv = (
+        output_root
+        / "BASE_FEATURE"
+        / "fu"
+        / "fu2602"
+        / "5min"
+        / "2026-01-05.csv"
+    )
+    assert base_csv.exists()
+    assert "timestamp" in pd.read_csv(base_csv).columns
     assert (
         output_root
         / "DOWNSCALE_ORDERBOOK_25"
@@ -373,6 +383,14 @@ def test_downscale_continuous_cli_reads_summary_and_writes_contract_outputs(tmp_
         / "fu2602"
         / "5min"
         / "2026-01-05.feather"
+    ).exists()
+    assert (
+        output_root
+        / "DOWNSCALE_ORDERBOOK_25"
+        / "fu"
+        / "fu2602"
+        / "5min"
+        / "2026-01-05.csv"
     ).exists()
 
 

@@ -175,6 +175,7 @@ from RL.DiHFT.low_level.pretrain_qtable_diagnostics import (
     prepare_pretrain_qtable_diagnostics,
     select_sample_from_plan,
 )
+from RL.DiHFT.low_level.loss_nan_diagnostics import log_loss_nan_diagnostics
 import copy
 
 
@@ -461,7 +462,7 @@ class Weighted_Contexts_DQN:
             self.device = "cuda"
         else:
             self.device = "cpu"
-        # self.device = "cpu"
+        self.device = "cpu"
         # log path
         self.experiment_name = args.experiment_name
         self.model_path = build_serial_model_path(
@@ -801,6 +802,35 @@ class Weighted_Contexts_DQN:
         )
         soft_copy_params(self.eval_net, self.target_net, self.tau)
         self.update_counter += 1
+        if torch.isnan(loss):
+            log_loss_nan_diagnostics(
+                logger=logger,
+                numeric_values={
+                    "loss": loss,
+                    "KL_div": KL_div,
+                    "td_loss": td_loss,
+                    "states": states,
+                    "next_states": states_,
+                    "actions": actions,
+                    "rewards": rewards,
+                    "dones": dones,
+                    "time_input": time_input,
+                    "next_time_input": time_input_,
+                    "previous_action": previous_action,
+                    "next_previous_action": previous_action_,
+                    "avaliable_action": avaliable_action,
+                    "next_avaliable_action": avaliable_action_,
+                    "current_sa_quantiles": current_sa_quantiles,
+                    "target_sa_quantiles": target_sa_quantiles,
+                    "predict_action_distrbution": predict_action_distrbution,
+                    "weighted_action_distribution": weighted_action_distribution,
+                    "q_value": q_value,
+                    "batch_weights": batch_weights,
+                },
+                info_values={"info": info, "info_": info_},
+                trainer=self,
+            )
+            raise ValueError("loss is nan")
         return loss.item(), KL_div.item(), td_loss.item()
 
     def act_single_context(self, state, info, context_index, epsilon):
@@ -972,6 +1002,7 @@ class Weighted_Contexts_DQN:
         update_count_before = self.update_counter
 
         for df_index in range(self.total_df_index_length):
+            df_index = 12
             train_df = train_df_cache[df_index]
             q_table = q_table_cache[df_index]
             first_row_indicators = ", ".join(

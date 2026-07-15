@@ -63,6 +63,49 @@ def test_summarize_rollout_diagnostics_counts_actions_and_positions():
     assert summary["position_switches"] == 2
 
 
+def test_build_loss_nan_diagnostics_identifies_nonfinite_training_data():
+    import numpy as np
+    import torch
+    from RL.DiHFT.low_level import loss_nan_diagnostics
+
+    diagnostics = loss_nan_diagnostics.build_loss_nan_diagnostics(
+        numeric_values={
+            "loss": torch.tensor(float("nan")),
+            "td_loss": torch.tensor(3.0),
+            "states": torch.tensor([[1.0, float("inf")]]),
+        },
+        info_values={
+            "info": {
+                "q_value": torch.tensor([[1.0, float("nan")]]),
+                "funding_count_down_hour": np.array([1.0, float("-inf")]),
+                "safe_value": [1.0, 2.0],
+            }
+        },
+    )
+
+    assert diagnostics["numeric"]["loss"]["nan_count"] == 1
+    assert diagnostics["numeric"]["td_loss"]["finite_count"] == 1
+    assert diagnostics["numeric"]["states"]["inf_count"] == 1
+    assert diagnostics["info_nonfinite"] == [
+        {
+            "path": "info.q_value",
+            "shape": [1, 2],
+            "dtype": "torch.float32",
+            "nan_count": 1,
+            "inf_count": 0,
+            "first_nonfinite_indices": [[0, 1]],
+        },
+        {
+            "path": "info.funding_count_down_hour",
+            "shape": [2],
+            "dtype": "float64",
+            "nan_count": 0,
+            "inf_count": 1,
+            "first_nonfinite_indices": [[1]],
+        },
+    ]
+
+
 def test_record_diverse_rollout_latest_metric_overwrites_existing_key():
     from RL.DiHFT.low_level import weight_advantage_pretrain as wap
 

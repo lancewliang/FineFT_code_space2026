@@ -97,6 +97,7 @@ def _write_downscaled_day(
         path = output_root / folder / symbol / contract / target_freq
         path.mkdir(parents=True, exist_ok=True)
         frame.write_ipc(path / f"{output_name}.feather")
+        frame.write_csv(path / f"{output_name}.csv")
     return trading_day
 
 

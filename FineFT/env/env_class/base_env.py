@@ -275,6 +275,8 @@ class Base_Env(gym.Env):
         return (
             state,
             {
+                "current_timestamp": current_timestamp,
+                "current_markprice": self.current_markprice,
                 "personal_state": self.initial_state,
                 "avaiable_action_list": avaiable_actions,
                 "avaliable_action": avaiable_action_mask,
@@ -436,8 +438,9 @@ class Base_Env(gym.Env):
                     "personal_state": {0, 0, 0, 0, self.leverage_choices[0]},
                     "avaiable_action_list": avaiable_actions,
                     "avaliable_action": avaiable_action_mask,
-                    "funding_count_down": previous_funding_timestamp
-                    - previous_timestamp,
+                    "previous_timestamp": previous_timestamp,
+                    "current_timestamp": current_timestamp,
+                    "funding_count_down": previous_funding_timestamp - previous_timestamp,
                     "funding_count_down_hour": hours,
                     "funding_count_down_minute": minutes,
                     "funding_count_down_second": seconds,
@@ -562,8 +565,9 @@ class Base_Env(gym.Env):
                         ),
                         "avaiable_action_list": avaiable_actions,
                         "avaliable_action": avaiable_action_mask,
-                        "funding_count_down": current_funding_timestamp
-                        - current_timestamp,
+                        "previous_timestamp": previous_timestamp,
+                        "current_timestamp": current_timestamp,
+                        "funding_count_down": current_funding_timestamp - current_timestamp,
                         "funding_count_down_hour": hours,
                         "funding_count_down_minute": minutes,
                         "funding_count_down_second": seconds,
@@ -663,10 +667,11 @@ class Base_Env(gym.Env):
                             self.position,
                             self.leverage,
                         ),
+                        "previous_timestamp": previous_timestamp,
+                        "current_timestamp": current_timestamp,
                         "avaiable_action_list": avaiable_actions,
                         "avaliable_action": avaiable_action_mask,
-                        "funding_count_down": current_funding_timestamp
-                        - current_timestamp,
+                        "funding_count_down": current_funding_timestamp - current_timestamp,
                         "funding_count_down_hour": hours,
                         "funding_count_down_minute": minutes,
                         "funding_count_down_second": seconds,
