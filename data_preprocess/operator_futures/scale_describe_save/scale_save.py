@@ -159,6 +159,7 @@ def main(args):
         len(out.columns),
     )
     out.write_ipc(output_dir / "df.feather")
+    out.write_csv(output_dir / "df.csv")
     np.save(output_dir / "state_features.npy", np.array(state_feature))
     df_describe.write_csv(output_dir / "df_describe.csv")
     logger.info(

@@ -14,6 +14,10 @@ from operator_futures.cross_section.base_feature_util import *
 logger = logging.getLogger(__name__)
 
 
+def _csv_path(feather_path: str) -> str:
+    return os.path.splitext(feather_path)[0] + ".csv"
+
+
 def configure_logging():
     logging.basicConfig(
         level=logging.INFO,
@@ -165,6 +169,9 @@ def main(args):
     kline_feature.write_ipc(kline_output_path)
     quotes_feature.write_ipc(quotes_output_path)
     snapshot_feature.write_ipc(snapshot_output_path)
+    kline_feature.write_csv(_csv_path(kline_output_path))
+    quotes_feature.write_csv(_csv_path(quotes_output_path))
+    snapshot_feature.write_csv(_csv_path(snapshot_output_path))
     logger.info(
         "Finished cross-section feature process: kline_rows=%d quotes_rows=%d snapshot_rows=%d elapsed_seconds=%.2f",
         kline_feature.height,

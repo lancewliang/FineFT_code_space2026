@@ -193,6 +193,8 @@ def test_ic_correlation_cli_writes_expected_files(tmp_path):
         tmp_path / "PREPROCESS_DATASET/commodity-futures/IC_RESULT/fu/5min/2026-01-05-2026-01-06"
     )
     assert (output_dir / "df.feather").exists()
+    assert (output_dir / "df.csv").exists()
+    assert pl.read_csv(output_dir / "df.csv").shape == pl.read_ipc(output_dir / "df.feather").shape
     assert (output_dir / "state_features.npy").exists()
     assert (output_dir / "correlation.csv").exists()
     assert np.load(output_dir / "state_features.npy", allow_pickle=True).size >= 0
@@ -373,6 +375,8 @@ def test_scale_save_cli_writes_expected_files(tmp_path):
         tmp_path / "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/5min/2026-01-05-2026-01-06"
     )
     assert (output_dir / "df.feather").exists()
+    assert (output_dir / "df.csv").exists()
+    assert pl.read_csv(output_dir / "df.csv").shape == pl.read_ipc(output_dir / "df.feather").shape
     assert (output_dir / "state_features.npy").exists()
     assert (output_dir / "df_describe.csv").exists()
     df = pl.read_ipc(output_dir / "df.feather")

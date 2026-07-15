@@ -135,14 +135,14 @@ def main(args):
     time_df.reset_index(inplace=True)
     if not os.path.exists(os.path.join(args.save_path, args.symbols, args.target_freq)):
         os.makedirs(os.path.join(args.save_path, args.symbols, args.target_freq))
-    time_df.to_feather(
-        os.path.join(
-            args.save_path,
-            args.symbols,
-            args.target_freq,
-            args.start_date + "-" + args.end_date + ".feather",
-        )
+    output_path = os.path.join(
+        args.save_path,
+        args.symbols,
+        args.target_freq,
+        args.start_date + "-" + args.end_date + ".feather",
     )
+    time_df.to_feather(output_path)
+    time_df.to_csv(os.path.splitext(output_path)[0] + ".csv", index=False)
 
 
 if __name__ == "__main__":

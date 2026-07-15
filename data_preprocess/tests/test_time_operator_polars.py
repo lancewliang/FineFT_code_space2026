@@ -112,6 +112,9 @@ def test_time_feature_cli_respects_orderbook_depth_and_output_contract(tmp_path)
     assert out.height > 0
     assert "bid5_price_log_return_2" in out.columns
     assert "bid6_price_log_return_2" not in out.columns
+    csv_output = output_file.with_suffix(".csv")
+    assert csv_output.exists()
+    assert pl.read_csv(csv_output).columns[0] == "timestamp"
 
 
 def test_get_multi_window_ohlcv_supports_multiple_windows_without_suffix_collision():

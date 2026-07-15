@@ -22,6 +22,10 @@ from operator_futures.time_operator.multi_processing_util import (
 logger = logging.getLogger(__name__)
 
 
+def _csv_path(feather_path: str) -> str:
+    return os.path.splitext(feather_path)[0] + ".csv"
+
+
 def configure_logging():
     logging.basicConfig(
         level=logging.INFO,
@@ -211,6 +215,7 @@ def main(args):
     )
     logger.info("Writing time feature output: output=%s rows=%d columns=%d", output_path, time_df.height, len(time_df.columns))
     time_df.write_ipc(output_path)
+    time_df.write_csv(_csv_path(output_path))
     logger.info(
         "Finished time feature process: rows=%d columns=%d elapsed_seconds=%.2f",
         time_df.height,
