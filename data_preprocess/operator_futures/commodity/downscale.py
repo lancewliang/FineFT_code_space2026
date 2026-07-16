@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta
 from typing import List
 
@@ -6,6 +7,8 @@ import polars as pl
 from .config import TradingSession, get_commodity_config
 from .main_contract import with_normalized_timestamp
 
+
+logger = logging.getLogger(__name__)
 
 BID_PRICE_COLUMNS = [f"BidPrice{level}" for level in range(1, 6)]
 ASK_PRICE_COLUMNS = [f"AskPrice{level}" for level in range(1, 6)]
@@ -24,6 +27,8 @@ SECOND_LEVEL_PRICE_COLUMNS = (
     ]
 )
 OHLC_PRICE_COLUMNS = ("OpenPrice", "HighPrice", "LowPrice")
+SOURCE_LINE_COLUMN = "_source_line_number"
+SECOND_LEVEL_ROW_COLUMN = "_second_level_row_number"
 
 
 def _polars_freq(target_freq: str) -> str:
@@ -117,7 +122,11 @@ def validate_best_quotes(df: pl.DataFrame, contract: str) -> None:
     limit_up_single_sided = (
         last_price.is_not_null()
         & upper_limit_price.is_not_null()
-        & ((last_price == upper_limit_price) | (high_price == upper_limit_price))
+        & (
+            (last_price == upper_limit_price)
+            | (high_price == upper_limit_price)
+            | (last_price == low_price)
+        )
         & pl.all_horizontal(
             [pl.col(column).is_null() for column in ASK_PRICE_COLUMNS]
         )
@@ -167,10 +176,51 @@ def drop_empty_depth_price_rows(df: pl.DataFrame) -> pl.DataFrame:
     return df.filter(~empty_depth_prices)
 
 
-def _fill_second_level_price_gaps(df: pl.DataFrame) -> pl.DataFrame:
+def _log_second_level_gap_fill_rows(
+    df: pl.DataFrame,
+    mask: pl.Expr,
+    *,
+    source_file: str | None,
+    rule: str,
+    columns: list[str],
+    fill_value_column: str,
+) -> None:
+    if not logger.isEnabledFor(logging.INFO):
+        return
+
+    logged = df.with_row_index(SECOND_LEVEL_ROW_COLUMN, offset=1).filter(mask)
+    if logged.is_empty():
+        return
+
+    select_columns = [SECOND_LEVEL_ROW_COLUMN]
+    if SOURCE_LINE_COLUMN in logged.columns:
+        select_columns.append(SOURCE_LINE_COLUMN)
+    if "timestamp" in logged.columns:
+        select_columns.append("timestamp")
+    select_columns.extend(columns)
+    select_columns.append(fill_value_column)
+
+    for row in logged.select(select_columns).iter_rows(named=True):
+        old_values = {column: row.get(column) for column in columns}
+        logger.info(
+            "Second-level gap filled: source_file=%s source_line=%s second_level_row=%s timestamp=%s rule=%s columns=%s old_values=%s new_value=%s",
+            source_file,
+            row.get(SOURCE_LINE_COLUMN),
+            row.get(SECOND_LEVEL_ROW_COLUMN),
+            row.get("timestamp"),
+            rule,
+            ",".join(columns),
+            old_values,
+            row.get(fill_value_column),
+        )
+
+
+def _fill_second_level_price_gaps(
+    df: pl.DataFrame, source_file: str | None = None
+) -> pl.DataFrame:
     if all(
         column in df.columns
-        for column in (*OHLC_PRICE_COLUMNS, "Volume", "Turnover")
+        for column in (*OHLC_PRICE_COLUMNS, "Volume", "Turnover", "LastPrice")
     ):
         empty_ohlc_no_trade = (
             pl.all_horizontal(
@@ -178,6 +228,14 @@ def _fill_second_level_price_gaps(df: pl.DataFrame) -> pl.DataFrame:
             )
             & (pl.col("Volume").fill_null(0) == 0)
             & (pl.col("Turnover").fill_null(0) == 0)
+        )
+        _log_second_level_gap_fill_rows(
+            df,
+            empty_ohlc_no_trade,
+            source_file=source_file,
+            rule="empty_ohlc_no_trade",
+            columns=list(OHLC_PRICE_COLUMNS),
+            fill_value_column="LastPrice",
         )
         df = df.with_columns(
             [
@@ -193,13 +251,17 @@ def _fill_second_level_price_gaps(df: pl.DataFrame) -> pl.DataFrame:
         column in df.columns
         for column in (
             "LastPrice",
+            "LowPrice",
             "UpperLimitPrice",
             *ASK_PRICE_COLUMNS,
             *ASK_VOLUME_COLUMNS,
         )
     ):
         limit_up_empty_asks = (
-            (pl.col("LastPrice") == pl.col("UpperLimitPrice"))
+            (
+                (pl.col("LastPrice") == pl.col("UpperLimitPrice"))
+                | (pl.col("HighPrice") == pl.col("UpperLimitPrice"))
+            )
             & pl.all_horizontal(
                 [pl.col(column).is_null() for column in ASK_PRICE_COLUMNS]
             )
@@ -207,6 +269,14 @@ def _fill_second_level_price_gaps(df: pl.DataFrame) -> pl.DataFrame:
                 [pl.col(column).fill_null(0) == 0 for column in ASK_VOLUME_COLUMNS]
             )
         ).fill_null(False)
+        _log_second_level_gap_fill_rows(
+            df,
+            limit_up_empty_asks,
+            source_file=source_file,
+            rule="limit_up_empty_asks",
+            columns=ASK_PRICE_COLUMNS,
+            fill_value_column="UpperLimitPrice",
+        )
         df = df.with_columns(
             [
                 pl.when(limit_up_empty_asks)
@@ -227,7 +297,10 @@ def _fill_second_level_price_gaps(df: pl.DataFrame) -> pl.DataFrame:
         )
     ):
         limit_down_empty_bids = (
-            (pl.col("LastPrice") == pl.col("LowerLimitPrice"))
+            (
+                (pl.col("LastPrice") == pl.col("LowerLimitPrice"))
+                | (pl.col("LowPrice") == pl.col("LowerLimitPrice"))
+            )
             & pl.all_horizontal(
                 [pl.col(column).is_null() for column in BID_PRICE_COLUMNS]
             )
@@ -235,6 +308,14 @@ def _fill_second_level_price_gaps(df: pl.DataFrame) -> pl.DataFrame:
                 [pl.col(column).fill_null(0) == 0 for column in BID_VOLUME_COLUMNS]
             )
         ).fill_null(False)
+        _log_second_level_gap_fill_rows(
+            df,
+            limit_down_empty_bids,
+            source_file=source_file,
+            rule="limit_down_empty_bids",
+            columns=BID_PRICE_COLUMNS,
+            fill_value_column="LowerLimitPrice",
+        )
         df = df.with_columns(
             [
                 pl.when(limit_down_empty_bids)
@@ -248,32 +329,59 @@ def _fill_second_level_price_gaps(df: pl.DataFrame) -> pl.DataFrame:
     for level in range(2, 6):
         price_column = f"AskPrice{level}"
         volume_column = f"AskVolume{level}"
+        previous_price_column = f"AskPrice{level - 1}"
         previous_volume_column = f"AskVolume{level - 1}"
         if all(
             column in df.columns
-            for column in (price_column, volume_column, previous_volume_column)
+            for column in (
+                price_column,
+                volume_column,
+                previous_price_column,
+                previous_volume_column,
+            )
         ):
             empty_ask_level = (
                 (pl.col(volume_column).fill_null(0) == 0)
                 & pl.col(price_column).is_null()
             )
-            df = df.with_columns(
-                pl.when(empty_ask_level)
-                .then(pl.col(previous_volume_column))
-                .otherwise(pl.col(volume_column))
-                .alias(volume_column)
+            _log_second_level_gap_fill_rows(
+                df,
+                empty_ask_level,
+                source_file=source_file,
+                rule=f"empty_ask_level_{level}",
+                columns=[volume_column],
+                fill_value_column=previous_volume_column,
             )
+            df = df.with_columns(
+                [
+                    pl.when(empty_ask_level)
+                    .then(pl.col(previous_price_column))
+                    .otherwise(pl.col(price_column))
+                    .alias(price_column),
+                    pl.when(empty_ask_level)
+                    .then(pl.col(previous_volume_column))
+                    .otherwise(pl.col(volume_column))
+                    .alias(volume_column),
+                ]
+            )
+    if SOURCE_LINE_COLUMN in df.columns:
+        return df.drop(SOURCE_LINE_COLUMN)
     return df
 
 
-def create_second_level_snapshots(df: pl.DataFrame) -> pl.DataFrame:
+def create_second_level_snapshots(
+    df: pl.DataFrame, source_file: str | None = None
+) -> pl.DataFrame:
     contract = (
         str(df.item(0, "InstrumentID"))
         if "InstrumentID" in df.columns and df.height
         else "unknown"
     )
+    normalized = with_normalized_timestamp(df)
+    if SOURCE_LINE_COLUMN not in normalized.columns:
+        normalized = normalized.with_row_index(SOURCE_LINE_COLUMN, offset=2)
     copied = drop_empty_depth_price_rows(
-        with_normalized_timestamp(df).with_columns(
+        normalized.with_columns(
             [
                 pl.col(column).cast(pl.Float64, strict=False).alias(column)
                 for column in SECOND_LEVEL_PRICE_COLUMNS
@@ -289,7 +397,7 @@ def create_second_level_snapshots(df: pl.DataFrame) -> pl.DataFrame:
         .agg(pl.exclude("timestamp").last())
         .sort("timestamp")
     )
-    return _fill_second_level_price_gaps(second)
+    return _fill_second_level_price_gaps(second, source_file=source_file)
 
 
 def _with_reference_price(df: pl.DataFrame) -> pl.DataFrame:

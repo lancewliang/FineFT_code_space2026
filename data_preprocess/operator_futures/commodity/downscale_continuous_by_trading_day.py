@@ -104,6 +104,7 @@ def _write_downscaled_day(
     symbol: str,
     contract: str,
     depth: int,
+    source_file: str | None = None,
 ) -> str:
     trading_days = (
         day_frame.select(pl.col("TradingDay").cast(pl.Utf8).unique().sort())
@@ -115,7 +116,7 @@ def _write_downscaled_day(
             f"Daily continuous file must contain one TradingDay: {trading_days}"
         )
     trading_day = trading_days[0]
-    second = create_second_level_snapshots(day_frame)
+    second = create_second_level_snapshots(day_frame, source_file=source_file)
     DataQualityValidator.validate_no_illegal_values(
         second,
         stage="second_level_snapshots",
@@ -166,6 +167,7 @@ def _downscale_task(task: DownscaleTask) -> tuple[str, str]:
         task.symbol,
         task.contract,
         task.depth,
+        source_file=str(task.source_file),
     )
     return task.contract, trading_day
 

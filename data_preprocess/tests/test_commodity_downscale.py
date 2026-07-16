@@ -1,4 +1,5 @@
 from datetime import datetime
+import logging
 from types import SimpleNamespace
 
 import polars as pl
@@ -327,6 +328,35 @@ def test_second_level_fills_empty_ohlc_with_last_price_when_no_trade():
     assert second.item(0, "LowPrice") == second.item(0, "LastPrice")
 
 
+def test_second_level_gap_fill_logs_source_rule_and_line(caplog):
+    raw = pl.read_csv(SAMPLE_PATH).head(2).with_columns(
+        pl.lit(None).alias("OpenPrice"),
+        pl.lit(None).alias("HighPrice"),
+        pl.lit(None).alias("LowPrice"),
+        pl.lit(0).alias("Volume"),
+        pl.lit(0.0).alias("Turnover"),
+    )
+
+    with caplog.at_level(logging.INFO, logger="operator_futures.commodity.downscale"):
+        create_second_level_snapshots(raw, source_file="input.csv")
+
+    fill_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "Second-level gap filled" in record.getMessage()
+    ]
+    messages = "\n".join(fill_messages)
+    assert len(fill_messages) == 2
+    assert "Second-level gap filled" in messages
+    assert "source_file=input.csv" in messages
+    assert "source_line=2" in messages
+    assert "source_line=3" in messages
+    assert "rule=empty_ohlc_no_trade" in messages
+    assert "columns=OpenPrice,HighPrice,LowPrice" in messages
+    assert "old_values={'OpenPrice': None, 'HighPrice': None, 'LowPrice': None}" in messages
+    assert "new_value=" in messages
+
+
 def test_second_level_fills_empty_ask_volumes_from_previous_level():
     raw = pl.read_csv(SAMPLE_PATH).head(1).with_columns(
         pl.lit(12).alias("AskVolume1"),
@@ -334,12 +364,33 @@ def test_second_level_fills_empty_ask_volumes_from_previous_level():
         pl.lit(0).alias("AskVolume2"),
         pl.lit(None).alias("AskPrice3"),
         pl.lit(0).alias("AskVolume3"),
+        pl.lit(None).alias("AskPrice4"),
+        pl.lit(0).alias("AskVolume4"),
+        pl.lit(None).alias("AskPrice5"),
+        pl.lit(0).alias("AskVolume5"),
     )
 
     second = create_second_level_snapshots(raw)
 
-    assert second.item(0, "AskVolume2") == 12
-    assert second.item(0, "AskVolume3") == 12
+    for level in range(2, 6):
+        assert second.item(0, f"AskVolume{level}") == 12
+
+
+def test_second_level_fills_empty_ask_price_and_volume_depth_gaps():
+    raw = pl.read_csv(SAMPLE_PATH).head(1).with_columns(
+        pl.lit(12345.0).alias("AskPrice3"),
+        pl.lit(7).alias("AskVolume3"),
+        pl.lit(None).alias("AskPrice4"),
+        pl.lit(0).alias("AskVolume4"),
+        pl.lit(None).alias("AskPrice5"),
+        pl.lit(0).alias("AskVolume5"),
+    )
+
+    second = create_second_level_snapshots(raw)
+
+    for level in (4, 5):
+        assert second.item(0, f"AskPrice{level}") == 12345.0
+        assert second.item(0, f"AskVolume{level}") == 7
 
 
 def test_second_level_fills_limit_up_empty_ask_prices():
@@ -347,6 +398,28 @@ def test_second_level_fills_limit_up_empty_ask_prices():
     upper_limit = raw.item(0, "UpperLimitPrice")
     raw = raw.with_columns(
         [pl.lit(upper_limit).alias("LastPrice")]
+        + [
+            pl.lit(None).alias(f"AskPrice{level}")
+            for level in range(1, 6)
+        ]
+        + [
+            pl.lit(0).alias(f"AskVolume{level}")
+            for level in range(1, 6)
+        ]
+    )
+
+    second = create_second_level_snapshots(raw)
+
+    for level in range(1, 6):
+        assert second.item(0, f"AskPrice{level}") == upper_limit
+
+
+def test_second_level_fills_low_price_empty_ask_prices():
+    raw = pl.read_csv(SAMPLE_PATH).filter(pl.col("LowPrice").is_not_null()).head(1)
+    low_price = raw.item(0, "LowPrice")
+    upper_limit = raw.item(0, "UpperLimitPrice")
+    raw = raw.with_columns(
+        [pl.lit(low_price).alias("LastPrice")]
         + [
             pl.lit(None).alias(f"AskPrice{level}")
             for level in range(1, 6)

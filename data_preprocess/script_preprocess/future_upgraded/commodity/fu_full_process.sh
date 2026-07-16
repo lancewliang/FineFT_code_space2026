@@ -102,7 +102,7 @@ run_commodity_downscale_continuous_by_trading_day() {
         --output_root "${output_root}" \
         --target_freq "${target_freq}" \
         --symbol "${symbol}" \
-        --depth 5 \
+        --depth 5 --max_workers 7 \
         "${contract_args[@]}"
 }
 
