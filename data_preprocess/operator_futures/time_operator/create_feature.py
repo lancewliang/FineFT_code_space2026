@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import polars as pl
 import os
 import re
 from datetime import datetime
@@ -8,6 +9,7 @@ import sys
 
 sys.path.append(".")
 from operator_futures.util import find_ohlcv_groups, find_ohlc_groups
+from operator_futures.data_quality import DataQualityValidator
 from memory_profiler import profile
 from operator_futures.time_operator.time_operator_util import (
     process_ohlcv,
@@ -67,6 +69,15 @@ parser.add_argument(
 )
 
 
+def _validate_no_illegal_values(df: pd.DataFrame, *, stage: str, args) -> None:
+    DataQualityValidator.validate_no_illegal_values(
+        pl.from_pandas(df),
+        stage=stage,
+        contract=args.symbols,
+        trading_day=args.start_date + "-" + args.end_date,
+    )
+
+
 def main(args):
     time_feature_list_all = []
     windows = list(map(int, args.windows.split(",")))
@@ -80,6 +91,7 @@ def main(args):
             args.start_date + "-" + args.end_date + ".feather",
         )
     )
+    _validate_no_illegal_values(original_df, stage="time_feature_input", args=args)
     original_df.set_index("timestamp", inplace=True)
     ohlcv_features, _ = find_ohlcv_groups(original_df)
     ohlc_features, _ = find_ohlc_groups(original_df)
@@ -133,6 +145,7 @@ def main(args):
         time_feature_list_all.append(p_process_ohlc)
     time_df = pd.concat(time_feature_list_all, axis=1)
     time_df.reset_index(inplace=True)
+    _validate_no_illegal_values(time_df, stage="time_feature_output", args=args)
     if not os.path.exists(os.path.join(args.save_path, args.symbols, args.target_freq)):
         os.makedirs(os.path.join(args.save_path, args.symbols, args.target_freq))
     output_path = os.path.join(

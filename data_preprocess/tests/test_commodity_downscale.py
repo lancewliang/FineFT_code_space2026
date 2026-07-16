@@ -1,10 +1,12 @@
 from datetime import datetime
+from types import SimpleNamespace
 
 import polars as pl
 import pytest
 
 from operator_futures.commodity.main_contract import MainContractSummary
 from operator_futures.data_quality import DataQualityValidator
+import operator_futures.commodity.downscale_continuous_by_trading_day as continuous_downscale
 from operator_futures.commodity.downscale_continuous_by_trading_day import (
     _write_downscaled_day,
     iter_summary_trading_days,
@@ -57,6 +59,106 @@ def test_iter_summary_trading_days_accepts_summary_model(tmp_path):
     assert days[0].contract == "fu2601"
     assert days[0].date == "2026-01-05"
     assert days[0].source_file == source_file
+
+
+def test_downscale_continuous_terminates_process_pool_on_worker_error(
+    tmp_path, monkeypatch
+):
+    source_file_1 = tmp_path / "fu2601_20260105.csv"
+    source_file_2 = tmp_path / "fu2601_20260106.csv"
+    source_file_1.write_text("placeholder\n", encoding="utf-8")
+    source_file_2.write_text("placeholder\n", encoding="utf-8")
+    summary = MainContractSummary.from_dict(
+        {
+            "symbol": "fu",
+            "commodity_name": "燃料油",
+            "start_date": "2026-01-05",
+            "end_date": "2026-01-07",
+            "selection_rule": "monthly_top_2_by_sum_daily_volume_delta",
+            "contracts": [
+                {
+                    "contract": "fu2601",
+                    "start_trading_day": "20260105",
+                    "end_trading_day": "20260106",
+                    "trading_day_count": 2,
+                    "selected_months": ["2026-01"],
+                    "trading_days": [
+                        {
+                            "trading_day": "20260105",
+                            "date": "2026-01-05",
+                            "source_file": str(source_file_1),
+                            "daily_volume": 100.0,
+                        },
+                        {
+                            "trading_day": "20260106",
+                            "date": "2026-01-06",
+                            "source_file": str(source_file_2),
+                            "daily_volume": 90.0,
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    class FailingPool:
+        def __init__(self):
+            self.closed = False
+            self.initializer = None
+            self.joined = False
+            self.processes = None
+            self.tasks = None
+            self.terminated = False
+
+        def imap_unordered(self, worker, tasks):
+            self.tasks = list(tasks)
+            yield ("fu2601", "20260105")
+            raise RuntimeError("worker failed")
+
+        def close(self):
+            self.closed = True
+
+        def terminate(self):
+            self.terminated = True
+
+        def join(self):
+            self.joined = True
+
+    pool = FailingPool()
+
+    def build_pool(processes, initializer):
+        pool.processes = processes
+        pool.initializer = initializer
+        return pool
+
+    monkeypatch.setattr(
+        continuous_downscale,
+        "mp",
+        SimpleNamespace(get_context=lambda method: SimpleNamespace(Pool=build_pool)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        continuous_downscale,
+        "load_main_contract_summary",
+        lambda summary_path: summary,
+    )
+
+    with pytest.raises(RuntimeError, match="worker failed"):
+        continuous_downscale.downscale_continuous_by_trading_day(
+            summary_path=tmp_path / "summary.json",
+            output_root=tmp_path,
+            target_freq="5min",
+            symbol="fu",
+            max_workers=2,
+        )
+
+    assert pool.processes == 2
+    assert pool.initializer is continuous_downscale.configure_logging
+    assert pool.tasks is not None
+    assert len(pool.tasks) == 2
+    assert pool.terminated
+    assert pool.joined
+    assert not pool.closed
 
 
 def test_sample_file_can_create_depth_five_outputs():
@@ -238,6 +340,48 @@ def test_second_level_fills_empty_ask_volumes_from_previous_level():
 
     assert second.item(0, "AskVolume2") == 12
     assert second.item(0, "AskVolume3") == 12
+
+
+def test_second_level_fills_limit_up_empty_ask_prices():
+    raw = pl.read_csv(SAMPLE_PATH).head(1)
+    upper_limit = raw.item(0, "UpperLimitPrice")
+    raw = raw.with_columns(
+        [pl.lit(upper_limit).alias("LastPrice")]
+        + [
+            pl.lit(None).alias(f"AskPrice{level}")
+            for level in range(1, 6)
+        ]
+        + [
+            pl.lit(0).alias(f"AskVolume{level}")
+            for level in range(1, 6)
+        ]
+    )
+
+    second = create_second_level_snapshots(raw)
+
+    for level in range(1, 6):
+        assert second.item(0, f"AskPrice{level}") == upper_limit
+
+
+def test_second_level_fills_limit_down_empty_bid_prices():
+    raw = pl.read_csv(SAMPLE_PATH).head(1)
+    lower_limit = raw.item(0, "LowerLimitPrice")
+    raw = raw.with_columns(
+        [pl.lit(lower_limit).alias("LastPrice")]
+        + [
+            pl.lit(None).alias(f"BidPrice{level}")
+            for level in range(1, 6)
+        ]
+        + [
+            pl.lit(0).alias(f"BidVolume{level}")
+            for level in range(1, 6)
+        ]
+    )
+
+    second = create_second_level_snapshots(raw)
+
+    for level in range(1, 6):
+        assert second.item(0, f"BidPrice{level}") == lower_limit
 
 
 def test_second_level_drops_rows_with_all_depth_prices_null():

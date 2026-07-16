@@ -189,6 +189,62 @@ def _fill_second_level_price_gaps(df: pl.DataFrame) -> pl.DataFrame:
             ]
         )
 
+    if all(
+        column in df.columns
+        for column in (
+            "LastPrice",
+            "UpperLimitPrice",
+            *ASK_PRICE_COLUMNS,
+            *ASK_VOLUME_COLUMNS,
+        )
+    ):
+        limit_up_empty_asks = (
+            (pl.col("LastPrice") == pl.col("UpperLimitPrice"))
+            & pl.all_horizontal(
+                [pl.col(column).is_null() for column in ASK_PRICE_COLUMNS]
+            )
+            & pl.all_horizontal(
+                [pl.col(column).fill_null(0) == 0 for column in ASK_VOLUME_COLUMNS]
+            )
+        ).fill_null(False)
+        df = df.with_columns(
+            [
+                pl.when(limit_up_empty_asks)
+                .then(pl.col("UpperLimitPrice"))
+                .otherwise(pl.col(column))
+                .alias(column)
+                for column in ASK_PRICE_COLUMNS
+            ]
+        )
+
+    if all(
+        column in df.columns
+        for column in (
+            "LastPrice",
+            "LowerLimitPrice",
+            *BID_PRICE_COLUMNS,
+            *BID_VOLUME_COLUMNS,
+        )
+    ):
+        limit_down_empty_bids = (
+            (pl.col("LastPrice") == pl.col("LowerLimitPrice"))
+            & pl.all_horizontal(
+                [pl.col(column).is_null() for column in BID_PRICE_COLUMNS]
+            )
+            & pl.all_horizontal(
+                [pl.col(column).fill_null(0) == 0 for column in BID_VOLUME_COLUMNS]
+            )
+        ).fill_null(False)
+        df = df.with_columns(
+            [
+                pl.when(limit_down_empty_bids)
+                .then(pl.col("LowerLimitPrice"))
+                .otherwise(pl.col(column))
+                .alias(column)
+                for column in BID_PRICE_COLUMNS
+            ]
+        )
+
     for level in range(2, 6):
         price_column = f"AskPrice{level}"
         volume_column = f"AskVolume{level}"

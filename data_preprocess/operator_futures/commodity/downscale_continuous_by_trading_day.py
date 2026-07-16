@@ -2,6 +2,7 @@ import argparse
 from datetime import datetime
 from dataclasses import dataclass
 import logging
+import multiprocessing as mp
 from pathlib import Path
 import time
 
@@ -61,6 +62,17 @@ class SummaryTradingDaySource:
     contract: str
     date: str
     source_file: Path
+
+
+@dataclass(frozen=True)
+class DownscaleTask:
+    contract: str
+    date: str
+    source_file: Path
+    output_root: Path
+    target_freq: str
+    symbol: str
+    depth: int
 
 
 def iter_summary_trading_days(
@@ -138,6 +150,58 @@ def _write_downscaled_day(
     return trading_day
 
 
+def _downscale_task(task: DownscaleTask) -> tuple[str, str]:
+    raw = pl.read_csv(task.source_file)
+    logger.info(
+        "Downscaling commodity contract source file: contract=%s date=%s input=%s rows=%d",
+        task.contract,
+        task.date,
+        task.source_file,
+        raw.height,
+    )
+    trading_day = _write_downscaled_day(
+        raw,
+        task.output_root,
+        task.target_freq,
+        task.symbol,
+        task.contract,
+        task.depth,
+    )
+    return task.contract, trading_day
+
+
+def _run_downscale_tasks(
+    tasks: list[DownscaleTask],
+    max_workers: int | None = None,
+) -> list[tuple[str, str]]:
+    if max_workers is not None and max_workers < 1:
+        raise ValueError("max_workers must be at least 1")
+    if not tasks:
+        return []
+
+    # Polars uses native thread pools internally. Spawning clean child processes
+    # avoids inheriting an initialized parent-side thread state via fork.
+    pool = mp.get_context("spawn").Pool(
+        processes=max_workers,
+        initializer=configure_logging,
+    )
+    processed: list[tuple[str, str]] = []
+    try:
+        for result in pool.imap_unordered(_downscale_task, tasks):
+            processed.append(result)
+    except BaseException:
+        logger.exception(
+            "Commodity summary downscale worker failed; terminating process pool"
+        )
+        pool.terminate()
+        raise
+    else:
+        pool.close()
+        return processed
+    finally:
+        pool.join()
+
+
 def downscale_continuous_by_trading_day(
     summary_path: Path,
     output_root: Path,
@@ -145,37 +209,33 @@ def downscale_continuous_by_trading_day(
     symbol: str,
     depth: int = 5,
     contract: str | None = None,
+    max_workers: int | None = None,
 ) -> None:
     started_at = time.monotonic()
     logger.info(
-        "Starting commodity summary downscale: summary=%s output_root=%s target_freq=%s symbol=%s contract=%s depth=%d",
+        "Starting commodity summary downscale: summary=%s output_root=%s target_freq=%s symbol=%s contract=%s depth=%d max_workers=%s",
         summary_path,
         output_root,
         target_freq,
         symbol,
         contract,
         depth,
+        max_workers,
     )
     summary = load_main_contract_summary(summary_path)
-    processed = []
-    for item in iter_summary_trading_days(summary, contract):
-        raw = pl.read_csv(item.source_file)
-        logger.info(
-            "Downscaling commodity contract source file: contract=%s date=%s input=%s rows=%d",
-            item.contract,
-            item.date,
-            item.source_file,
-            raw.height,
+    tasks = [
+        DownscaleTask(
+            contract=item.contract,
+            date=item.date,
+            source_file=item.source_file,
+            output_root=output_root,
+            target_freq=target_freq,
+            symbol=symbol,
+            depth=depth,
         )
-        trading_day = _write_downscaled_day(
-            raw,
-            output_root,
-            target_freq,
-            symbol,
-            item.contract,
-            depth,
-        )
-        processed.append((item.contract, trading_day))
+        for item in iter_summary_trading_days(summary, contract)
+    ]
+    processed = _run_downscale_tasks(tasks, max_workers=max_workers)
 
     logger.info(
         "Finished commodity summary downscale: contract_days=%d elapsed_seconds=%.2f",
@@ -194,6 +254,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--symbol", default="fu")
     parser.add_argument("--contract")
     parser.add_argument("--depth", type=int, default=5)
+    parser.add_argument("--max_workers", type=int)
     return parser.parse_args()
 
 
@@ -207,6 +268,7 @@ def main() -> None:
         symbol=args.symbol,
         depth=args.depth,
         contract=args.contract,
+        max_workers=args.max_workers,
     )
 
 
