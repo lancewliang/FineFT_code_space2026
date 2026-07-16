@@ -413,7 +413,7 @@ def test_scale_save_cli_rejects_input_nan_before_writing_outputs(tmp_path):
     assert result.returncode != 0
     assert "input" in combined_output
     assert str(input_file) in combined_output
-    assert "feature_a" in combined_output
+    assert "feature_a(count=1, rows=[2])" in combined_output
     assert not (output_dir / "df.feather").exists()
     assert not (output_dir / "df.csv").exists()
     assert not (output_dir / "state_features.npy").exists()
@@ -432,7 +432,7 @@ def test_scale_save_cli_rejects_output_nan_before_writing_outputs(tmp_path):
     assert result.returncode != 0
     assert "output" in combined_output
     assert str(output_dir / "df.feather") in combined_output
-    assert "feature_a" in combined_output
+    assert "feature_a(count=12, rows=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])" in combined_output
     assert not (output_dir / "df.feather").exists()
     assert not (output_dir / "df.csv").exists()
     assert not (output_dir / "state_features.npy").exists()

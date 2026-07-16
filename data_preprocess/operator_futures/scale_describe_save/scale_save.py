@@ -15,6 +15,7 @@ NAN_CHECK_DTYPES = {
     pl.Float32,
     pl.Float64,
 }
+NAN_ROW_PREVIEW_LIMIT = 20
 
 
 def configure_logging():
@@ -24,13 +25,22 @@ def configure_logging():
     )
 
 
-def columns_with_nan(df: pl.DataFrame) -> list[str]:
-    nan_columns = []
+def columns_with_nan(df: pl.DataFrame) -> dict[str, tuple[int, list[int]]]:
+    nan_columns = {}
     for column, dtype in df.schema.items():
         if dtype not in NAN_CHECK_DTYPES:
             continue
-        if df.select(pl.col(column).is_nan().any()).item():
-            nan_columns.append(column)
+        nan_count = df.select(pl.col(column).is_nan().sum()).item()
+        if nan_count:
+            rows = (
+                df.with_row_index("__row_nr")
+                .filter(pl.col(column).is_nan())
+                .select("__row_nr")
+                .head(NAN_ROW_PREVIEW_LIMIT)
+                .to_series()
+                .to_list()
+            )
+            nan_columns[column] = (nan_count, rows)
     return nan_columns
 
 
@@ -38,8 +48,11 @@ def validate_no_nan(df: pl.DataFrame, *, path: Path, stage: str) -> None:
     nan_columns = columns_with_nan(df)
     if not nan_columns:
         return
-    columns = ", ".join(nan_columns)
-    raise ValueError(f"NaN detected during {stage} validation for {path}: columns={columns}")
+    columns = "; ".join(
+        f"{column}(count={count}, rows={rows})" for column, (count, rows) in nan_columns.items()
+    )
+    logger.error(f"NaN detected during {stage} validation for {path}: columns={columns}")
+    raise ValueError("NaN detected during validation")
 
 
 parser = argparse.ArgumentParser()

@@ -137,6 +137,42 @@
                 "--long_estimated_rate",
                 "0"
             ]
+        },
+        {
+            "name": "scale_save.py (commodity)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/data_preprocess/operator_futures/scale_describe_save/scale_save.py",
+            "python": "/home/lanceliang/miniconda3/envs/finetf/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/data_preprocess"
+            },
+            "args": [
+                "--symbols",
+                "fu",
+                "--contract",
+                "fu2411",
+                "--target_freq",
+                "10min",
+                "--start_date",
+                "2024-01-01",
+                "--end_date",
+                "2024-12-01",
+                "--root_path",
+                "${workspaceFolder}",
+                "--data_path",
+                "PREPROCESS_DATASET/commodity-futures/IC_RESULT",
+                "--save_path",
+                "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/",
+                "--market_type",
+                "commodity_futures",
+                "--orderbook_depth",
+                "5",
+                "--ic_choice",
+                "ic"
+            ]
         }
     ],
     "inputs": [
@@ -169,6 +205,36 @@
             "type": "promptString",
             "description": "epoch_num",
             "default": "1"
+        },
+        {
+            "id": "commodity_symbol",
+            "type": "promptString",
+            "description": "Commodity symbol",
+            "default": "fu"
+        },
+        {
+            "id": "commodity_contract",
+            "type": "promptString",
+            "description": "Commodity contract",
+            "default": "fu2405"
+        },
+        {
+            "id": "commodity_target_freq",
+            "type": "promptString",
+            "description": "Commodity target_freq",
+            "default": "10min"
+        },
+        {
+            "id": "commodity_start_date",
+            "type": "promptString",
+            "description": "Commodity start_date",
+            "default": "2024-01-01"
+        },
+        {
+            "id": "commodity_end_date",
+            "type": "promptString",
+            "description": "Commodity end_date",
+            "default": "2024-12-01"
         }
     ]
 }

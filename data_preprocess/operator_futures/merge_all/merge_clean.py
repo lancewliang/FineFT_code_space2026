@@ -15,6 +15,10 @@ from operator_futures.util import symbol_contract_path_parts
 logger = logging.getLogger(__name__)
 
 
+def _csv_path(feather_path: str) -> str:
+    return os.path.splitext(feather_path)[0] + ".csv"
+
+
 def configure_logging():
     logging.basicConfig(
         level=logging.INFO,
@@ -124,6 +128,7 @@ def main(args):
     )
     logger.info("Writing merge-clean output: output=%s rows=%d columns=%d", output_path, all_feature_df.height, len(all_feature_df.columns))
     all_feature_df.write_ipc(output_path)
+    all_feature_df.write_csv(_csv_path(output_path))
     logger.info(
         "Finished merge-clean process: rows=%d columns=%d elapsed_seconds=%.2f",
         all_feature_df.height,
