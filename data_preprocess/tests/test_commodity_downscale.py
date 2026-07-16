@@ -125,6 +125,36 @@ def test_illegal_value_validation_reports_null_nan_and_infinite(caplog):
     assert "Illegal data detected" in caplog.text
 
 
+def test_illegal_value_validation_checks_only_requested_columns():
+    frame = pl.DataFrame(
+        {
+            "checked": [1.0, 2.0],
+            "ignored": [None, float("nan")],
+        }
+    )
+
+    DataQualityValidator.validate_no_illegal_values(
+        frame,
+        stage="test_stage",
+        feature_name="TEST_FEATURE",
+        contract="fu2601",
+        trading_day="20260105",
+        columns=["checked"],
+    )
+
+
+def test_continuous_downscale_ignores_unused_second_level_null_columns(tmp_path):
+    raw = pl.read_csv(SAMPLE_PATH).head(2).with_columns(
+        pl.col("LastPrice").alias("LowPrice"),
+        pl.col("LastPrice").alias("HighPrice"),
+    )
+
+    trading_day = _write_downscaled_day(raw, tmp_path, "5min", "fu", "fu2302", depth=5)
+
+    assert trading_day == "20230104"
+    assert list(tmp_path.rglob("*.feather"))
+
+
 def test_continuous_downscale_rejects_illegal_second_level_values(tmp_path, caplog):
     raw = pl.read_csv(SAMPLE_PATH).head(2).with_columns(
         pl.when(pl.int_range(pl.len()) == 0)
@@ -177,6 +207,37 @@ def test_second_level_snapshots_handle_string_quote_columns():
     assert second.height == 1
     assert second.item(0, "BidPrice1") == 2593.0
     assert second.item(0, "AskPrice1") == 2638.0
+
+
+def test_second_level_fills_empty_ohlc_with_last_price_when_no_trade():
+    raw = pl.read_csv(SAMPLE_PATH).head(1).with_columns(
+        pl.lit(None).alias("OpenPrice"),
+        pl.lit(None).alias("HighPrice"),
+        pl.lit(None).alias("LowPrice"),
+        pl.lit(0).alias("Volume"),
+        pl.lit(0.0).alias("Turnover"),
+    )
+
+    second = create_second_level_snapshots(raw)
+
+    assert second.item(0, "OpenPrice") == second.item(0, "LastPrice")
+    assert second.item(0, "HighPrice") == second.item(0, "LastPrice")
+    assert second.item(0, "LowPrice") == second.item(0, "LastPrice")
+
+
+def test_second_level_fills_empty_ask_volumes_from_previous_level():
+    raw = pl.read_csv(SAMPLE_PATH).head(1).with_columns(
+        pl.lit(12).alias("AskVolume1"),
+        pl.lit(None).alias("AskPrice2"),
+        pl.lit(0).alias("AskVolume2"),
+        pl.lit(None).alias("AskPrice3"),
+        pl.lit(0).alias("AskVolume3"),
+    )
+
+    second = create_second_level_snapshots(raw)
+
+    assert second.item(0, "AskVolume2") == 12
+    assert second.item(0, "AskVolume3") == 12
 
 
 def test_second_level_drops_rows_with_all_depth_prices_null():

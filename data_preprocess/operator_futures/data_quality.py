@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Iterable
 
 import polars as pl
 
@@ -18,10 +19,19 @@ class DataQualityValidator:
         feature_name: str | None = None,
         contract: str,
         trading_day: str,
+        columns: Iterable[str] | None = None,
     ) -> None:
         details = []
         row_conditions = []
-        for column, dtype in zip(frame.columns, frame.dtypes):
+        schema = frame.schema
+        checked_columns = (
+            list(dict.fromkeys(columns)) if columns is not None else frame.columns
+        )
+        for column in checked_columns:
+            if column not in schema:
+                details.append(f"{column}:missing=1")
+                continue
+            dtype = schema[column]
             null_expr = pl.col(column).is_null()
             null_count = frame.select(null_expr.sum()).item()
             if null_count:
@@ -75,6 +85,7 @@ def validate_no_illegal_values(
     feature_name: str | None = None,
     contract: str,
     trading_day: str,
+    columns: Iterable[str] | None = None,
 ) -> None:
     DataQualityValidator.validate_no_illegal_values(
         frame,
@@ -82,4 +93,5 @@ def validate_no_illegal_values(
         feature_name=feature_name,
         contract=contract,
         trading_day=trading_day,
+        columns=columns,
     )

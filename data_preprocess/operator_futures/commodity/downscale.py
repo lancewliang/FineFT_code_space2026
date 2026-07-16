@@ -16,12 +16,14 @@ SECOND_LEVEL_PRICE_COLUMNS = (
     DEPTH_PRICE_COLUMNS
     + [
         "LastPrice",
+        "OpenPrice",
         "LowPrice",
         "HighPrice",
         "LowerLimitPrice",
         "UpperLimitPrice",
     ]
 )
+OHLC_PRICE_COLUMNS = ("OpenPrice", "HighPrice", "LowPrice")
 
 
 def _polars_freq(target_freq: str) -> str:
@@ -165,6 +167,49 @@ def drop_empty_depth_price_rows(df: pl.DataFrame) -> pl.DataFrame:
     return df.filter(~empty_depth_prices)
 
 
+def _fill_second_level_price_gaps(df: pl.DataFrame) -> pl.DataFrame:
+    if all(
+        column in df.columns
+        for column in (*OHLC_PRICE_COLUMNS, "Volume", "Turnover")
+    ):
+        empty_ohlc_no_trade = (
+            pl.all_horizontal(
+                [pl.col(column).is_null() for column in OHLC_PRICE_COLUMNS]
+            )
+            & (pl.col("Volume").fill_null(0) == 0)
+            & (pl.col("Turnover").fill_null(0) == 0)
+        )
+        df = df.with_columns(
+            [
+                pl.when(empty_ohlc_no_trade)
+                .then(pl.col("LastPrice"))
+                .otherwise(pl.col(column))
+                .alias(column)
+                for column in OHLC_PRICE_COLUMNS
+            ]
+        )
+
+    for level in range(2, 6):
+        price_column = f"AskPrice{level}"
+        volume_column = f"AskVolume{level}"
+        previous_volume_column = f"AskVolume{level - 1}"
+        if all(
+            column in df.columns
+            for column in (price_column, volume_column, previous_volume_column)
+        ):
+            empty_ask_level = (
+                (pl.col(volume_column).fill_null(0) == 0)
+                & pl.col(price_column).is_null()
+            )
+            df = df.with_columns(
+                pl.when(empty_ask_level)
+                .then(pl.col(previous_volume_column))
+                .otherwise(pl.col(volume_column))
+                .alias(volume_column)
+            )
+    return df
+
+
 def create_second_level_snapshots(df: pl.DataFrame) -> pl.DataFrame:
     contract = (
         str(df.item(0, "InstrumentID"))
@@ -181,13 +226,14 @@ def create_second_level_snapshots(df: pl.DataFrame) -> pl.DataFrame:
         )
     )
     validate_best_quotes(copied, contract)
-    return (
+    second = (
         copied.sort("timestamp")
         .with_columns(pl.col("timestamp").dt.truncate("1s").alias("timestamp"))
         .group_by("timestamp", maintain_order=True)
         .agg(pl.exclude("timestamp").last())
         .sort("timestamp")
     )
+    return _fill_second_level_price_gaps(second)
 
 
 def _with_reference_price(df: pl.DataFrame) -> pl.DataFrame:

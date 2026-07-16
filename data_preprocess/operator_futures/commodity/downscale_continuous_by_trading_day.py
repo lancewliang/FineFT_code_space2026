@@ -10,6 +10,10 @@ import polars as pl
 from operator_futures.data_quality import DataQualityValidator
 
 from .downscale import (
+    ASK_PRICE_COLUMNS,
+    ASK_VOLUME_COLUMNS,
+    BID_PRICE_COLUMNS,
+    BID_VOLUME_COLUMNS,
     create_second_level_snapshots,
     downscale_base_features,
     downscale_derivative_reference,
@@ -20,6 +24,22 @@ from .main_contract import MainContractSummary, load_main_contract_summary
 
 
 logger = logging.getLogger(__name__)
+
+
+SECOND_LEVEL_DOWNSCALE_REQUIRED_COLUMNS = (
+    "timestamp",
+    "LastPrice",
+    "LowPrice",
+    "HighPrice",
+    "LowerLimitPrice",
+    "UpperLimitPrice",
+    "Volume",
+    "Turnover",
+    *BID_PRICE_COLUMNS,
+    *ASK_PRICE_COLUMNS,
+    *BID_VOLUME_COLUMNS,
+    *ASK_VOLUME_COLUMNS,
+)
 
 
 def configure_logging() -> None:
@@ -89,6 +109,7 @@ def _write_downscaled_day(
         stage="second_level_snapshots",
         contract=contract,
         trading_day=trading_day,
+        columns=SECOND_LEVEL_DOWNSCALE_REQUIRED_COLUMNS,
     )
     outputs = {
         "DOWNSCALE_DERTIC": downscale_derivative_reference(
