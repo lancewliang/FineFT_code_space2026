@@ -314,34 +314,43 @@ def test_catboost_importance_frame_sorts_descending():
     assert frame["Feature"].to_list() == ["feature_b", "feature_a"]
 
 
-def _write_scale_fixture(path: Path) -> None:
+def _write_scale_fixture(path: Path, feature_values=None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if feature_values is None:
+        feature_values = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0, 110.0, 120.0]
     frame = pl.DataFrame(
         {
             "timestamp": list(range(12)),
             "mark_price": [100.0 + i for i in range(12)],
             "bid1_price": [99.0 + i for i in range(12)],
             "ask1_price": [101.0 + i for i in range(12)],
-            "feature_a": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0, 110.0, 120.0],
+            "feature_a": feature_values,
         }
     )
     frame.write_ipc(path)
 
 
-def test_scale_save_cli_writes_expected_files(tmp_path):
-    input_file = (
+def _scale_input_file(tmp_path: Path) -> Path:
+    return (
         tmp_path
         / "PREPROCESS_DATASET/commodity-futures/IC_RESULT/fu/5min"
         / "2026-01-05-2026-01-06/df.feather"
     )
-    input_file.parent.mkdir(parents=True, exist_ok=True)
-    _write_scale_fixture(input_file)
+
+
+def _scale_output_dir(tmp_path: Path) -> Path:
+    return tmp_path / "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/5min/2026-01-05-2026-01-06"
+
+
+def _write_scale_state_features(input_file: Path) -> None:
     np.save(
         input_file.parent / "state_features.npy",
         np.array(["feature_a"]),
     )
 
-    subprocess.run(
+
+def _run_scale_save_cli(tmp_path: Path, *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         [
             sys.executable,
             "data_preprocess/operator_futures/scale_describe_save/scale_save.py",
@@ -368,12 +377,20 @@ def test_scale_save_cli_writes_expected_files(tmp_path):
         ],
         cwd=REPO_ROOT,
         env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "data_preprocess")},
-        check=True,
+        check=check,
+        text=True,
+        capture_output=True,
     )
 
-    output_dir = (
-        tmp_path / "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/5min/2026-01-05-2026-01-06"
-    )
+
+def test_scale_save_cli_writes_expected_files(tmp_path):
+    input_file = _scale_input_file(tmp_path)
+    _write_scale_fixture(input_file)
+    _write_scale_state_features(input_file)
+
+    _run_scale_save_cli(tmp_path)
+
+    output_dir = _scale_output_dir(tmp_path)
     assert (output_dir / "df.feather").exists()
     assert (output_dir / "df.csv").exists()
     assert pl.read_csv(output_dir / "df.csv").shape == pl.read_ipc(output_dir / "df.feather").shape
@@ -382,6 +399,44 @@ def test_scale_save_cli_writes_expected_files(tmp_path):
     df = pl.read_ipc(output_dir / "df.feather")
     assert "symbol" in df.columns
     assert df["symbol"].unique().to_list() == ["fu"]
+
+
+def test_scale_save_cli_rejects_input_nan_before_writing_outputs(tmp_path):
+    input_file = _scale_input_file(tmp_path)
+    _write_scale_fixture(input_file, feature_values=[10.0, 20.0, float("nan"), 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0, 110.0, 120.0])
+    _write_scale_state_features(input_file)
+
+    result = _run_scale_save_cli(tmp_path, check=False)
+
+    output_dir = _scale_output_dir(tmp_path)
+    combined_output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "input" in combined_output
+    assert str(input_file) in combined_output
+    assert "feature_a" in combined_output
+    assert not (output_dir / "df.feather").exists()
+    assert not (output_dir / "df.csv").exists()
+    assert not (output_dir / "state_features.npy").exists()
+    assert not (output_dir / "df_describe.csv").exists()
+
+
+def test_scale_save_cli_rejects_output_nan_before_writing_outputs(tmp_path):
+    input_file = _scale_input_file(tmp_path)
+    _write_scale_fixture(input_file, feature_values=[0.0 for _ in range(12)])
+    _write_scale_state_features(input_file)
+
+    result = _run_scale_save_cli(tmp_path, check=False)
+
+    output_dir = _scale_output_dir(tmp_path)
+    combined_output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "output" in combined_output
+    assert str(output_dir / "df.feather") in combined_output
+    assert "feature_a" in combined_output
+    assert not (output_dir / "df.feather").exists()
+    assert not (output_dir / "df.csv").exists()
+    assert not (output_dir / "state_features.npy").exists()
+    assert not (output_dir / "df_describe.csv").exists()
 
 
 def test_remove_duplicates_feature_targets_do_not_import_pandas():

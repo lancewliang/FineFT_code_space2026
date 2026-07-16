@@ -63,19 +63,30 @@ def _remove_duplicate_columns_preserve_order(df: pl.DataFrame) -> pl.DataFrame:
     if df.width <= 1:
         return df
     keep_columns = []
-    seen_signatures: dict[tuple[int, ...], list[str]] = {}
+    seen_signatures: dict[tuple[str, tuple[int, ...]], list[str]] = {}
     for name in df.columns:
         if name == "timestamp":
             keep_columns.append(name)
             continue
+        dedupe_key = _equal_value_dedupe_key(name)
+        if dedupe_key is None:
+            keep_columns.append(name)
+            continue
         column = df.get_column(name)
         signature = tuple(column.hash().to_list())
-        candidates = seen_signatures.setdefault(signature, [])
+        candidates = seen_signatures.setdefault((dedupe_key, signature), [])
         if any(column.equals(df.get_column(existing)) for existing in candidates):
             continue
         candidates.append(name)
         keep_columns.append(name)
     return df.select(keep_columns)
+
+
+def _equal_value_dedupe_key(name: str) -> str | None:
+    base, marker, window = name.rpartition("_log_return_")
+    if marker and window.isdigit():
+        return f"{base}{marker}"
+    return None
 
 
 def _clean_numeric(df: pl.DataFrame) -> pl.DataFrame:

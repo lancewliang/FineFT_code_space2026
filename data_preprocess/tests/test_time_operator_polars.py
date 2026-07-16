@@ -117,6 +117,23 @@ def test_time_feature_cli_respects_orderbook_depth_and_output_contract(tmp_path)
     assert pl.read_csv(csv_output).columns[0] == "timestamp"
 
 
+def test_multi_feature_price_preserves_equal_trends_for_distinct_price_levels():
+    frame = pl.DataFrame(
+        {
+            "timestamp": list(range(8)),
+            "ask4_price": [100.0 + idx for idx in range(8)],
+            "ask5_price": [101.0 + idx for idx in range(8)],
+        }
+    )
+
+    out = get_multi_feature_window_price(
+        frame, [2], ["ask4_price", "ask5_price"]
+    )
+
+    assert "ask4_price_trend_2" in out.columns
+    assert "ask5_price_trend_2" in out.columns
+
+
 def test_get_multi_window_ohlcv_supports_multiple_windows_without_suffix_collision():
     frame = pl.DataFrame(
         {

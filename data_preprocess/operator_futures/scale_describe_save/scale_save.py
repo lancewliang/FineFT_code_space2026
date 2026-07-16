@@ -11,6 +11,10 @@ from operator_futures.util import symbol_contract_path_parts
 
 
 logger = logging.getLogger(__name__)
+NAN_CHECK_DTYPES = {
+    pl.Float32,
+    pl.Float64,
+}
 
 
 def configure_logging():
@@ -18,6 +22,25 @@ def configure_logging():
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
     )
+
+
+def columns_with_nan(df: pl.DataFrame) -> list[str]:
+    nan_columns = []
+    for column, dtype in df.schema.items():
+        if dtype not in NAN_CHECK_DTYPES:
+            continue
+        if df.select(pl.col(column).is_nan().any()).item():
+            nan_columns.append(column)
+    return nan_columns
+
+
+def validate_no_nan(df: pl.DataFrame, *, path: Path, stage: str) -> None:
+    nan_columns = columns_with_nan(df)
+    if not nan_columns:
+        return
+    columns = ", ".join(nan_columns)
+    raise ValueError(f"NaN detected during {stage} validation for {path}: columns={columns}")
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--root_path", type=str, default=".", help="the path of storing the data")
@@ -129,7 +152,9 @@ def main(args):
         args.base,
         args.clip_theshold,
     )
-    df = pl.read_ipc(input_dir / f"{df_name}.feather")
+    input_file = input_dir / f"{df_name}.feather"
+    df = pl.read_ipc(input_file)
+    validate_no_nan(df, path=input_file, stage="input")
     logger.info("Loaded scale-save input: rows=%d columns=%d", df.height, len(df.columns))
     if args.market_type == "commodity_futures":
         from operator_futures.commodity.schema import get_reward_execution_columns
@@ -152,13 +177,15 @@ def main(args):
     out = pl.concat([df_reward, df_state], how="horizontal").with_columns(
         pl.lit(args.symbols).alias("symbol")
     )
+    output_file = output_dir / "df.feather"
+    validate_no_nan(out, path=output_file, stage="output")
     logger.info(
         "Writing scale-save outputs: output_dir=%s rows=%d columns=%d",
         output_dir,
         out.height,
         len(out.columns),
     )
-    out.write_ipc(output_dir / "df.feather")
+    out.write_ipc(output_file)
     out.write_csv(output_dir / "df.csv")
     np.save(output_dir / "state_features.npy", np.array(state_feature))
     df_describe.write_csv(output_dir / "df_describe.csv")
