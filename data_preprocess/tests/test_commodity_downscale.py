@@ -4,7 +4,9 @@ import polars as pl
 import pytest
 
 from operator_futures.commodity.main_contract import MainContractSummary
+from operator_futures.data_quality import DataQualityValidator
 from operator_futures.commodity.downscale_continuous_by_trading_day import (
+    _write_downscaled_day,
     iter_summary_trading_days,
 )
 from operator_futures.commodity.downscale import (
@@ -92,6 +94,77 @@ def test_invalid_best_quote_fails_fast():
     assert "row={" in message
     assert "'InstrumentID': 'fu2302'" in message
     assert "'LastPrice':" in message
+
+
+def test_illegal_value_validation_reports_null_nan_and_infinite(caplog):
+    frame = pl.DataFrame(
+        {
+            "timestamp": [datetime(2026, 1, 5, 9, 0, 0), None],
+            "nan_feature": [1.0, float("nan")],
+            "null_feature": [None, 2.0],
+            "inf_feature": [float("inf"), 3.0],
+        }
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        DataQualityValidator.validate_no_illegal_values(
+            frame,
+            stage="test_stage",
+            feature_name="TEST_FEATURE",
+            contract="fu2601",
+            trading_day="20260105",
+        )
+
+    message = str(exc_info.value)
+    assert "stage=test_stage" in message
+    assert "feature=TEST_FEATURE" in message
+    assert "nan_feature:nan=1" in message
+    assert "null_feature:null=1" in message
+    assert "inf_feature:infinite=1" in message
+    assert "timestamp:null=1" in message
+    assert "Illegal data detected" in caplog.text
+
+
+def test_continuous_downscale_rejects_illegal_second_level_values(tmp_path, caplog):
+    raw = pl.read_csv(SAMPLE_PATH).head(2).with_columns(
+        pl.when(pl.int_range(pl.len()) == 0)
+        .then(pl.lit(float("nan")))
+        .otherwise(pl.col("LastPrice"))
+        .alias("LastPrice")
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        _write_downscaled_day(raw, tmp_path, "5min", "fu", "fu2302", depth=5)
+
+    message = str(exc_info.value)
+    assert "stage=second_level_snapshots" in message
+    assert "contract=fu2302" in message
+    assert "LastPrice:nan=1" in message
+    assert "Illegal data detected" in caplog.text
+    assert not list(tmp_path.rglob("*.feather"))
+
+
+def test_continuous_downscale_rejects_illegal_feature_outputs(tmp_path, caplog):
+    raw = pl.read_csv(SAMPLE_PATH).head(2).fill_null(0).with_columns(
+        pl.lit(0.0).alias("ClosePrice"),
+        pl.lit(0.0).alias("SettlementPrice"),
+        pl.lit(0.0).alias("PreDelta"),
+        pl.lit(0.0).alias("CurrDelta"),
+        pl.lit(0.0).alias("AveragePrice"),
+        pl.lit(0).alias("BidVolume1"),
+        pl.lit(0).alias("AskVolume1"),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        _write_downscaled_day(raw, tmp_path, "5min", "fu", "fu2302", depth=5)
+
+    message = str(exc_info.value)
+    assert "stage=feature_output" in message
+    assert "feature=COMMODITY_QUOTE_FEATURE" in message
+    assert "imbalance_volume" in message
+    assert "nan=1" in message
+    assert "Illegal data detected" in caplog.text
+    assert not list(tmp_path.rglob("*.feather"))
 
 
 def test_second_level_snapshots_handle_string_quote_columns():

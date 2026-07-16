@@ -7,6 +7,8 @@ import time
 
 import polars as pl
 
+from operator_futures.data_quality import DataQualityValidator
+
 from .downscale import (
     create_second_level_snapshots,
     downscale_base_features,
@@ -82,6 +84,12 @@ def _write_downscaled_day(
         )
     trading_day = trading_days[0]
     second = create_second_level_snapshots(day_frame)
+    DataQualityValidator.validate_no_illegal_values(
+        second,
+        stage="second_level_snapshots",
+        contract=contract,
+        trading_day=trading_day,
+    )
     outputs = {
         "DOWNSCALE_DERTIC": downscale_derivative_reference(
             second, target_freq, symbol
@@ -93,6 +101,14 @@ def _write_downscaled_day(
         "COMMODITY_QUOTE_FEATURE": downscale_quote_features(second, target_freq),
     }
     output_name = _trading_day_output_name(trading_day)
+    for folder, frame in outputs.items():
+        DataQualityValidator.validate_no_illegal_values(
+            frame,
+            stage="feature_output",
+            feature_name=folder,
+            contract=contract,
+            trading_day=trading_day,
+        )
     for folder, frame in outputs.items():
         path = output_root / folder / symbol / contract / target_freq
         path.mkdir(parents=True, exist_ok=True)
