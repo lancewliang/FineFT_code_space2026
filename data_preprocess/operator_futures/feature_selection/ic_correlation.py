@@ -12,6 +12,7 @@ import time
 import polars as pl
 
 sys.path.append(".")
+from operator_futures.data_quality import DataQualityValidator
 from operator_futures.util import symbol_contract_path_parts
 from operator_futures.feature_selection.cor_util import select_feature
 
@@ -237,6 +238,12 @@ def main(args):
         args.orderbook_depth,
     )
     df = pl.read_ipc(input_path)
+    DataQualityValidator.validate_no_illegal_values(
+        df,
+        stage="ic_correlation_input",
+        contract=args.contract or args.symbols,
+        trading_day=args.start_date + "-" + args.end_date,
+    )
     logger.info("Loaded IC input: rows=%d columns=%d", df.height, len(df.columns))
     reward_features, state_feature = select_reward_state_features(
         df, args.market_type, args.orderbook_depth

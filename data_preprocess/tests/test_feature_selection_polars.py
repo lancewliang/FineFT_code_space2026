@@ -2,10 +2,12 @@ from pathlib import Path
 import os
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 import polars as pl
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -42,6 +44,25 @@ def _write_contract_ic_fixture(path: Path) -> None:
         }
     )
     frame.write_ipc(path)
+
+
+def _ic_args(tmp_path):
+    return SimpleNamespace(
+        root_path=str(tmp_path),
+        data_path="PREPROCESS_DATASET/commodity-futures/ALL_FEATURE/",
+        save_path="PREPROCESS_DATASET/commodity-futures/IC_RESULT/",
+        symbols="fu",
+        contract=None,
+        target_freq="5min",
+        start_date="2026-01-05",
+        end_date="2026-01-06",
+        ic_theshold=0.01,
+        cor_theshold=0.7,
+        windows_list=[1],
+        market_type="commodity_futures",
+        orderbook_depth=5,
+        candidate_only=False,
+    )
 
 
 def test_feature_selection_targets_do_not_import_pandas():
@@ -198,6 +219,35 @@ def test_ic_correlation_cli_writes_expected_files(tmp_path):
     assert (output_dir / "state_features.npy").exists()
     assert (output_dir / "correlation.csv").exists()
     assert np.load(output_dir / "state_features.npy", allow_pickle=True).size >= 0
+
+
+def test_ic_correlation_rejects_illegal_input_values(tmp_path):
+    from operator_futures.feature_selection import ic_correlation
+
+    input_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/ALL_FEATURE/fu/5min"
+        / "2026-01-05-2026-01-06.feather"
+    )
+    input_file.parent.mkdir(parents=True, exist_ok=True)
+    frame = pl.DataFrame(
+        {
+            "timestamp": list(range(12)),
+            "mark_price": [100.0 + i for i in range(12)],
+            "feature_a": [
+                float("inf") if i == 2 else float(i) for i in range(12)
+            ],
+            "feature_b": [float(12 - i) for i in range(12)],
+        }
+    )
+    frame.write_ipc(input_file)
+
+    with pytest.raises(ValueError) as exc_info:
+        ic_correlation.main(_ic_args(tmp_path))
+
+    message = str(exc_info.value)
+    assert "stage=ic_correlation_input" in message
+    assert "feature_a:infinite=1" in message
 
 
 def test_ic_correlation_candidate_only_writes_candidate_artifacts(tmp_path):
