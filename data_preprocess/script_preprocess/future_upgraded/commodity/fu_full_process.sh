@@ -418,12 +418,13 @@ run_commodity_full_process() {
             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
             "merge_clean" \
             run_commodity_merge_and_clean "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
-        run_commodity_logged_step \
+    done < <(run_commodity_summary_contracts "$summary_path")
+
+    run_commodity_logged_step \
             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
             "ic_candidate" \
             run_commodity_ic_candidate "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
-    done < <(run_commodity_summary_contracts "$summary_path")
-
+    
     run_commodity_logged_step \
         "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
         "ic_union_finalize" \

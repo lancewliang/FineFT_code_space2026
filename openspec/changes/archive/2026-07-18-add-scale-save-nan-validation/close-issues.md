@@ -94,3 +94,35 @@ These failures are outside the scale-save implementation surface, which is limit
 ## Recommendation
 
 Do not archive `add-scale-save-nan-validation` until the broader suite policy is clarified, the missing external test data is supplied or excluded, and the unrelated FineFT RL failures are fixed or explicitly waived.
+
+## Forced Archive Waiver
+
+Fresh close attempt: 2026-07-18.
+
+User requested `/sddflow close add-scale-save-nan-validation 强制归档`, so archive proceeds despite non-target broad-suite failures.
+
+Fresh passing checks:
+
+- `source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && pytest data_preprocess/tests/test_feature_selection_polars.py::test_scale_helpers_ignore_nan_like_pandas data_preprocess/tests/test_feature_selection_polars.py::test_scale_helpers_match_reference_for_tiny_std_large_mean_adjustment data_preprocess/tests/test_feature_selection_polars.py::test_scale_save_cli_writes_expected_files data_preprocess/tests/test_feature_selection_polars.py::test_scale_save_cli_rejects_input_nan_before_writing_outputs data_preprocess/tests/test_feature_selection_polars.py::test_scale_save_cli_rejects_output_nan_before_writing_outputs -q`
+  - Result: `5 passed in 1.90s`
+- `source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && python -m py_compile data_preprocess/operator_futures/scale_describe_save/scale_save.py data_preprocess/tests/test_feature_selection_polars.py`
+  - Result: passed with no output
+- `openspec validate add-scale-save-nan-validation --strict`
+  - Result: `Change 'add-scale-save-nan-validation' is valid`
+
+Fresh non-blocking failures waived by force archive:
+
+- `source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && pytest data_preprocess/tests -q`
+  - Result: `2 failed, 156 passed, 4 warnings in 18.01s`
+  - Failures:
+    - `data_preprocess/tests/test_commodity_downscale.py::test_second_level_fills_low_price_empty_ask_prices`
+    - `data_preprocess/tests/test_commodity_main_contract_cli.py::test_commodity_full_process_writes_step_logs_and_preserves_child_log_paths`
+  - Scope assessment: failures are outside the scale-save NaN validation surface. At the time of forced archive, implementation files `data_preprocess/operator_futures/scale_describe_save/scale_save.py`, `data_preprocess/tests/test_feature_selection_polars.py`, and `docs/superpowers/plans/2026-07-16-add-scale-save-nan-validation.md` had no diff; `close-issues.md` was updated only to record this forced-archive waiver.
+
+Post-archive checks:
+
+- `openspec archive add-scale-save-nan-validation --yes`
+  - Result: archived as `openspec/changes/archive/2026-07-18-add-scale-save-nan-validation/`; updated `openspec/specs/operator-futures-polars-preprocessing/spec.md`
+  - Non-blocking warning: `proposal.md` uses the older proposal shape and is missing `## Why` / `## What Changes`
+- `openspec validate --all --strict`
+  - Result: `5 passed, 0 failed`

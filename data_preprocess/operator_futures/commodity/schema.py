@@ -27,4 +27,9 @@ def build_orderbook_columns(depth: int) -> List[str]:
 
 
 def get_reward_execution_columns(depth: int) -> List[str]:
-    return ["timestamp", *build_orderbook_columns(depth), *DERIVATIVE_REFERENCE_COLUMNS]
+    return [
+        "timestamp",
+        "contract",
+        *build_orderbook_columns(depth),
+        *DERIVATIVE_REFERENCE_COLUMNS,
+    ]

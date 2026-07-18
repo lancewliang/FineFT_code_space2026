@@ -70,12 +70,15 @@ def build_daily_feature_frames(
     snapshot_feature: pl.DataFrame,
     quotes_feature: pl.DataFrame,
     kline_feature: pl.DataFrame,
+    contract: str | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     der_without_symbol = der.drop("symbol") if "symbol" in der.columns else der
     reward_feature = (
         snapshot.join(der_without_symbol, on="timestamp", how="left")
         .join(snapshot_feature, on="timestamp", how="left")
     )
+    if contract is not None:
+        reward_feature = reward_feature.with_columns(pl.lit(contract).alias("contract"))
     future_feature = (
         base_feature.join(quotes_feature, on="timestamp", how="left")
         .join(kline_feature, on="timestamp", how="left")
@@ -174,6 +177,7 @@ def main(args):
         snapshot_feature,
         quotes_feature,
         kline_feature,
+        contract=args.contract,
     )
 
     # merged_feature = pd.concat(

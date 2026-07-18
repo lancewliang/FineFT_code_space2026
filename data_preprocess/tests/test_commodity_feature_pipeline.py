@@ -41,7 +41,8 @@ def test_snapshot_features_accept_depth_five_without_level_25():
 def test_manifest_replaces_first_106_reward_columns():
     reward_columns = get_reward_execution_columns(depth=5)
 
-    assert len(reward_columns) == 26
+    assert len(reward_columns) == 27
+    assert "contract" in reward_columns
     assert "ask5_price" in reward_columns
     assert "ask25_price" not in reward_columns
 
@@ -49,6 +50,7 @@ def test_manifest_replaces_first_106_reward_columns():
 def test_ic_correlation_uses_commodity_manifest_for_reward_columns():
     reward_columns = get_reward_execution_columns(depth=5)
     df = pd.DataFrame({column: [1.0, 2.0] for column in reward_columns})
+    df["contract"] = ["fu2601", "fu2601"]
     df["state_alpha"] = [0.1, 0.2]
 
     selected_reward, selected_state = select_reward_state_features(

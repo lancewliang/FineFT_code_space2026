@@ -63,6 +63,40 @@ def test_build_daily_feature_frames_drops_derivative_symbol_from_reward():
     assert future.columns[:3] == ["timestamp", "symbol", "exchange"]
 
 
+def test_build_daily_feature_frames_adds_contract_to_reward_when_provided():
+    snapshot = pl.DataFrame({"timestamp": [1, 2], "ask1_price": [101.0, 102.0]})
+    der = pl.DataFrame(
+        {
+            "timestamp": [1, 2],
+            "symbol": ["fu", "fu"],
+            "mark_price": [100.0, 101.0],
+        }
+    )
+    base = pl.DataFrame({"timestamp": [1, 2], "volume": [1.0, 2.0]})
+    snapshot_feature = pl.DataFrame(
+        {"timestamp": [1, 2], "snapshot_feature": [2.0, 3.0]}
+    )
+    quotes_feature = pl.DataFrame(
+        {"timestamp": [1, 2], "quote_feature": [3.0, 4.0]}
+    )
+    kline_feature = pl.DataFrame(
+        {"timestamp": [1, 2], "kline_feature": [4.0, 5.0]}
+    )
+
+    reward, future = build_daily_feature_frames(
+        snapshot,
+        der,
+        base,
+        snapshot_feature,
+        quotes_feature,
+        kline_feature,
+        contract="fu2601",
+    )
+
+    assert reward["contract"].to_list() == ["fu2601", "fu2601"]
+    assert "contract" not in future.columns
+
+
 def test_merge_clean_cli_writes_csv_next_to_feather(tmp_path):
     start_date = "2026-01-05"
     end_date = "2026-01-06"

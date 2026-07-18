@@ -105,10 +105,11 @@ def test_reward_execution_manifest_for_depth_five():
     assert columns[0] == "timestamp"
     assert "mark_price" in columns
     assert "funding_rate" in columns
+    assert "contract" in columns
     assert "ask5_price" in columns
     assert "bid5_size" in columns
     assert "ask6_price" not in columns
-    assert len(columns) == 1 + 20 + 5
+    assert len(columns) == 1 + 1 + 20 + 5
 
 
 def test_resample_kwargs_are_right_closed_and_right_labeled():
