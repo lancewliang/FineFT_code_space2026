@@ -1111,7 +1111,6 @@ def test_commodity_full_process_shell_sets_pythonpath_for_operator_scripts():
         "data_preprocess/operator_futures/merge_concat/concat.py",
         "data_preprocess/operator_futures/time_operator/create_feature_multi_processing.py",
         "data_preprocess/operator_futures/merge_all/merge_clean.py",
-        "data_preprocess/operator_futures/feature_selection/ic_correlation.py",
     ]
 
     for script_path in operator_script_calls:
@@ -1121,6 +1120,9 @@ def test_commodity_full_process_shell_sets_pythonpath_for_operator_scripts():
             or f'PYTHONPATH="${{root_path}}/data_preprocess" nohup python -u {script_path}'
             in text
         )
+
+    assert 'PYTHONPATH="${root_path}/data_preprocess' in text
+    assert "python -u -m operator_futures.dataset_split.dataset_split" in text
 
 
 def test_commodity_cross_section_shell_skips_missing_downscale_outputs(tmp_path):

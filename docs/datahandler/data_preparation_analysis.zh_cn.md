@@ -704,9 +704,7 @@ dataset/<symbol>/valid_processed.feather
 
 ## 商品期货多合约 FineFT 数据集
 
-商品期货数据不再通过单个 `df.feather` 直接生成 `train.feather`、`valid.feather` 和 `test.feather`。商品入口读取 `main_contract_summary.json`、合约级 `SCALE_SAVE/{symbol}/{contract}/{target_freq}/{start_date}-{end_date}/df.feather` 和品种级 `FEATURE_UNION/{symbol}/{target_freq}/{start_date}-{end_date}/state_features.npy`。
-
-数据集生成先基于 summary 中所有合约有效交易日的去重有序并集，按 `train:valid:test = 5:3:2` 计算全局边界：
+商品期货第 9 阶段 `dataset_split` 读取 `main_contract_summary.json` 和合约级 `SCALE_SAVE/{symbol}/{contract}/{target_freq}/{start_date}-{end_date}/df.feather`，按 summary 中所有合约有效交易日的去重有序并集计算全局边界：
 
 ```text
 train: [start, a)
@@ -714,7 +712,7 @@ valid: [a, b)
 test:  [b, c)
 ```
 
-然后每个合约用自身有效交易日与全局区间求交，写入 `dataset/{target_freq}/{symbol}/dataset_manifest.json`。阶段数据集按合约落盘：
+然后每个合约用自身有效交易日与全局区间求交，写入 `dataset/{target_freq}/{symbol}/dataset_split_manifest.json`。阶段数据集按合约落盘：
 
 ```text
 dataset/{target_freq}/{symbol}/train/df_<contract>.feather
@@ -722,7 +720,15 @@ dataset/{target_freq}/{symbol}/valid/df_<contract>.feather
 dataset/{target_freq}/{symbol}/test/df_<contract>.feather
 ```
 
-manifest 中每个合约阶段记录包含 `output_row_count`，表示该 `output_path` feather 文件实际写出的行数。每个集合包含 `contracts_total_count`，表示该集合内所有合约阶段文件的总行数，因此可以直接从 manifest 查看单个文件行数和 train/valid/test 总行数。
+第 9 阶段同时会纵向合并每个集合的合约级文件，并写出：
+
+```text
+dataset/{target_freq}/{symbol}/train.feather
+dataset/{target_freq}/{symbol}/valid.feather
+dataset/{target_freq}/{symbol}/test.feather
+```
+
+合约级目录会保留，不会被删除。manifest 中每个合约阶段记录包含 `output_row_count`，表示该 `output_path` feather 文件实际写出的行数。每个集合包含 `contracts_total_count`，表示该集合内所有合约阶段文件的总行数，因此可以直接从 manifest 查看单个文件行数、集合总行数和 merged 输出规模。
 
 训练实际读取 `train/slice/df_*.feather`。这些 slice 连续编号，且单个 slice 不跨合约、不跨 train 日期边界。合约 train 数据少于 `chunk_length`，或完整切片后剩余尾部少于 `chunk_length` 时，也会写出短 slice 参与训练；manifest 的 `slice_outputs[]` 会记录每个 slice 的 `output_row_count`。
 
