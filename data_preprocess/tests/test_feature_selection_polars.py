@@ -61,7 +61,6 @@ def _ic_args(tmp_path):
         windows_list=[1],
         market_type="commodity_futures",
         orderbook_depth=5,
-        candidate_only=False,
     )
 
 
@@ -248,60 +247,6 @@ def test_ic_correlation_rejects_illegal_input_values(tmp_path):
     message = str(exc_info.value)
     assert "stage=ic_correlation_input" in message
     assert "feature_a:infinite=1" in message
-
-
-def test_ic_correlation_candidate_only_writes_candidate_artifacts(tmp_path):
-    input_file = (
-        tmp_path
-        / "PREPROCESS_DATASET/commodity-futures/ALL_FEATURE/fu/fu2601/5min"
-        / "2026-01-05-2026-01-06.feather"
-    )
-    _write_contract_ic_fixture(input_file)
-
-    subprocess.run(
-        [
-            sys.executable,
-            "data_preprocess/operator_futures/feature_selection/ic_correlation.py",
-            "--root_path",
-            str(tmp_path),
-            "--data_path",
-            "PREPROCESS_DATASET/commodity-futures/ALL_FEATURE/",
-            "--save_path",
-            "PREPROCESS_DATASET/commodity-futures/IC_RESULT/",
-            "--symbols",
-            "fu",
-            "--contract",
-            "fu2601",
-            "--target_freq",
-            "5min",
-            "--start_date",
-            "2026-01-05",
-            "--end_date",
-            "2026-01-06",
-            "--market_type",
-            "commodity_futures",
-            "--orderbook_depth",
-            "5",
-            "--windows_list",
-            "1",
-            "--candidate_only",
-        ],
-        cwd=REPO_ROOT,
-        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "data_preprocess")},
-        check=True,
-    )
-
-    output_dir = (
-        tmp_path
-        / "PREPROCESS_DATASET/commodity-futures/IC_RESULT/fu/fu2601/5min"
-        / "2026-01-05-2026-01-06"
-    )
-    assert (output_dir / "state_features_candidate.npy").exists()
-    assert (output_dir / "candidate_manifest.json").exists()
-    assert (output_dir / "ic_window_1.json").exists()
-    assert (output_dir / "correlation.csv").exists()
-    assert not (output_dir / "df.feather").exists()
-    assert not (output_dir / "state_features.npy").exists()
 
 
 def _write_lasso_fixture(path: Path) -> None:
