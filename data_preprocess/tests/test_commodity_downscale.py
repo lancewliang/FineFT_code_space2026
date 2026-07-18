@@ -393,6 +393,31 @@ def test_second_level_fills_empty_ask_price_and_volume_depth_gaps():
         assert second.item(0, f"AskVolume{level}") == 7
 
 
+def test_second_level_fills_empty_bid_price_and_volume_depth_gaps():
+    raw = pl.read_csv(SAMPLE_PATH).head(1).with_columns(
+        pl.lit(3089.0).alias("LastPrice"),
+        pl.lit(3089.0).alias("LowPrice"),
+        pl.lit(3088.0).alias("LowerLimitPrice"),
+        pl.lit(3089.0).alias("BidPrice1"),
+        pl.lit(15).alias("BidVolume1"),
+        pl.lit(3088.0).alias("BidPrice2"),
+        pl.lit(61).alias("BidVolume2"),
+        pl.lit(None).alias("BidPrice3"),
+        pl.lit(0).alias("BidVolume3"),
+        pl.lit(None).alias("BidPrice4"),
+        pl.lit(0).alias("BidVolume4"),
+        pl.lit(None).alias("BidPrice5"),
+        pl.lit(0).alias("BidVolume5"),
+        pl.lit(3100.0).alias("AskPrice1"),
+    )
+
+    second = create_second_level_snapshots(raw)
+
+    for level in (3, 4, 5):
+        assert second.item(0, f"BidPrice{level}") == 3088.0
+        assert second.item(0, f"BidVolume{level}") == 61
+
+
 def test_second_level_fills_limit_up_empty_ask_prices():
     raw = pl.read_csv(SAMPLE_PATH).head(1)
     upper_limit = raw.item(0, "UpperLimitPrice")

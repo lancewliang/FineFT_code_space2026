@@ -261,6 +261,7 @@ def _fill_second_level_price_gaps(
             (
                 (pl.col("LastPrice") == pl.col("UpperLimitPrice"))
                 | (pl.col("HighPrice") == pl.col("UpperLimitPrice"))
+                | (pl.col("LastPrice") == pl.col("LowPrice"))
             )
             & pl.all_horizontal(
                 [pl.col(column).is_null() for column in ASK_PRICE_COLUMNS]
@@ -359,6 +360,44 @@ def _fill_second_level_price_gaps(
                     .otherwise(pl.col(price_column))
                     .alias(price_column),
                     pl.when(empty_ask_level)
+                    .then(pl.col(previous_volume_column))
+                    .otherwise(pl.col(volume_column))
+                    .alias(volume_column),
+                ]
+            )
+    for level in range(2, 6):
+        price_column = f"BidPrice{level}"
+        volume_column = f"BidVolume{level}"
+        previous_price_column = f"BidPrice{level - 1}"
+        previous_volume_column = f"BidVolume{level - 1}"
+        if all(
+            column in df.columns
+            for column in (
+                price_column,
+                volume_column,
+                previous_price_column,
+                previous_volume_column,
+            )
+        ):
+            empty_bid_level = (
+                (pl.col(volume_column).fill_null(0) == 0)
+                & pl.col(price_column).is_null()
+            )
+            _log_second_level_gap_fill_rows(
+                df,
+                empty_bid_level,
+                source_file=source_file,
+                rule=f"empty_bid_level_{level}",
+                columns=[volume_column],
+                fill_value_column=previous_volume_column,
+            )
+            df = df.with_columns(
+                [
+                    pl.when(empty_bid_level)
+                    .then(pl.col(previous_price_column))
+                    .otherwise(pl.col(price_column))
+                    .alias(price_column),
+                    pl.when(empty_bid_level)
                     .then(pl.col(previous_volume_column))
                     .otherwise(pl.col(volume_column))
                     .alias(volume_column),
