@@ -61,6 +61,32 @@ def _write_scale_file(root: Path, contract: str, dates):
     return output
 
 
+def _write_all_feature_file(root: Path, contract: str, dates):
+    output = (
+        root
+        / "PREPROCESS_DATASET"
+        / "commodity-futures"
+        / "ALL_FEATURE"
+        / "fu"
+        / contract
+        / "10min"
+        / "2023-01-01-2026-03-01.feather"
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    frame = pl.DataFrame(
+        {
+            "timestamp": [
+                f"{date} 09:{index:02d}:00" for index, date in enumerate(dates)
+            ],
+            "trading_day": dates,
+            "symbol": [contract] * len(dates),
+            "feature_a": list(range(len(dates))),
+        }
+    ).with_columns(pl.col("timestamp").str.strptime(pl.Datetime))
+    frame.write_ipc(output)
+    return output
+
+
 def test_calculate_split_boundaries_uses_union_trading_days_5_3_2():
     summary = {
         "contracts": [
@@ -210,6 +236,26 @@ def test_run_dataset_split_writes_contract_and_merged_outputs_with_all_columns(
     assert manifest["sets"]["train"]["merged_output_path"].endswith(
         "dataset/5min/fu/train.feather"
     )
+
+
+def test_run_dataset_split_reads_all_feature_date_range_file(tmp_path):
+    summary_path = tmp_path / "summary.json"
+    dates = [f"2023-01-{day:02d}" for day in range(1, 11)]
+    _write_summary(summary_path, [_contract("fu2305", dates)])
+    input_file = _write_all_feature_file(tmp_path, "fu2305", dates)
+
+    manifest = run_dataset_split(
+        summary_path=summary_path,
+        input_root=tmp_path / "PREPROCESS_DATASET/commodity-futures/ALL_FEATURE",
+        output_root=tmp_path / "dataset/10min",
+        symbol="fu",
+        target_freq="10min",
+        start_date="2023-01-01",
+        end_date="2026-03-01",
+    )
+
+    assert manifest["sets"]["train"]["contracts"][0]["input_path"] == str(input_file)
+    assert (tmp_path / "dataset/10min/fu/train/fu2305.feather").exists()
 
 
 def test_run_dataset_split_fails_when_planned_input_file_is_missing(tmp_path):

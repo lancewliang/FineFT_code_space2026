@@ -49,15 +49,28 @@ def _in_range(date, start, end):
     return _parse_date(start) <= parsed < _parse_date(end)
 
 
+def _input_path_candidates(input_root, symbol, contract, target_freq, start_date, end_date):
+    input_dir = Path(input_root) / symbol / contract / target_freq
+    date_range = f"{start_date}-{end_date}"
+    return [
+        input_dir / f"{date_range}.feather",
+        input_dir / date_range / "df.feather",
+    ]
+
+
 def _input_path(input_root, symbol, contract, target_freq, start_date, end_date):
-    return (
-        Path(input_root)
-        / symbol
-        / contract
-        / target_freq
-        / f"{start_date}-{end_date}"
-        / "df.feather"
+    candidates = _input_path_candidates(
+        input_root,
+        symbol,
+        contract,
+        target_freq,
+        start_date,
+        end_date,
     )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
 
 
 def _contract_output_path(output_root, symbol, set_name, contract):
