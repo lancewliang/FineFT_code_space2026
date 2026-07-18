@@ -376,6 +376,62 @@ def test_scale_save_cli_writes_expected_files(tmp_path):
     assert df["symbol"].unique().to_list() == ["fu"]
 
 
+def test_scale_save_cli_reads_feature_selection_filtered_input(tmp_path):
+    input_dir = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/valid/fu2601"
+    )
+    input_file = input_dir / "df.feather"
+    _write_scale_fixture(input_file)
+    np.save(input_dir.parent / "state_features.npy", np.array(["feature_a"]))
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "data_preprocess/operator_futures/scale_describe_save/scale_save.py",
+            "--root_path",
+            str(tmp_path),
+            "--data_path",
+            "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION",
+            "--save_path",
+            "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/",
+            "--symbols",
+            "fu",
+            "--contract",
+            "fu2601",
+            "--target_freq",
+            "5min",
+            "--start_date",
+            "2026-01-05",
+            "--end_date",
+            "2026-01-06",
+            "--market_type",
+            "commodity_futures",
+            "--orderbook_depth",
+            "5",
+            "--ic_choice",
+            "ic",
+            "--feature_selection_stage",
+            "valid",
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "data_preprocess")},
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    output_dir = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/fu2601/5min/2026-01-05-2026-01-06"
+    )
+    assert (output_dir / "df.feather").exists()
+    assert np.load(output_dir / "state_features.npy", allow_pickle=True).tolist() == [
+        "feature_a"
+    ]
+
+
 def test_scale_save_cli_rejects_input_nan_before_writing_outputs(tmp_path):
     input_file = _scale_input_file(tmp_path)
     _write_scale_fixture(input_file, feature_values=[10.0, 20.0, float("nan"), 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0, 110.0, 120.0])

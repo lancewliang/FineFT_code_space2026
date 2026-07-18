@@ -189,8 +189,9 @@ run_commodity_scale_save() {
         --start_date "$start_date" \
         --end_date "$end_date" \
         --root_path "$root_path" \
-        --data_path "PREPROCESS_DATASET/commodity-futures/IC_RESULT" \
+        --data_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION" \
         --save_path "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/" \
+        --feature_selection_stage valid \
         --market_type commodity_futures \
         --orderbook_depth 5 \
         --ic_choice ic
@@ -324,8 +325,8 @@ run_commodity_dataset_split() {
 
     PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" python -u -m operator_futures.dataset_split.dataset_split \
         --summary_path "${summary_path}" \
-        --input_root "${root_path}/PREPROCESS_DATASET/commodity-futures/SCALE_SAVE" \
-        --output_root "${root_path}/dataset/${target_freq}" \
+        --input_root "${root_path}/PREPROCESS_DATASET/commodity-futures/ALL_FEATURE" \
+        --output_root "${root_path}/PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/${target_freq}" \
         --symbol "${symbol}" \
         --target_freq "${target_freq}" \
         --start_date "${start_date}" \
@@ -333,6 +334,23 @@ run_commodity_dataset_split() {
         --train_ratio 5 \
         --valid_ratio 3 \
         --test_ratio 2
+}
+
+run_commodity_feature_selection() {
+    local stage=$1
+    local split_root=$2
+    local target_freq=$3
+    local symbol=$4
+    local root_path=$5
+
+    PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" python -u -m operator_futures.feature_selection.muti_contract \
+        --root_path "${root_path}" \
+        --split_path "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST" \
+        --save_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION" \
+        --symbol "${symbol}" \
+        --target_freq "${target_freq}" \
+        --stage "${stage}" \
+        --orderbook_depth 5
 }
 
 run_commodity_maintenance_margin_dict() {
@@ -389,16 +407,30 @@ run_commodity_full_process() {
             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
             "merge_clean" \
             run_commodity_merge_and_clean "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
-        run_commodity_logged_step \
-            "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-            "scale_save" \
-            run_commodity_scale_save "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
     done < <(run_commodity_summary_contracts "$summary_path")
 
     run_commodity_logged_step \
         "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
         "dataset_split" \
         run_commodity_dataset_split "$summary_path" "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
+
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "feature_selection_train" \
+        run_commodity_feature_selection "train" "${root_path}/PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/${target_freq}" "$target_freq" "$symbol" "$root_path"
+
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "feature_selection_valid" \
+        run_commodity_feature_selection "valid" "${root_path}/PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/${target_freq}" "$target_freq" "$symbol" "$root_path"
+
+    while IFS= read -r contract; do
+        [ -n "$contract" ] || continue
+        run_commodity_logged_step \
+            "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+            "scale_save" \
+            run_commodity_scale_save "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
+    done < <(run_commodity_summary_contracts "$summary_path")
 
     run_commodity_logged_step \
         "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \

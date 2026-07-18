@@ -74,17 +74,18 @@ YEAR=2026 START_DATE=2026-01-01 END_DATE=2026-02-01 TARGET_FREQ=5min \
 PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu/main_contract_summary.json
 ```
 
-然后继续执行商品期货下采样、cross-section、merge/concat、time feature、merge clean、IC feature selection 和 scale/save。下游输出按合约增加一层目录。最终训练入口数据写入：
+然后继续执行商品期货下采样、cross-section、merge/concat、time feature、merge clean、dataset split、train feature selection、valid feature selection 和 scale/save。下游中间输出按合约增加一层目录；split 后特征选择统一写入：
+
+```text
+PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features_candidate.npy
+PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/valid/state_features.npy
+PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/valid/fu2601/df.feather
+```
+
+最终训练入口数据仍写入：
 
 ```text
 PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/fu2601/5min/2026-01-01-2026-02-01/
-```
-
-所有合约完成 scale/save 后，流程还会生成品种级 state feature 合集。该合集按 summary 合约顺序和各合约特征顺序稳定去重，用于后续同一个模型训练时读取统一特征清单：
-
-```text
-PREPROCESS_DATASET/commodity-futures/FEATURE_UNION/fu/5min/2026-01-01-2026-02-01/state_features.npy
-PREPROCESS_DATASET/commodity-futures/FEATURE_UNION/fu/5min/2026-01-01-2026-02-01/feature_union_manifest.json
 ```
 
 直接运行连续主力拼接和下采样 CLI：

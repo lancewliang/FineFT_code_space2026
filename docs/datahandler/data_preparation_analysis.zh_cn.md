@@ -704,7 +704,7 @@ dataset/<symbol>/valid_processed.feather
 
 ## 商品期货多合约 FineFT 数据集
 
-商品期货第 9 阶段 `dataset_split` 读取 `main_contract_summary.json` 和合约级 `SCALE_SAVE/{symbol}/{contract}/{target_freq}/{start_date}-{end_date}/df.feather`，按 summary 中所有合约有效交易日的去重有序并集计算全局边界：
+商品期货预处理主流程在所有合约完成 `ALL_FEATURE` 后，先运行第 9 阶段 `dataset_split`。该阶段读取 `main_contract_summary.json` 和合约级 `ALL_FEATURE/{symbol}/{contract}/{target_freq}/{start_date}-{end_date}.feather`，按 summary 中所有合约有效交易日的去重有序并集计算全局边界：
 
 ```text
 train: [start, a)
@@ -719,6 +719,27 @@ dataset/{target_freq}/{symbol}/train/df_<contract>.feather
 dataset/{target_freq}/{symbol}/valid/df_<contract>.feather
 dataset/{target_freq}/{symbol}/test/df_<contract>.feather
 ```
+
+`dataset_split` 完成后，商品主流程进入 split 后特征选择：
+
+```text
+dataset_split -> feature_selection(train) -> feature_selection(valid) -> scale_save -> maintenance_margin_dict
+```
+
+`feature_selection(train)` 读取 `SPLIT-TRAIN-VALID-TEST/{target_freq}/{symbol}/train/*.feather`，计算每合约 `Permutation Importance`、`CatBoost Importance`、`IC`、`RankIC`、`Sharpe`，汇总 `Mean`、`Std`、`Median`，并写出候选特征：
+
+```text
+PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/{target_freq}/{symbol}/train/state_features_candidate.npy
+```
+
+`feature_selection(valid)` 读取 valid split，并且只使用 train 候选特征集合，写出最终特征和筛选后的合约级输入：
+
+```text
+PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/{target_freq}/{symbol}/valid/state_features.npy
+PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/{target_freq}/{symbol}/valid/{contract}/df.feather
+```
+
+随后 `scale_save` 从 filtered valid feature selection 输出读取 `df.feather` 和最终 `state_features.npy`，最终仍写入 `PREPROCESS_DATASET/commodity-futures/SCALE_SAVE`。
 
 第 9 阶段同时会纵向合并每个集合的合约级文件，并写出：
 

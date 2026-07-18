@@ -906,7 +906,22 @@ run_commodity_merge_process() {
 run_commodity_concat_process() { echo "concat stdout"; }
 run_commodity_time_feature() { echo "time feature stdout"; }
 run_commodity_merge_and_clean() { echo "merge clean stdout"; }
-run_commodity_scale_save() { echo "scale stdout"; }
+run_commodity_feature_selection() {
+    local stage=$1
+    local split_root=$2
+    local target_freq=$3
+    local symbol=$4
+    echo "feature_selection:${stage}:${symbol}:${target_freq}:${split_root}"
+}
+run_commodity_scale_save() {
+    local target_freq=$1
+    local start_date=$2
+    local end_date=$3
+    local symbol=$4
+    local root_path=$5
+    local contract=$6
+    echo "scale_save:${symbol}:${contract}:${target_freq}:${start_date}:${end_date}:${root_path}"
+}
 run_commodity_dataset_split() {
     local summary_path=$1
     local target_freq=$2
@@ -955,8 +970,10 @@ run_commodity_maintenance_margin_dict() { echo "maintenance stdout"; }
         "concat": "fu_fu2601",
         "time_feature": "fu_fu2601",
         "merge_clean": "fu_fu2601",
-        "scale_save": "fu_fu2601",
         "dataset_split": "fu",
+        "feature_selection_train": "fu",
+        "feature_selection_valid": "fu",
+        "scale_save": "fu_fu2601",
         "maintenance_margin_dict": "fu",
     }
     for step_name, step_symbol in symbol_by_step.items():
@@ -991,6 +1008,39 @@ run_commodity_maintenance_margin_dict() { echo "maintenance stdout"; }
     )
     assert "dataset_split:fu:5min:2026-01-05:2026-01-07:" in (
         dataset_split_log.read_text(encoding="utf-8")
+    )
+    feature_train_log = (
+        tmp_path
+        / "log_futures"
+        / "ticker_result"
+        / "commodity"
+        / "steps"
+        / "fu_5min_2026-01-05_2026-01-07_feature_selection_train.log"
+    )
+    feature_valid_log = (
+        tmp_path
+        / "log_futures"
+        / "ticker_result"
+        / "commodity"
+        / "steps"
+        / "fu_5min_2026-01-05_2026-01-07_feature_selection_valid.log"
+    )
+    scale_log = (
+        tmp_path
+        / "log_futures"
+        / "ticker_result"
+        / "commodity"
+        / "steps"
+        / "fu_fu2601_5min_2026-01-05_2026-01-07_scale_save.log"
+    )
+    assert "feature_selection:train:fu:5min:" in feature_train_log.read_text(
+        encoding="utf-8"
+    )
+    assert "feature_selection:valid:fu:5min:" in feature_valid_log.read_text(
+        encoding="utf-8"
+    )
+    assert "scale_save:fu:fu2601:5min:2026-01-05:2026-01-07:" in (
+        scale_log.read_text(encoding="utf-8")
     )
     assert (
         tmp_path / "log_futures/downscale/cross_section/5min/fu/fu2601/2026-01-05.log"
@@ -1282,22 +1332,24 @@ def test_commodity_full_process_shell_scales_ic_selection_output():
     assert "--ic_choice ic" in text
 
 
-def test_commodity_full_process_shell_runs_scale_after_merge_clean_and_dataset_split_after_loop():
+def test_commodity_full_process_shell_runs_scale_after_feature_selection_valid():
     script = (
         REPO_ROOT
         / "data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
     )
     text = script.read_text(encoding="utf-8")
 
-    assert "run_commodity_ic_candidate()" not in text
-    assert "run_commodity_ic_union_finalize()" not in text
+    assert '"dataset_split"' in text
+    assert '"feature_selection_train"' in text
+    assert '"feature_selection_valid"' in text
+    assert '"feature_union"' not in text
     assert '"ic_candidate"' not in text
     assert '"ic_union_finalize"' not in text
-    assert '"dataset_split"' in text
-    assert '"feature_union"' not in text
-    assert text.index('"merge_clean"') < text.index('"scale_save"')
-    assert text.rindex('"scale_save"') < text.index('"dataset_split"')
-    assert text.index('"dataset_split"') < text.index('"maintenance_margin_dict"')
+    assert text.index('"merge_clean"') < text.index('"dataset_split"')
+    assert text.index('"dataset_split"') < text.index('"feature_selection_train"')
+    assert text.index('"feature_selection_train"') < text.index('"feature_selection_valid"')
+    assert text.index('"feature_selection_valid"') < text.rindex('"scale_save"')
+    assert text.rindex('"scale_save"') < text.index('"maintenance_margin_dict"')
 
 
 def test_validate_features_checks_feature_union_outputs():

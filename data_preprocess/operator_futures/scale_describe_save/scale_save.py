@@ -102,6 +102,13 @@ parser.add_argument(
     default=25,
     help="the available orderbook depth",
 )
+parser.add_argument(
+    "--feature_selection_stage",
+    type=str,
+    default=None,
+    choices=["train", "valid"],
+    help="read filtered commodity FEATURE_SELECTION output for the selected stage",
+)
 
 
 def scale_std(df: pl.DataFrame, log_base=10):
@@ -132,32 +139,46 @@ def scale_mean(df: pl.DataFrame, log_base=10, clip_theshold=10):
     return pl.DataFrame(columns)
 
 
+def resolve_scale_input_paths(args, symbol_parts):
+    if args.feature_selection_stage is None:
+        input_dir = Path(args.data_path).joinpath(*symbol_parts, args.target_freq) / (
+            f"{args.start_date}-{args.end_date}"
+        )
+        if args.ic_choice == "ic":
+            df_name = "df"
+            state_name = "state_features"
+        elif args.ic_choice == "rank_ic":
+            df_name = "df_rank"
+            state_name = "state_features_rank"
+        else:
+            df_name = "df_catboost"
+            state_name = "state_features_catboost"
+        return input_dir / f"{df_name}.feather", input_dir / f"{state_name}.npy"
+
+    if args.contract is None:
+        raise ValueError("--feature_selection_stage requires --contract")
+    stage_dir = Path(args.data_path).joinpath(
+        args.target_freq, args.symbols, args.feature_selection_stage
+    )
+    return stage_dir / args.contract / "df.feather", stage_dir / "state_features.npy"
+
+
 def main(args):
     started_at = time.monotonic()
     args.data_path = os.path.join(args.root_path, args.data_path)
     args.save_path = os.path.join(args.root_path, args.save_path)
     symbol_parts = symbol_contract_path_parts(args.symbols, args.contract)
     assert args.ic_choice in ["ic", "rank_ic", "catboost"]
-    if args.ic_choice == "ic":
-        df_name = "df"
-        state_name = "state_features"
-    elif args.ic_choice == "rank_ic":
-        df_name = "df_rank"
-        state_name = "state_features_rank"
-    else:
-        df_name = "df_catboost"
-        state_name = "state_features_catboost"
-
-    input_dir = Path(args.data_path).joinpath(*symbol_parts, args.target_freq) / f"{args.start_date}-{args.end_date}"
+    input_file, state_features_file = resolve_scale_input_paths(args, symbol_parts)
     output_dir = Path(args.save_path).joinpath(*symbol_parts, args.target_freq) / f"{args.start_date}-{args.end_date}"
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info(
-        "Starting scale-save process: symbol=%s start_date=%s end_date=%s target_freq=%s input_dir=%s output_dir=%s ic_choice=%s market_type=%s orderbook_depth=%d base=%s clip_threshold=%s",
+        "Starting scale-save process: symbol=%s start_date=%s end_date=%s target_freq=%s input_file=%s output_dir=%s ic_choice=%s market_type=%s orderbook_depth=%d base=%s clip_threshold=%s",
         args.symbols,
         args.start_date,
         args.end_date,
         args.target_freq,
-        input_dir,
+        input_file,
         output_dir,
         args.ic_choice,
         args.market_type,
@@ -165,7 +186,6 @@ def main(args):
         args.base,
         args.clip_theshold,
     )
-    input_file = input_dir / f"{df_name}.feather"
     df = pl.read_ipc(input_file)
     validate_no_nan(df, path=input_file, stage="input")
     logger.info("Loaded scale-save input: rows=%d columns=%d", df.height, len(df.columns))
@@ -175,7 +195,7 @@ def main(args):
         reward_features = [col for col in get_reward_execution_columns(args.orderbook_depth) if col in df.columns]
     else:
         reward_features = list(df.columns[:106])
-    state_feature = np.load(input_dir / f"{state_name}.npy", allow_pickle=True).tolist()
+    state_feature = np.load(state_features_file, allow_pickle=True).tolist()
     logger.info(
         "Selected scale-save feature groups: reward_features=%d state_features=%d",
         len(reward_features),
