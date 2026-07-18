@@ -4,7 +4,6 @@ import numpy as np
 import os
 import argparse
 import sys
-import json
 import logging
 from pathlib import Path
 import time
@@ -111,11 +110,6 @@ parser.add_argument(
     default=25,
     help="the available orderbook depth",
 )
-parser.add_argument(
-    "--candidate_only",
-    action="store_true",
-    help="write selected feature candidates and reports without writing final df.feather",
-)
 
 
 def calculate_cor(column, target):
@@ -179,36 +173,6 @@ def select_reward_state_features(df, market_type="crypto_futures", orderbook_dep
         reward_features = list(df.columns[:106])
     state_feature = [col for col in df.columns if col not in reward_features]
     return reward_features, state_feature
-
-
-def write_candidate_outputs(
-    output_dir: Path,
-    symbol: str,
-    contract: str | None,
-    target_freq: str,
-    start_date: str,
-    end_date: str,
-    state_features: list[str],
-    reward_features: list[str],
-    input_path: Path,
-) -> None:
-    np.save(output_dir / "state_features_candidate.npy", np.array(state_features))
-    manifest = {
-        "symbol": symbol,
-        "contract": contract,
-        "target_freq": target_freq,
-        "start_date": start_date,
-        "end_date": end_date,
-        "input_path": str(input_path),
-        "candidate_state_feature_count": len(state_features),
-        "reward_feature_count": len(reward_features),
-        "state_features_candidate_path": str(output_dir / "state_features_candidate.npy"),
-        "state_features": state_features,
-    }
-    (output_dir / "candidate_manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
 
 
 def main(args):
@@ -290,31 +254,6 @@ def main(args):
     df_cor.write_csv(output_dir / "correlation.csv")
     selected_feature_names = select_feature(corre_df=df_cor, theshold=args.cor_theshold)
     state_feature = selected_feature_names
-    if args.candidate_only:
-        logger.info(
-            "Writing IC candidate outputs: selected_state_features=%d output_dir=%s",
-            len(state_feature),
-            output_dir,
-        )
-        write_candidate_outputs(
-            output_dir=output_dir,
-            symbol=args.symbols,
-            contract=args.contract,
-            target_freq=args.target_freq,
-            start_date=args.start_date,
-            end_date=args.end_date,
-            state_features=state_feature,
-            reward_features=reward_features,
-            input_path=input_path,
-        )
-        logger.info(
-            "Finished IC candidate process: rows=%d candidate_features=%d elapsed_seconds=%.2f",
-            df.height,
-            len(state_feature),
-            time.monotonic() - started_at,
-        )
-        return df
-
     out = df.select([*reward_features, *state_feature])
     logger.info(
         "Writing IC outputs: selected_state_features=%d total_columns=%d output_dir=%s",

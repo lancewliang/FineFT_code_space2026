@@ -272,13 +272,15 @@
 - **AND** shell 脚本 MUST NOT 构造 `continuous_file="${symbol}_${start_date}_${end_date}.csv"` 作为 handoff
 - **AND** shell 脚本 MUST NOT 把 `CONTINUOUS_RAW/{symbol}` 当作日文件目录传给 downscale
 
-#### Scenario: full process 按 summary 合约循环并在 union 后执行 scale save
+#### Scenario: full process 按 summary 合约循环并在 scale save 后切分数据集
 - **WHEN** `main_contract_summary.json` 中包含合约 `fu2601` 和 `fu2605`
 - **THEN** `fu_full_process.sh` SHALL 从 summary 读取合约列表
-- **AND** `fu_full_process.sh` SHALL 分别为 `fu2601` 和 `fu2605` 调用 `cross_section`、`merge`、`concat`、`time_feature`、`merge_clean` 和 `ic_candidate`
+- **AND** `fu_full_process.sh` SHALL 分别为 `fu2601` 和 `fu2605` 调用 `cross_section`、`merge`、`concat`、`time_feature`、`merge_clean` 和 `scale_save`
 - **AND** 每次合约级调用 SHALL 传递 `--symbols fu --contract <contract>`
-- **AND** 所有合约 `ic_candidate` 完成后，`fu_full_process.sh` SHALL 调用品种级 `ic_union_finalize`
-- **AND** `ic_union_finalize` 完成后，`fu_full_process.sh` SHALL 分别为每个合约调用 `scale_save`
+- **AND** `scale_save` SHALL 在同一合约的 `merge_clean` 完成后执行
+- **AND** 所有合约 `scale_save` 完成后，`fu_full_process.sh` SHALL 只调用一次 `dataset_split`
+- **AND** `fu_full_process.sh` SHALL NOT 调用 `ic_candidate` logged step
+- **AND** `fu_full_process.sh` SHALL NOT 调用 `ic_union_finalize` logged step
 - **AND** `fu_full_process.sh` SHALL NOT 保留独立后置的旧 `feature_union` 步骤
 
 ### Requirement: 商品期货 Polars 预处理兼容性
@@ -339,7 +341,7 @@
 
 #### Scenario: 主流程生成步骤日志
 - **WHEN** 用户运行 `data_preprocess/script_preprocess/future_upgraded/commodity/main.sh`，且 `SYMBOL=fu`、`TARGET_FREQ=5min`、`START_DATE=2025-11-03`、`END_DATE=2025-11-08`
-- **THEN** 系统 SHALL 为 `stitch_main_contract`、`downscale_continuous_by_trading_day`、`cross_section`、`merge`、`concat`、`time_feature`、`merge_clean`、`ic_correlation` 和 `scale_save` 生成独立日志文件
+- **THEN** 系统 SHALL 为 `stitch_main_contract`、`downscale_continuous_by_trading_day`、`cross_section`、`merge`、`concat`、`time_feature`、`merge_clean`、`scale_save`、`dataset_split` 和 `maintenance_margin_dict` 生成独立日志文件
 - **AND** 每个步骤日志文件名 SHALL 包含 symbol、target_freq、start_date、end_date 和步骤名
 - **AND** 每个步骤日志 SHALL 捕获该步骤的 stdout 和 stderr
 
@@ -348,17 +350,6 @@
 - **THEN** 总日志 SHALL 记录该步骤的开始信息和步骤日志路径
 - **AND** 当步骤成功完成时，总日志 SHALL 记录该步骤成功完成
 - **AND** 当步骤失败时，总日志 SHALL 记录该步骤失败和对应日志路径
-
-#### Scenario: 失败语义保持 fail-fast
-- **WHEN** 任一主要步骤返回非 0 状态
-- **THEN** 商品 preprocess 主流程 SHALL 以非 0 状态退出
-- **AND** 系统 SHALL 保留失败步骤日志中的错误输出
-- **AND** 系统 MUST NOT 因日志包装而继续执行后续主要步骤
-
-#### Scenario: 现有子日志继续保留
-- **WHEN** `cross_section` 或 `merge` 阶段继续按日期启动子任务日志
-- **THEN** 系统 SHALL 保留现有按日期子日志目录和文件
-- **AND** 新增步骤日志 MUST NOT 删除、重命名或替代这些子日志
 
 ### Requirement: 商品期货按合约生成因子文件
 系统 SHALL 在商品期货多合约流程中按具体合约生成独立因子文件，并在未传 contract 时保留共享脚本旧路径行为。
@@ -409,7 +400,7 @@
 - **AND** 一个合约的日志或输出 SHALL NOT 覆盖另一个合约的日志或输出
 
 ### Requirement: 商品期货跨合约训练特征合集
-系统 SHALL 在所有入选合约完成单合约特征选择和 scale save 后，生成品种级统一 state feature 合集，供后续同模型训练读取。
+系统 SHALL 支持在所有入选合约完成单合约特征选择和 scale save 后，生成品种级统一 state feature 合集，供需要统一 state feature 列表的独立流程读取。
 
 #### Scenario: 生成品种级 state feature union
 - **WHEN** `main_contract_summary.json` 中包含合约 `fu2601` 和 `fu2605`
@@ -433,17 +424,16 @@
 - **THEN** 系统 SHALL 报错并停止 feature union 生成
 - **AND** 错误信息 SHALL 包含缺失合约 `fu2605` 和缺失的 `state_features.npy` 路径
 
-#### Scenario: full process 最后生成 feature union
+#### Scenario: full process 不再生成 feature union
 - **WHEN** `fu_full_process.sh` 已对 summary 中所有合约完成 `scale_save`
-- **THEN** `fu_full_process.sh` SHALL 调用品种级 feature union 生成步骤
-- **AND** 该步骤 SHALL 使用同一次运行的 `summary_path`、`symbol`、`target_freq`、`start_date` 和 `end_date`
-- **AND** feature union 日志、skip 检查和验证输出 SHALL 使用 symbol 级别，不绑定单个 contract
+- **THEN** `fu_full_process.sh` SHALL NOT 调用品种级 feature union 生成步骤
+- **AND** `fu_full_process.sh` SHALL NOT 调用 `run_commodity_ic_union_finalize`
+- **AND** 后续第 9 阶段 dataset split SHALL NOT 依赖 `FEATURE_UNION/{symbol}/{target_freq}/{start_date}-{end_date}/state_features.npy`
 
 #### Scenario: validation 检查 feature union
 - **WHEN** `validate_features.sh` 验证商品期货输出
 - **THEN** 脚本 SHALL 检查 `FEATURE_UNION/{symbol}/{target_freq}/{start_date}-{end_date}/state_features.npy`
 - **AND** 脚本 SHALL 检查 `FEATURE_UNION/{symbol}/{target_freq}/{start_date}-{end_date}/feature_union_manifest.json`
-- **AND** 缺少任一 feature union 产物时验证 SHALL 失败
 
 ### Requirement: 商品期货多合约 feature selection union
 系统 SHALL 将商品期货多合约 feature selection 拆分为 candidate 和 union finalize 两个阶段，确保所有合约使用同一份 union state feature 列表，并为每个合约生成按 union 过滤后的标准 `IC_RESULT` 数据文件。
@@ -540,31 +530,42 @@
 - **AND** manifest SHALL 记录该合约在 valid 集合为空命中或被跳过的原因
 
 ### Requirement: 商品 FineFT 阶段数据集生成
-系统 SHALL 从合约级 `SCALE_SAVE` 输出生成 FineFT 商品阶段数据集，并停止生成旧的品种级 `train.feather`、`valid.feather` 和 `test.feather`。
+系统 SHALL 从合约级 `SCALE_SAVE` 输出生成商品阶段数据集，保留合约级 train/valid/test 文件，并额外生成品种级纵向合并的 `train.feather`、`valid.feather` 和 `test.feather`。
 
 #### Scenario: 生成合约级阶段数据文件
-- **WHEN** manifest 中合约 `fu2601` 在 train、valid、test 集合均命中交易日
+- **WHEN** summary 中合约 `fu2601` 在 train、valid、test 集合均命中交易日
 - **THEN** 系统 SHALL 读取 `SCALE_SAVE/fu/fu2601/5min/{start_date}-{end_date}/df.feather`
-- **AND** 系统 SHALL 按 manifest 中列出的交易日过滤并按时间升序输出 `dataset/5min/fu/train/df_fu2601.feather`
-- **AND** 系统 SHALL 输出 `dataset/5min/fu/valid/df_fu2601.feather`
-- **AND** 系统 SHALL 输出 `dataset/5min/fu/test/df_fu2601.feather`
+- **AND** 系统 SHALL 按该合约命中的交易日过滤并按时间升序输出 `dataset/5min/fu/train/fu2601.feather`
+- **AND** 系统 SHALL 输出 `dataset/5min/fu/valid/fu2601.feather`
+- **AND** 系统 SHALL 输出 `dataset/5min/fu/test/fu2601.feather`
+- **AND** 输出 SHALL 保留输入 feather 的所有列
 - **AND** 输出前 SHALL 重置 DataFrame index
 
-#### Scenario: 不再生成旧集合大文件
-- **WHEN** 商品多合约数据集工具生成阶段数据集
-- **THEN** 系统 SHALL NOT 生成 `dataset/{target_freq}/{symbol}/train.feather`
-- **AND** 系统 SHALL NOT 生成 `dataset/{target_freq}/{symbol}/valid.feather`
-- **AND** 系统 SHALL NOT 生成 `dataset/{target_freq}/{symbol}/test.feather`
+#### Scenario: 生成纵向合并阶段大文件
+- **WHEN** 商品 dataset split 已写出一个或多个合约级 train、valid 和 test 阶段文件
+- **THEN** 系统 SHALL 分别纵向合并所有合约级 train 文件并写出 `dataset/{target_freq}/{symbol}/train.feather`
+- **AND** 系统 SHALL 分别纵向合并所有合约级 valid 文件并写出 `dataset/{target_freq}/{symbol}/valid.feather`
+- **AND** 系统 SHALL 分别纵向合并所有合约级 test 文件并写出 `dataset/{target_freq}/{symbol}/test.feather`
+- **AND** 纵向合并 SHALL 保留输入 feather 的所有列
+- **AND** 纵向合并 SHALL NOT 删除合约级 `train/`、`valid/` 或 `test/` 目录
 
-#### Scenario: 复制品种级 state features
-- **WHEN** `FEATURE_UNION/{symbol}/{target_freq}/{start_date}-{end_date}/state_features.npy` 存在
-- **THEN** 系统 SHALL 将该文件复制或等价写出到 `dataset/{target_freq}/{symbol}/state_features.npy`
-- **AND** 商品训练 SHALL 使用该品种级 feature union 作为统一 state feature 列表
+#### Scenario: dataset split 不依赖 state features
+- **WHEN** 第 9 阶段 dataset split 生成阶段数据集
+- **THEN** 系统 SHALL NOT 要求 `FEATURE_UNION/{symbol}/{target_freq}/{start_date}-{end_date}/state_features.npy` 存在
+- **AND** 系统 SHALL NOT 读取 `state_features.npy` 来筛选输出列
+- **AND** 系统 SHALL NOT 生成或复制 `dataset/{target_freq}/{symbol}/state_features.npy`
 
 #### Scenario: 缺少必要输入 fail-fast
-- **WHEN** manifest 中某个非空集合需要合约 `fu2601` 的 `df.feather`，但输入文件不存在
+- **WHEN** 某个非空集合需要合约 `fu2601` 的 `df.feather`，但输入文件不存在
 - **THEN** 系统 SHALL 报错并停止
 - **AND** 错误信息 SHALL 包含缺失合约和缺失路径
+
+#### Scenario: 计划交易日过滤为空 fail-fast
+- **WHEN** summary 显示合约 `fu2601` 在 train 集合存在交易日
+- **AND** 系统读取 `SCALE_SAVE/fu/fu2601/5min/{start_date}-{end_date}/df.feather`
+- **AND** 按该集合交易日过滤后没有任何行
+- **THEN** 系统 SHALL 报错并停止
+- **AND** 错误信息 SHALL 包含合约、集合名和输入路径
 
 ### Requirement: 商品 FineFT 训练切片生成
 系统 SHALL 从商品 train 阶段数据生成真正用于低层训练的 `train/slice/df_*.feather` 文件，切片连续编号且不跨合约、不跨 train 日期边界。
@@ -674,4 +675,49 @@
 - **AND** 后续 VAE 数据生成 SHALL 写出 `VAE_data/test/test_<contract>.npy`
 - **AND** 后续 VAE 数据生成 SHALL NOT 将多合约 test 数据合并为单个 `VAE_data/test.npy`
 - **AND** 后续 VAE 数据生成 SHALL NOT 要求 `test.feather` 存在
+
+### Requirement: 商品期货第 9 阶段 dataset split 入口
+系统 SHALL 提供 `future_upgraded/9_dataset_split` 阶段入口，并在商品 full process 中于所有合约 `scale_save` 完成后运行该阶段。
+
+#### Scenario: shell stage 激活 finetf 环境
+- **WHEN** `data_preprocess/script_preprocess/future_upgraded/9_dataset_split/dataset_split.sh` 运行
+- **THEN** 脚本 SHALL 激活 `finetf` conda 环境
+- **AND** 脚本 SHALL 调用 `operator_futures.dataset_split.dataset_split`
+- **AND** 脚本 SHALL 传递 summary 路径、`SCALE_SAVE` 根目录、输出根目录、`symbol`、`target_freq`、`start_date`、`end_date` 和 split ratio 参数
+
+#### Scenario: full process 只运行一次 dataset split
+- **WHEN** `main_contract_summary.json` 包含多个合约
+- **AND** `fu_full_process.sh` 已为每个合约完成 `scale_save`
+- **THEN** `fu_full_process.sh` SHALL 调用一次 `dataset_split`
+- **AND** 该调用 SHALL 使用同一次运行的 `summary_path`、`symbol`、`target_freq`、`start_date` 和 `end_date`
+- **AND** 该调用 SHALL NOT 绑定单个 `contract`
+
+### Requirement: 商品期货 dataset split manifest
+系统 SHALL 为第 9 阶段商品 dataset split 写出 `dataset_split_manifest.json`，描述 split 边界、合约集合归属、输入输出路径、输出行数和跳过原因。
+
+#### Scenario: 写出 split manifest 边界和集合信息
+- **WHEN** `operator_futures.dataset_split.dataset_split` 完成边界计算
+- **THEN** 系统 SHALL 写出 `dataset/{target_freq}/{symbol}/dataset_split_manifest.json`
+- **AND** manifest SHALL 包含 `symbol`、`target_freq`、`split_ratio`、`boundaries` 和 `sets`
+- **AND** `split_ratio` SHALL 记录 `{"train": 5, "valid": 3, "test": 2}`
+- **AND** `boundaries` SHALL 记录 `start`、`a`、`b`、`c`
+
+#### Scenario: split manifest 记录合约级输入输出
+- **WHEN** 合约 `fu2601` 在 train 集合命中至少一个交易日
+- **THEN** manifest SHALL 在 `sets.train.contracts` 中记录 `contract=fu2601`
+- **AND** 该记录 SHALL 包含命中的 `trading_days`
+- **AND** 该记录 SHALL 包含输入 `SCALE_SAVE/{symbol}/{contract}/{target_freq}/{start_date}-{end_date}/df.feather` 路径
+- **AND** 该记录 SHALL 包含阶段输出 `dataset/{target_freq}/{symbol}/train/{contract}.feather` 路径
+- **AND** 该记录 SHALL 包含 `output_row_count`
+
+#### Scenario: split manifest 记录集合合并输出
+- **WHEN** dataset split 写出 `train.feather`、`valid.feather` 和 `test.feather`
+- **THEN** manifest SHALL 为每个集合记录顶层 merged output 路径
+- **AND** manifest SHALL 为每个集合记录 `contracts_total_count`
+- **AND** `contracts_total_count` SHALL 等于该集合内所有合约 `output_row_count` 之和
+
+#### Scenario: split manifest 记录空命中或跳过原因
+- **WHEN** 某合约在 valid 集合没有命中任何交易日
+- **THEN** 系统 SHALL NOT 写出空的 `valid/{contract}.feather`
+- **AND** manifest SHALL 记录该合约在 valid 集合为空命中或被跳过的原因
 
