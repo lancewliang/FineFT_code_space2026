@@ -289,6 +289,37 @@ def test_train_stage_writes_candidates_metrics_filtered_outputs_and_manifest(tmp
     assert manifest["windows_list"] == [1, 6, 12]
 
 
+def test_train_stage_rejects_illegal_feature_values_before_metrics(tmp_path, fake_catboost):
+    _write_long_split_contract(
+        tmp_path,
+        "train",
+        "fu2601",
+        [0.0, 1.0, float("nan"), 3.0, 4.0, 5.0, float("inf"), 7.0, 8.0, 9.0, 10.0, 11.0, float("-inf"), 13.0, 14.0],
+        [float(index) for index in range(15)],
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        run_feature_selection(
+            root_path=tmp_path,
+            split_path="PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST",
+            save_path="PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION",
+            symbol="fu",
+            target_freq="5min",
+            stage="train",
+            orderbook_depth=5,
+            min_abs_ic=0.01,
+            max_correlation=0.99,
+        )
+
+    message = str(exc_info.value)
+    assert "Illegal data detected" in message
+    assert "stage=train_feature_selection_input" in message
+    assert "contract=fu2601" in message
+    assert "alpha:nan=1" in message
+    assert "alpha:infinite=2" in message
+    assert "CatBoostRegressor" not in fake_catboost
+
+
 def test_valid_stage_uses_train_candidates_and_writes_final_features(tmp_path, fake_catboost):
     _write_split_contract(tmp_path, "valid", "fu2601", [1.0, 2.0, 3.0, 4.0], [4.0, 4.0, 4.0, 4.0], gamma=[9.0, 8.0, 7.0, 6.0])
     train_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"

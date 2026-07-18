@@ -9,6 +9,7 @@ import numpy as np
 import polars as pl
 
 from operator_futures.commodity.schema import get_reward_execution_columns
+from operator_futures.data_quality import DataQualityValidator
 from operator_futures.feature_selection.cor_util import select_feature
 from operator_futures.feature_selection.muti_contract.metrics import (
     DEFAULT_WINDOWS_LIST,
@@ -163,6 +164,23 @@ def _ordered_filter_features(
     }
 
 
+def _validate_contract_frame(
+    frame: pl.DataFrame,
+    *,
+    stage: str,
+    contract: str,
+    feature_universe: list[str],
+) -> None:
+    DataQualityValidator.validate_no_illegal_values(
+        frame,
+        stage=f"{stage}_feature_selection_input",
+        feature_name="FEATURE_SELECTION",
+        contract=contract,
+        trading_day="-",
+        columns=["mark_price", *feature_universe],
+    )
+
+
 def _write_filtered_outputs(
     frames: dict[str, pl.DataFrame],
     output_dir: Path,
@@ -248,6 +266,12 @@ def run_feature_selection(
             raise ValueError(
                 f"contract {contract} is missing required feature columns: {missing}"
             )
+        _validate_contract_frame(
+            frame,
+            stage=stage,
+            contract=contract,
+            feature_universe=feature_universe,
+        )
         metrics = calculate_metric_frame(frame, feature_universe, windows_list=windows_list)
         metric_path = per_contract_dir / f"{contract}_metrics.csv"
         metrics.write_csv(metric_path)
