@@ -26,26 +26,6 @@ def _write_ic_fixture(path: Path) -> None:
     frame.write_ipc(path)
 
 
-def _write_contract_ic_fixture(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame = pl.DataFrame(
-        {
-            "timestamp": list(range(12)),
-            "mark_price": [100.0 + i for i in range(12)],
-            "index_price": [100.0 + i for i in range(12)],
-            "funding_timestamp": list(range(12)),
-            "funding_rate": [0.0 for _ in range(12)],
-            "ask1_price": [101.0 + i for i in range(12)],
-            "ask1_size": [10.0 for _ in range(12)],
-            "bid1_price": [99.0 + i for i in range(12)],
-            "bid1_size": [11.0 for _ in range(12)],
-            "feature_a": [float(i) for i in range(12)],
-            "feature_b": [float(12 - i) for i in range(12)],
-        }
-    )
-    frame.write_ipc(path)
-
-
 def _ic_args(tmp_path):
     return SimpleNamespace(
         root_path=str(tmp_path),
