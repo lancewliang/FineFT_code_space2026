@@ -101,6 +101,7 @@ def test_depth_five_orderbook_columns_have_no_synthetic_levels():
 
 def test_reward_execution_manifest_for_depth_five():
     columns = get_reward_execution_columns(depth=5)
+    orderbook_columns = build_orderbook_columns(5)
 
     assert columns[0] == "timestamp"
     assert "mark_price" in columns
@@ -109,7 +110,23 @@ def test_reward_execution_manifest_for_depth_five():
     assert "ask5_price" in columns
     assert "bid5_size" in columns
     assert "ask6_price" not in columns
-    assert len(columns) == 1 + 1 + 20 + 5
+    assert columns.index("LowerLimitPrice") < columns.index("funding_timestamp")
+    assert columns.index("UpperLimitPrice") < columns.index("funding_timestamp")
+    assert columns.index("LowerLimitPrice") > columns.index("bid5_size")
+    assert columns.index("UpperLimitPrice") > columns.index("bid5_size")
+    assert columns == [
+        "timestamp",
+        "contract",
+        *orderbook_columns,
+        "LowerLimitPrice",
+        "UpperLimitPrice",
+        "symbol",
+        "funding_timestamp",
+        "funding_rate",
+        "index_price",
+        "mark_price",
+    ]
+    assert len(columns) == 1 + 1 + 20 + 2 + 5
 
 
 def test_resample_kwargs_are_right_closed_and_right_labeled():

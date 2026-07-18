@@ -3,19 +3,31 @@ import json
 
 import numpy as np
 import pandas as pd
+import polars as pl
 
+from operator_futures.cross_section.base_feature_util import process_snapshot_features
 from operator_futures.feature_validation.compare import compare_frames
 from operator_futures.feature_validation.expected_columns import EXPECTED_COLUMNS_BY_DOC
 from operator_futures.feature_validation.models import StageResult, ValidationConfig, ValidationReport
 from operator_futures.feature_validation.report import render_json_report, render_markdown_report
 
 
+def _snapshot_25_depth() -> pl.DataFrame:
+    row = {}
+    for level in range(1, 26):
+        row[f"ask{level}_price"] = 3000.0 + level
+        row[f"ask{level}_size"] = float(level)
+        row[f"bid{level}_price"] = 3000.0 - level
+        row[f"bid{level}_size"] = float(level + 1)
+    return pl.DataFrame([row])
+
+
 def test_expected_columns_are_fixed_docs_derived_lists():
     assert len(EXPECTED_COLUMNS_BY_DOC["base_feature"]) == 112
     assert len(EXPECTED_COLUMNS_BY_DOC["kline_feature"]) == 216
     assert len(EXPECTED_COLUMNS_BY_DOC["quotes_feature"]) == 69
-    assert len(EXPECTED_COLUMNS_BY_DOC["snapshot_feature"]) == 82
-    assert len(EXPECTED_COLUMNS_BY_DOC["reward_environment"]) == 106
+    assert len(EXPECTED_COLUMNS_BY_DOC["snapshot_feature"]) == 84
+    assert len(EXPECTED_COLUMNS_BY_DOC["reward_environment"]) == 108
     assert len(EXPECTED_COLUMNS_BY_DOC["time_feature"]) == 3375
     assert "ohlcv_feature_1" not in EXPECTED_COLUMNS_BY_DOC["time_feature"]
     assert "ohlc_feature_1" not in EXPECTED_COLUMNS_BY_DOC["time_feature"]
@@ -23,6 +35,12 @@ def test_expected_columns_are_fixed_docs_derived_lists():
     assert "vma_48_std_norm_sell" in EXPECTED_COLUMNS_BY_DOC["time_feature"]
     assert "roc_2_spread" in EXPECTED_COLUMNS_BY_DOC["time_feature"]
     assert "sumd_48_asksize" in EXPECTED_COLUMNS_BY_DOC["time_feature"]
+
+
+def test_snapshot_expected_columns_match_process_snapshot_feature_order():
+    actual = process_snapshot_features(_snapshot_25_depth()).columns
+
+    assert actual == EXPECTED_COLUMNS_BY_DOC["snapshot_feature"]
 
 
 def test_compare_frames_aligns_by_timestamp_and_applies_absolute_tolerance():

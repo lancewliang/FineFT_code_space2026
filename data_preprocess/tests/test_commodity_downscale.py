@@ -177,6 +177,45 @@ def test_sample_file_can_create_depth_five_outputs():
     assert "nquote" in quote.columns
 
 
+def test_downscale_orderbook_preserves_price_limit_columns():
+    second = pl.DataFrame(
+        {
+            "timestamp": [
+                datetime(2026, 2, 2, 9, 0, 1),
+                datetime(2026, 2, 2, 9, 4, 59),
+            ],
+            "LowerLimitPrice": [2500.0, 2501.0],
+            "UpperLimitPrice": [3100.0, 3101.0],
+            "AskPrice1": [3001.0, 3002.0],
+            "AskVolume1": [10, 11],
+            "BidPrice1": [2999.0, 3000.0],
+            "BidVolume1": [20, 21],
+            "AskPrice2": [3003.0, 3004.0],
+            "AskVolume2": [12, 13],
+            "BidPrice2": [2998.0, 2999.0],
+            "BidVolume2": [22, 23],
+            "AskPrice3": [3005.0, 3006.0],
+            "AskVolume3": [14, 15],
+            "BidPrice3": [2997.0, 2998.0],
+            "BidVolume3": [24, 25],
+            "AskPrice4": [3007.0, 3008.0],
+            "AskVolume4": [16, 17],
+            "BidPrice4": [2996.0, 2997.0],
+            "BidVolume4": [26, 27],
+            "AskPrice5": [3009.0, 3010.0],
+            "AskVolume5": [18, 19],
+            "BidPrice5": [2995.0, 2996.0],
+            "BidVolume5": [28, 29],
+        }
+    )
+
+    out = downscale_orderbook(second, "5min", depth=5)
+    row = out.filter(pl.col("timestamp") == datetime(2026, 2, 2, 9, 5, 0))
+
+    assert row.item(0, "LowerLimitPrice") == 2501.0
+    assert row.item(0, "UpperLimitPrice") == 3101.0
+
+
 def test_invalid_best_quote_fails_fast():
     raw = pl.read_csv(SAMPLE_PATH).head(2)
     ask_price = raw.item(0, "AskPrice1")

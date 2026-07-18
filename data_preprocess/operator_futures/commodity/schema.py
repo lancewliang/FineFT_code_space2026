@@ -8,6 +8,10 @@ DERIVATIVE_REFERENCE_COLUMNS = [
     "index_price",
     "mark_price",
 ]
+PRICE_LIMIT_COLUMNS = [
+    "LowerLimitPrice",
+    "UpperLimitPrice",
+]
 
 
 def resample_kwargs() -> Dict[str, str]:
@@ -31,5 +35,6 @@ def get_reward_execution_columns(depth: int) -> List[str]:
         "timestamp",
         "contract",
         *build_orderbook_columns(depth),
+        *PRICE_LIMIT_COLUMNS,
         *DERIVATIVE_REFERENCE_COLUMNS,
     ]

@@ -39,6 +39,15 @@ def _valid_ohlcv_frame():
             "low": [99.0 + idx for idx in range(8)],
             "close": [100.5 + idx for idx in range(8)],
             "volume": [1000.0 + idx for idx in range(8)],
+            "sell_wap": [101.0 + idx for idx in range(8)],
+            "buy_wap": [99.0 + idx for idx in range(8)],
+            "buy_sell_wap_spread": [-2.0 for _ in range(8)],
+            "ask1_size_n": [0.0 if idx == 2 else 0.2 for idx in range(8)],
+            "bid1_size_n": [1.0 for _ in range(8)],
+            "ask_side_empty": [idx == 2 for idx in range(8)],
+            "bid_side_empty": [False for _ in range(8)],
+            "LowerLimitPrice": [80.0 for _ in range(8)],
+            "UpperLimitPrice": [120.0 for _ in range(8)],
         }
     )
 
@@ -54,6 +63,12 @@ def test_create_feature_rejects_illegal_input_values(tmp_path):
     message = str(exc_info.value)
     assert "stage=time_feature_input" in message
     assert "close:null=1" in message
+
+
+def test_create_feature_accepts_enhanced_single_sided_snapshot_input(tmp_path):
+    _write_input(tmp_path, _valid_ohlcv_frame())
+
+    create_feature.main(_args(tmp_path))
 
 
 def test_create_feature_rejects_illegal_output_values(tmp_path, monkeypatch):

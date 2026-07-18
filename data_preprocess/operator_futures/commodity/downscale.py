@@ -492,6 +492,10 @@ def downscale_orderbook(
         ):
             expressions.append(pl.col(source).alias(output))
             output_columns.append(output)
+    for column in ("LowerLimitPrice", "UpperLimitPrice"):
+        if column in second_df.columns:
+            expressions.append(pl.col(column))
+            output_columns.append(column)
     renamed = second_df.select(expressions)
     result = _resample(
         renamed,

@@ -364,11 +364,23 @@ def process_snapshot_features(df: pd.DataFrame, topk=5, depth=25):
     bid_size_array = df[[f"bid{i}_size" for i in range(1, depth + 1)]].values
     ask_price_array = df[[f"ask{i}_price" for i in range(1, depth + 1)]].values
     bid_price_array = df[[f"bid{i}_price" for i in range(1, depth + 1)]].values
-    normalized_ask_size_array = ask_size_array / (
-        np.sum(ask_size_array, axis=1).reshape(-1, 1)
+    ask_total = np.sum(ask_size_array, axis=1)
+    bid_total = np.sum(bid_size_array, axis=1)
+    ask_side_empty = ask_total <= 0
+    bid_side_empty = bid_total <= 0
+    if np.any(ask_side_empty & bid_side_empty):
+        raise ValueError("both sides have zero total size")
+    normalized_ask_size_array = np.divide(
+        ask_size_array,
+        ask_total.reshape(-1, 1),
+        out=np.zeros_like(ask_size_array, dtype=float),
+        where=ask_total.reshape(-1, 1) > 0,
     )
-    normalized_bid_size_array = bid_size_array / (
-        np.sum(bid_size_array, axis=1).reshape(-1, 1)
+    normalized_bid_size_array = np.divide(
+        bid_size_array,
+        bid_total.reshape(-1, 1),
+        out=np.zeros_like(bid_size_array, dtype=float),
+        where=bid_total.reshape(-1, 1) > 0,
     )
 
     best_ask_size_array = df["ask{}_size".format(1)].values
@@ -387,23 +399,33 @@ def process_snapshot_features(df: pd.DataFrame, topk=5, depth=25):
     volume_related_df = pd.DataFrame(index=df.index)
     # price related features
     price_related_df["midprice"] = (df["ask1_price"] + df["bid1_price"]) / 2
-    price_related_df["wap_1"] = (
+    wap_1_denominator = best_ask_size_array + best_bid_size_array
+    price_related_df["wap_1"] = np.divide(
         best_ask_size_array * best_bid_price_array
-        + best_bid_size_array * best_ask_price_array
-    ) / (best_ask_size_array + best_bid_size_array)
+        + best_bid_size_array * best_ask_price_array,
+        wap_1_denominator,
+        out=(best_ask_price_array + best_bid_price_array) / 2,
+        where=wap_1_denominator > 0,
+    )
 
-    price_related_df["wap_2"] = (
+    wap_2_denominator = bid_size_array[:, 1] + ask_size_array[:, 1]
+    price_related_df["wap_2"] = np.divide(
         ask_size_array[:, 1] * bid_price_array[:, 1]
-        + bid_size_array[:, 1] * ask_price_array[:, 1]
-    ) / (bid_size_array[:, 1] + ask_size_array[:, 1])
+        + bid_size_array[:, 1] * ask_price_array[:, 1],
+        wap_2_denominator,
+        out=(ask_price_array[:, 1] + bid_price_array[:, 1]) / 2,
+        where=wap_2_denominator > 0,
+    )
     price_related_df["wap_balance"] = (
         price_related_df["wap_1"] - price_related_df["wap_2"]
     )
-    price_related_df["sell_wap"] = np.sum(
-        normalized_ask_size_array * ask_price_array, axis=1
+    sell_wap = np.sum(normalized_ask_size_array * ask_price_array, axis=1)
+    buy_wap = np.sum(normalized_bid_size_array * bid_price_array, axis=1)
+    price_related_df["sell_wap"] = np.where(
+        ask_side_empty, best_ask_price_array, sell_wap
     )
-    price_related_df["buy_wap"] = np.sum(
-        normalized_bid_size_array * bid_price_array, axis=1
+    price_related_df["buy_wap"] = np.where(
+        bid_side_empty, best_bid_price_array, buy_wap
     )
     price_related_df["buy_sell_wap_spread"] = (
         price_related_df["buy_wap"] - price_related_df["sell_wap"]
@@ -436,8 +458,8 @@ def process_snapshot_features(df: pd.DataFrame, topk=5, depth=25):
     price_related_df = pd.concat([price_related_df, topk_related_df], axis=1)
 
     # volume related features
-    volume_related_df["buy_volume_oe"] = np.sum(bid_size_array, axis=1)
-    volume_related_df["sell_volume_oe"] = np.sum(ask_size_array, axis=1)
+    volume_related_df["buy_volume_oe"] = bid_total
+    volume_related_df["sell_volume_oe"] = ask_total
     volume_related_df["imblance_volume_oe"] = (
         volume_related_df["buy_volume_oe"] - volume_related_df["sell_volume_oe"]
     ) / (
@@ -445,16 +467,18 @@ def process_snapshot_features(df: pd.DataFrame, topk=5, depth=25):
         + volume_related_df["sell_volume_oe"]
         + minium
     )
+    volume_related_df["ask_side_empty"] = ask_side_empty
+    volume_related_df["bid_side_empty"] = bid_side_empty
     all_normalized_size_df_list = []
 
     for i in range(1, depth + 1):
         single_normalized_size_df = pd.DataFrame(index=df.index)
-        single_normalized_size_df["ask{}_size_n".format(i)] = (
-            ask_size_array[:, i - 1] / volume_related_df["sell_volume_oe"]
-        )
-        single_normalized_size_df["bid{}_size_n".format(i)] = (
-            bid_size_array[:, i - 1] / volume_related_df["buy_volume_oe"]
-        )
+        single_normalized_size_df["ask{}_size_n".format(i)] = normalized_ask_size_array[
+            :, i - 1
+        ]
+        single_normalized_size_df["bid{}_size_n".format(i)] = normalized_bid_size_array[
+            :, i - 1
+        ]
         all_normalized_size_df_list.append(single_normalized_size_df)
     all_normalized_size_df = pd.concat(all_normalized_size_df_list, axis=1)
 
@@ -639,8 +663,24 @@ def process_snapshot_features(df, topk=5, depth=25) -> pl.DataFrame:
     ask_price_array = df.select([f"ask{i}_price" for i in range(1, depth + 1)]).to_numpy()
     bid_price_array = df.select([f"bid{i}_price" for i in range(1, depth + 1)]).to_numpy()
 
-    normalized_ask_size_array = ask_size_array / np.sum(ask_size_array, axis=1).reshape(-1, 1)
-    normalized_bid_size_array = bid_size_array / np.sum(bid_size_array, axis=1).reshape(-1, 1)
+    ask_total = np.sum(ask_size_array, axis=1)
+    bid_total = np.sum(bid_size_array, axis=1)
+    ask_side_empty = ask_total <= 0
+    bid_side_empty = bid_total <= 0
+    if np.any(ask_side_empty & bid_side_empty):
+        raise ValueError("both sides have zero total size")
+    normalized_ask_size_array = np.divide(
+        ask_size_array,
+        ask_total.reshape(-1, 1),
+        out=np.zeros_like(ask_size_array, dtype=float),
+        where=ask_total.reshape(-1, 1) > 0,
+    )
+    normalized_bid_size_array = np.divide(
+        bid_size_array,
+        bid_total.reshape(-1, 1),
+        out=np.zeros_like(bid_size_array, dtype=float),
+        where=bid_total.reshape(-1, 1) > 0,
+    )
     best_ask_size_array = ask_size_array[:, 0]
     best_ask_price_array = ask_price_array[:, 0]
     best_bid_size_array = bid_size_array[:, 0]
@@ -657,17 +697,25 @@ def process_snapshot_features(df, topk=5, depth=25) -> pl.DataFrame:
     if "timestamp" in df.columns:
         data["timestamp"] = df["timestamp"].to_list()
     data["midprice"] = ((df["ask1_price"] + df["bid1_price"]) / 2).to_list()
-    data["wap_1"] = (
-        (best_ask_size_array * best_bid_price_array + best_bid_size_array * best_ask_price_array)
-        / (best_ask_size_array + best_bid_size_array)
+    wap_1_denominator = best_ask_size_array + best_bid_size_array
+    data["wap_1"] = np.divide(
+        best_ask_size_array * best_bid_price_array + best_bid_size_array * best_ask_price_array,
+        wap_1_denominator,
+        out=(best_ask_price_array + best_bid_price_array) / 2,
+        where=wap_1_denominator > 0,
     )
-    data["wap_2"] = (
-        (ask_size_array[:, 1] * bid_price_array[:, 1] + bid_size_array[:, 1] * ask_price_array[:, 1])
-        / (bid_size_array[:, 1] + ask_size_array[:, 1])
+    wap_2_denominator = bid_size_array[:, 1] + ask_size_array[:, 1]
+    data["wap_2"] = np.divide(
+        ask_size_array[:, 1] * bid_price_array[:, 1] + bid_size_array[:, 1] * ask_price_array[:, 1],
+        wap_2_denominator,
+        out=(ask_price_array[:, 1] + bid_price_array[:, 1]) / 2,
+        where=wap_2_denominator > 0,
     )
     data["wap_balance"] = data["wap_1"] - data["wap_2"]
-    data["sell_wap"] = np.sum(normalized_ask_size_array * ask_price_array, axis=1)
-    data["buy_wap"] = np.sum(normalized_bid_size_array * bid_price_array, axis=1)
+    sell_wap = np.sum(normalized_ask_size_array * ask_price_array, axis=1)
+    buy_wap = np.sum(normalized_bid_size_array * bid_price_array, axis=1)
+    data["sell_wap"] = np.where(ask_side_empty, best_ask_price_array, sell_wap)
+    data["buy_wap"] = np.where(bid_side_empty, best_bid_price_array, buy_wap)
     data["buy_sell_wap_spread"] = data["buy_wap"] - data["sell_wap"]
     data["buy_spread_oe_max"] = np.abs(df["bid1_price"].to_numpy() - df[f"bid{depth}_price"].to_numpy())
     data["sell_spread_oe_max"] = np.abs(df["ask1_price"].to_numpy() - df[f"ask{depth}_price"].to_numpy())
@@ -676,15 +724,17 @@ def process_snapshot_features(df, topk=5, depth=25) -> pl.DataFrame:
         data[f"bid_price_topk_size_{i + 1}_increments"] = bid_price_topk_size[:, i] - best_bid_price_array
         data[f"ask_size_topk_size_{i + 1}_increments"] = ask_size_topk_size[:, i] - best_ask_size_array
         data[f"bid_size_topk_size_{i + 1}_increments"] = bid_size_topk_size[:, i] - best_bid_size_array
-    data["buy_volume_oe"] = np.sum(bid_size_array, axis=1)
-    data["sell_volume_oe"] = np.sum(ask_size_array, axis=1)
+    data["buy_volume_oe"] = bid_total
+    data["sell_volume_oe"] = ask_total
     data["imblance_volume_oe"] = (
         (data["buy_volume_oe"] - data["sell_volume_oe"])
         / (data["buy_volume_oe"] + data["sell_volume_oe"] + minium)
     )
+    data["ask_side_empty"] = ask_side_empty
+    data["bid_side_empty"] = bid_side_empty
     for i in range(1, depth + 1):
-        data[f"ask{i}_size_n"] = ask_size_array[:, i - 1] / data["sell_volume_oe"]
-        data[f"bid{i}_size_n"] = bid_size_array[:, i - 1] / data["buy_volume_oe"]
+        data[f"ask{i}_size_n"] = normalized_ask_size_array[:, i - 1]
+        data[f"bid{i}_size_n"] = normalized_bid_size_array[:, i - 1]
     return pl.DataFrame(data)
 
 

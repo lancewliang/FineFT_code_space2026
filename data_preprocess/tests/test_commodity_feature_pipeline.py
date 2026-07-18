@@ -29,6 +29,21 @@ def _snapshot():
     return pd.DataFrame([row])
 
 
+def _single_sided_snapshot(empty_side: str):
+    frame = _snapshot()
+    if empty_side == "ask":
+        for level in range(1, 6):
+            frame[f"ask{level}_price"] = 3050.0
+            frame[f"ask{level}_size"] = 0
+    elif empty_side == "bid":
+        for level in range(1, 6):
+            frame[f"bid{level}_price"] = 2600.0
+            frame[f"bid{level}_size"] = 0
+    else:
+        raise ValueError(empty_side)
+    return frame
+
+
 def test_snapshot_features_accept_depth_five_without_level_25():
     features = process_snapshot_features(_snapshot(), topk=3, depth=5)
 
@@ -38,12 +53,62 @@ def test_snapshot_features_accept_depth_five_without_level_25():
     assert "ask6_size_n" not in features.columns
 
 
+def test_snapshot_features_handle_empty_ask_side_without_nan():
+    features = process_snapshot_features(_single_sided_snapshot("ask"), topk=3, depth=5)
+
+    row = features.row(0, named=True)
+    assert bool(row["ask_side_empty"]) is True
+    assert bool(row["bid_side_empty"]) is False
+    assert row["sell_wap"] == 3050.0
+    assert row["buy_sell_wap_spread"] == row["buy_wap"] - row["sell_wap"]
+    for level in range(1, 6):
+        assert row[f"ask{level}_size_n"] == 0.0
+    assert not features.select(pl.any_horizontal(pl.selectors.float().is_nan())).item()
+    assert not features.select(pl.any_horizontal(pl.selectors.float().is_infinite())).item()
+
+
+def test_snapshot_features_handle_empty_bid_side_without_nan():
+    features = process_snapshot_features(_single_sided_snapshot("bid"), topk=3, depth=5)
+
+    row = features.row(0, named=True)
+    assert bool(row["ask_side_empty"]) is False
+    assert bool(row["bid_side_empty"]) is True
+    assert row["buy_wap"] == 2600.0
+    assert row["buy_sell_wap_spread"] == row["buy_wap"] - row["sell_wap"]
+    for level in range(1, 6):
+        assert row[f"bid{level}_size_n"] == 0.0
+    assert not features.select(pl.any_horizontal(pl.selectors.float().is_nan())).item()
+    assert not features.select(pl.any_horizontal(pl.selectors.float().is_infinite())).item()
+
+
+def test_snapshot_features_flag_normal_two_sided_book_as_not_empty():
+    features = process_snapshot_features(_snapshot(), topk=3, depth=5)
+    row = features.row(0, named=True)
+
+    assert bool(row["ask_side_empty"]) is False
+    assert bool(row["bid_side_empty"]) is False
+    assert row["ask1_size_n"] == 1 / sum(range(1, 6))
+    assert row["bid1_size_n"] == 2 / sum(range(2, 7))
+
+
+def test_snapshot_features_reject_both_sides_empty():
+    frame = _snapshot()
+    for side in ("ask", "bid"):
+        for level in range(1, 6):
+            frame[f"{side}{level}_size"] = 0
+
+    with pytest.raises(ValueError, match="both sides have zero total size"):
+        process_snapshot_features(frame, topk=3, depth=5)
+
+
 def test_manifest_replaces_first_106_reward_columns():
     reward_columns = get_reward_execution_columns(depth=5)
 
-    assert len(reward_columns) == 27
+    assert len(reward_columns) == 29
     assert "contract" in reward_columns
     assert "ask5_price" in reward_columns
+    assert "LowerLimitPrice" in reward_columns
+    assert "UpperLimitPrice" in reward_columns
     assert "ask25_price" not in reward_columns
 
 

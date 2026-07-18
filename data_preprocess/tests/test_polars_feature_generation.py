@@ -114,6 +114,8 @@ def test_cross_section_features_return_polars_with_timestamp():
     assert kline.columns[:2] == ["timestamp", "klen"]
     assert isinstance(snapshot_features, pl.DataFrame)
     assert snapshot_features.columns[:2] == ["timestamp", "midprice"]
+    assert "ask_side_empty" in snapshot_features.columns
+    assert "bid_side_empty" in snapshot_features.columns
 
 
 def test_time_operator_ohlc_returns_polars_with_causal_rolling_features():
