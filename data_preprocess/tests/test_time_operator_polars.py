@@ -10,7 +10,6 @@ from operator_futures.feature_validation.pandas_reference.time_operator.multi_pr
     get_multi_feature_window_price as pandas_get_multi_feature_window_price,
     process_ohlc_single_window as pandas_process_ohlc_single_window,
     process_ohlcv_single_window as pandas_process_ohlcv_single_window,
-    process_single_price_single_window as pandas_process_single_price_single_window,
 )
 from operator_futures.time_operator.multi_processing_util import (
     _process_ohlc_single_window_polars,
@@ -49,7 +48,9 @@ def _write_concat_feature_fixture(
             "buy_wap": 2600.1 + idx,
             "sell_wap": 2600.4 + idx,
             "buy_volume_oe": 20.0 + idx,
-            "sell_volume_oe": 21.0 + idx,
+            "sell_volume_oe": (
+                0.0 if idx == single_sided_ask_index else 21.0 + idx
+            ),
             "imblance_volume_oe": 1.0,
             "ask_side_empty": idx == single_sided_ask_index,
             "bid_side_empty": False,
@@ -318,28 +319,29 @@ def test_ohlc_single_window_matches_pandas_reference_formulas():
     )
 
 
-def test_single_price_window_preserves_pandas_reference_nan_values():
+def test_single_price_window_cleans_signed_log_return_illegal_values():
     timestamps = [1_700_000_000 + idx * 60 for idx in range(8)]
-    pandas_frame = pd.DataFrame(
+    polars_frame = pl.DataFrame(
         {"imblance_volume_oe": [1.0, -1.0, -2.0, 2.0, -3.0, -3.0, 4.0, -4.0]},
-        index=timestamps,
-    )
-    polars_frame = pl.from_pandas(pandas_frame.reset_index(names="timestamp"))
-
-    expected = pandas_process_single_price_single_window(
-        pandas_frame["imblance_volume_oe"], 2
-    ).reset_index(names="timestamp")
+    ).with_columns(pl.Series("timestamp", timestamps))
     actual = get_multi_feature_window_price(
         polars_frame, [2], ["imblance_volume_oe"]
-    ).to_pandas()
-
-    pd.testing.assert_frame_equal(
-        actual[expected.columns],
-        expected,
-        check_dtype=False,
-        atol=1e-9,
-        rtol=0,
     )
+
+    assert "imblance_volume_oe_log_return_2" in actual.columns
+    assert not actual.select(
+        pl.any_horizontal(pl.selectors.float().is_nan()).any()
+    ).item()
+    assert not actual.select(
+        pl.any_horizontal(pl.selectors.float().is_infinite()).any()
+    ).item()
+    assert actual["imblance_volume_oe_log_return_2"].to_list() == [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+    ]
 
 
 def test_multi_feature_price_deduplicates_repeated_window_outputs_like_reference():

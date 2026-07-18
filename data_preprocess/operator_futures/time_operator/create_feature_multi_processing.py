@@ -158,6 +158,12 @@ def main(args):
         len(ohlc_features),
     )
     df_time = get_multi_feature_window_price(original_df, windows, price_features)
+    # DataQualityValidator.validate_no_illegal_values(
+    #         df_time,
+    #         stage="df_time",
+    #         contract=args.contract or args.symbols,
+    #         trading_day=args.start_date + "-" + args.end_date,
+    #     )
     time_feature_list_all.append(df_time)
     for key in ohlcv_features:
         ohlc_features.pop(key, None)
@@ -183,6 +189,12 @@ def main(args):
             }
         )
         time_feature_list_all.append(p_process_ohlcv)
+        # DataQualityValidator.validate_no_illegal_values(
+        #     p_process_ohlcv,
+        #     stage="p_process_ohlcv",
+        #     contract=args.contract or args.symbols,
+        #     trading_day=args.start_date + "-" + args.end_date,
+        # )
     for ffuixes in ohlc_features:
         (prefix, suffix) = ffuixes
         # print("prefix",prefix,"suffix",suffix)
@@ -209,9 +221,21 @@ def main(args):
                 if key != "timestamp"
             }
         )
+        # DataQualityValidator.validate_no_illegal_values(
+        #     p_process_ohlc,
+        #     stage="p_process_ohlc",
+        #     contract=args.contract or args.symbols,
+        #     trading_day=args.start_date + "-" + args.end_date,
+        # )
         time_feature_list_all.append(p_process_ohlc)
 
     time_df = _inner_join_on_timestamp(time_feature_list_all)
+    DataQualityValidator.validate_no_illegal_values(
+        time_df,
+        stage="time_feature_output",
+        contract=args.contract or args.symbols,
+        trading_day=args.start_date + "-" + args.end_date,
+    )
     if not os.path.exists(os.path.join(args.save_path, *symbol_parts, args.target_freq)):
         os.makedirs(os.path.join(args.save_path, *symbol_parts, args.target_freq))
     output_path = os.path.join(

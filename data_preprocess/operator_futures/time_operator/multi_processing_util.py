@@ -16,11 +16,13 @@ def get_multi_feature_window_price(df, windows, feature_name_list):
         if feature_name not in df.columns:
             continue
         for window in windows:
+            current = pl.col(feature_name)
+            previous = pl.col(feature_name).shift(1)
             exprs = [
                 (
-                    (pl.col(feature_name) / (pl.col(feature_name).shift(1) + min_value))
-                    .log()
-                    * 1000
+                    pl.when((current > 0) & (previous > 0))
+                    .then((current / (previous + min_value)).log() * 1000)
+                    .otherwise(0.0)
                 ).alias(f"{feature_name}_log_return_{window}")
             ]
             if window != 1:
