@@ -420,6 +420,8 @@ run_commodity_full_process() {
             run_commodity_merge_and_clean "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
     done < <(run_commodity_summary_contracts "$summary_path")
 
+
+#   split train and test
     run_commodity_logged_step \
             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
             "ic_candidate" \
