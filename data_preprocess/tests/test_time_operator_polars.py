@@ -23,7 +23,9 @@ from operator_futures.time_operator.multi_processing_util import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _write_concat_feature_fixture(path: Path, depth: int = 5) -> None:
+def _write_concat_feature_fixture(
+    path: Path, depth: int = 5, mark_price_nan_index: int | None = None
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = []
     for idx in range(20):
@@ -34,7 +36,9 @@ def _write_concat_feature_fixture(path: Path, depth: int = 5) -> None:
             "low": 2599.0 + idx,
             "close": 2600.5 + idx,
             "volume": 100.0 + idx,
-            "mark_price": 2600.25 + idx,
+            "mark_price": (
+                float("nan") if idx == mark_price_nan_index else 2600.25 + idx
+            ),
             "buy_spread_oe_max": 4.0,
             "sell_spread_oe_max": 4.0,
             "wap_1": 2600.2 + idx,
@@ -115,6 +119,57 @@ def test_time_feature_cli_respects_orderbook_depth_and_output_contract(tmp_path)
     csv_output = output_file.with_suffix(".csv")
     assert csv_output.exists()
     assert pl.read_csv(csv_output).columns[0] == "timestamp"
+
+
+def test_time_feature_cli_rejects_illegal_input_before_generating_features(tmp_path):
+    input_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/MERGE_CONCAT/CONCAT_FEATURE/fu/5min"
+        / "2026-01-05-2026-01-06.feather"
+    )
+    _write_concat_feature_fixture(input_file, depth=5, mark_price_nan_index=3)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "data_preprocess/operator_futures/time_operator/create_feature_multi_processing.py",
+            "--root_path",
+            str(tmp_path),
+            "--data_path",
+            "PREPROCESS_DATASET/commodity-futures/MERGE_CONCAT/CONCAT_FEATURE/",
+            "--save_path",
+            "PREPROCESS_DATASET/commodity-futures/TIME_FEATURE/",
+            "--symbols",
+            "fu",
+            "--target_freq",
+            "5min",
+            "--start_date",
+            "2026-01-05",
+            "--end_date",
+            "2026-01-06",
+            "--windows",
+            "2",
+            "--orderbook_depth",
+            "5",
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "data_preprocess")},
+        capture_output=True,
+        text=True,
+    )
+
+    output_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/TIME_FEATURE/fu/5min"
+        / "2026-01-05-2026-01-06.feather"
+    )
+    message = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "Illegal data detected" in message
+    assert "stage=time_feature_input" in message
+    assert "contract=fu" in message
+    assert "mark_price:nan=1" in message
+    assert not output_file.exists()
 
 
 def test_multi_feature_price_preserves_equal_trends_for_distinct_price_levels():

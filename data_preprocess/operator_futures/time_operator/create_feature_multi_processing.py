@@ -10,6 +10,7 @@ from operator_futures.util import (
     find_ohlc_groups,
     symbol_contract_path_parts,
 )
+from operator_futures.data_quality import DataQualityValidator
 import polars as pl
 from operator_futures.time_operator.multi_processing_util import (
     get_multi_window_ohlcv,
@@ -122,6 +123,12 @@ def main(args):
         "Loaded time feature input: rows=%d columns=%d",
         original_df.height,
         len(original_df.columns),
+    )
+    DataQualityValidator.validate_no_illegal_values(
+        original_df,
+        stage="time_feature_input",
+        contract=args.contract or args.symbols,
+        trading_day=args.start_date + "-" + args.end_date,
     )
     ohlcv_features, _ = find_ohlcv_groups(original_df.columns)
     ohlc_features, _ = find_ohlc_groups(original_df.columns)
