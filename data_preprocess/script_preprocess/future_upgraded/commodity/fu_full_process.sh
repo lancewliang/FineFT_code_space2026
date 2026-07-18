@@ -314,33 +314,7 @@ run_commodity_merge_and_clean() {
         --save_path "PREPROCESS_DATASET/commodity-futures/ALL_FEATURE"
 }
 
-run_commodity_ic_candidate() {
-    local target_freq=$1
-    local start_date=$2
-    local end_date=$3
-    local symbol=$4
-    local root_path=$5
-    local contract=${6:-}
-    local contract_args=()
-    if [ -n "${contract}" ]; then
-        contract_args=(--contract "${contract}")
-    fi
-
-    PYTHONPATH="${root_path}/data_preprocess" python -u data_preprocess/operator_futures/feature_selection/ic_correlation.py \
-        --symbols "$symbol" \
-        "${contract_args[@]}" \
-        --target_freq "$target_freq" \
-        --start_date "$start_date" \
-        --end_date "$end_date" \
-        --root_path "$root_path" \
-        --data_path "PREPROCESS_DATASET/commodity-futures/ALL_FEATURE/" \
-        --save_path "PREPROCESS_DATASET/commodity-futures/IC_RESULT/" \
-        --market_type commodity_futures \
-        --orderbook_depth 5 \
-        --candidate_only
-}
-
-run_commodity_ic_union_finalize() {
+run_commodity_dataset_split() {
     local summary_path=$1
     local target_freq=$2
     local start_date=$3
@@ -348,20 +322,17 @@ run_commodity_ic_union_finalize() {
     local symbol=$5
     local root_path=$6
 
-    PYTHONPATH="${root_path}/data_preprocess" python -u -m operator_futures.feature_selection.contract_feature_union \
-        --summary "${summary_path}" \
-        --symbols "${symbol}" \
+    PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" python -u -m operator_futures.dataset_split.dataset_split \
+        --summary_path "${summary_path}" \
+        --input_root "${root_path}/PREPROCESS_DATASET/commodity-futures/SCALE_SAVE" \
+        --output_root "${root_path}/dataset/${target_freq}" \
+        --symbol "${symbol}" \
         --target_freq "${target_freq}" \
         --start_date "${start_date}" \
         --end_date "${end_date}" \
-        --root_path "${root_path}" \
-        --candidate_path "PREPROCESS_DATASET/commodity-futures/IC_RESULT" \
-        --all_feature_path "PREPROCESS_DATASET/commodity-futures/ALL_FEATURE" \
-        --ic_result_path "PREPROCESS_DATASET/commodity-futures/IC_RESULT" \
-        --save_path "PREPROCESS_DATASET/commodity-futures/FEATURE_UNION" \
-        --finalize_filtered_df \
-        --market_type commodity_futures \
-        --orderbook_depth 5
+        --train_ratio 5 \
+        --valid_ratio 3 \
+        --test_ratio 2
 }
 
 run_commodity_maintenance_margin_dict() {
@@ -418,27 +389,16 @@ run_commodity_full_process() {
             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
             "merge_clean" \
             run_commodity_merge_and_clean "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
-    done < <(run_commodity_summary_contracts "$summary_path")
-
-
-#   split train and test
-    run_commodity_logged_step \
-            "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-            "ic_candidate" \
-            run_commodity_ic_candidate "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
-    
-    run_commodity_logged_step \
-        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-        "ic_union_finalize" \
-        run_commodity_ic_union_finalize "$summary_path" "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
-
-    while IFS= read -r contract; do
-        [ -n "$contract" ] || continue
         run_commodity_logged_step \
             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
             "scale_save" \
             run_commodity_scale_save "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
     done < <(run_commodity_summary_contracts "$summary_path")
+
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "dataset_split" \
+        run_commodity_dataset_split "$summary_path" "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
 
     run_commodity_logged_step \
         "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
