@@ -243,7 +243,42 @@ def test_composite_score_drops_bottom_ten_percent_with_rankic_priority():
     assert filter_results["Composite Score Dropped"] == ["feature_9"]
 
 
-def test_train_stage_writes_candidates_metrics_filtered_outputs_and_manifest(tmp_path, fake_catboost):
+def test_hard_filter_rejects_high_ic_feature_when_rankic_is_too_low():
+    features = ["high_ic_low_rankic", "sufficient_rankic"]
+    aggregate = pl.DataFrame(
+        {
+            "feature": features,
+            "IC_Mean": [0.95, 0.02],
+            "IC_Std": [0.1, 0.1],
+            "RankIC_Mean": [0.0, 0.2],
+            "Sharpe_Mean": [10.0, 0.0],
+            "Permutation Importance_Mean": [10.0, 0.0],
+            "CatBoost Importance_Mean": [10.0, 0.0],
+        }
+    )
+    frames = {
+        "fu2601": pl.DataFrame(
+            {
+                "high_ic_low_rankic": [1.0, 3.0, 2.0, 4.0],
+                "sufficient_rankic": [1.0, 2.0, 3.0, 4.0],
+            }
+        )
+    }
+
+    selected, filter_results = _ordered_filter_features(
+        frames,
+        aggregate,
+        features,
+        min_abs_ic=0.1,
+        max_metric_std=1.0,
+        max_correlation=1.0,
+    )
+
+    assert "high_ic_low_rankic" not in filter_results["Hard Filter"]
+    assert "sufficient_rankic" in filter_results["Hard Filter"]
+
+
+def test_train_stage_writes_final_features_metrics_filtered_outputs_and_manifest(tmp_path, fake_catboost):
     _write_long_split_contract(
         tmp_path,
         "train",
@@ -272,16 +307,19 @@ def test_train_stage_writes_candidates_metrics_filtered_outputs_and_manifest(tmp
     )
 
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
-    candidates = np.load(stage_dir / "state_features_candidate.npy", allow_pickle=True).tolist()
-    assert candidates
+    selected_feature_path = stage_dir / "state_features.npy"
+    assert selected_feature_path.exists()
+    selected_features = np.load(selected_feature_path, allow_pickle=True).tolist()
+    assert selected_features
+    assert not (stage_dir / "state_features_candidate.npy").exists()
     assert (stage_dir / "per_contract" / "fu2601_metrics.csv").exists()
     assert (stage_dir / "per_contract" / "fu2605_metrics.csv").exists()
     assert (stage_dir / "aggregate_metrics.csv").exists()
     assert (stage_dir / "feature_selection_manifest.json").exists()
     assert (stage_dir / "fu2601" / "df.feather").exists()
     assert manifest["stage"] == "train"
-    assert manifest["selected_feature_file"].endswith("state_features_candidate.npy")
-    assert manifest["selected_feature_count"] == len(candidates)
+    assert manifest["selected_feature_file"].endswith("train/state_features.npy")
+    assert manifest["selected_feature_count"] == len(selected_features)
     metrics = pl.read_csv(stage_dir / "aggregate_metrics.csv")
     assert {"IC_Mean", "IC_Std", "IC_Median", "Sharpe_Mean", "Sharpe_Std", "Sharpe_Median"}.issubset(metrics.columns)
     per_contract_metrics = pl.read_csv(stage_dir / "per_contract" / "fu2601_metrics.csv")
@@ -320,11 +358,12 @@ def test_train_stage_rejects_illegal_feature_values_before_metrics(tmp_path, fak
     assert "CatBoostRegressor" not in fake_catboost
 
 
-def test_valid_stage_uses_train_candidates_and_writes_final_features(tmp_path, fake_catboost):
+def test_valid_stage_evaluates_train_features_without_writing_downstream_features(tmp_path, fake_catboost):
     _write_split_contract(tmp_path, "valid", "fu2601", [1.0, 2.0, 3.0, 4.0], [4.0, 4.0, 4.0, 4.0], gamma=[9.0, 8.0, 7.0, 6.0])
     train_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     train_dir.mkdir(parents=True)
-    np.save(train_dir / "state_features_candidate.npy", np.array(["alpha"]))
+    train_feature_file = train_dir / "state_features.npy"
+    np.save(train_feature_file, np.array(["alpha"]))
 
     manifest = run_feature_selection(
         root_path=tmp_path,
@@ -339,14 +378,27 @@ def test_valid_stage_uses_train_candidates_and_writes_final_features(tmp_path, f
     )
 
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/valid"
-    selected = np.load(stage_dir / "state_features.npy", allow_pickle=True).tolist()
-    assert selected == ["alpha"]
-    filtered = pl.read_ipc(stage_dir / "fu2601" / "df.feather")
-    assert "alpha" in filtered.columns
-    assert "gamma" not in filtered.columns
-    assert filtered.get_column("symbol").unique().to_list() == ["fu"]
-    assert manifest["candidate_feature_file"].endswith("state_features_candidate.npy")
-    assert manifest["selected_feature_file"].endswith("state_features.npy")
+    manifest_path = stage_dir / "feature_selection_manifest.json"
+    assert (stage_dir / "per_contract" / "fu2601_metrics.csv").exists()
+    assert (stage_dir / "aggregate_metrics.csv").exists()
+    assert manifest_path.exists()
+    assert not (stage_dir / "state_features.npy").exists()
+    assert not (stage_dir / "fu2601" / "df.feather").exists()
+    persisted_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["evaluated_feature_file"].endswith("train/state_features.npy")
+    assert persisted_manifest["evaluated_feature_file"] == manifest["evaluated_feature_file"]
+    assert manifest["report_only"] is True
+    assert manifest["evaluated_feature_count"] == 1
+    assert manifest["evaluated_features"] == ["alpha"]
+    assert persisted_manifest["report_only"] is True
+    assert persisted_manifest["evaluated_feature_count"] == 1
+    assert persisted_manifest["evaluated_features"] == ["alpha"]
+    assert "filter_results" not in manifest
+    assert "filter_results" not in persisted_manifest
+    assert "selected_feature_file" not in manifest
+    assert "selected_feature_file" not in persisted_manifest
+    assert "filtered_outputs" not in manifest
+    assert "filtered_outputs" not in persisted_manifest
 
 
 def test_feature_selection_fails_for_missing_split_input(tmp_path):
@@ -362,13 +414,13 @@ def test_feature_selection_fails_for_missing_split_input(tmp_path):
         )
 
 
-def test_valid_stage_fails_when_candidate_file_is_empty(tmp_path):
+def test_valid_stage_fails_when_train_feature_file_is_empty(tmp_path):
     _write_split_contract(tmp_path, "valid", "fu2601", [1.0, 2.0, 3.0, 4.0], [4.0, 3.0, 2.0, 1.0])
     train_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     train_dir.mkdir(parents=True)
-    np.save(train_dir / "state_features_candidate.npy", np.array([]))
+    np.save(train_dir / "state_features.npy", np.array([]))
 
-    with pytest.raises(ValueError, match="candidate feature list is empty"):
+    with pytest.raises(ValueError, match="feature list is empty"):
         run_feature_selection(
             root_path=tmp_path,
             split_path="PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST",
@@ -380,11 +432,11 @@ def test_valid_stage_fails_when_candidate_file_is_empty(tmp_path):
         )
 
 
-def test_valid_stage_fails_when_candidate_column_is_missing(tmp_path):
+def test_valid_stage_fails_when_train_feature_column_is_missing(tmp_path):
     _write_split_contract(tmp_path, "valid", "fu2601", [1.0, 2.0, 3.0, 4.0], [4.0, 3.0, 2.0, 1.0])
     train_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     train_dir.mkdir(parents=True)
-    np.save(train_dir / "state_features_candidate.npy", np.array(["missing_alpha"]))
+    np.save(train_dir / "state_features.npy", np.array(["missing_alpha"]))
 
     with pytest.raises(ValueError, match="missing_alpha"):
         run_feature_selection(

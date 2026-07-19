@@ -919,7 +919,7 @@ run_commodity_scale_save() {
     local end_date=$3
     local symbol=$4
     local root_path=$5
-    local contract=$6
+    local contract=${6:-}
     echo "scale_save:${symbol}:${contract}:${target_freq}:${start_date}:${end_date}:${root_path}"
 }
 run_commodity_dataset_split() {
@@ -973,7 +973,7 @@ run_commodity_maintenance_margin_dict() { echo "maintenance stdout"; }
         "dataset_split": "fu",
         "feature_selection_train": "fu",
         "feature_selection_valid": "fu",
-        "scale_save": "fu_fu2601",
+        "scale_save": "fu",
         "maintenance_margin_dict": "fu",
     }
     for step_name, step_symbol in symbol_by_step.items():
@@ -1031,7 +1031,7 @@ run_commodity_maintenance_margin_dict() { echo "maintenance stdout"; }
         / "ticker_result"
         / "commodity"
         / "steps"
-        / "fu_fu2601_5min_2026-01-05_2026-01-07_scale_save.log"
+        / "fu_5min_2026-01-05_2026-01-07_scale_save.log"
     )
     assert "feature_selection:train:fu:5min:" in feature_train_log.read_text(
         encoding="utf-8"
@@ -1039,7 +1039,7 @@ run_commodity_maintenance_margin_dict() { echo "maintenance stdout"; }
     assert "feature_selection:valid:fu:5min:" in feature_valid_log.read_text(
         encoding="utf-8"
     )
-    assert "scale_save:fu:fu2601:5min:2026-01-05:2026-01-07:" in (
+    assert "scale_save:fu::5min:2026-01-05:2026-01-07:" in (
         scale_log.read_text(encoding="utf-8")
     )
     assert (
@@ -1156,7 +1156,7 @@ def test_commodity_full_process_shell_sets_pythonpath_for_operator_scripts():
 
     operator_script_calls = [
         "data_preprocess/operator_futures/cross_section/create_feature.py",
-        "data_preprocess/operator_futures/scale_describe_save/scale_save.py",
+        "data_preprocess/operator_futures/scale_describe_save/muti_contract_scale_save.py",
         "data_preprocess/operator_futures/merge_concat/merge.py",
         "data_preprocess/operator_futures/merge_concat/concat.py",
         "data_preprocess/operator_futures/time_operator/create_feature_multi_processing.py",
@@ -1328,8 +1328,8 @@ def test_commodity_full_process_shell_scales_ic_selection_output():
     )
     text = script.read_text(encoding="utf-8")
 
-    assert "scale_describe_save/scale_save.py" in text
-    assert "--ic_choice ic" in text
+    assert "scale_describe_save/muti_contract_scale_save.py" in text
+    assert "scale_describe_save/scale_save.py" not in text
 
 
 def test_commodity_full_process_shell_runs_scale_after_feature_selection_valid():
@@ -1342,6 +1342,12 @@ def test_commodity_full_process_shell_runs_scale_after_feature_selection_valid()
     assert '"dataset_split"' in text
     assert '"feature_selection_train"' in text
     assert '"feature_selection_valid"' in text
+    assert "SPLIT-TRAIN-VALID-TEST" in text
+    assert "FEATURE_SELECTION/${target_freq}/${symbol}/train/state_features.npy" in text
+    assert "--feature_list_path" in text
+    assert "--contract" not in text[text.index("run_commodity_scale_save()") : text.index("run_commodity_merge_process()")]
+    assert "--split_stage_scale_save" not in text
+    assert "--feature_selection_stage valid" not in text
     assert '"feature_union"' not in text
     assert '"ic_candidate"' not in text
     assert '"ic_union_finalize"' not in text

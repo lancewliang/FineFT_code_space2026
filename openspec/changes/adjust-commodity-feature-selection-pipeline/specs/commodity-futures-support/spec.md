@@ -1,9 +1,9 @@
 ## ADDED Requirements
 
 ### Requirement: 商品期货 split 后多合约特征选择流水线
-系统 SHALL 在商品期货 dataset split 之后执行 train 和 valid 两段独立的多合约特征评估与筛选，并将所有中间产物写入 `PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/{target_freq}`。
+系统 SHALL 在商品期货 dataset split 之后执行 train 多合约特征评估与筛选，并执行 valid 多合约评估与报告；后续 scale-save SHALL 只使用 train 产生的最终特征清单。
 
-#### Scenario: train 阶段从 split train 文件生成候选特征
+#### Scenario: train 阶段从 split train 文件生成最终特征清单
 - **WHEN** `dataset_split` 已写出 `PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train/fu2601.feather` 和 `fu2605.feather`
 - **THEN** train feature selection SHALL 读取该 split train 目录下的合约级 feather 文件
 - **AND** train feature selection SHALL 对所有 state 特征计算每合约 `Permutation Importance`、`CatBoost Importance`、`IC`、`RankIC` 和 `Sharpe`
@@ -12,19 +12,20 @@
 - **AND** 每合约明细 SHALL 包含 `window` 字段
 - **AND** train feature selection SHALL 汇总每个指标的 `Mean`、`Std` 和 `Median`
 - **AND** train feature selection SHALL 依次执行 `Hard Filter`、`Stability Filter`、`Composite Score` 和 `Correlation Filter`
-- **AND** train feature selection SHALL 写出 `PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features_candidate.npy`
-- **AND** train feature selection SHALL 写出 `feature_selection_manifest.json`，记录输入 split 路径、合约、指标明细路径、汇总路径、筛选阶段结果、候选特征数、`windows_list` 和 `composite_drop_ratio`
+- **AND** train feature selection SHALL 写出 `PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy`
+- **AND** train feature selection SHALL NOT 写出 `state_features_candidate.npy` 作为下游约定文件
+- **AND** train feature selection SHALL 写出 `feature_selection_manifest.json`，记录输入 split 路径、合约、指标明细路径、汇总路径、筛选阶段结果、最终特征数、`windows_list` 和 `composite_drop_ratio`
 
-#### Scenario: valid 阶段只使用 train 候选特征生成最终特征
-- **WHEN** train feature selection 已写出 `FEATURE_SELECTION/5min/fu/train/state_features_candidate.npy`
+#### Scenario: valid 阶段只使用 train 特征清单做评估报告
+- **WHEN** train feature selection 已写出 `FEATURE_SELECTION/5min/fu/train/state_features.npy`
 - **AND** `dataset_split` 已写出 `PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/valid/fu2601.feather`
 - **THEN** valid feature selection SHALL 读取 split valid 目录下的合约级 feather 文件
-- **AND** valid feature selection SHALL 仅对 train 候选特征集合中的 state 特征计算 `Permutation Importance`、`CatBoost Importance`、`IC`、`RankIC` 和 `Sharpe`
+- **AND** valid feature selection SHALL 仅对 train `state_features.npy` 中的 state 特征计算 `Permutation Importance`、`CatBoost Importance`、`IC`、`RankIC` 和 `Sharpe`
 - **AND** valid feature selection SHALL 默认按窗口 `[1, 6, 12]` 计算指标
 - **AND** valid feature selection SHALL 汇总每个指标的 `Mean`、`Std` 和 `Median`
-- **AND** valid feature selection SHALL 依次执行 `Hard Filter`、`Stability Filter`、`Composite Score` 和 `Correlation Filter`
-- **AND** valid feature selection SHALL 写出 `PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/valid/state_features.npy`
-- **AND** valid feature selection SHALL 写出 `feature_selection_manifest.json`，记录 candidate 输入路径、输入 split 路径、指标明细路径、汇总路径、筛选阶段结果、最终特征数、`windows_list` 和 `composite_drop_ratio`
+- **AND** valid feature selection SHALL NOT 执行 `Hard Filter`、`Stability Filter`、`Composite Score` 或 `Correlation Filter`
+- **AND** valid feature selection SHALL NOT 写出下游采用的 `PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/valid/state_features.npy`
+- **AND** valid feature selection SHALL 写出 `feature_selection_manifest.json`，记录 train feature list 路径、输入 split 路径、指标明细路径、汇总路径、评估特征数和 `windows_list`
 
 #### Scenario: 指标目标和多窗口口径
 - **WHEN** feature selection 计算窗口 `window` 的任一指标
@@ -74,7 +75,8 @@
 
 #### Scenario: Composite Score 按优先级删除低分因子
 - **WHEN** feature selection 完成 `Hard Filter` 和 `Stability Filter`
-- **THEN** `Hard Filter` SHALL 保留 `abs(IC_Mean) >= min_abs_ic` 的 features
+- **THEN** `Hard Filter` SHALL 保留 `abs(RankIC_Mean) >= min_abs_ic` 的 features
+- **AND** `Hard Filter` SHALL NOT 使用 `abs(IC_Mean)` 作为第一步硬过滤依据
 - **AND** `Stability Filter` SHALL 保留 `IC_Std <= max_metric_std` 的 features
 - **AND** `Composite Score` SHALL 先按 `abs(RankIC_Mean)` 降序排序
 - **AND** 当 `abs(RankIC_Mean)` 相同时，`Composite Score` SHALL 按 `abs(Sharpe_Mean) + Permutation Importance_Mean` 降序排序
@@ -85,19 +87,29 @@
 - **AND** 系统 SHALL 在 `feature_selection_manifest.json` 的 `filter_results` 中记录 `Composite Score` 保留列表和 `Composite Score Dropped` 删除列表
 - **AND** `Correlation Filter` SHALL 在 Composite Score 删除后执行
 
-#### Scenario: 筛选后生成合约级 filtered df
-- **WHEN** valid feature selection 已得到最终 `state_features.npy`
-- **THEN** 系统 SHALL 为 valid 阶段每个合约写出筛选后的 `df.feather`
-- **AND** 每个 filtered `df.feather` SHALL 包含商品 reward/execution 列、最终 state features 和 `symbol`
-- **AND** 系统 SHALL 将 filtered 合约文件路径记录到 valid `feature_selection_manifest.json`
-- **AND** 系统 SHALL NOT 将未入选 state features 写入 filtered `df.feather`
+#### Scenario: scale-save 使用训练集特征清单处理 split 阶段文件
+- **WHEN** train feature selection 已得到最终 `FEATURE_SELECTION/5min/fu/train/state_features.npy`
+- **AND** `SPLIT-TRAIN-VALID-TEST/5min/fu/train/fu2601.feather` 存在
+- **AND** `SPLIT-TRAIN-VALID-TEST/5min/fu/valid/fu2601.feather` 不存在
+- **THEN** scale-save SHALL 使用 train `state_features.npy` 作为 state feature 清单
+- **AND** scale-save SHALL 处理存在的 `train/fu2601.feather`
+- **AND** scale-save SHALL 跳过缺失的 `valid/fu2601.feather` 并记录 contract 和 stage
+- **AND** scale-save SHALL 继续处理同一合约或其他合约的其他存在阶段
+- **AND** scale-save SHALL NOT 使用 valid 阶段产生的特征清单
+
+#### Scenario: scale-save 输出只包含训练集选中特征
+- **WHEN** scale-save 处理任一存在的 split 阶段合约文件
+- **THEN** scale-save SHALL 写出 `SCALE_SAVE/fu/fu2601/5min/{stage}/{start_date}-{end_date}/df.feather`
+- **AND** 输出 `df.feather` SHALL 包含商品 reward/execution 列、train `state_features.npy` 中的 state features 和 `symbol`
+- **AND** 输出 `state_features.npy` SHALL 与 train feature selection 产生的 `state_features.npy` 一致
+- **AND** 系统 SHALL NOT 将未入选 state features 写入 scale-save 输出 `df.feather`
 
 #### Scenario: 特征选择 fail-fast
-- **WHEN** train 或 valid split 输入目录不存在、没有合约 feather、任一计划合约输入缺失、train candidate 为空、valid 最终特征为空或 required feature column 缺失
+- **WHEN** train 或 valid split 输入目录不存在、没有合约 feather、train feature universe 为空、train 筛选结果为空或 required feature column 缺失
 - **THEN** feature selection SHALL 报错并停止当前阶段
 - **AND** 错误信息 SHALL 包含阶段名、缺失或为空的资源路径，以及相关合约或特征名
 - **AND** 系统 SHALL NOT 静默跳过该合约
-- **AND** 系统 SHALL NOT 写出下游可消费的 filtered `df.feather`
+- **AND** 系统 SHALL NOT 写出下游可消费的 train `state_features.npy`
 
 ## MODIFIED Requirements
 
@@ -137,7 +149,8 @@
 - **AND** `dataset_split` 完成后，`fu_full_process.sh` SHALL 调用 `feature_selection_train`
 - **AND** `feature_selection_train` 完成后，`fu_full_process.sh` SHALL 调用 `feature_selection_valid`
 - **AND** `feature_selection_valid` 完成后，`fu_full_process.sh` SHALL 对每个合约调用 `scale_save`
-- **AND** 每个 `scale_save` SHALL 读取 `FEATURE_SELECTION/{target_freq}/{symbol}/valid` 中筛选后的合约级 `df.feather`
+- **AND** 每个 `scale_save` SHALL 使用 `FEATURE_SELECTION/{target_freq}/{symbol}/train/state_features.npy`
+- **AND** 每个 `scale_save` SHALL 读取 `SPLIT-TRAIN-VALID-TEST/{target_freq}/{symbol}/{train|valid|test}/{contract}.feather` 中存在的 split 阶段合约文件
 - **AND** `maintenance_margin_dict` SHALL 在全部合约 `scale_save` 完成后执行
 - **AND** `fu_full_process.sh` SHALL NOT 在合约循环内的 `merge_clean` 后立即调用 `scale_save`
 - **AND** `fu_full_process.sh` SHALL NOT 使用旧 `IC_RESULT` 作为本次商品特征评估输入源
@@ -209,8 +222,11 @@
 - **WHEN** 商品 full process 完成 split 后 feature selection
 - **THEN** feature selection SHALL 读取 `SPLIT-TRAIN-VALID-TEST/{target_freq}/{symbol}/{train|valid}/{contract}.feather`
 - **AND** feature selection SHALL 写出 `FEATURE_SELECTION/{target_freq}/{symbol}/{train|valid}/`
-- **AND** scale save SHALL 读取 `FEATURE_SELECTION/{target_freq}/{symbol}/valid/{contract}/df.feather`
-- **AND** scale save SHALL 写出 `SCALE_SAVE/{symbol}/{contract}/{target_freq}/{start_date}-{end_date}/`
+- **AND** train feature selection SHALL 写出 `FEATURE_SELECTION/{target_freq}/{symbol}/train/state_features.npy`
+- **AND** valid feature selection SHALL 只写评估明细、汇总统计和 manifest/report
+- **AND** scale save SHALL 读取 `SPLIT-TRAIN-VALID-TEST/{target_freq}/{symbol}/{train|valid|test}/{contract}.feather`
+- **AND** scale save SHALL 使用 `FEATURE_SELECTION/{target_freq}/{symbol}/train/state_features.npy`
+- **AND** scale save SHALL 写出 `SCALE_SAVE/{symbol}/{contract}/{target_freq}/{stage}/{start_date}-{end_date}/`
 
 #### Scenario: 未传 contract 时保留旧路径
 - **WHEN** 共享 operator-futures 脚本未传入 `--contract`

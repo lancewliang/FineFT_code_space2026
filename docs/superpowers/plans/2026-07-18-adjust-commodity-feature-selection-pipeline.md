@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Move commodity feature selection after dataset split, run independent train and valid multi-contract selection, and run scale-save from filtered valid feature outputs.
+**Goal:** Move commodity feature selection after dataset split, let train produce the only final `state_features.npy`, run valid as evaluation/reporting only, and run scale-save from split-stage inputs using the train feature list.
 
-**Architecture:** Keep existing contract-level preprocessing through `ALL_FEATURE` unchanged. Add a focused `operator_futures.feature_selection.muti_contract` package for split-input feature metrics, aggregation, filtering, manifests, and filtered contract outputs. Keep `fu_full_process.sh` as orchestration only, and extend `scale_save.py` with an explicit feature-selection input layout while preserving old `IC_RESULT` behavior.
+**Architecture:** Keep existing contract-level preprocessing through `ALL_FEATURE` unchanged. Add a focused `operator_futures.feature_selection.muti_contract` package for split-input feature metrics, train filtering, valid reporting, and manifests. Keep `fu_full_process.sh` as orchestration only, and extend `scale_save.py` with a split-stage input layout while preserving old `IC_RESULT` behavior.
 
 **Tech Stack:** Bash, Python, Polars, NumPy, pytest, CatBoost when installed, OpenSpec.
 
@@ -1331,10 +1331,203 @@ Expected: PASS.
 
 - [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
+### Task 12: Add revised train/valid feature-selection tests
+
+> **trace:** plan-ready.md → `### Task 12: Add revised train/valid feature-selection tests` | tasks.md → ``- [ ] 1.8 Add focused tests for the revised train/valid feature-selection semantics: train writes final `state_features.npy`, no longer writes `state_features_candidate.npy`, Hard Filter uses `RankIC_Mean` instead of `IC_Mean`, and valid writes metrics/manifest only without running filters or producing a downstream feature list.``
+> **sync:** tasks.md → ``- [ ] 1.8 Add focused tests for the revised train/valid feature-selection semantics: train writes final `state_features.npy`, no longer writes `state_features_candidate.npy`, Hard Filter uses `RankIC_Mean` instead of `IC_Mean`, and valid writes metrics/manifest only without running filters or producing a downstream feature list.`` | plan-ready.md → `### Task 12: Add revised train/valid feature-selection tests`
+
+**Files:**
+- Modify: `data_preprocess/tests/test_commodity_multi_contract_feature_selection.py`
+
+- [x] **Step 1: Update train selected-file assertions**
+
+Change the train stage test so it expects:
+- `FEATURE_SELECTION/5min/fu/train/state_features.npy` exists and contains the selected features.
+- `FEATURE_SELECTION/5min/fu/train/state_features_candidate.npy` does not exist.
+- train manifest `selected_feature_file` ends with `train/state_features.npy`.
+
+- [x] **Step 2: Add a Hard Filter RankIC test**
+
+Add a focused `_ordered_filter_features` test with at least two features where one feature has high `IC_Mean` but low `RankIC_Mean`, and another has sufficient `RankIC_Mean`. Assert the high-IC/low-RankIC feature is rejected by `Hard Filter`.
+
+- [x] **Step 3: Update valid stage assertions**
+
+Change the valid stage test so it creates `train/state_features.npy`, runs `stage="valid"`, and asserts:
+- per-contract metrics, aggregate metrics, and `feature_selection_manifest.json` are written.
+- `valid/state_features.npy` is not written.
+- valid manifest references the train feature list as the evaluated feature source.
+- valid manifest has no authoritative `filter_results` / `selected_feature_file` for downstream scale-save.
+
+- [x] **Step 4: Confirm tests fail before implementation**
+
+Run:
+
+```bash
+bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && pytest data_preprocess/tests/test_commodity_multi_contract_feature_selection.py -q'
+```
+
+Expected: FAIL until the pipeline is updated.
+
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+
+### Task 13: Update multi-contract feature-selection pipeline
+
+> **trace:** plan-ready.md → `### Task 13: Update multi-contract feature-selection pipeline` | tasks.md → ``- [ ] 1.9 Update `operator_futures.feature_selection.muti_contract.pipeline` so `train` is the only filtering stage, `train/state_features.npy` is the canonical selected feature file, `valid` loads that train file for evaluation/reporting only, and valid manifest fields cannot be mistaken for selected downstream features.``
+> **sync:** tasks.md → ``- [ ] 1.9 Update `operator_futures.feature_selection.muti_contract.pipeline` so `train` is the only filtering stage, `train/state_features.npy` is the canonical selected feature file, `valid` loads that train file for evaluation/reporting only, and valid manifest fields cannot be mistaken for selected downstream features.`` | plan-ready.md → `### Task 13: Update multi-contract feature-selection pipeline`
+
+**Files:**
+- Modify: `data_preprocess/operator_futures/feature_selection/muti_contract/pipeline.py`
+
+- [x] **Step 1: Make train write the canonical selected file**
+
+In `run_feature_selection`, change the train selected output path from `state_features_candidate.npy` to `state_features.npy`.
+
+- [x] **Step 2: Make valid load the train selected file**
+
+In the valid branch, load candidates from `FEATURE_SELECTION/{target_freq}/{symbol}/train/state_features.npy`.
+
+- [x] **Step 3: Skip filters and filtered outputs for valid**
+
+After writing valid per-contract metrics and `aggregate_metrics.csv`, write a valid manifest/report and return. Do not call `_ordered_filter_features`, do not save `valid/state_features.npy`, and do not call `_write_filtered_outputs`.
+
+- [x] **Step 4: Change Hard Filter to RankIC**
+
+In `_ordered_filter_features`, change the first hard filter from `abs(IC_Mean) >= min_abs_ic` to `abs(RankIC_Mean) >= min_abs_ic`. Keep the CLI argument name unless a broader rename is explicitly requested.
+
+- [x] **Step 5: Run the focused feature-selection tests**
+
+Run:
+
+```bash
+bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && pytest data_preprocess/tests/test_commodity_multi_contract_feature_selection.py -q'
+```
+
+Expected: PASS.
+
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+
+### Task 14: Update full-process scale-save handoff
+
+> **trace:** plan-ready.md → `### Task 14: Update full-process scale-save handoff` | tasks.md → ``- [ ] 1.10 Update `fu_full_process.sh` orchestration so `feature_selection_valid` remains after train as an evaluation/report step, and subsequent `scale_save` uses the train-produced `state_features.npy` instead of any valid-produced feature list.``
+> **sync:** tasks.md → ``- [ ] 1.10 Update `fu_full_process.sh` orchestration so `feature_selection_valid` remains after train as an evaluation/report step, and subsequent `scale_save` uses the train-produced `state_features.npy` instead of any valid-produced feature list.`` | plan-ready.md → `### Task 14: Update full-process scale-save handoff`
+
+**Files:**
+- Modify: `data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh`
+- Modify: `data_preprocess/tests/test_commodity_main_contract_cli.py`
+
+- [x] **Step 1: Update shell assertions for train-list scale-save**
+
+Keep the order assertion `dataset_split -> feature_selection_train -> feature_selection_valid -> scale_save -> maintenance_margin_dict`. Add an assertion that the scale-save call no longer passes `--feature_selection_stage valid` as the source of the selected feature list, and does pass the new split-stage/train-feature-list routing arguments introduced in Task 15.
+
+- [x] **Step 2: Update `run_commodity_scale_save` arguments**
+
+Adjust `run_commodity_scale_save` so it points `scale_save.py` at:
+- split-stage data root: `PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST`
+- train feature-selection root/list: `PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/{target_freq}/{symbol}/train/state_features.npy`
+
+- [x] **Step 3: Run shell-focused validation**
+
+Run:
+
+```bash
+bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && pytest data_preprocess/tests/test_commodity_main_contract_cli.py::test_commodity_full_process_writes_step_logs_and_preserves_child_log_paths data_preprocess/tests/test_commodity_main_contract_cli.py::test_commodity_full_process_shell_runs_scale_after_feature_selection_valid -q'
+bash -n data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh
+```
+
+Expected: PASS after Task 15 routing exists.
+
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+
+### Task 15: Enhance scale-save for split-stage inputs
+
+> **trace:** plan-ready.md → `### Task 15: Enhance scale-save for split-stage inputs` | tasks.md → ``- [ ] 1.11 Enhance `scale_save.py` and focused tests so commodity scale-save can read split-stage inputs, apply `FEATURE_SELECTION/{target_freq}/{symbol}/train/state_features.npy`, skip contract-stage inputs that do not exist, fail when a requested contract has no split-stage input at all, and preserve existing non-feature-selection `IC_RESULT` behavior.``
+> **sync:** tasks.md → ``- [ ] 1.11 Enhance `scale_save.py` and focused tests so commodity scale-save can read split-stage inputs, apply `FEATURE_SELECTION/{target_freq}/{symbol}/train/state_features.npy`, skip contract-stage inputs that do not exist, fail when a requested contract has no split-stage input at all, and preserve existing non-feature-selection `IC_RESULT` behavior.`` | plan-ready.md → `### Task 15: Enhance scale-save for split-stage inputs`
+
+**Files:**
+- Modify: `data_preprocess/operator_futures/scale_describe_save/scale_save.py`
+- Modify: `data_preprocess/tests/test_feature_selection_polars.py`
+
+- [x] **Step 1: Add split-stage scale-save tests**
+
+Add tests that create `SPLIT-TRAIN-VALID-TEST/5min/fu/train/fu2601.feather`, omit `valid/fu2601.feather`, write `FEATURE_SELECTION/5min/fu/train/state_features.npy`, run the CLI, and assert:
+- train output is written under `SCALE_SAVE/fu/fu2601/5min/train/{start_date}-{end_date}/`.
+- the missing valid stage is skipped without nonzero exit.
+- output `state_features.npy` equals the train list.
+
+Add fail-fast tests for:
+- requested contract missing from all split stages.
+- existing split-stage input missing a selected feature column.
+- train `state_features.npy` missing or empty.
+
+- [x] **Step 2: Add split-stage CLI/routing arguments**
+
+Add narrowly scoped arguments for commodity split-stage routing. Keep old `--feature_selection_stage` / `IC_RESULT` behavior unless tests prove it must be replaced.
+
+- [x] **Step 3: Implement stage iteration**
+
+For split-stage routing, check `train`, `valid`, and `test` stage files for the requested contract. Process existing files and skip missing files with an informative log containing contract and stage. Fail only if none exist.
+
+- [x] **Step 4: Apply train feature list to every existing stage**
+
+Load `FEATURE_SELECTION/{target_freq}/{symbol}/train/state_features.npy` once and select those state columns from every existing split-stage input. Preserve reward/execution column behavior and scaling algorithm.
+
+- [x] **Step 5: Run scale-save focused tests**
+
+Run:
+
+```bash
+bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && pytest data_preprocess/tests/test_feature_selection_polars.py -q'
+```
+
+Expected: PASS.
+
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+
+### Task 16: Validate revised amend implementation
+
+> **trace:** plan-ready.md → `### Task 16: Validate revised amend implementation` | tasks.md → ``- [ ] 2.5 Re-run strict OpenSpec validation and the revised focused pytest/static checks after the 2026-07-19 train-list/valid-report/scale-save amend is implemented.``
+> **sync:** tasks.md → ``- [ ] 2.5 Re-run strict OpenSpec validation and the revised focused pytest/static checks after the 2026-07-19 train-list/valid-report/scale-save amend is implemented.`` | plan-ready.md → `### Task 16: Validate revised amend implementation`
+
+**Files:**
+- Verify: `openspec/changes/adjust-commodity-feature-selection-pipeline`
+- Verify: changed tests, shell, and Python modules
+
+- [x] **Step 1: Run OpenSpec validation**
+
+Run:
+
+```bash
+openspec validate adjust-commodity-feature-selection-pipeline --strict
+```
+
+Expected: PASS.
+
+- [x] **Step 2: Run focused pytest**
+
+Run:
+
+```bash
+bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && pytest data_preprocess/tests/test_commodity_multi_contract_feature_selection.py data_preprocess/tests/test_commodity_main_contract_cli.py data_preprocess/tests/test_feature_selection_polars.py -q'
+```
+
+Expected: PASS.
+
+- [x] **Step 3: Run static validation**
+
+Run:
+
+```bash
+bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && bash -n data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh && python -m py_compile data_preprocess/operator_futures/feature_selection/muti_contract/*.py data_preprocess/operator_futures/scale_describe_save/scale_save.py'
+```
+
+Expected: PASS.
+
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+
 ## Self-Review
 
-Spec coverage: Tasks 1 and 4 cover the full-process ordering, step logs, dataset split input, and scale-save timing. Tasks 2 and 3 cover train/valid feature selection, metrics, aggregation, filters, manifests, candidate/final feature files, filtered contract outputs, Sharpe semantics, and fail-fast behavior. Task 5 covers feature-selection input routing for scale-save while preserving old `IC_RESULT` behavior. Task 6 covers documentation. Task 10 covers the amended metric/filter semantics: default windows, IC, RankIC, CatBoost Importance, Sharpe, Permutation Importance, Composite Score priority, bottom 10% drop, and manifest fields. Tasks 7 through 9 and 11 cover OpenSpec, pytest, shell syntax, Python compile, and amend validation.
+Spec coverage: Tasks 1 and 4 cover the full-process ordering, step logs, dataset split input, and scale-save timing. Tasks 2 and 3 cover the original train/valid feature selection implementation. Task 5 covers the original feature-selection input routing for scale-save while preserving old `IC_RESULT` behavior. Task 6 covers documentation. Task 10 covers the amended metric/filter semantics: default windows, IC, RankIC, CatBoost Importance, Sharpe, Permutation Importance, Composite Score priority, bottom 10% drop, and manifest fields. Tasks 12 through 15 cover the 2026-07-19 semantic change: train-only final `state_features.npy`, valid reporting only, RankIC hard filter, and split-stage scale-save with missing contract-stage support. Tasks 7 through 9, 11, and 16 cover OpenSpec, pytest, shell syntax, Python compile, and amend validation.
 
 Placeholder scan: No placeholder markers are intentionally present. All code-changing steps include concrete code blocks or exact replacements, and all validation steps include exact commands and expected results.
 
-Type consistency: The plan consistently uses `run_feature_selection`, `calculate_metric_frame`, `aggregate_metric_frames`, `calculate_sharpe`, `--feature_selection_stage`, `FEATURE_SELECTION/{target_freq}/{symbol}/{stage}`, and the package path `operator_futures.feature_selection.muti_contract`.
+Type consistency: The plan consistently uses `run_feature_selection`, `calculate_metric_frame`, `aggregate_metric_frames`, `calculate_sharpe`, `FEATURE_SELECTION/{target_freq}/{symbol}/{stage}`, `SPLIT-TRAIN-VALID-TEST/{target_freq}/{symbol}/{stage}/{contract}.feather`, and the package path `operator_futures.feature_selection.muti_contract`.

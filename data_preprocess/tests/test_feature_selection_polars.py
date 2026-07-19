@@ -432,6 +432,131 @@ def test_scale_save_cli_reads_feature_selection_filtered_input(tmp_path):
     ]
 
 
+def _run_multi_contract_scale_save_cli(
+    tmp_path: Path, *, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    command = [
+        sys.executable,
+        "data_preprocess/operator_futures/scale_describe_save/muti_contract_scale_save.py",
+        "--root_path",
+        str(tmp_path),
+        "--data_path",
+        "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST",
+        "--save_path",
+        "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/",
+        "--symbols",
+        "fu",
+        "--target_freq",
+        "5min",
+        "--start_date",
+        "2026-01-05",
+        "--end_date",
+        "2026-01-06",
+        "--market_type",
+        "commodity_futures",
+        "--orderbook_depth",
+        "5",
+        "--feature_list_path",
+        "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy",
+    ]
+    return subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "data_preprocess")},
+        check=check,
+        text=True,
+        capture_output=True,
+    )
+
+
+def test_multi_contract_scale_save_cli_scans_all_split_stage_contracts(tmp_path):
+    _write_scale_fixture(
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train/fu2601.feather"
+    )
+    _write_scale_fixture(
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/valid/fu2605.feather"
+    )
+    feature_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy"
+    )
+    feature_file.parent.mkdir(parents=True)
+    np.save(feature_file, np.array(["feature_a"]))
+
+    result = _run_multi_contract_scale_save_cli(tmp_path)
+
+    assert result.returncode == 0
+    for contract, stage in [("fu2601", "train"), ("fu2605", "valid")]:
+        output_file = (
+            tmp_path
+            / f"PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/5min/{stage}/{contract}.feather"
+        )
+        old_output_file = (
+            tmp_path
+            / f"PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/{contract}/5min/{stage}/df.feather"
+        )
+        assert output_file.exists()
+        assert not old_output_file.exists()
+        assert "feature_a" in pl.read_ipc(output_file).columns
+
+
+def test_multi_contract_scale_save_cli_rejects_missing_split_stage_inputs(tmp_path):
+    feature_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy"
+    )
+    feature_file.parent.mkdir(parents=True)
+    np.save(feature_file, np.array(["feature_a"]))
+
+    result = _run_multi_contract_scale_save_cli(tmp_path, check=False)
+
+    assert result.returncode != 0
+    assert "no split-stage inputs found for symbol=fu" in (
+        result.stdout + result.stderr
+    )
+
+
+def test_multi_contract_scale_save_cli_rejects_missing_selected_feature(tmp_path):
+    input_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train/fu2601.feather"
+    )
+    _write_scale_fixture(input_file)
+    feature_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy"
+    )
+    feature_file.parent.mkdir(parents=True)
+    np.save(feature_file, np.array(["missing_feature"]))
+
+    result = _run_multi_contract_scale_save_cli(tmp_path, check=False)
+
+    assert result.returncode != 0
+    assert "missing selected state feature columns" in (result.stdout + result.stderr)
+    assert "missing_feature" in (result.stdout + result.stderr)
+
+
+def test_multi_contract_scale_save_cli_rejects_empty_train_feature_list(tmp_path):
+    input_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train/fu2601.feather"
+    )
+    _write_scale_fixture(input_file)
+    feature_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy"
+    )
+    feature_file.parent.mkdir(parents=True)
+    np.save(feature_file, np.array([]))
+
+    result = _run_multi_contract_scale_save_cli(tmp_path, check=False)
+
+    assert result.returncode != 0
+    assert "state feature list is empty" in (result.stdout + result.stderr)
+
+
 def test_scale_save_cli_rejects_input_nan_before_writing_outputs(tmp_path):
     input_file = _scale_input_file(tmp_path)
     _write_scale_fixture(input_file, feature_values=[10.0, 20.0, float("nan"), 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0, 110.0, 120.0])

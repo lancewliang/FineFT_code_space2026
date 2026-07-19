@@ -13,6 +13,11 @@
 - 影响规格：`openspec/changes/adjust-commodity-feature-selection-pipeline/specs/commodity-futures-support/spec.md`
 - 影响任务：`tasks.md` 追加 1.7 和 2.4。
 
+### 2026-07-19: 训练集特征清单成为唯一 scale-save 清单
+- 原因：验证集只应评估训练集筛选出的特征表现，不应再次筛选并覆盖最终特征清单；split 后不同阶段的合约覆盖不一致，scale-save 需要支持合约在某阶段不存在。
+- 影响规格：`openspec/changes/adjust-commodity-feature-selection-pipeline/specs/commodity-futures-support/spec.md`、`openspec/changes/adjust-commodity-feature-selection-pipeline/specs/operator-futures-polars-preprocessing/spec.md`
+- 影响任务：`tasks.md` 追加 1.8、1.9、1.10、1.11 和 2.5。
+
 ## 实现步骤
 
 ### Task 1: Add full-process ordering tests
@@ -91,3 +96,38 @@
 - 改动文件：无代码改动；只在 amend 完成后同步 checkbox。
 - 验证方式：`openspec validate adjust-commodity-feature-selection-pipeline --strict`，预期通过。
 - 对应 OpenSpec 任务：``- [x] 2.4 Re-run strict OpenSpec validation after metric/filter semantics amend.``
+
+### Task 12: Add revised train/valid feature-selection tests
+- [x] **任务完成**（与 superpowers plan `Task 12`、`tasks.md` 对应条目同步勾选）
+- 目标：覆盖新语义：train 写最终 `state_features.npy` 且不再写 `state_features_candidate.npy`；`_ordered_filter_features` 的 Hard Filter 使用 `RankIC_Mean`；valid 只写 metrics/manifest，不跑 filters，不产出下游特征清单。
+- 改动文件：`data_preprocess/tests/test_commodity_multi_contract_feature_selection.py`
+- 验证方式：`bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && pytest data_preprocess/tests/test_commodity_multi_contract_feature_selection.py -q'`，实现前预期失败。
+- 对应 OpenSpec 任务：``- [ ] 1.8 Add focused tests for the revised train/valid feature-selection semantics: train writes final `state_features.npy`, no longer writes `state_features_candidate.npy`, Hard Filter uses `RankIC_Mean` instead of `IC_Mean`, and valid writes metrics/manifest only without running filters or producing a downstream feature list.``
+
+### Task 13: Update multi-contract feature-selection pipeline
+- [x] **任务完成**（与 superpowers plan `Task 13`、`tasks.md` 对应条目同步勾选）
+- 目标：让 `train` 成为唯一筛选阶段并输出 canonical `train/state_features.npy`；让 `valid` 加载 train 清单做评估报告，禁止 valid manifest 暴露为下游 selected feature 输出。
+- 改动文件：`data_preprocess/operator_futures/feature_selection/muti_contract/pipeline.py`、必要时同步 `__main__.py`
+- 验证方式：运行 Task 12 focused pytest，预期通过。
+- 对应 OpenSpec 任务：``- [ ] 1.9 Update `operator_futures.feature_selection.muti_contract.pipeline` so `train` is the only filtering stage, `train/state_features.npy` is the canonical selected feature file, `valid` loads that train file for evaluation/reporting only, and valid manifest fields cannot be mistaken for selected downstream features.``
+
+### Task 14: Update full-process scale-save handoff
+- [x] **任务完成**（与 superpowers plan `Task 14`、`tasks.md` 对应条目同步勾选）
+- 目标：保持 `feature_selection_valid` 在 train 后运行作为评估报告步骤；调整后续 `scale_save` 参数，使其使用 train 产生的 `state_features.npy`，不使用 valid 特征清单。
+- 改动文件：`data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh`、`data_preprocess/tests/test_commodity_main_contract_cli.py`
+- 验证方式：`bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && pytest data_preprocess/tests/test_commodity_main_contract_cli.py::test_commodity_full_process_writes_step_logs_and_preserves_child_log_paths data_preprocess/tests/test_commodity_main_contract_cli.py::test_commodity_full_process_shell_runs_scale_after_feature_selection_valid -q'` 和 `bash -n data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh`，预期通过。
+- 对应 OpenSpec 任务：``- [ ] 1.10 Update `fu_full_process.sh` orchestration so `feature_selection_valid` remains after train as an evaluation/report step, and subsequent `scale_save` uses the train-produced `state_features.npy` instead of any valid-produced feature list.``
+
+### Task 15: Enhance scale-save for split-stage inputs
+- [x] **任务完成**（与 superpowers plan `Task 15`、`tasks.md` 对应条目同步勾选）
+- 目标：扩展 `scale_save.py` 以读取 split-stage 输入并应用 train `state_features.npy`，输出到 `SCALE_SAVE/{symbol}/{contract}/{target_freq}/{stage}/{start_date}-{end_date}/`；当某合约在某 split 阶段不存在时跳过该阶段并记录 contract/stage；当请求合约所有阶段都不存在、train 清单缺失/为空或现有阶段缺 required feature column 时 fail-fast；保留旧 `IC_RESULT` 路由。
+- 改动文件：`data_preprocess/operator_futures/scale_describe_save/scale_save.py`、`data_preprocess/tests/test_feature_selection_polars.py`
+- 验证方式：`bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && pytest data_preprocess/tests/test_feature_selection_polars.py -q'`，预期通过。
+- 对应 OpenSpec 任务：``- [ ] 1.11 Enhance `scale_save.py` and focused tests so commodity scale-save can read split-stage inputs, apply `FEATURE_SELECTION/{target_freq}/{symbol}/train/state_features.npy`, skip contract-stage inputs that do not exist, fail when a requested contract has no split-stage input at all, and preserve existing non-feature-selection `IC_RESULT` behavior.``
+
+### Task 16: Validate revised amend implementation
+- [x] **任务完成**（与 superpowers plan `Task 16`、`tasks.md` 对应条目同步勾选）
+- 目标：完成 2026-07-19 amend 后运行 OpenSpec、focused pytest、shell syntax 和 Python compile 检查。
+- 改动文件：无代码改动；只在 build 阶段完成后同步 checkbox。
+- 验证方式：`openspec validate adjust-commodity-feature-selection-pipeline --strict`；`bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && pytest data_preprocess/tests/test_commodity_multi_contract_feature_selection.py data_preprocess/tests/test_commodity_main_contract_cli.py data_preprocess/tests/test_feature_selection_polars.py -q'`；`bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && bash -n data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh && python -m py_compile data_preprocess/operator_futures/feature_selection/muti_contract/*.py data_preprocess/operator_futures/scale_describe_save/scale_save.py'`，预期通过。
+- 对应 OpenSpec 任务：``- [ ] 2.5 Re-run strict OpenSpec validation and the revised focused pytest/static checks after the 2026-07-19 train-list/valid-report/scale-save amend is implemented.``

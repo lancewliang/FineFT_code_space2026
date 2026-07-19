@@ -15,9 +15,13 @@ The system SHALL migrate scale/save processing to Polars while preserving reward
 - **THEN** reward/execution columns are selected from the commodity manifest for depth 5
 - **AND** the implementation does not assume the first 106 columns are reward/execution columns
 
-#### Scenario: Commodity scale save reads filtered feature-selection input
-- **WHEN** commodity full process has written `FEATURE_SELECTION/5min/fu/valid/fu2601/df.feather` and `FEATURE_SELECTION/5min/fu/valid/state_features.npy`
-- **THEN** `scale_save.py` SHALL support reading that filtered input path for contract `fu2601`
-- **AND** `scale_save.py` SHALL keep writing final outputs to `SCALE_SAVE/fu/fu2601/5min/{start_date}-{end_date}/`
+#### Scenario: Commodity scale save reads split-stage input with train feature list
+- **WHEN** commodity full process has written `FEATURE_SELECTION/5min/fu/train/state_features.npy`
+- **AND** `SPLIT-TRAIN-VALID-TEST/5min/fu/train/fu2601.feather` exists
+- **AND** `SPLIT-TRAIN-VALID-TEST/5min/fu/valid/fu2601.feather` does not exist
+- **THEN** `scale_save.py` SHALL support reading the existing split-stage input path for contract `fu2601`
+- **AND** `scale_save.py` SHALL use `FEATURE_SELECTION/5min/fu/train/state_features.npy` as the state feature list
+- **AND** `scale_save.py` SHALL skip the missing `valid/fu2601.feather` stage without failing the whole contract
+- **AND** `scale_save.py` SHALL keep writing final outputs under `SCALE_SAVE/fu/fu2601/5min/{stage}/{start_date}-{end_date}/`
 - **AND** reward/execution columns remain unscaled and state columns remain scaled according to existing scale rules
 - **AND** successful output file names remain `df.feather`, `df.csv`, `state_features.npy`, and `df_describe.csv`

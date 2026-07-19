@@ -53,13 +53,13 @@ def _state_features(df: pl.DataFrame, *, orderbook_depth: int) -> list[str]:
     ]
 
 
-def _load_candidates(path: Path) -> list[str]:
+def _load_feature_list(path: Path) -> list[str]:
     if not path.exists():
-        raise FileNotFoundError(f"candidate feature file does not exist: {path}")
+        raise FileNotFoundError(f"feature list file does not exist: {path}")
     values = np.load(path, allow_pickle=True).tolist()
     values = [str(value) for value in values]
     if not values:
-        raise ValueError(f"candidate feature list is empty: {path}")
+        raise ValueError(f"feature list is empty: {path}")
     return values
 
 
@@ -77,7 +77,7 @@ def _ordered_filter_features(
         raise ValueError("composite_drop_ratio must be in [0, 1)")
 
     selected = aggregate.filter(pl.col("feature").is_in(feature_universe))
-    hard = selected.filter(pl.col("IC_Mean").abs() >= min_abs_ic)[
+    hard = selected.filter(pl.col("RankIC_Mean").abs() >= min_abs_ic)[
         "feature"
     ].to_list()
     if not hard:
@@ -244,15 +244,13 @@ def run_feature_selection(
     if stage == "train":
         first_frame = next(iter(frames.values()))
         feature_universe = _state_features(first_frame, orderbook_depth=orderbook_depth)
-        selected_file = output_dir / "state_features_candidate.npy"
-        candidate_file = None
+        train_feature_file = None
     else:
-        candidate_file = (
+        train_feature_file = (
             _stage_output_dir(root_path, save_path, target_freq, symbol, "train")
-            / "state_features_candidate.npy"
+            / "state_features.npy"
         )
-        feature_universe = _load_candidates(candidate_file)
-        selected_file = output_dir / "state_features.npy"
+        feature_universe = _load_feature_list(train_feature_file)
     if not feature_universe:
         raise ValueError(f"{stage} feature universe is empty")
 
@@ -287,6 +285,27 @@ def run_feature_selection(
     aggregate = aggregate_metric_frames(metric_frames)
     aggregate_path = output_dir / "aggregate_metrics.csv"
     aggregate.write_csv(aggregate_path)
+    if stage == "valid":
+        manifest = {
+            "symbol": symbol,
+            "target_freq": target_freq,
+            "stage": stage,
+            "split_input_dir": str(input_dir),
+            "evaluated_feature_file": str(train_feature_file),
+            "evaluated_feature_count": len(feature_universe),
+            "evaluated_features": feature_universe,
+            "windows_list": windows_list,
+            "aggregate_metrics_path": str(aggregate_path),
+            "contracts": per_contract,
+            "report_only": True,
+        }
+        manifest_path = output_dir / "feature_selection_manifest.json"
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return manifest
+
     selected_features, filter_results = _ordered_filter_features(
         frames,
         aggregate,
@@ -296,6 +315,7 @@ def run_feature_selection(
         max_correlation=max_correlation,
         composite_drop_ratio=composite_drop_ratio,
     )
+    selected_file = output_dir / "state_features.npy"
     np.save(selected_file, np.array(selected_features))
     filtered_outputs = _write_filtered_outputs(
         frames,
@@ -309,7 +329,6 @@ def run_feature_selection(
         "target_freq": target_freq,
         "stage": stage,
         "split_input_dir": str(input_dir),
-        "candidate_feature_file": str(candidate_file) if candidate_file else None,
         "selected_feature_file": str(selected_file),
         "selected_feature_count": len(selected_features),
         "selected_features": selected_features,
@@ -348,7 +367,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min_abs_ic", type=float, default=0.01)
     parser.add_argument("--max_metric_std", type=float, default=1.0)
     parser.add_argument("--max_correlation", type=float, default=0.7)
-    parser.add_argument("--composite_drop_ratio", type=float, default=0)
+    parser.add_argument("--composite_drop_ratio", type=float, default=0.1)
     parser.add_argument(
         "--windows_list",
         "--windows",

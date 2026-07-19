@@ -176,25 +176,18 @@ run_commodity_scale_save() {
     local end_date=$3
     local symbol=$4
     local root_path=$5
-    local contract=${6:-}
-    local contract_args=()
-    if [ -n "${contract}" ]; then
-        contract_args=(--contract "${contract}")
-    fi
 
-    PYTHONPATH="${root_path}/data_preprocess" python -u data_preprocess/operator_futures/scale_describe_save/scale_save.py \
+    PYTHONPATH="${root_path}/data_preprocess" python -u data_preprocess/operator_futures/scale_describe_save/muti_contract_scale_save.py \
         --symbols "$symbol" \
-        "${contract_args[@]}" \
         --target_freq "$target_freq" \
         --start_date "$start_date" \
         --end_date "$end_date" \
         --root_path "$root_path" \
-        --data_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION" \
+        --data_path "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST" \
         --save_path "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/" \
-        --feature_selection_stage valid \
         --market_type commodity_futures \
         --orderbook_depth 5 \
-        --ic_choice ic
+        --feature_list_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/${target_freq}/${symbol}/train/state_features.npy"
 }
 
 run_commodity_merge_process() {
@@ -424,13 +417,10 @@ run_commodity_full_process() {
         "feature_selection_valid" \
         run_commodity_feature_selection "valid" "${root_path}/PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/${target_freq}" "$target_freq" "$symbol" "$root_path"
 
-    while IFS= read -r contract; do
-        [ -n "$contract" ] || continue
-        run_commodity_logged_step \
-            "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-            "scale_save" \
-            run_commodity_scale_save "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
-    done < <(run_commodity_summary_contracts "$summary_path")
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "scale_save" \
+        run_commodity_scale_save "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
 
     run_commodity_logged_step \
         "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
