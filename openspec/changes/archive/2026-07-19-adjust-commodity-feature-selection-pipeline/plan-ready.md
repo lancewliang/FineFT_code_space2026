@@ -18,6 +18,11 @@
 - 影响规格：`openspec/changes/adjust-commodity-feature-selection-pipeline/specs/commodity-futures-support/spec.md`、`openspec/changes/adjust-commodity-feature-selection-pipeline/specs/operator-futures-polars-preprocessing/spec.md`
 - 影响任务：`tasks.md` 追加 1.8、1.9、1.10、1.11 和 2.5。
 
+### 2026-07-19: 以 muti_contract_scale_save.py 当前批量输出契约为准
+- 原因：当前代码通过 `muti_contract_scale_save.py` 批量扫描 split-stage 输入并输出到 `SCALE_SAVE/{symbol}/{target_freq}/{stage}/{contract}.feather`；现有 spec 中部分单合约 `scale_save.py`/`df.feather` 路径描述与代码不一致。用户要求若 spec 与当前代码不一致，以当前代码为准，并新增同名 csv 调试输出。
+- 影响规格：`openspec/changes/adjust-commodity-feature-selection-pipeline/specs/commodity-futures-support/spec.md`、`openspec/changes/adjust-commodity-feature-selection-pipeline/specs/operator-futures-polars-preprocessing/spec.md`
+- 影响任务：`tasks.md` 追加 1.12、1.13 和 2.6。
+
 ## 实现步骤
 
 ### Task 1: Add full-process ordering tests
@@ -131,3 +136,26 @@
 - 改动文件：无代码改动；只在 build 阶段完成后同步 checkbox。
 - 验证方式：`openspec validate adjust-commodity-feature-selection-pipeline --strict`；`bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && pytest data_preprocess/tests/test_commodity_multi_contract_feature_selection.py data_preprocess/tests/test_commodity_main_contract_cli.py data_preprocess/tests/test_feature_selection_polars.py -q'`；`bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && bash -n data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh && python -m py_compile data_preprocess/operator_futures/feature_selection/muti_contract/*.py data_preprocess/operator_futures/scale_describe_save/scale_save.py'`，预期通过。
 - 对应 OpenSpec 任务：``- [ ] 2.5 Re-run strict OpenSpec validation and the revised focused pytest/static checks after the 2026-07-19 train-list/valid-report/scale-save amend is implemented.``
+
+## 追加实现步骤
+
+### Task 17: Add multi-contract scale-save csv output tests
+- [x] **任务完成**（与 superpowers plan `Task 17`、`tasks.md` 对应条目同步勾选）
+- 目标：新增 focused tests，确认 `muti_contract_scale_save.py` 以当前批量脚本契约为准：扫描存在的 split-stage feather，写出 `SCALE_SAVE/{symbol}/{target_freq}/{stage}/{contract}.feather`，并在同目录写出同 basename 的 `.csv`。
+- 改动文件：`data_preprocess/tests/test_feature_selection_polars.py`
+- 验证方式：`bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && pytest data_preprocess/tests/test_feature_selection_polars.py::test_multi_contract_scale_save_cli_scans_all_split_stage_contracts -q'`，实现前预期因缺少 csv 输出断言失败。
+- 对应 OpenSpec 任务：``- [ ] 1.12 Add focused tests for `muti_contract_scale_save.py` as the commodity split-stage scale-save source of truth: scan existing `SPLIT-TRAIN-VALID-TEST/{target_freq}/{symbol}/{stage}/*.feather`, write `SCALE_SAVE/{symbol}/{target_freq}/{stage}/{contract}.feather`, write same-basename `.csv` beside each feather, and preserve selected-feature-only output.``
+
+### Task 18: Write csv beside each muti_contract_scale_save feather
+- [x] **任务完成**（与 superpowers plan `Task 18`、`tasks.md` 对应条目同步勾选）
+- 目标：在 `scale_one_input` 写出 feather 后同步写出 `output_file.with_suffix(".csv")`，保持 reward/execution 列不缩放、state feature 只包含 train 清单、`symbol` 列和现有 NaN 校验行为不变。
+- 改动文件：`data_preprocess/operator_futures/scale_describe_save/muti_contract_scale_save.py`
+- 验证方式：运行 Task 17 focused pytest，预期通过。
+- 对应 OpenSpec 任务：``- [ ] 1.13 Update `data_preprocess/operator_futures/scale_describe_save/muti_contract_scale_save.py` so every successful feather output is accompanied by a same-directory, same-basename csv debug output without changing the scaling algorithm or selected feature list semantics.``
+
+### Task 19: Validate csv amend implementation
+- [x] **任务完成**（与 superpowers plan `Task 19`、`tasks.md` 对应条目同步勾选）
+- 目标：完成 csv debug 输出实现后运行 OpenSpec、focused pytest 和 Python compile 检查。
+- 改动文件：无代码改动；只在 build 阶段完成后同步 checkbox。
+- 验证方式：`openspec validate adjust-commodity-feature-selection-pipeline --strict`；`bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && pytest data_preprocess/tests/test_feature_selection_polars.py::test_multi_contract_scale_save_cli_scans_all_split_stage_contracts -q'`；`bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && python -m py_compile data_preprocess/operator_futures/scale_describe_save/muti_contract_scale_save.py'`，预期通过。
+- 对应 OpenSpec 任务：``- [ ] 2.6 Re-run strict OpenSpec validation and focused `muti_contract_scale_save.py` pytest/static checks after adding csv debug outputs.``

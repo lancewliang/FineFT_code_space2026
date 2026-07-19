@@ -140,9 +140,12 @@ def scale_one_input(
     validate_no_nan(out, path=output_file, stage="output")
     output_file.parent.mkdir(parents=True, exist_ok=True)
     out.write_ipc(output_file)
+    csv_output_file = output_file.with_suffix(".csv")
+    out.write_csv(csv_output_file)
     logger.info(
-        "Wrote split-stage scale-save output: output_file=%s rows=%d columns=%d",
+        "Wrote split-stage scale-save output: output_file=%s csv_output_file=%s rows=%d columns=%d",
         output_file,
+        csv_output_file,
         out.height,
         len(out.columns),
     )

@@ -15,13 +15,14 @@ The system SHALL migrate scale/save processing to Polars while preserving reward
 - **THEN** reward/execution columns are selected from the commodity manifest for depth 5
 - **AND** the implementation does not assume the first 106 columns are reward/execution columns
 
-#### Scenario: Commodity scale save reads split-stage input with train feature list
+#### Scenario: Commodity multi-contract scale save reads split-stage input with train feature list
 - **WHEN** commodity full process has written `FEATURE_SELECTION/5min/fu/train/state_features.npy`
 - **AND** `SPLIT-TRAIN-VALID-TEST/5min/fu/train/fu2601.feather` exists
 - **AND** `SPLIT-TRAIN-VALID-TEST/5min/fu/valid/fu2601.feather` does not exist
-- **THEN** `scale_save.py` SHALL support reading the existing split-stage input path for contract `fu2601`
-- **AND** `scale_save.py` SHALL use `FEATURE_SELECTION/5min/fu/train/state_features.npy` as the state feature list
-- **AND** `scale_save.py` SHALL skip the missing `valid/fu2601.feather` stage without failing the whole contract
-- **AND** `scale_save.py` SHALL keep writing final outputs under `SCALE_SAVE/fu/fu2601/5min/{stage}/{start_date}-{end_date}/`
+- **THEN** `muti_contract_scale_save.py` SHALL support reading the existing split-stage input path for contract `fu2601`
+- **AND** `muti_contract_scale_save.py` SHALL use `FEATURE_SELECTION/5min/fu/train/state_features.npy` as the state feature list
+- **AND** `muti_contract_scale_save.py` SHALL NOT require an output for the missing `valid/fu2601.feather` stage
+- **AND** `muti_contract_scale_save.py` SHALL continue processing all discovered split-stage inputs
+- **AND** `muti_contract_scale_save.py` SHALL keep writing final feather outputs under `SCALE_SAVE/fu/5min/{stage}/{contract}.feather`
+- **AND** `muti_contract_scale_save.py` SHALL write a debug csv next to each feather output under `SCALE_SAVE/fu/5min/{stage}/{contract}.csv`
 - **AND** reward/execution columns remain unscaled and state columns remain scaled according to existing scale rules
-- **AND** successful output file names remain `df.feather`, `df.csv`, `state_features.npy`, and `df_describe.csv`

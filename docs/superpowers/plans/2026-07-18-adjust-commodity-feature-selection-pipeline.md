@@ -4,7 +4,7 @@
 
 **Goal:** Move commodity feature selection after dataset split, let train produce the only final `state_features.npy`, run valid as evaluation/reporting only, and run scale-save from split-stage inputs using the train feature list.
 
-**Architecture:** Keep existing contract-level preprocessing through `ALL_FEATURE` unchanged. Add a focused `operator_futures.feature_selection.muti_contract` package for split-input feature metrics, train filtering, valid reporting, and manifests. Keep `fu_full_process.sh` as orchestration only, and extend `scale_save.py` with a split-stage input layout while preserving old `IC_RESULT` behavior.
+**Architecture:** Keep existing contract-level preprocessing through `ALL_FEATURE` unchanged. Add a focused `operator_futures.feature_selection.muti_contract` package for split-input feature metrics, train filtering, valid reporting, and manifests. Keep `fu_full_process.sh` as orchestration only, and use `muti_contract_scale_save.py` as the commodity split-stage batch scale-save source of truth while preserving old `scale_save.py` / `IC_RESULT` behavior for old callers.
 
 **Tech Stack:** Bash, Python, Polars, NumPy, pytest, CatBoost when installed, OpenSpec.
 
@@ -1524,9 +1524,147 @@ Expected: PASS.
 
 - [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
+### Task 17: Add multi-contract scale-save csv output tests
+
+> **trace:** plan-ready.md → `### Task 17: Add multi-contract scale-save csv output tests` | tasks.md → ``- [ ] 1.12 Add focused tests for `muti_contract_scale_save.py` as the commodity split-stage scale-save source of truth: scan existing `SPLIT-TRAIN-VALID-TEST/{target_freq}/{symbol}/{stage}/*.feather`, write `SCALE_SAVE/{symbol}/{target_freq}/{stage}/{contract}.feather`, write same-basename `.csv` beside each feather, and preserve selected-feature-only output.``
+> **sync:** tasks.md → ``- [ ] 1.12 Add focused tests for `muti_contract_scale_save.py` as the commodity split-stage scale-save source of truth: scan existing `SPLIT-TRAIN-VALID-TEST/{target_freq}/{symbol}/{stage}/*.feather`, write `SCALE_SAVE/{symbol}/{target_freq}/{stage}/{contract}.feather`, write same-basename `.csv` beside each feather, and preserve selected-feature-only output.`` | plan-ready.md → `### Task 17: Add multi-contract scale-save csv output tests`
+
+**Files:**
+- Modify: `data_preprocess/tests/test_feature_selection_polars.py`
+
+- [x] **Step 1: Add csv assertions to the existing multi-contract scale-save test**
+
+In `data_preprocess/tests/test_feature_selection_polars.py`, inside `test_multi_contract_scale_save_cli_scans_all_split_stage_contracts`, replace the final assertion block:
+
+```python
+        assert output_file.exists()
+        assert not old_output_file.exists()
+        assert "feature_a" in pl.read_ipc(output_file).columns
+```
+
+with:
+
+```python
+        output_csv = output_file.with_suffix(".csv")
+        assert output_file.exists()
+        assert output_csv.exists()
+        assert not old_output_file.exists()
+        feather = pl.read_ipc(output_file)
+        csv = pl.read_csv(output_csv)
+        assert feather.shape == csv.shape
+        assert "feature_a" in feather.columns
+        assert "feature_a" in csv.columns
+        assert "timestamp" in feather.columns
+        assert "timestamp" in csv.columns
+```
+
+- [x] **Step 2: Run the focused test and confirm RED**
+
+Run:
+
+```bash
+bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && pytest data_preprocess/tests/test_feature_selection_polars.py::test_multi_contract_scale_save_cli_scans_all_split_stage_contracts -q'
+```
+
+Expected: FAIL because `muti_contract_scale_save.py` writes the feather output but does not write `output_file.with_suffix(".csv")` yet.
+
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+
+### Task 18: Write csv beside each muti_contract_scale_save feather
+
+> **trace:** plan-ready.md → `### Task 18: Write csv beside each muti_contract_scale_save feather` | tasks.md → ``- [ ] 1.13 Update `data_preprocess/operator_futures/scale_describe_save/muti_contract_scale_save.py` so every successful feather output is accompanied by a same-directory, same-basename csv debug output without changing the scaling algorithm or selected feature list semantics.``
+> **sync:** tasks.md → ``- [ ] 1.13 Update `data_preprocess/operator_futures/scale_describe_save/muti_contract_scale_save.py` so every successful feather output is accompanied by a same-directory, same-basename csv debug output without changing the scaling algorithm or selected feature list semantics.`` | plan-ready.md → `### Task 18: Write csv beside each muti_contract_scale_save feather`
+
+**Files:**
+- Modify: `data_preprocess/operator_futures/scale_describe_save/muti_contract_scale_save.py`
+- Test: `data_preprocess/tests/test_feature_selection_polars.py`
+
+- [x] **Step 1: Write the csv after the feather output**
+
+In `scale_one_input`, replace:
+
+```python
+    out.write_ipc(output_file)
+    logger.info(
+        "Wrote split-stage scale-save output: output_file=%s rows=%d columns=%d",
+        output_file,
+        out.height,
+        len(out.columns),
+    )
+```
+
+with:
+
+```python
+    out.write_ipc(output_file)
+    csv_output_file = output_file.with_suffix(".csv")
+    out.write_csv(csv_output_file)
+    logger.info(
+        "Wrote split-stage scale-save output: output_file=%s csv_output_file=%s rows=%d columns=%d",
+        output_file,
+        csv_output_file,
+        out.height,
+        len(out.columns),
+    )
+```
+
+- [x] **Step 2: Run the focused test and confirm GREEN**
+
+Run:
+
+```bash
+bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && pytest data_preprocess/tests/test_feature_selection_polars.py::test_multi_contract_scale_save_cli_scans_all_split_stage_contracts -q'
+```
+
+Expected: PASS.
+
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+
+### Task 19: Validate csv amend implementation
+
+> **trace:** plan-ready.md → `### Task 19: Validate csv amend implementation` | tasks.md → ``- [ ] 2.6 Re-run strict OpenSpec validation and focused `muti_contract_scale_save.py` pytest/static checks after adding csv debug outputs.``
+> **sync:** tasks.md → ``- [ ] 2.6 Re-run strict OpenSpec validation and focused `muti_contract_scale_save.py` pytest/static checks after adding csv debug outputs.`` | plan-ready.md → `### Task 19: Validate csv amend implementation`
+
+**Files:**
+- Verify: `openspec/changes/adjust-commodity-feature-selection-pipeline`
+- Verify: `data_preprocess/tests/test_feature_selection_polars.py`
+- Verify: `data_preprocess/operator_futures/scale_describe_save/muti_contract_scale_save.py`
+
+- [x] **Step 1: Run OpenSpec validation**
+
+Run:
+
+```bash
+openspec validate adjust-commodity-feature-selection-pipeline --strict
+```
+
+Expected: PASS.
+
+- [x] **Step 2: Run focused pytest**
+
+Run:
+
+```bash
+bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && pytest data_preprocess/tests/test_feature_selection_polars.py::test_multi_contract_scale_save_cli_scans_all_split_stage_contracts -q'
+```
+
+Expected: PASS.
+
+- [x] **Step 3: Run Python compile**
+
+Run:
+
+```bash
+bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf && python -m py_compile data_preprocess/operator_futures/scale_describe_save/muti_contract_scale_save.py'
+```
+
+Expected: PASS.
+
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+
 ## Self-Review
 
-Spec coverage: Tasks 1 and 4 cover the full-process ordering, step logs, dataset split input, and scale-save timing. Tasks 2 and 3 cover the original train/valid feature selection implementation. Task 5 covers the original feature-selection input routing for scale-save while preserving old `IC_RESULT` behavior. Task 6 covers documentation. Task 10 covers the amended metric/filter semantics: default windows, IC, RankIC, CatBoost Importance, Sharpe, Permutation Importance, Composite Score priority, bottom 10% drop, and manifest fields. Tasks 12 through 15 cover the 2026-07-19 semantic change: train-only final `state_features.npy`, valid reporting only, RankIC hard filter, and split-stage scale-save with missing contract-stage support. Tasks 7 through 9, 11, and 16 cover OpenSpec, pytest, shell syntax, Python compile, and amend validation.
+Spec coverage: Tasks 1 and 4 cover the full-process ordering, step logs, dataset split input, and scale-save timing. Tasks 2 and 3 cover the original train/valid feature selection implementation. Task 5 covers the original feature-selection input routing for scale-save while preserving old `IC_RESULT` behavior. Task 6 covers documentation. Task 10 covers the amended metric/filter semantics: default windows, IC, RankIC, CatBoost Importance, Sharpe, Permutation Importance, Composite Score priority, bottom 10% drop, and manifest fields. Tasks 12 through 15 cover the 2026-07-19 semantic change: train-only final `state_features.npy`, valid reporting only, RankIC hard filter, and split-stage scale-save with missing contract-stage support. Tasks 17 and 18 cover the `muti_contract_scale_save.py` source-of-truth output layout and same-basename csv debug output. Tasks 7 through 9, 11, 16, and 19 cover OpenSpec, pytest, shell syntax, Python compile, and amend validation.
 
 Placeholder scan: No placeholder markers are intentionally present. All code-changing steps include concrete code blocks or exact replacements, and all validation steps include exact commands and expected results.
 

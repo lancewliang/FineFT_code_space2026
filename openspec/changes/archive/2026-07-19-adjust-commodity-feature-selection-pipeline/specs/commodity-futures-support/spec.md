@@ -91,18 +91,18 @@
 - **WHEN** train feature selection 已得到最终 `FEATURE_SELECTION/5min/fu/train/state_features.npy`
 - **AND** `SPLIT-TRAIN-VALID-TEST/5min/fu/train/fu2601.feather` 存在
 - **AND** `SPLIT-TRAIN-VALID-TEST/5min/fu/valid/fu2601.feather` 不存在
-- **THEN** scale-save SHALL 使用 train `state_features.npy` 作为 state feature 清单
-- **AND** scale-save SHALL 处理存在的 `train/fu2601.feather`
-- **AND** scale-save SHALL 跳过缺失的 `valid/fu2601.feather` 并记录 contract 和 stage
-- **AND** scale-save SHALL 继续处理同一合约或其他合约的其他存在阶段
-- **AND** scale-save SHALL NOT 使用 valid 阶段产生的特征清单
+- **THEN** `muti_contract_scale_save.py` SHALL 使用 train `state_features.npy` 作为 state feature 清单
+- **AND** `muti_contract_scale_save.py` SHALL 处理存在的 `train/fu2601.feather`
+- **AND** `muti_contract_scale_save.py` SHALL NOT 要求为缺失的 `valid/fu2601.feather` 生成输出
+- **AND** `muti_contract_scale_save.py` SHALL 继续处理扫描到的其他存在阶段合约文件
+- **AND** `muti_contract_scale_save.py` SHALL NOT 使用 valid 阶段产生的特征清单
 
 #### Scenario: scale-save 输出只包含训练集选中特征
-- **WHEN** scale-save 处理任一存在的 split 阶段合约文件
-- **THEN** scale-save SHALL 写出 `SCALE_SAVE/fu/fu2601/5min/{stage}/{start_date}-{end_date}/df.feather`
-- **AND** 输出 `df.feather` SHALL 包含商品 reward/execution 列、train `state_features.npy` 中的 state features 和 `symbol`
-- **AND** 输出 `state_features.npy` SHALL 与 train feature selection 产生的 `state_features.npy` 一致
-- **AND** 系统 SHALL NOT 将未入选 state features 写入 scale-save 输出 `df.feather`
+- **WHEN** `muti_contract_scale_save.py` 处理任一存在的 split 阶段合约文件
+- **THEN** `muti_contract_scale_save.py` SHALL 写出 `SCALE_SAVE/fu/5min/{stage}/fu2601.feather`
+- **AND** `muti_contract_scale_save.py` SHALL 同步写出 `SCALE_SAVE/fu/5min/{stage}/fu2601.csv`
+- **AND** 输出 feather 和 csv SHALL 包含商品 reward/execution 列、train `state_features.npy` 中的 state features 和 `symbol`
+- **AND** 系统 SHALL NOT 将未入选 state features 写入 scale-save 输出 feather 或 csv
 
 #### Scenario: 特征选择 fail-fast
 - **WHEN** train 或 valid split 输入目录不存在、没有合约 feather、train feature universe 为空、train 筛选结果为空或 required feature column 缺失
@@ -148,10 +148,10 @@
 - **AND** 所有合约 `merge_clean` 完成后，`fu_full_process.sh` SHALL 只调用一次 `dataset_split`
 - **AND** `dataset_split` 完成后，`fu_full_process.sh` SHALL 调用 `feature_selection_train`
 - **AND** `feature_selection_train` 完成后，`fu_full_process.sh` SHALL 调用 `feature_selection_valid`
-- **AND** `feature_selection_valid` 完成后，`fu_full_process.sh` SHALL 对每个合约调用 `scale_save`
-- **AND** 每个 `scale_save` SHALL 使用 `FEATURE_SELECTION/{target_freq}/{symbol}/train/state_features.npy`
-- **AND** 每个 `scale_save` SHALL 读取 `SPLIT-TRAIN-VALID-TEST/{target_freq}/{symbol}/{train|valid|test}/{contract}.feather` 中存在的 split 阶段合约文件
-- **AND** `maintenance_margin_dict` SHALL 在全部合约 `scale_save` 完成后执行
+- **AND** `feature_selection_valid` 完成后，`fu_full_process.sh` SHALL 调用一次 `muti_contract_scale_save.py`
+- **AND** `muti_contract_scale_save.py` SHALL 使用 `FEATURE_SELECTION/{target_freq}/{symbol}/train/state_features.npy`
+- **AND** `muti_contract_scale_save.py` SHALL 扫描并读取 `SPLIT-TRAIN-VALID-TEST/{target_freq}/{symbol}/{train|valid|test}/*.feather` 中存在的 split 阶段合约文件
+- **AND** `maintenance_margin_dict` SHALL 在 `muti_contract_scale_save.py` 完成后执行
 - **AND** `fu_full_process.sh` SHALL NOT 在合约循环内的 `merge_clean` 后立即调用 `scale_save`
 - **AND** `fu_full_process.sh` SHALL NOT 使用旧 `IC_RESULT` 作为本次商品特征评估输入源
 
@@ -218,15 +218,16 @@
 - **THEN** 系统 SHALL 从 `MERGE_CONCAT/CONCAT_FEATURE/fu/fu2601/5min/2026-01-01-2026-04-01.feather` 和 `TIME_FEATURE/fu/fu2601/5min/2026-01-01-2026-04-01.feather` 读取输入
 - **AND** 系统 SHALL 写出 `ALL_FEATURE/fu/fu2601/5min/2026-01-01-2026-04-01.feather`
 
-#### Scenario: feature selection 和 scale save 按 contract 生成日期范围目录
+#### Scenario: feature selection 和 multi-contract scale save 按 stage/contract 生成文件
 - **WHEN** 商品 full process 完成 split 后 feature selection
 - **THEN** feature selection SHALL 读取 `SPLIT-TRAIN-VALID-TEST/{target_freq}/{symbol}/{train|valid}/{contract}.feather`
 - **AND** feature selection SHALL 写出 `FEATURE_SELECTION/{target_freq}/{symbol}/{train|valid}/`
 - **AND** train feature selection SHALL 写出 `FEATURE_SELECTION/{target_freq}/{symbol}/train/state_features.npy`
 - **AND** valid feature selection SHALL 只写评估明细、汇总统计和 manifest/report
-- **AND** scale save SHALL 读取 `SPLIT-TRAIN-VALID-TEST/{target_freq}/{symbol}/{train|valid|test}/{contract}.feather`
-- **AND** scale save SHALL 使用 `FEATURE_SELECTION/{target_freq}/{symbol}/train/state_features.npy`
-- **AND** scale save SHALL 写出 `SCALE_SAVE/{symbol}/{contract}/{target_freq}/{stage}/{start_date}-{end_date}/`
+- **AND** `muti_contract_scale_save.py` SHALL 读取 `SPLIT-TRAIN-VALID-TEST/{target_freq}/{symbol}/{train|valid|test}/{contract}.feather`
+- **AND** `muti_contract_scale_save.py` SHALL 使用 `FEATURE_SELECTION/{target_freq}/{symbol}/train/state_features.npy`
+- **AND** `muti_contract_scale_save.py` SHALL 写出 `SCALE_SAVE/{symbol}/{target_freq}/{stage}/{contract}.feather`
+- **AND** `muti_contract_scale_save.py` SHALL 同步写出 `SCALE_SAVE/{symbol}/{target_freq}/{stage}/{contract}.csv`
 
 #### Scenario: 未传 contract 时保留旧路径
 - **WHEN** 共享 operator-futures 脚本未传入 `--contract`
@@ -254,6 +255,6 @@
 - **AND** `LastPrice` 回退、funding 兼容列、Volume/Turnover 差分、tick rule 估计方向、右闭窗口聚合和 fail-fast 校验语义保持不变
 
 #### Scenario: 商品 market_type 分支兼容
-- **WHEN** `cross_section/create_feature.py`、`scale_describe_save/scale_save.py` 或 split 后 multi-contract feature selection 以 `market_type=commodity_futures` 运行
+- **WHEN** `cross_section/create_feature.py`、`scale_describe_save/scale_save.py`、`scale_describe_save/muti_contract_scale_save.py` 或 split 后 multi-contract feature selection 以 `market_type=commodity_futures` 运行
 - **THEN** 商品 reward/execution manifest、depth-aware feature generation、funding 关闭特征处理和 feature selection target 语义保持不变
 - **AND** 输出列集合和列顺序继续满足商品期货现有 tests 和 downstream readers

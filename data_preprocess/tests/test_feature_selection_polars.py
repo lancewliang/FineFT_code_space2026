@@ -497,9 +497,17 @@ def test_multi_contract_scale_save_cli_scans_all_split_stage_contracts(tmp_path)
             tmp_path
             / f"PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/{contract}/5min/{stage}/df.feather"
         )
+        output_csv = output_file.with_suffix(".csv")
         assert output_file.exists()
+        assert output_csv.exists()
         assert not old_output_file.exists()
-        assert "feature_a" in pl.read_ipc(output_file).columns
+        feather = pl.read_ipc(output_file)
+        csv = pl.read_csv(output_csv)
+        assert feather.shape == csv.shape
+        assert "feature_a" in feather.columns
+        assert "feature_a" in csv.columns
+        assert "timestamp" in feather.columns
+        assert "timestamp" in csv.columns
 
 
 def test_multi_contract_scale_save_cli_rejects_missing_split_stage_inputs(tmp_path):

@@ -7,7 +7,7 @@
 1. 先按合约切分出 `train/valid/test`
 2. 对 `train` 做特征评估与筛选，产出唯一的最终训练特征清单
 3. 对 `valid` 只做特征评估和报告，不再做二次筛选
-4. 最后由 `scale_save` 使用训练集产生的特征清单处理 split 后各阶段数据
+4. 最后由 `muti_contract_scale_save.py` 使用训练集产生的特征清单批量处理 split 后各阶段数据
 
 目标是把“特征统计评估”和“特征筛选”从旧的 `IC_RESULT / SCALE_SAVE` 步骤中拆出来，统一沉淀到 `PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/${target_freq}`，同时保留原有 `SCALE_SAVE` 作为最终缩放输出目录。验证集评估报告只用于观察训练集特征在 valid 阶段的表现，不参与后续特征清单决策。
 
@@ -31,8 +31,9 @@
 ### 场景 3：筛选后重新生成最终可用数据
 - 系统使用 `FEATURE_SELECTION/${target_freq}/${symbol}/train/state_features.npy` 作为唯一 state feature 清单
 - 系统读取 `SPLIT-TRAIN-VALID-TEST/${target_freq}/${symbol}/{train|valid|test}/{contract}.feather`
-- 某个合约在某个 split 阶段不存在时，`scale_save` 支持跳过该合约阶段并继续处理其他存在的阶段
-- 最终数据仍保留在 `PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/...`，并按 split stage 区分输出目录
+- `muti_contract_scale_save.py` 扫描所有存在的 split 阶段合约文件；某个合约在某个 split 阶段不存在时，不要求为该缺失阶段生成输出
+- 最终 feather 数据保留在 `PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/${symbol}/${target_freq}/${stage}/${contract}.feather`，并按 split stage 区分输出文件
+- 为方便调试，生成 `.feather` 的同时生成同目录、同 basename 的 `.csv`
 
 ## 设计方向
 
@@ -43,7 +44,7 @@
 1. `dataset_split`
 2. `feature_selection(train)`
 3. `feature_selection(valid)`
-4. `scale_save`
+4. `muti_contract_scale_save`
 5. `maintenance_margin_dict`
 
 ### 目录边界
@@ -71,7 +72,7 @@
 - 汇总层必须保存 `Mean / Std / Median` 统计
 - `FEATURE_SELECTION/${target_freq}` 是特征评估、筛选和最终中间产物的统一根目录
 - `Hard Filter` 第一步必须使用 `abs(RankIC_Mean)`，不再使用 `abs(IC_Mean)`
-- `scale_save` 必须后移，且读取 split 后各阶段合约文件，并始终使用训练集产生的 `state_features.npy`
+- `muti_contract_scale_save.py` 必须后移，且读取 split 后各阶段合约文件，并始终使用训练集产生的 `state_features.npy`
 - 旧的 `SCALE_SAVE` 目录保留，作为最终缩放结果目录，不再作为特征评估输入源
 
 ## 范围边界
@@ -82,8 +83,9 @@
 - 新增 `valid` 评估与报告流程，不做筛选
 - 新增多合约特征评估模块
 - 新增 per-contract 明细、汇总统计、manifest 和训练集最终特征清单输出
-- 调整 `scale_save` 输入来源
-- 增强 `scale_save` 对 split 阶段目录中合约缺失的处理
+- 调整 `muti_contract_scale_save.py` 输入来源
+- 增强 `muti_contract_scale_save.py` 对 split 阶段目录中合约缺失的处理
+- 增强 `muti_contract_scale_save.py` 调试输出，使每个 feather 旁边生成同 basename 的 csv
 
 **不包含（本次）：**
 - 修改商品期货环境、交易撮合、手续费、保证金逻辑
@@ -99,8 +101,9 @@
 - [ ] `FEATURE_SELECTION/${target_freq}/valid` 能产出 per-contract 明细、汇总统计和 manifest/report，但不做筛选，不产生下游采用的新特征清单
 - [ ] `train` 和 `valid` 两段都包含 `Permutation Importance`、`CatBoost Importance`、`IC`、`RankIC`、`Sharpe`
 - [ ] `_ordered_filter_features` 第一步 hard filter 使用 `RankIC_Mean` 而不是 `IC_Mean`
-- [ ] `scale_save` 使用训练集产生的 `state_features.npy` 处理 split 后存在的合约阶段，最终结果仍保留在 `PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/{symbol}/{contract}/{target_freq}/{stage}/{start_date}-{end_date}/`
-- [ ] 某个合约在某个 split 阶段不存在时，`scale_save` 跳过该缺失阶段并继续处理其他存在阶段
+- [ ] `muti_contract_scale_save.py` 使用训练集产生的 `state_features.npy` 批量处理 split 后存在的合约阶段，最终 feather 结果保留在 `PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/{symbol}/{target_freq}/{stage}/{contract}.feather`
+- [ ] 每个 `muti_contract_scale_save.py` 生成的 feather 文件旁边同步生成同 basename 的 csv 文件，便于调试
+- [ ] 某个合约在某个 split 阶段不存在时，`muti_contract_scale_save.py` 不要求为该缺失阶段生成输出，并继续处理扫描到的其他存在阶段
 - [ ] 若输入缺失、训练特征清单为空或筛选结果为空，流程必须 fail-fast
 
 ## Amendments
@@ -112,3 +115,7 @@
 ### 2026-07-19: 训练集决定最终特征清单，验证集只评估
 - 原因：split 后每个阶段的合约覆盖不完全一致，使用 valid 再筛选会让最终清单依赖验证集可用合约，且与训练阶段筛选结果不一致。
 - 摘要：`feature_selection_train` 输出的特征清单改名为最终 `state_features.npy`；`feature_selection_valid` 只做评估和报告，不做筛选；`_ordered_filter_features` 第一步 hard filter 使用 `RankIC_Mean`；后续 `scale_save` 只使用训练集产生的 `state_features.npy`，并支持某合约在某 split 阶段不存在时跳过该阶段。
+
+### 2026-07-19: 以 muti_contract_scale_save.py 当前批量输出契约为准
+- 原因：当前代码已经通过 `muti_contract_scale_save.py` 扫描 split-stage 输入并批量输出到 `SCALE_SAVE/{symbol}/{target_freq}/{stage}/{contract}.feather`，现有 spec 中部分单合约 `scale_save.py`/`df.feather` 路径描述与代码不一致。
+- 摘要：OpenSpec 改为以 `muti_contract_scale_save.py` 当前批量行为为准；新增要求为每个生成的 feather 同步写出同目录同 basename 的 csv，便于调试。

@@ -13,6 +13,8 @@
 - [x] 1.9 Update `operator_futures.feature_selection.muti_contract.pipeline` so `train` is the only filtering stage, `train/state_features.npy` is the canonical selected feature file, `valid` loads that train file for evaluation/reporting only, and valid manifest fields cannot be mistaken for selected downstream features. <!-- 已实现: train 写 canonical state_features.npy，valid 仅报告，Hard Filter 改用 RankIC_Mean -->
 - [x] 1.10 Update `fu_full_process.sh` orchestration so `feature_selection_valid` remains after train as an evaluation/report step, and subsequent `scale_save` uses the train-produced `state_features.npy` instead of any valid-produced feature list. <!-- 已实现: full-process scale_save 改为 split-stage 输入和 train state_features.npy -->
 - [x] 1.11 Enhance `scale_save.py` and focused tests so commodity scale-save can read split-stage inputs, apply `FEATURE_SELECTION/{target_freq}/{symbol}/train/state_features.npy`, skip contract-stage inputs that do not exist, fail when a requested contract has no split-stage input at all, and preserve existing non-feature-selection `IC_RESULT` behavior. <!-- 已实现: 新增 split-stage scale-save 路由并保留旧 IC_RESULT 空清单兼容 -->
+- [x] 1.12 Add focused tests for `muti_contract_scale_save.py` as the commodity split-stage scale-save source of truth: scan existing `SPLIT-TRAIN-VALID-TEST/{target_freq}/{symbol}/{stage}/*.feather`, write `SCALE_SAVE/{symbol}/{target_freq}/{stage}/{contract}.feather`, write same-basename `.csv` beside each feather, and preserve selected-feature-only output. <!-- 已实现: focused test 已新增 csv 同名输出断言并确认 RED -->
+- [x] 1.13 Update `data_preprocess/operator_futures/scale_describe_save/muti_contract_scale_save.py` so every successful feather output is accompanied by a same-directory, same-basename csv debug output without changing the scaling algorithm or selected feature list semantics. <!-- 已实现: feather 写出后同步写出同 basename csv，缩放和特征选择语义不变 -->
 
 ## 2. Validation
 
@@ -21,3 +23,4 @@
 - [x] 2.3 Run `bash -n` on changed shell scripts and `python -m py_compile` on changed Python modules with `conda activate finetf`. <!-- 已实现: shell syntax 与 py_compile 通过 -->
 - [x] 2.4 Re-run strict OpenSpec validation after metric/filter semantics amend. <!-- 已实现: amend 后 openspec validate --strict 通过 -->
 - [x] 2.5 Re-run strict OpenSpec validation and the revised focused pytest/static checks after the 2026-07-19 train-list/valid-report/scale-save amend is implemented. <!-- 已实现: OpenSpec strict、58 个 focused tests、shell syntax 与 py_compile 均通过 -->
+- [x] 2.6 Re-run strict OpenSpec validation and focused `muti_contract_scale_save.py` pytest/static checks after adding csv debug outputs. <!-- 已实现: OpenSpec strict、focused pytest 与 py_compile 均通过 -->

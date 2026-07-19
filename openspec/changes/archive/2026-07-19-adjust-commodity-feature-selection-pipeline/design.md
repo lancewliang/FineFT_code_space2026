@@ -10,7 +10,7 @@ The target flow moves feature evaluation after dataset splitting:
 2. Run `dataset_split` once across all summary contracts.
 3. Evaluate and select features on split `train` files, producing the final training-derived `state_features.npy`.
 4. Re-evaluate split `valid` files using only the train feature list, producing metrics and reports only.
-5. Run stage-aware `scale_save` against split `train` / `valid` / `test` files using the train feature list.
+5. Run stage-aware `muti_contract_scale_save.py` against split `train` / `valid` / `test` files using the train feature list.
 
 ## Decisions
 
@@ -46,9 +46,9 @@ The train manifest records `windows_list`, `composite_drop_ratio`, each filter s
 
 ### Scale-save compatibility
 
-Keep the scale/save algorithm unchanged. Extend its input routing so commodity full process can load `FEATURE_SELECTION/{target_freq}/{symbol}/train/state_features.npy` and then scale existing split files from `SPLIT-TRAIN-VALID-TEST/{target_freq}/{symbol}/{stage}/{contract}.feather`. Stage-aware commodity outputs should be written under `SCALE_SAVE/{symbol}/{contract}/{target_freq}/{stage}/{start_date}-{end_date}/` so train, valid, and test outputs cannot overwrite each other.
+Keep the scale/save algorithm unchanged. The commodity full process uses `data_preprocess/operator_futures/scale_describe_save/muti_contract_scale_save.py` as the source of truth for the split-stage batch scale-save contract. It loads `FEATURE_SELECTION/{target_freq}/{symbol}/train/state_features.npy` and scales existing split files from `SPLIT-TRAIN-VALID-TEST/{target_freq}/{symbol}/{stage}/{contract}.feather`. Stage-aware commodity outputs are written as `SCALE_SAVE/{symbol}/{target_freq}/{stage}/{contract}.feather` so train, valid, and test outputs cannot overwrite each other. For debug visibility, each feather output should also have a same-directory, same-basename csv output such as `SCALE_SAVE/fu/5min/train/fu2601.csv`.
 
-Because split stages are time based, a contract may exist in `train` but not `valid`, or in `valid` but not `test`. `scale_save` should treat a missing contract-stage input as a skipped stage, record/log the skip with the contract and stage, and continue processing other existing stages for that contract. It should fail only when a requested contract has no split-stage inputs at all, when the train feature list is missing or empty, or when an existing split-stage input lacks a required selected feature column.
+Because split stages are time based, a contract may exist in `train` but not `valid`, or in `valid` but not `test`. `muti_contract_scale_save.py` scans existing stage files and should continue processing every discovered split-stage input without requiring outputs for missing contract-stage combinations. It should fail only when no split-stage inputs are found for the symbol, when the train feature list is missing or empty, or when an existing split-stage input lacks a required selected feature column.
 
 ## Risks
 
