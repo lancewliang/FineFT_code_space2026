@@ -348,7 +348,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min_abs_ic", type=float, default=0.01)
     parser.add_argument("--max_metric_std", type=float, default=1.0)
     parser.add_argument("--max_correlation", type=float, default=0.7)
-    parser.add_argument("--composite_drop_ratio", type=float, default=0.1)
+    parser.add_argument("--composite_drop_ratio", type=float, default=0)
     parser.add_argument(
         "--windows_list",
         "--windows",
