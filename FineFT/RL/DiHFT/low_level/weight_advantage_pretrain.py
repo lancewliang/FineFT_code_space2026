@@ -462,7 +462,7 @@ class Weighted_Contexts_DQN:
             self.device = "cuda"
         else:
             self.device = "cpu"
-        self.device = "cpu"
+        # self.device = "cpu"
         # log path
         self.experiment_name = args.experiment_name
         self.model_path = build_serial_model_path(
