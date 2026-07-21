@@ -1002,7 +1002,6 @@ class Weighted_Contexts_DQN:
         update_count_before = self.update_counter
 
         for df_index in range(self.total_df_index_length):
-            df_index = 12
             train_df = train_df_cache[df_index]
             q_table = q_table_cache[df_index]
             first_row_indicators = ", ".join(

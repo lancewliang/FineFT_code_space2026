@@ -417,6 +417,7 @@ def prepare_pretrain_qtable_diagnostics(
     output_dir,
     logger=None,
     process_count=None,
+    num_sample=None,
 ):
     sample_count = total_df_index_length * position_choices
     manifest = _build_diagnostics_manifest(
