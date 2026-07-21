@@ -23,7 +23,7 @@ function run_ddqn_context {
             --base_path "${base_path}" \
             --dataset_name "${dataset_name}" --experiment_name "${experiment_name}" \
             --max_holding_number "${max_holding_number}" --initial_wallet_balance 10000 --order_book_depth 5 \
-            --epoch_num "${epoch}" --position_choices 3 --transcation_cost 0.0005 --short_estimated_rate 0 --long_estimated_rate 0 \
+            --epoch_num "${epoch}" --position_choices 3 --transcation_cost 0.0004 --short_estimated_rate 0 --long_estimated_rate 0 \
             >"${log_dir}/epoch_${epoch}.log" 2>&1 &
         pids+=($!) # 将每个后台进程的PID添加到数组中
 
@@ -89,11 +89,11 @@ function run_ddqn_average {
 # # #DOTUSDT
 # # run_ddqn_average DOTUSDT 6000 1 100
 # run_ddqn_context fu 1 1 2 dataset/5min 5min_nstep6_costw5
-run_ddqn_context fu 1 30 100 dataset/5min 5min_nstep6_costw5
+#run_ddqn_context fu 1 30 100 dataset/5min 5min_nstep6_costw5
 
 # # # ETHUSDT
 # # run_ddqn_average ETHUSDT 160 1 100
-run_ddqn_context fu 1 30 100 dataset/10min 10min_nstep6_costw5
+run_ddqn_context fu 1 1 60 dataset/10min default
 
 # BTCUSDT
 # run_ddqn_context BTCUSDT 8 45 100

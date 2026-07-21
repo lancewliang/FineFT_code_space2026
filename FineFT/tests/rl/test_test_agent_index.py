@@ -303,3 +303,23 @@ def test_trading_detail_csv_records_actions_trades_and_execution_metrics(
     assert detail_df.loc[1, "保证金余额"] == 1004.0
     assert detail_df.loc[1, "浮动总价值"] == 1004.0
     assert detail_df.loc[1, "持仓资产"] == 101.0
+
+
+def test_weighted_trader_handles_nested_contract_label_directories(
+    monkeypatch, tmp_path
+):
+    from RL.DiHFT.low_level import test_agent_index as tai
+
+    nested_dir = tmp_path / "valid" / "fu2507" / "label_2"
+    nested_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"mark_price": [100.0]}).to_feather(nested_dir / "df_0.feather")
+
+    monkeypatch.setattr(tai, "initiate_base_env", lambda **kwargs: FakeEnv())
+    monkeypatch.setattr(tai, "map_action_to_position_leverage", lambda *args: (0, 1))
+
+    trader = _make_test_trader(tai, tmp_path)
+    trader.test()
+
+    result = np.load(tmp_path / "analysis_result.npy", allow_pickle=True).tolist()
+    assert result[0]["label"] == "fu2507/label_2"
+    assert result[0]["df_path"] == ["df_0.feather"]

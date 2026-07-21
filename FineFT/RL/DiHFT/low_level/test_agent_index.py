@@ -261,6 +261,17 @@ def write_trading_detail_csv(detail_rows, csv_path):
     _bilingual_csv_columns(pd.DataFrame(detail_rows)).to_csv(csv_path, index=False)
 
 
+def _iter_valid_feather_files(root_dir):
+    for dirpath, dirnames, filenames in os.walk(root_dir):
+        dirnames.sort()
+        rel_dir = os.path.relpath(dirpath, root_dir)
+        if rel_dir == ".":
+            continue
+        for filename in sorted(filenames):
+            if filename.startswith("df_") and filename.endswith(".feather"):
+                yield rel_dir, filename
+
+
 DETAIL_MARKET_COLUMNS = ["timestamp", "open", "high", "low", "close", "volume", "mark_price"]
 
 
@@ -487,10 +498,15 @@ class weighted_trader:
         overall_result = []
         trading_detail_rows = []
         self.eval_net.eval()
-        label_list = os.listdir(self.valid_data_path)
+        df_entries = list(_iter_valid_feather_files(self.valid_data_path))
+        label_list = sorted({label for label, _ in df_entries})
         for label in label_list:
             print('start label {}'.format(label))
-            df_list = os.listdir(os.path.join(self.valid_data_path, label))
+            df_list = [
+                df_path
+                for label_path, df_path in df_entries
+                if label_path == label
+            ]
             for initial_action in self.initial_action_list:
                 for bin_index in range(self.N):
                     single_label_initial_action_bin_index_reward_sum_result = []
