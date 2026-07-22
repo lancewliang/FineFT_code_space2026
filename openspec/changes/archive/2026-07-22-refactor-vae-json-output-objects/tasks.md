@@ -1,0 +1,17 @@
+## 1. Implementation
+
+- [x] 1.1 Add focused tests for VAE JSON output objects covering `LabelTrainingManifest`, `LabelSummary`, `RoutingSummary`, object attribute access, `maybe_write_routing_summary_after_analysis()` return type, and `to_dict()` equality with written JSON files. <!-- 已实现: focused tests now require VAE JSON dataclass objects, object attribute access, and to_dict JSON compatibility -->
+- [x] 1.2 Add `FineFT/RL/DiHFT/VAE/manifests.py` with dataclass models for training manifest, logpx summary, sample integrity, acceptance, winner summary, contract routing summary, and routing summary serialization. <!-- 已实现: added VAE manifests dataclass module and verified py_compile; focused tests now fail only on old dict-returning implementation -->
+- [x] 1.3 Refactor `FineFT/RL/DiHFT/VAE/merge_vae_train.py` and `main.py` so materialized train data is represented and passed as objects, not dicts, while preserving `label_k_manifest.json`. <!-- 已实现: materialized train data now returns LabelTrainingManifest; main.py uses object attributes and TrainBaselineLogpx -->
+- [x] 1.4 Refactor `FineFT/RL/DiHFT/VAE/process.py` and `summary.py` so per-label summary inputs, summary outputs, and routing summary data are represented and returned as objects, not dicts, while preserving `summary.json` and `routing_summary.json`. <!-- 已实现: process.py now passes ContractLogpxResult objects; summary.py returns LabelSummary and RoutingSummary while writing compatible JSON -->
+- [x] 1.5 Add focused tests for VAE source discovery and loader preparation objects covering `LabelArraySource`, `TestContractSource`, `ContractDatasetLoader`, object attribute access, and preservation of existing discovery/validation behavior. <!-- 已实现: focused tests require source discovery and loader preparation to return dataclass objects with attribute access -->
+- [x] 1.6 Refactor `FineFT/RL/DiHFT/VAE/merge_vae_train.py`, `main.py`, and `process.py` so label source discovery, test source discovery, and contract loader preparation return and pass dataclass objects instead of `list[dict]`. <!-- 已实现: label/test source discovery and contract loader flow now pass LabelArraySource, TestContractSource, and ContractDatasetLoader objects -->
+
+## 2. Verification
+
+- [x] 2.1 Run `conda activate finetf && pytest FineFT/tests/rl/test_commodity_vae_cross_contract.py`. <!-- 已实现: focused VAE test module passed with 14 tests -->
+- [x] 2.2 Run `conda activate finetf && python -m py_compile FineFT/RL/DiHFT/VAE/manifests.py FineFT/RL/DiHFT/VAE/merge_vae_train.py FineFT/RL/DiHFT/VAE/main.py FineFT/RL/DiHFT/VAE/summary.py`. <!-- 已实现: VAE manifests.py, merge_vae_train.py, main.py, and summary.py py_compile passed -->
+- [x] 2.3 Run `openspec validate refactor-vae-json-output-objects --strict`. <!-- 已实现: OpenSpec strict validation passed -->
+- [x] 2.4 Re-run `conda activate finetf && pytest FineFT/tests/rl/test_commodity_vae_cross_contract.py`. <!-- 已实现: focused VAE test module passed with 18 tests -->
+- [x] 2.5 Re-run `conda activate finetf && python -m py_compile FineFT/RL/DiHFT/VAE/manifests.py FineFT/RL/DiHFT/VAE/merge_vae_train.py FineFT/RL/DiHFT/VAE/main.py FineFT/RL/DiHFT/VAE/process.py FineFT/RL/DiHFT/VAE/summary.py`. <!-- 已实现: expanded VAE object refactor py_compile passed -->
+- [x] 2.6 Re-run `openspec validate refactor-vae-json-output-objects --strict`. <!-- 已实现: OpenSpec strict validation passed -->

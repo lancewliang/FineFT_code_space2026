@@ -10,6 +10,33 @@ try:
 except ImportError:
     from merge_vae_train import label_name_from_index, vae_data_dir
 
+try:
+    from .manifests import (
+        AcceptanceStats,
+        ContractLogpxSummary,
+        ContractRoutingSummary,
+        LabelSummary,
+        LabelTestSummary,
+        LogpxStats,
+        LogpxSummary,
+        RoutingSummary,
+        SampleIntegrity,
+        WinnerSummary,
+    )
+except ImportError:
+    from manifests import (
+        AcceptanceStats,
+        ContractLogpxSummary,
+        ContractRoutingSummary,
+        LabelSummary,
+        LabelTestSummary,
+        LogpxStats,
+        LogpxSummary,
+        RoutingSummary,
+        SampleIntegrity,
+        WinnerSummary,
+    )
+
 
 SUMMARY_QUANTILES = (
     ("q01", 0.01),
@@ -26,36 +53,42 @@ def _logpx_stats(values):
     values = np.asarray(values, dtype=float).reshape(-1)
     if values.size == 0:
         raise ValueError("logpx array has no samples")
-    return {
-        "samples": int(values.size),
-        "logpx_mean": float(np.mean(values)),
-        "logpx_std": float(np.std(values)),
-        "logpx_min": float(np.min(values)),
-        "logpx_max": float(np.max(values)),
-        "quantiles": {
+    return LogpxStats(
+        samples=int(values.size),
+        logpx_mean=float(np.mean(values)),
+        logpx_std=float(np.std(values)),
+        logpx_min=float(np.min(values)),
+        logpx_max=float(np.max(values)),
+        quantiles={
             name: float(np.quantile(values, quantile))
             for name, quantile in SUMMARY_QUANTILES
         },
-    }
+    )
 
 
 def _acceptance_stats(values, train_quantiles):
     values = np.asarray(values, dtype=float).reshape(-1)
-    return {
-        "ge_train_q01_pct": float(np.mean(values >= train_quantiles["q01"]) * 100.0),
-        "ge_train_q05_pct": float(np.mean(values >= train_quantiles["q05"]) * 100.0),
-        "ge_train_q50_pct": float(np.mean(values >= train_quantiles["q50"]) * 100.0),
-    }
+    return AcceptanceStats(
+        ge_train_q01_pct=float(np.mean(values >= train_quantiles["q01"]) * 100.0),
+        ge_train_q05_pct=float(np.mean(values >= train_quantiles["q05"]) * 100.0),
+        ge_train_q50_pct=float(np.mean(values >= train_quantiles["q50"]) * 100.0),
+    )
 
 
 def _sample_integrity(input_samples, analyzed_samples):
-    input_samples = int(input_samples)
-    analyzed_samples = int(analyzed_samples)
-    return {
-        "input_samples": input_samples,
-        "analyzed_samples": analyzed_samples,
-        "sample_mismatch": input_samples != analyzed_samples,
-    }
+    return SampleIntegrity(
+        input_samples=int(input_samples),
+        analyzed_samples=int(analyzed_samples),
+    )
+
+
+def _logpx_summary(input_samples, logpx, acceptance=None):
+    flat_logpx = np.asarray(logpx, dtype=float).reshape(-1)
+    return LogpxSummary(
+        integrity=_sample_integrity(input_samples, flat_logpx.size),
+        stats=_logpx_stats(flat_logpx),
+        acceptance=acceptance,
+    )
 
 
 def _logpx_rows(contract, source_file, logpx):
@@ -79,21 +112,27 @@ def write_contract_logpx_outputs(
     contract_summary = {}
     train_summary = None
     if train_baseline is not None:
-        train_logpx = np.asarray(train_baseline["logpx"], dtype=float).reshape(-1)
-        train_summary = {
-            "source_file": train_baseline["source_file"],
-            **_sample_integrity(
-                train_baseline.get("input_samples", train_logpx.size),
-                train_baseline.get("analyzed_samples", train_logpx.size),
+        train_logpx = np.asarray(train_baseline.logpx, dtype=float).reshape(-1)
+        train_summary = ContractLogpxSummary(
+            source_file=train_baseline.source_file,
+            summary=LogpxSummary(
+                integrity=_sample_integrity(
+                    train_baseline.input_samples,
+                    train_baseline.analyzed_samples,
+                ),
+                stats=_logpx_stats(train_logpx),
             ),
-            **_logpx_stats(train_logpx),
-        }
-    for result in sorted(contract_results, key=lambda item: item["contract"]):
-        contract = result["contract"]
-        source_file = result["source_file"]
-        logpx = np.asarray(result["logpx"], dtype=float)
+        )
+    for result in sorted(contract_results, key=lambda item: item.contract):
+        contract = result.contract
+        source_file = result.source_file
+        logpx = np.asarray(result.logpx, dtype=float)
         flat_logpx = logpx.reshape(-1)
-        input_samples = int(result.get("input_samples", flat_logpx.size))
+        input_samples = int(
+            result.input_samples
+            if result.input_samples is not None
+            else flat_logpx.size
+        )
         np.save(os.path.join(save_path, f"ood_logpx_{contract}.npy"), logpx)
         rows = _logpx_rows(contract, source_file, logpx)
         pd.DataFrame(
@@ -104,16 +143,15 @@ def write_contract_logpx_outputs(
         )
         all_logpx.append(logpx)
         all_rows.extend(rows)
-        contract_stats = {
-            "source_file": source_file,
-            **_sample_integrity(input_samples, flat_logpx.size),
-            **_logpx_stats(logpx),
-        }
+        acceptance = None
         if train_summary is not None:
-            contract_stats["acceptance"] = _acceptance_stats(
-                flat_logpx, train_summary["quantiles"]
+            acceptance = _acceptance_stats(
+                flat_logpx, train_summary.summary.stats.quantiles
             )
-        contract_summary[contract] = contract_stats
+        contract_summary[contract] = ContractLogpxSummary(
+            source_file=source_file,
+            summary=_logpx_summary(input_samples, flat_logpx, acceptance),
+        )
     combined = np.concatenate(all_logpx, axis=0)
     np.save(os.path.join(save_path, "ood_logpx_all.npy"), combined)
     pd.DataFrame(
@@ -121,34 +159,28 @@ def write_contract_logpx_outputs(
     ).to_csv(os.path.join(save_path, "ood_logpx_all.csv"), index=False)
     total_input_samples = sum(
         int(
-            item.get(
-                "input_samples",
-                np.asarray(item["logpx"], dtype=float).reshape(-1).size,
+            item.input_samples
+            if item.input_samples is not None
+            else np.asarray(item.logpx, dtype=float).reshape(-1).size
             )
-        )
         for item in contract_results
     )
     combined_flat = combined.reshape(-1)
-    all_summary = {
-        **_sample_integrity(total_input_samples, combined_flat.size),
-        **_logpx_stats(combined_flat),
-    }
+    all_summary = _logpx_summary(total_input_samples, combined_flat)
     if train_summary is not None:
-        all_summary["acceptance"] = _acceptance_stats(
-            combined_flat, train_summary["quantiles"]
+        all_summary = _logpx_summary(
+            total_input_samples,
+            combined_flat,
+            _acceptance_stats(combined_flat, train_summary.summary.stats.quantiles),
         )
-    summary = {
-        "dataset_name": dataset_name,
-        "label": label,
-        "test": {
-            "contracts": contract_summary,
-            "all": all_summary,
-        },
-    }
-    if train_summary is not None:
-        summary["train_baseline"] = train_summary
+    summary = LabelSummary(
+        dataset_name=dataset_name,
+        label=label,
+        test=LabelTestSummary(contracts=contract_summary, all=all_summary),
+        train_baseline=train_summary,
+    )
     with open(os.path.join(save_path, "summary.json"), "w", encoding="utf-8") as file:
-        json.dump(summary, file, ensure_ascii=False, indent=2)
+        json.dump(summary.to_dict(), file, ensure_ascii=False, indent=2)
     return summary
 
 
@@ -156,30 +188,30 @@ def _winner_summary(scores, labels, low_margin_threshold):
     scores = np.asarray(scores, dtype=float)
     samples = int(scores.shape[0])
     if samples == 0:
-        return {
-            "samples": 0,
-            "winner_counts": {label: 0 for label in labels},
-            "winner_pct": {label: 0.0 for label in labels},
-            "top1_top2_margin_mean": 0.0,
-            "top1_top2_margin_q25": 0.0,
-            "low_margin_pct": 0.0,
-        }
+        return WinnerSummary(
+            samples=0,
+            winner_counts={label: 0 for label in labels},
+            winner_pct={label: 0.0 for label in labels},
+            top1_top2_margin_mean=0.0,
+            top1_top2_margin_q25=0.0,
+            low_margin_pct=0.0,
+        )
     winners = np.argmax(scores, axis=1)
     sorted_scores = np.sort(scores, axis=1)
     margins = sorted_scores[:, -1] - sorted_scores[:, -2]
     counts = {
         label: int(np.sum(winners == index)) for index, label in enumerate(labels)
     }
-    return {
-        "samples": samples,
-        "winner_counts": counts,
-        "winner_pct": {
+    return WinnerSummary(
+        samples=samples,
+        winner_counts=counts,
+        winner_pct={
             label: float(count / samples * 100.0) for label, count in counts.items()
         },
-        "top1_top2_margin_mean": float(np.mean(margins)),
-        "top1_top2_margin_q25": float(np.quantile(margins, 0.25)),
-        "low_margin_pct": float(np.mean(margins <= low_margin_threshold) * 100.0),
-    }
+        top1_top2_margin_mean=float(np.mean(margins)),
+        top1_top2_margin_q25=float(np.quantile(margins, 0.25)),
+        low_margin_pct=float(np.mean(margins <= low_margin_threshold) * 100.0),
+    )
 
 
 def write_routing_summary(
@@ -213,12 +245,11 @@ def write_routing_summary(
         }
         n = min(input_samples_by_label.values())
         scores = np.vstack([array[:n] for array in arrays]).T
-        contract_summary = _winner_summary(scores, labels, low_margin_threshold)
-        contract_summary["input_samples_by_label"] = input_samples_by_label
-        contract_summary["sample_mismatch"] = (
-            len(set(input_samples_by_label.values())) != 1
+        contract_summaries[contract] = ContractRoutingSummary(
+            winner=_winner_summary(scores, labels, low_margin_threshold),
+            input_samples_by_label=input_samples_by_label,
+            sample_mismatch=len(set(input_samples_by_label.values())) != 1,
         )
-        contract_summaries[contract] = contract_summary
         all_scores.append(scores)
 
     combined = (
@@ -226,16 +257,16 @@ def write_routing_summary(
         if all_scores
         else np.empty((0, len(labels)))
     )
-    summary = {
-        "dataset_name": dataset_name,
-        "labels": list(labels),
-        "score_type": "raw_logpx",
-        "low_margin_threshold": float(low_margin_threshold),
-        "contracts": contract_summaries,
-        "all": _winner_summary(combined, labels, low_margin_threshold),
-    }
+    summary = RoutingSummary(
+        dataset_name=dataset_name,
+        labels=list(labels),
+        score_type="raw_logpx",
+        low_margin_threshold=float(low_margin_threshold),
+        contracts=contract_summaries,
+        all=_winner_summary(combined, labels, low_margin_threshold),
+    )
     with open(result_root / "routing_summary.json", "w", encoding="utf-8") as file:
-        json.dump(summary, file, ensure_ascii=False, indent=2)
+        json.dump(summary.to_dict(), file, ensure_ascii=False, indent=2)
     return summary
 
 

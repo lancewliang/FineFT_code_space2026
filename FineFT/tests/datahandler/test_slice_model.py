@@ -8,6 +8,15 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from datahandler.manifests import (
+    SliceContractManifest,
+    SliceFileManifest,
+    SliceLabelManifest,
+    SliceManifest,
+)
+
 
 def _load_slice_model():
     datahandler_path = Path(__file__).resolve().parents[2] / "datahandler"
@@ -47,6 +56,46 @@ def _args():
         merging_threshold=0.0003,
         merging_dynamic_constraint=1,
     )
+
+
+def test_slice_manifest_replaces_contract_and_rebuilds_label_view(tmp_path):
+    valid_dir = tmp_path / "dataset" / "10min" / "fu" / "valid"
+    manifest = SliceManifest(valid_path=str(valid_dir))
+    manifest.replace_contract(
+        SliceContractManifest(
+            contract="fu2505",
+            processed_path=str(
+                valid_dir / "processed" / "valid_processed_fu2505.feather"
+            ),
+            labels={
+                "label_0": SliceLabelManifest(
+                    label="label_0",
+                    file_count=1,
+                    total_row_count=2,
+                    files=[
+                        SliceFileManifest(
+                            path=str(valid_dir / "fu2505" / "label_0" / "df_0.feather"),
+                            output_row_count=2,
+                        )
+                    ],
+                )
+            },
+        )
+    )
+    manifest.record_skipped_contract(
+        contract="fu2509",
+        processed_path=str(valid_dir / "processed" / "valid_processed_fu2509.feather"),
+        reason="insufficient rows",
+        input_row_count=4,
+    )
+
+    payload = manifest.to_dict()
+
+    assert sorted(payload["contracts"].keys()) == ["fu2505"]
+    assert sorted(payload["labels"].keys()) == ["label_0"]
+    assert payload["labels"]["label_0"]["files"][0]["contract"] == "fu2505"
+    assert payload["labels"]["label_0"]["total_row_count"] == 2
+    assert payload["skipped_contracts"]["fu2509"]["input_row_count"] == 4
 
 
 def test_prepare_raw_data_reports_loaded_columns_and_missing_required_columns(capsys):

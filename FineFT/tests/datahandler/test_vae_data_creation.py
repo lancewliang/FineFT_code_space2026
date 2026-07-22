@@ -7,7 +7,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from FineFT.datahandler.vae_data_creation import make_data
+from datahandler.vae_data_creation import make_data
 
 
 def test_make_data_skips_empty_label_directory(tmp_path, capsys):

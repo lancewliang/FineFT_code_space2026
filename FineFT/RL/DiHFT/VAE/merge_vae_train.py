@@ -3,6 +3,11 @@ from pathlib import Path
 
 import numpy as np
 
+try:
+    from .manifests import LabelArraySource, LabelContractSource, LabelTrainingManifest
+except ImportError:
+    from manifests import LabelArraySource, LabelContractSource, LabelTrainingManifest
+
 
 RESERVED_VAE_DIRS = {"test", "train", "processed", "__pycache__"}
 
@@ -45,10 +50,10 @@ def discover_label_sources(data_base_path, dataset_name, label_index):
         source_file = contract_dir / f"{label_name}.npy"
         if source_file.exists():
             included.append(
-                {
-                    "contract": contract_dir.name,
-                    "source_file": str(source_file),
-                }
+                LabelArraySource(
+                    contract=contract_dir.name,
+                    source_file=str(source_file),
+                )
             )
         else:
             missing.append(contract_dir.name)
@@ -69,22 +74,22 @@ def materialize_label_training_data(data_base_path, dataset_name, label_index):
     included_contracts = []
     feature_dim = None
     for source in included_sources:
-        array = load_2d_array(Path(source["source_file"]), source["contract"])
+        array = load_2d_array(Path(source.source_file), source.contract)
         if feature_dim is None:
             feature_dim = int(array.shape[1])
         elif int(array.shape[1]) != feature_dim:
             raise ValueError(
                 "feature dimension mismatch for "
-                f"{source['contract']} at {source['source_file']}: "
+                f"{source.contract} at {source.source_file}: "
                 f"expected {feature_dim}, got {array.shape[1]}"
             )
         arrays.append(array)
         included_contracts.append(
-            {
-                "contract": source["contract"],
-                "source_file": source["source_file"],
-                "sample_count": int(array.shape[0]),
-            }
+            LabelContractSource(
+                contract=source.contract,
+                source_file=source.source_file,
+                sample_count=int(array.shape[0]),
+            )
         )
 
     merged = np.concatenate(arrays, axis=0)
@@ -96,15 +101,15 @@ def materialize_label_training_data(data_base_path, dataset_name, label_index):
     merged_path = train_dir / f"{label_name}.npy"
     manifest_path = train_dir / f"{label_name}_manifest.json"
     np.save(merged_path, merged)
-    manifest = {
-        "dataset_name": dataset_name,
-        "label": label_name,
-        "merged_path": str(merged_path),
-        "total_samples": int(merged.shape[0]),
-        "feature_dim": int(merged.shape[1]),
-        "included_contracts": included_contracts,
-        "missing_contracts": missing_contracts,
-    }
+    manifest = LabelTrainingManifest(
+        dataset_name=dataset_name,
+        label=label_name,
+        merged_path=str(merged_path),
+        total_samples=int(merged.shape[0]),
+        feature_dim=int(merged.shape[1]),
+        included_contracts=included_contracts,
+        missing_contracts=missing_contracts,
+    )
     with open(manifest_path, "w", encoding="utf-8") as file:
-        json.dump(manifest, file, ensure_ascii=False, indent=2)
+        json.dump(manifest.to_dict(), file, ensure_ascii=False, indent=2)
     return manifest

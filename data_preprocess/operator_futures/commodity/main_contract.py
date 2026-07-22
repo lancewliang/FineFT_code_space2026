@@ -1,9 +1,9 @@
 import logging
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence
+from typing import Dict, Iterable, List, Sequence, Set, Tuple
 
 import polars as pl
 
@@ -57,6 +57,22 @@ class MainContractSummaryContract:
     selected_months: List[str]
     trading_days: List[MainContractSummaryTradingDay]
 
+    @property
+    def ordered_trading_days(self) -> List[MainContractSummaryTradingDay]:
+        return sorted(self.trading_days, key=lambda item: item.trading_day)
+
+    @property
+    def start_trading_day(self) -> str:
+        return self.ordered_trading_days[0].trading_day
+
+    @property
+    def end_trading_day(self) -> str:
+        return self.ordered_trading_days[-1].trading_day
+
+    @property
+    def trading_day_count(self) -> int:
+        return len(self.ordered_trading_days)
+
     @classmethod
     def from_dict(cls, payload: dict) -> "MainContractSummaryContract":
         if not isinstance(payload, dict):
@@ -83,14 +99,13 @@ class MainContractSummaryContract:
         )
 
     def to_dict(self) -> dict:
-        ordered_days = sorted(self.trading_days, key=lambda item: item.trading_day)
         return {
             "contract": self.contract,
-            "start_trading_day": ordered_days[0].trading_day,
-            "end_trading_day": ordered_days[-1].trading_day,
-            "trading_day_count": len(ordered_days),
+            "start_trading_day": self.start_trading_day,
+            "end_trading_day": self.end_trading_day,
+            "trading_day_count": self.trading_day_count,
             "selected_months": sorted(self.selected_months),
-            "trading_days": [item.to_dict() for item in ordered_days],
+            "trading_days": [item.to_dict() for item in self.ordered_trading_days],
         }
 
 
@@ -136,6 +151,74 @@ class MainContractSummary:
             "selection_rule": self.selection_rule,
             "contracts": [item.to_dict() for item in self.contracts],
         }
+
+
+@dataclass(frozen=True)
+class ContractSourceFile:
+    contract: str
+    source_file: Path
+
+
+@dataclass(frozen=True)
+class TradingDayContractSources:
+    trading_day: str
+    contract_files: Tuple[ContractSourceFile, ...]
+
+
+@dataclass
+class MainContractBuildState:
+    monthly_volumes: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    monthly_high_volume_days: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    contract_days: Dict[str, List[MainContractSummaryTradingDay]] = field(
+        default_factory=dict
+    )
+    selected_months_by_contract: Dict[str, Set[str]] = field(default_factory=dict)
+
+    def record_contract_day(
+        self,
+        contract: str,
+        trading_day: str,
+        source_file: Path,
+        daily_volume: float,
+    ) -> None:
+        self.contract_days.setdefault(contract, []).append(
+            MainContractSummaryTradingDay(
+                trading_day=trading_day,
+                date=_format_trading_day_file_date(trading_day),
+                source_file=str(source_file),
+                daily_volume=daily_volume,
+            )
+        )
+
+    def add_monthly_volume(
+        self, month: str, contract: str, daily_volume: float
+    ) -> None:
+        volumes = self.monthly_volumes.setdefault(month, {})
+        volumes[contract] = volumes.get(contract, 0.0) + daily_volume
+
+    def add_high_volume_day(self, month: str, contract: str) -> None:
+        counts = self.monthly_high_volume_days.setdefault(month, {})
+        counts[contract] = counts.get(contract, 0) + 1
+
+    def select_contract_months(self) -> None:
+        for month in sorted(
+            set(self.monthly_volumes) | set(self.monthly_high_volume_days)
+        ):
+            volumes = self.monthly_volumes.get(month, {})
+            positive = {
+                contract: volume for contract, volume in volumes.items() if volume > 0
+            }
+            top_contracts = sorted(
+                positive,
+                key=lambda contract: (-positive[contract], contract),
+            )[:2]
+            for contract in top_contracts:
+                self.selected_months_by_contract.setdefault(contract, set()).add(month)
+            for contract, count in self.monthly_high_volume_days.get(month, {}).items():
+                if count >= 10:
+                    self.selected_months_by_contract.setdefault(contract, set()).add(
+                        month
+                    )
 
 
 def load_main_contract_summary(path: Path) -> MainContractSummary:
@@ -233,7 +316,7 @@ def _eligible_contracts(
 
 def load_contract_files_by_trading_day_for_years(
     raw_root: Path, commodity_name: str, years: Sequence[str]
-) -> Dict[str, Dict[str, Path]]:
+) -> List[TradingDayContractSources]:
     days: Dict[str, Dict[str, Path]] = {}
     for year in years:
         file_paths = list(iter_contract_files(raw_root, commodity_name, str(year)))
@@ -289,7 +372,16 @@ def load_contract_files_by_trading_day_for_years(
         len(days),
         contract_count,
     )
-    return days
+    return [
+        TradingDayContractSources(
+            trading_day=trading_day,
+            contract_files=tuple(
+                ContractSourceFile(contract=contract, source_file=file_path)
+                for contract, file_path in sorted(contracts.items())
+            ),
+        )
+        for trading_day, contracts in sorted(days.items())
+    ]
 
 
 def _trading_day_in_range(trading_day: str, start_date: str, end_date: str) -> bool:
@@ -348,78 +440,58 @@ def build_main_contract_summary_model_for_date_range(
         end_date,
         ",".join(years),
     )
-    days = load_contract_files_by_trading_day_for_years(
+    trading_day_sources = load_contract_files_by_trading_day_for_years(
         raw_root, commodity_name, years
     )
 
-    monthly_volumes: Dict[str, Dict[str, float]] = {}
-    monthly_high_volume_days: Dict[str, Dict[str, int]] = {}
-    contract_days: Dict[str, List[MainContractSummaryTradingDay]] = {}
-    selected_months_by_contract: Dict[str, set] = {}
+    build_state = MainContractBuildState()
     high_volume_threshold = get_commodity_config(
         symbol
     ).main_contract_daily_volume_threshold
 
-    for trading_day in sorted(days):
-        if not _trading_day_in_range(trading_day, start_date, end_date):
+    for day_sources in trading_day_sources:
+        if not _trading_day_in_range(day_sources.trading_day, start_date, end_date):
             continue
 
         frames = {}
-        source_files = days[trading_day]
-        for contract, file_path in source_files.items():
-            frame = pl.read_csv(file_path)
+        source_files: Dict[str, Path] = {}
+        for source in day_sources.contract_files:
+            frame = pl.read_csv(source.source_file)
             missing = {"Volume"}.difference(frame.columns)
             if missing:
                 raise ValueError(
-                    f"{file_path} missing required columns: {sorted(missing)}"
+                    f"{source.source_file} missing required columns: {sorted(missing)}"
                 )
-            frames[contract] = frame
+            frames[source.contract] = frame
+            source_files[source.contract] = source.source_file
 
         eligible = _eligible_contracts(frames, symbol)
-        month = _format_trading_day_file_date(trading_day)[:7]
+        month = _format_trading_day_file_date(day_sources.trading_day)[:7]
         for contract, frame in eligible.items():
             daily_volume = calculate_contract_volume(frame)
-            monthly_volumes.setdefault(month, {}).setdefault(contract, 0.0)
-            monthly_volumes[month][contract] += daily_volume
+            build_state.add_monthly_volume(month, contract, daily_volume)
             if (
                 high_volume_threshold is not None
                 and daily_volume > high_volume_threshold
             ):
-                monthly_high_volume_days.setdefault(month, {}).setdefault(contract, 0)
-                monthly_high_volume_days[month][contract] += 1
-            contract_days.setdefault(contract, []).append(
-                MainContractSummaryTradingDay(
-                    trading_day=trading_day,
-                    date=_format_trading_day_file_date(trading_day),
-                    source_file=str(source_files[contract]),
-                    daily_volume=daily_volume,
-                )
+                build_state.add_high_volume_day(month, contract)
+            build_state.record_contract_day(
+                contract=contract,
+                trading_day=day_sources.trading_day,
+                source_file=source_files[contract],
+                daily_volume=daily_volume,
             )
 
-    for month in sorted(set(monthly_volumes) | set(monthly_high_volume_days)):
-        volumes = monthly_volumes.get(month, {})
-        positive = {
-            contract: volume for contract, volume in volumes.items() if volume > 0
-        }
-        top_contracts = sorted(
-            positive,
-            key=lambda contract: (-positive[contract], contract),
-        )[:2]
-        for contract in top_contracts:
-            selected_months_by_contract.setdefault(contract, set()).add(month)
-        for contract, count in monthly_high_volume_days.get(month, {}).items():
-            if count >= 10:
-                selected_months_by_contract.setdefault(contract, set()).add(month)
-
-    if not selected_months_by_contract:
+    build_state.select_contract_months()
+    if not build_state.selected_months_by_contract:
         raise ValueError(f"No monthly top-2 contracts found for symbol {symbol!r}")
 
     contracts = []
-    for contract in sorted(selected_months_by_contract):
-        selected_months = sorted(selected_months_by_contract[contract])
+    for contract in sorted(build_state.selected_months_by_contract):
+        selected_months = sorted(build_state.selected_months_by_contract[contract])
         actual_trading_days = _clip_contract_trading_days(
             contract,
-            contract_days[contract],
+            build_state.contract_days[contract],
             selected_months,
         )
         contracts.append(
@@ -445,14 +517,14 @@ def build_main_contract_summary_for_date_range(
     start_date: str,
     end_date: str,
     symbol: str,
-) -> dict:
+) -> MainContractSummary:
     return build_main_contract_summary_model_for_date_range(
         raw_root=raw_root,
         commodity_name=commodity_name,
         start_date=start_date,
         end_date=end_date,
         symbol=symbol,
-    ).to_dict()
+    )
 
 
 def write_main_contract_summary_for_date_range(
@@ -485,12 +557,12 @@ def write_main_contract_summary_for_date_range(
     if path.exists():
         logger.info("Overwriting commodity main-contract summary: output=%s", path)
     path.write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
+        json.dumps(summary.to_dict(), ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     logger.info(
         "Wrote commodity main-contract summary: output=%s contracts=%d",
         path,
-        len(summary["contracts"]),
+        len(summary.contracts),
     )
     return path

@@ -8,12 +8,17 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from FineFT.datahandler.commodity_contract_dataset import (
+from datahandler.commodity_contract_dataset import (
     build_dataset_manifest,
     load_dataset_split_manifest,
     run_dataset_generation,
     write_stage_datasets,
     write_train_slices,
+)
+from datahandler.manifests import (
+    DatasetManifest,
+    DatasetSkippedContract,
+    DatasetSplitManifest,
 )
 
 
@@ -90,6 +95,24 @@ def _write_scale_save_file(root, stage, contract, rows=2):
     return output
 
 
+def _dataset_manifest_from_dict(manifest):
+    payload = {
+        "symbol": manifest.get("symbol", "fu"),
+        "target_freq": manifest.get("target_freq", "10min"),
+        "dataset_split_manifest_path": manifest.get(
+            "dataset_split_manifest_path",
+            "dataset_split_manifest.json",
+        ),
+        "state_features_source_path": manifest.get(
+            "state_features_source_path",
+            "",
+        ),
+        "state_features_path": manifest.get("state_features_path", ""),
+        "sets": manifest.get("sets", {}),
+    }
+    return DatasetManifest.from_dict(payload)
+
+
 def test_load_dataset_split_manifest_validates_symbol_and_target_freq(tmp_path):
     manifest_path = _write_dataset_split_manifest(tmp_path / "dataset_split_manifest.json")
 
@@ -99,9 +122,10 @@ def test_load_dataset_split_manifest_validates_symbol_and_target_freq(tmp_path):
         target_freq="10min",
     )
 
-    assert manifest["symbol"] == "fu"
-    assert manifest["target_freq"] == "10min"
-    assert [item["contract"] for item in manifest["sets"]["train"]["contracts"]] == [
+    assert isinstance(manifest, DatasetSplitManifest)
+    assert manifest.symbol == "fu"
+    assert manifest.target_freq == "10min"
+    assert [item.contract for item in manifest.sets["train"].contracts] == [
         "fu2508",
         "fu2509",
     ]
@@ -158,11 +182,19 @@ def test_load_dataset_split_manifest_fails_when_stage_contracts_missing(tmp_path
 
 
 def test_build_dataset_manifest_uses_split_manifest_and_stage_scale_save_paths(tmp_path):
-    split_manifest = _dataset_split_manifest()
+    split_manifest_path = _write_dataset_split_manifest(
+        tmp_path / "dataset_split_manifest.json",
+        manifest=_dataset_split_manifest(),
+    )
+    split_manifest = load_dataset_split_manifest(
+        split_manifest_path,
+        symbol="fu",
+        target_freq="10min",
+    )
 
     manifest = build_dataset_manifest(
         split_manifest=split_manifest,
-        dataset_split_manifest_path=tmp_path / "dataset_split_manifest.json",
+        dataset_split_manifest_path=split_manifest_path,
         input_root=tmp_path / "SCALE_SAVE",
         state_features_path=tmp_path / "FEATURE_SELECTION" / "state_features.npy",
         output_root=tmp_path / "dataset" / "10min",
@@ -172,21 +204,30 @@ def test_build_dataset_manifest_uses_split_manifest_and_stage_scale_save_paths(t
         early_stop=1,
     )
 
-    assert manifest["dataset_split_manifest_path"].endswith("dataset_split_manifest.json")
-    assert manifest["state_features_path"].endswith("dataset/10min/fu/state_features.npy")
+    assert isinstance(manifest, DatasetManifest)
+    assert manifest.dataset_split_manifest_path.endswith("dataset_split_manifest.json")
+    assert manifest.state_features_path.endswith("dataset/10min/fu/state_features.npy")
     train_contracts = {
-        item["contract"]: item for item in manifest["sets"]["train"]["contracts"]
+        item.contract: item for item in manifest.sets["train"].contracts
     }
-    assert train_contracts["fu2508"]["input_path"].endswith(
+    assert train_contracts["fu2508"].input_path.endswith(
         "SCALE_SAVE/fu/10min/train/fu2508.feather"
     )
-    assert train_contracts["fu2508"]["output_path"].endswith(
+    assert train_contracts["fu2508"].output_path.endswith(
         "dataset/10min/fu/train/fu2508.feather"
     )
-    assert train_contracts["fu2508"]["slice_outputs"][0]["path"].endswith(
+    assert train_contracts["fu2508"].slice_outputs[0].path.endswith(
         "dataset/10min/fu/train/slice/df_0.feather"
     )
-    assert manifest["sets"]["valid"]["skipped_contracts"] == [
+    split_skipped_contract = split_manifest.sets["valid"].skipped_contracts[0]
+    assert isinstance(split_skipped_contract, DatasetSkippedContract)
+    assert split_skipped_contract.contract == "fu2509"
+    assert split_skipped_contract.reason == "no trading days in valid range"
+    skipped_contract = manifest.sets["valid"].skipped_contracts[0]
+    assert isinstance(skipped_contract, DatasetSkippedContract)
+    assert skipped_contract.contract == "fu2509"
+    assert skipped_contract.reason == "no trading days in valid range"
+    assert manifest.to_dict()["sets"]["valid"]["skipped_contracts"] == [
         {"contract": "fu2509", "reason": "no trading days in valid range"}
     ]
 
@@ -199,7 +240,7 @@ def test_write_stage_datasets_copies_stage_files_and_state_features(tmp_path):
     state_features.parent.mkdir(parents=True)
     np.save(state_features, np.array(["feature_a"]))
     dataset_root = tmp_path / "dataset" / "10min" / "fu"
-    manifest = {
+    manifest = _dataset_manifest_from_dict({
         "symbol": "fu",
         "target_freq": "10min",
         "state_features_source_path": str(state_features),
@@ -236,7 +277,7 @@ def test_write_stage_datasets_copies_stage_files_and_state_features(tmp_path):
                 "skipped_contracts": [],
             },
         },
-    }
+    })
 
     write_stage_datasets(manifest)
 
@@ -247,16 +288,16 @@ def test_write_stage_datasets_copies_stage_files_and_state_features(tmp_path):
     assert np.load(dataset_root / "state_features.npy", allow_pickle=True).tolist() == [
         "feature_a"
     ]
-    assert manifest["sets"]["train"]["contracts"][0]["output_row_count"] == 3
-    assert manifest["sets"]["valid"]["contracts_total_count"] == 2
-    assert manifest["sets"]["test"]["contracts_total_count"] == 2
+    assert manifest.sets["train"].contracts[0].output_row_count == 3
+    assert manifest.sets["valid"].contracts_total_count == 2
+    assert manifest.sets["test"].contracts_total_count == 2
     assert not (dataset_root / "train.feather").exists()
 
 
 def test_write_stage_datasets_fails_when_state_features_missing(tmp_path):
     train_file = _write_scale_save_file(tmp_path, "train", "fu2508", rows=2)
     dataset_root = tmp_path / "dataset" / "10min" / "fu"
-    manifest = {
+    manifest = _dataset_manifest_from_dict({
         "state_features_source_path": str(tmp_path / "missing" / "state_features.npy"),
         "state_features_path": str(dataset_root / "state_features.npy"),
         "sets": {
@@ -271,7 +312,7 @@ def test_write_stage_datasets_fails_when_state_features_missing(tmp_path):
                 "skipped_contracts": [],
             }
         },
-    }
+    })
 
     with pytest.raises(FileNotFoundError, match="state_features"):
         write_stage_datasets(manifest)
@@ -282,7 +323,7 @@ def test_write_stage_datasets_fails_when_scale_save_file_missing(tmp_path):
     state_features.parent.mkdir(parents=True)
     np.save(state_features, np.array(["feature_a"]))
     dataset_root = tmp_path / "dataset" / "10min" / "fu"
-    manifest = {
+    manifest = _dataset_manifest_from_dict({
         "state_features_source_path": str(state_features),
         "state_features_path": str(dataset_root / "state_features.npy"),
         "sets": {
@@ -297,7 +338,7 @@ def test_write_stage_datasets_fails_when_scale_save_file_missing(tmp_path):
                 "skipped_contracts": [],
             }
         },
-    }
+    })
 
     with pytest.raises(FileNotFoundError, match="fu2508"):
         write_stage_datasets(manifest)
@@ -309,7 +350,7 @@ def test_write_stage_datasets_fails_when_state_features_empty(tmp_path):
     state_features.parent.mkdir(parents=True)
     np.save(state_features, np.array([]))
     dataset_root = tmp_path / "dataset" / "10min" / "fu"
-    manifest = {
+    manifest = _dataset_manifest_from_dict({
         "state_features_source_path": str(state_features),
         "state_features_path": str(dataset_root / "state_features.npy"),
         "sets": {
@@ -324,7 +365,7 @@ def test_write_stage_datasets_fails_when_state_features_empty(tmp_path):
                 "skipped_contracts": [],
             }
         },
-    }
+    })
 
     with pytest.raises(ValueError, match="state feature"):
         write_stage_datasets(manifest)
@@ -336,7 +377,7 @@ def test_write_stage_datasets_fails_when_copied_stage_data_empty(tmp_path):
     state_features.parent.mkdir(parents=True)
     np.save(state_features, np.array(["feature_a"]))
     dataset_root = tmp_path / "dataset" / "10min" / "fu"
-    manifest = {
+    manifest = _dataset_manifest_from_dict({
         "state_features_source_path": str(state_features),
         "state_features_path": str(dataset_root / "state_features.npy"),
         "sets": {
@@ -351,7 +392,7 @@ def test_write_stage_datasets_fails_when_copied_stage_data_empty(tmp_path):
                 "skipped_contracts": [],
             }
         },
-    }
+    })
 
     with pytest.raises(ValueError, match="empty stage dataset"):
         write_stage_datasets(manifest)
@@ -374,12 +415,13 @@ def test_write_train_slices_uses_contiguous_indices_and_single_contract_files(tm
             "feature_a": range(10, 13),
         }
     ).to_feather(train_dir / "fu2509.feather")
-    manifest = {
+    manifest = _dataset_manifest_from_dict({
         "sets": {
             "train": {
                 "contracts": [
                     {
                         "contract": "fu2508",
+                        "input_path": str(train_dir / "fu2508.feather"),
                         "output_path": str(train_dir / "fu2508.feather"),
                         "slice_outputs": [
                             {
@@ -398,6 +440,7 @@ def test_write_train_slices_uses_contiguous_indices_and_single_contract_files(tm
                     },
                     {
                         "contract": "fu2509",
+                        "input_path": str(train_dir / "fu2509.feather"),
                         "output_path": str(train_dir / "fu2509.feather"),
                         "slice_outputs": [
                             {
@@ -411,7 +454,7 @@ def test_write_train_slices_uses_contiguous_indices_and_single_contract_files(tm
                 ]
             }
         }
-    }
+    })
 
     write_train_slices(manifest)
 
@@ -460,7 +503,7 @@ def test_run_dataset_generation_writes_manifest_stage_files_and_train_slices(tmp
     state_features.parent.mkdir(parents=True)
     np.save(state_features, np.array(["feature_a"]))
 
-    run_dataset_generation(
+    returned_manifest = run_dataset_generation(
         dataset_split_manifest_path=manifest_path,
         input_root=tmp_path / "SCALE_SAVE",
         state_features_path=state_features,
@@ -472,12 +515,14 @@ def test_run_dataset_generation_writes_manifest_stage_files_and_train_slices(tmp
     )
 
     dataset_root = tmp_path / "dataset" / "10min" / "fu"
+    assert isinstance(returned_manifest, DatasetManifest)
     assert (dataset_root / "dataset_manifest.json").exists()
     assert (dataset_root / "train" / "fu2508.feather").exists()
     assert (dataset_root / "train" / "fu2509.feather").exists()
     assert (dataset_root / "valid" / "fu2508.feather").exists()
     assert (dataset_root / "test" / "fu2509.feather").exists()
     manifest = json.loads((dataset_root / "dataset_manifest.json").read_text())
+    assert manifest == returned_manifest.to_dict()
     expected_counts = {"train": 6, "valid": 2, "test": 2}
     for set_name, expected_count in expected_counts.items():
         assert manifest["sets"][set_name]["contracts_total_count"] == expected_count

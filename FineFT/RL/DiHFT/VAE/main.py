@@ -16,6 +16,11 @@ from process import (
     analyze_contract_tests,
     prepare_contract_dataset_loader_list,
 )
+from RL.DiHFT.VAE.manifests import (
+    LabelTrainingManifest,
+    TestContractSource,
+    TrainBaselineLogpx,
+)
 from RL.DiHFT.VAE.summary import maybe_write_routing_summary_after_analysis
 import RL.DiHFT.VAE.vae as VAEs
 from datahandler.vae_dataset import One_Dim_Dataset
@@ -162,7 +167,7 @@ def discover_test_sources(data_base_path, dataset_name):
         contract = path.stem
         if contract.startswith("test_"):
             contract = contract[len("test_") :]
-        sources.append({"contract": contract, "source_file": str(path)})
+        sources.append(TestContractSource(contract=contract, source_file=str(path)))
     if not sources:
         raise FileNotFoundError(f"no test_*.npy files found under {test_dir}")
     return sources
@@ -199,13 +204,17 @@ class Piplineruner:
             train_data = np.load(train_path)
             if train_data.ndim != 2 or train_data.shape[0] == 0:
                 raise ValueError(f"invalid materialized training data: {train_path}")
-            train_manifest = {
-                "merged_path": str(train_path),
-                "total_samples": int(train_data.shape[0]),
-                "feature_dim": int(train_data.shape[1]),
-            }
+            train_manifest = LabelTrainingManifest(
+                dataset_name=self.args.dataset_name,
+                label=label_name,
+                merged_path=str(train_path),
+                total_samples=int(train_data.shape[0]),
+                feature_dim=int(train_data.shape[1]),
+                included_contracts=[],
+                missing_contracts=[],
+            )
         self.train_manifest = train_manifest
-        train_data_path = train_manifest["merged_path"]
+        train_data_path = train_manifest.merged_path
         hidden_dims = self.args.hidden_dims
         z_dim = self.args.z_dim
         loss = self.args.loss
@@ -235,7 +244,7 @@ class Piplineruner:
         )
         self.contract_loader_list = prepare_contract_dataset_loader_list(
             discover_test_sources(self.args.data_base_path, self.args.dataset_name),
-            expected_feature_dim=train_manifest["feature_dim"],
+            expected_feature_dim=train_manifest.feature_dim,
         )
 
     def train(self):
@@ -255,7 +264,7 @@ class Piplineruner:
             "model_latest.pth",
         )
         self.model.load_state_dict(torch.load(model_path))
-        train_dataset = One_Dim_Dataset(self.train_manifest["merged_path"])
+        train_dataset = One_Dim_Dataset(self.train_manifest.merged_path)
         kwargs = (
             {"num_workers": 1, "pin_memory": True}
             if self.device.type == "cuda"
@@ -273,12 +282,12 @@ class Piplineruner:
             save_path=self.args.single_label_save_path,
             dataset_name=self.args.dataset_name,
             label=self.label_name,
-            train_baseline={
-                "source_file": self.train_manifest["merged_path"],
-                "input_samples": self.train_manifest["total_samples"],
-                "analyzed_samples": int(np.asarray(train_logpx).reshape(-1).size),
-                "logpx": np.asarray(train_logpx, dtype=float),
-            },
+            train_baseline=TrainBaselineLogpx(
+                source_file=self.train_manifest.merged_path,
+                input_samples=self.train_manifest.total_samples,
+                analyzed_samples=int(np.asarray(train_logpx).reshape(-1).size),
+                logpx=np.asarray(train_logpx, dtype=float),
+            ),
         )
 
 

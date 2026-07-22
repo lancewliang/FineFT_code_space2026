@@ -7,6 +7,7 @@ import pytest
 
 from operator_futures.commodity.config import get_commodity_config
 from operator_futures.commodity.main_contract import (
+    ContractSourceFile,
     MAIN_CONTRACT_SELECTION_RULE,
     MainContractSummary,
     MainContractSummaryContract,
@@ -16,8 +17,8 @@ from operator_futures.commodity.main_contract import (
     infer_years_for_date_range,
     iter_contract_files,
     load_main_contract_summary,
-    normalize_timestamp,
     load_contract_files_by_trading_day_for_years,
+    normalize_timestamp,
     write_main_contract_summary_for_date_range,
 )
 
@@ -252,8 +253,13 @@ def test_load_contract_files_by_trading_day_for_years_returns_paths(tmp_path):
         raw_root, "燃料油", ["2026"]
     )
 
-    assert days["20260105"]["fu2602"] == first
-    assert days["20260106"]["fu2603"] == second
+    assert isinstance(days[0].contract_files[0], ContractSourceFile)
+    assert days[0].trading_day == "20260105"
+    assert days[0].contract_files[0].contract == "fu2602"
+    assert days[0].contract_files[0].source_file == first
+    assert days[1].trading_day == "20260106"
+    assert days[1].contract_files[0].contract == "fu2603"
+    assert days[1].contract_files[0].source_file == second
 
 
 def test_build_main_contract_summary_selects_monthly_top_two_contracts(tmp_path):
@@ -311,19 +317,20 @@ def test_build_main_contract_summary_selects_monthly_top_two_contracts(tmp_path)
         symbol="fu",
     )
 
-    contracts = {item["contract"]: item for item in summary["contracts"]}
-    assert summary["selection_rule"] == MAIN_CONTRACT_SELECTION_RULE
+    assert isinstance(summary, MainContractSummary)
+    contracts = {item.contract: item for item in summary.contracts}
+    assert summary.selection_rule == MAIN_CONTRACT_SELECTION_RULE
     assert list(contracts) == ["fu2601", "fu2602", "fu2603", "fu2604"]
-    assert contracts["fu2601"]["selected_months"] == ["2026-01"]
-    assert contracts["fu2602"]["selected_months"] == ["2026-01"]
-    assert contracts["fu2603"]["selected_months"] == ["2026-02"]
-    assert contracts["fu2604"]["selected_months"] == ["2026-02"]
-    assert contracts["fu2601"]["start_trading_day"] == "20260101"
-    assert contracts["fu2601"]["end_trading_day"] == "20260101"
-    assert contracts["fu2601"]["trading_day_count"] == 1
-    assert contracts["fu2603"]["start_trading_day"] == "20260201"
-    assert contracts["fu2603"]["end_trading_day"] == "20260201"
-    assert contracts["fu2603"]["trading_day_count"] == 1
+    assert contracts["fu2601"].selected_months == ["2026-01"]
+    assert contracts["fu2602"].selected_months == ["2026-01"]
+    assert contracts["fu2603"].selected_months == ["2026-02"]
+    assert contracts["fu2604"].selected_months == ["2026-02"]
+    assert contracts["fu2601"].start_trading_day == "20260101"
+    assert contracts["fu2601"].end_trading_day == "20260101"
+    assert contracts["fu2601"].trading_day_count == 1
+    assert contracts["fu2603"].start_trading_day == "20260201"
+    assert contracts["fu2603"].end_trading_day == "20260201"
+    assert contracts["fu2603"].trading_day_count == 1
 
 
 def test_build_main_contract_summary_selects_contract_with_ten_high_volume_days(tmp_path):
@@ -366,9 +373,10 @@ def test_build_main_contract_summary_selects_contract_with_ten_high_volume_days(
         raw_root, "燃料油", "2026-01-01", "2026-02-01", "fu"
     )
 
-    contracts = {item["contract"]: item for item in summary["contracts"]}
+    assert isinstance(summary, MainContractSummary)
+    contracts = {item.contract: item for item in summary.contracts}
     assert list(contracts) == ["fu2601", "fu2602", "fu2603"]
-    assert contracts["fu2603"]["selected_months"] == ["2026-01"]
+    assert contracts["fu2603"].selected_months == ["2026-01"]
 
 
 def test_build_main_contract_summary_high_volume_rule_requires_strictly_greater_than_threshold(
@@ -412,7 +420,7 @@ def test_build_main_contract_summary_high_volume_rule_requires_strictly_greater_
         raw_root, "燃料油", "2026-01-01", "2026-02-01", "fu"
     )
 
-    assert [item["contract"] for item in summary["contracts"]] == [
+    assert [item.contract for item in summary.contracts] == [
         "fu2601",
         "fu2602",
     ]
@@ -462,11 +470,12 @@ def test_build_main_contract_summary_clips_selected_contract_trading_window(tmp_
         raw_root, "燃料油", "2026-01-01", "2026-03-01", "fu"
     )
 
-    contract = {item["contract"]: item for item in summary["contracts"]}["fu2601"]
-    assert contract["selected_months"] == ["2026-02"]
-    assert contract["start_trading_day"] == "20260202"
-    assert contract["end_trading_day"] == "20260205"
-    assert [day["trading_day"] for day in contract["trading_days"]] == [
+    assert isinstance(summary, MainContractSummary)
+    contract = {item.contract: item for item in summary.contracts}["fu2601"]
+    assert contract.selected_months == ["2026-02"]
+    assert contract.start_trading_day == "20260202"
+    assert contract.end_trading_day == "20260205"
+    assert [day.trading_day for day in contract.trading_days] == [
         "20260202",
         "20260203",
         "20260204",
@@ -543,7 +552,7 @@ def test_build_main_contract_summary_ties_sort_by_contract_name(tmp_path):
         raw_root, "燃料油", "2026-01-01", "2026-02-01", "fu"
     )
 
-    assert [item["contract"] for item in summary["contracts"]] == ["fu2601", "fu2602"]
+    assert [item.contract for item in summary.contracts] == ["fu2601", "fu2602"]
 
 
 def test_build_main_contract_summary_rejects_zero_volume_candidates(tmp_path):
@@ -640,8 +649,12 @@ def test_write_main_contract_summary_for_date_range_writes_json(tmp_path):
 
     assert path == output_dir / "main_contract_summary.json"
     assert path.exists()
+    expected = build_main_contract_summary_for_date_range(
+        raw_root=raw_root,
+        commodity_name="燃料油",
+        start_date="2026-01-01",
+        end_date="2026-02-01",
+        symbol="fu",
+    )
     summary = json.loads(path.read_text(encoding="utf-8"))
-    assert summary["selection_rule"] == MAIN_CONTRACT_SELECTION_RULE
-    assert summary["contracts"][0]["contract"] == "fu2601"
-    assert summary["contracts"][0]["trading_day_count"] == 1
-    assert summary["contracts"][0]["trading_days"][0]["trading_day"] == "20260101"
+    assert summary == expected.to_dict()

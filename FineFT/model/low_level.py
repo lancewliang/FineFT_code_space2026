@@ -264,6 +264,40 @@ class CQnet(nn.Module):
         return masked_action
 
 
+class NCQRDQN(nn.Module):
+    def __init__(self, N_STATES, N_ACTIONS, hidden_nodes, TIME_INFO_DIM=2, N=51):
+        super(NCQRDQN, self).__init__()
+        self.N = N
+        self.N_ACTIONS = N_ACTIONS
+        self.time_bedding = int(hidden_nodes / 2)
+        self.fc1 = nn.Linear(N_STATES, hidden_nodes)
+        self.fc2 = nn.Linear(N_ACTIONS + hidden_nodes + self.time_bedding, hidden_nodes)
+        self.fc3 = nn.Linear(1, N_ACTIONS)
+        self.fc_time = nn.Linear(TIME_INFO_DIM, self.time_bedding)
+        self.out = nn.Linear(hidden_nodes, N_ACTIONS * N)
+        self.register_buffer("max_punish", torch.tensor(MAX_PUNISHMENT))
+
+    def forward(
+        self,
+        state: torch.tensor,
+        time: torch.tensor,
+        previous_action: torch.tensor,
+        avaliable_action: torch.tensor,
+    ):
+        state_hidden = F.relu(self.fc1(state))
+        time_hidden = F.relu(self.fc_time(time))
+        previous_action_hidden = F.relu(self.fc3(previous_action))
+        information_hidden = torch.cat(
+            [state_hidden, previous_action_hidden, time_hidden], dim=1
+        )
+        information_hidden = F.relu(self.fc2(information_hidden))
+        quantiles = self.out(information_hidden).view(-1, self.N, self.N_ACTIONS)
+        masked_quantiles = quantiles + (
+            avaliable_action.unsqueeze(1) - 1
+        ) * self.max_punish
+        return masked_quantiles
+
+
 # PPO network
 
 

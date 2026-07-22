@@ -18,7 +18,18 @@ if str(VAE_ROOT) not in sys.path:
 
 from RL.DiHFT.VAE import main as vae_main
 from RL.DiHFT.VAE import merge_vae_train
+from RL.DiHFT.VAE import process as vae_process
 from RL.DiHFT.VAE import summary as vae_summary
+from RL.DiHFT.VAE.manifests import (
+    ContractDatasetLoader,
+    ContractLogpxResult,
+    LabelArraySource,
+    LabelSummary,
+    LabelTrainingManifest,
+    RoutingSummary,
+    TestContractSource,
+    TrainBaselineLogpx,
+)
 
 
 def _dataset_root(tmp_path):
@@ -52,22 +63,25 @@ def test_materialize_label_training_data_merges_contract_arrays_and_writes_manif
         merged,
         np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]),
     )
-    assert result["merged_path"] == str(vae_dir / "train" / "label_0.npy")
-    assert result["total_samples"] == 3
-    assert result["feature_dim"] == 2
-
-    manifest = json.loads((vae_dir / "train" / "label_0_manifest.json").read_text())
-    assert manifest["dataset_name"] == "fu"
-    assert manifest["label"] == "label_0"
-    assert manifest["total_samples"] == 3
-    assert manifest["feature_dim"] == 2
-    assert [item["contract"] for item in manifest["included_contracts"]] == [
+    assert isinstance(result, LabelTrainingManifest)
+    assert result.merged_path == str(vae_dir / "train" / "label_0.npy")
+    assert result.total_samples == 3
+    assert result.feature_dim == 2
+    assert [item.contract for item in result.included_contracts] == [
         "fu2505",
         "fu2509",
     ]
-    assert manifest["included_contracts"][0]["sample_count"] == 2
-    assert manifest["included_contracts"][1]["sample_count"] == 1
-    assert manifest["missing_contracts"] == ["fu2510"]
+    assert result.included_contracts[0].sample_count == 2
+    assert result.included_contracts[1].sample_count == 1
+    assert result.missing_contracts == ["fu2510"]
+
+    manifest = json.loads((vae_dir / "train" / "label_0_manifest.json").read_text())
+    assert manifest == result.to_dict()
+    assert manifest["dataset_name"] == "fu"
+    assert manifest["label"] == "label_0"
+    assert manifest["included_contracts"][0]["source_file"].endswith(
+        "fu2505/label_0.npy"
+    )
 
 
 def test_materialize_label_training_data_fails_when_no_contract_has_label(tmp_path):
@@ -109,6 +123,24 @@ def test_materialize_label_training_data_rejects_feature_dim_mismatch(tmp_path):
         )
 
 
+def test_discover_label_sources_reads_contract_label_arrays_as_objects(tmp_path):
+    vae_dir = _vae_dir(tmp_path)
+    _save(vae_dir / "fu2505" / "label_0.npy", [[1.0, 2.0]])
+    _save(vae_dir / "fu2509" / "label_0.npy", [[3.0, 4.0]])
+    (vae_dir / "fu2510").mkdir(parents=True)
+
+    sources, missing_contracts = merge_vae_train.discover_label_sources(
+        data_base_path=str(_dataset_root(tmp_path)),
+        dataset_name="fu",
+        label_index=0,
+    )
+
+    assert all(isinstance(source, LabelArraySource) for source in sources)
+    assert [source.contract for source in sources] == ["fu2505", "fu2509"]
+    assert sources[0].source_file.endswith("fu2505/label_0.npy")
+    assert missing_contracts == ["fu2510"]
+
+
 def test_discover_test_sources_reads_contract_test_arrays(tmp_path):
     vae_dir = _vae_dir(tmp_path)
     _save(vae_dir / "test" / "test_fu2508.npy", [[1.0, 2.0]])
@@ -119,23 +151,65 @@ def test_discover_test_sources_reads_contract_test_arrays(tmp_path):
         dataset_name="fu",
     )
 
-    assert [source["contract"] for source in sources] == ["fu2508", "fu2509"]
-    assert sources[0]["source_file"].endswith("test_fu2508.npy")
+    assert all(isinstance(source, TestContractSource) for source in sources)
+    assert [source.contract for source in sources] == ["fu2508", "fu2509"]
+    assert sources[0].source_file.endswith("test_fu2508.npy")
+
+
+def test_discover_test_sources_fails_when_no_test_arrays(tmp_path):
+    (_vae_dir(tmp_path) / "test").mkdir(parents=True)
+
+    with pytest.raises(FileNotFoundError, match="no test_.*\\.npy"):
+        vae_main.discover_test_sources(
+            data_base_path=str(_dataset_root(tmp_path)),
+            dataset_name="fu",
+        )
+
+
+def test_prepare_contract_dataset_loader_list_wraps_sources_as_objects(tmp_path):
+    vae_dir = _vae_dir(tmp_path)
+    source_file = vae_dir / "test" / "test_fu2508.npy"
+    _save(source_file, [[1.0, 2.0], [3.0, 4.0]])
+    sources = [TestContractSource(contract="fu2508", source_file=str(source_file))]
+
+    loaders = vae_process.prepare_contract_dataset_loader_list(
+        sources,
+        expected_feature_dim=2,
+    )
+
+    assert len(loaders) == 1
+    assert isinstance(loaders[0], ContractDatasetLoader)
+    assert loaders[0].contract == "fu2508"
+    assert loaders[0].source_file == str(source_file)
+    assert len(loaders[0].loader.dataset) == 2
+
+
+def test_prepare_contract_dataset_loader_list_rejects_feature_dim_mismatch(tmp_path):
+    vae_dir = _vae_dir(tmp_path)
+    source_file = vae_dir / "test" / "test_fu2508.npy"
+    _save(source_file, [[1.0, 2.0, 3.0]])
+    sources = [TestContractSource(contract="fu2508", source_file=str(source_file))]
+
+    with pytest.raises(ValueError, match="feature dimension"):
+        vae_process.prepare_contract_dataset_loader_list(
+            sources,
+            expected_feature_dim=2,
+        )
 
 
 def test_write_contract_logpx_outputs_writes_per_contract_and_aggregate_files(tmp_path):
     save_path = tmp_path / "result" / "DiHFT" / "vae_results" / "fu" / "label_0"
     results = [
-        {
-            "contract": "fu2508",
-            "source_file": "dataset/10min/fu/VAE_data/test/test_fu2508.npy",
-            "logpx": np.array([-1.0, -2.0]),
-        },
-        {
-            "contract": "fu2509",
-            "source_file": "dataset/10min/fu/VAE_data/test/test_fu2509.npy",
-            "logpx": np.array([-3.0]),
-        },
+        ContractLogpxResult(
+            contract="fu2508",
+            source_file="dataset/10min/fu/VAE_data/test/test_fu2508.npy",
+            logpx=np.array([-1.0, -2.0]),
+        ),
+        ContractLogpxResult(
+            contract="fu2509",
+            source_file="dataset/10min/fu/VAE_data/test/test_fu2509.npy",
+            logpx=np.array([-3.0]),
+        ),
     ]
 
     summary = vae_summary.write_contract_logpx_outputs(
@@ -170,36 +244,37 @@ def test_write_contract_logpx_outputs_writes_per_contract_and_aggregate_files(tm
     ]
     all_csv = pd.read_csv(save_path / "ood_logpx_all.csv")
     assert all_csv["contract"].tolist() == ["fu2508", "fu2508", "fu2509"]
+    assert isinstance(summary, LabelSummary)
     summary_file = json.loads((save_path / "summary.json").read_text())
-    assert summary == summary_file
-    assert summary_file["dataset_name"] == "fu"
-    assert summary_file["label"] == "label_0"
-    assert summary_file["test"]["contracts"]["fu2508"]["samples"] == 2
-    assert summary_file["test"]["all"]["samples"] == 3
+    assert summary_file == summary.to_dict()
+    assert summary.dataset_name == "fu"
+    assert summary.label == "label_0"
+    assert summary.test.contracts["fu2508"].summary.stats.samples == 2
+    assert summary.test.all.stats.samples == 3
     assert "roc_auc" not in json.dumps(summary_file).lower()
 
 
 def test_write_contract_logpx_outputs_includes_enhanced_summary_metrics(tmp_path):
     save_path = tmp_path / "result" / "DiHFT" / "vae_results" / "fu" / "label_0"
-    train_baseline = {
-        "source_file": "dataset/10min/fu/VAE_data/train/label_0.npy",
-        "input_samples": 4,
-        "analyzed_samples": 4,
-        "logpx": np.array([-10.0, -8.0, -6.0, -4.0]),
-    }
+    train_baseline = TrainBaselineLogpx(
+        source_file="dataset/10min/fu/VAE_data/train/label_0.npy",
+        input_samples=4,
+        analyzed_samples=4,
+        logpx=np.array([-10.0, -8.0, -6.0, -4.0]),
+    )
     results = [
-        {
-            "contract": "fu2508",
-            "source_file": "dataset/10min/fu/VAE_data/test/test_fu2508.npy",
-            "input_samples": 3,
-            "logpx": np.array([-9.0, -7.0]),
-        },
-        {
-            "contract": "fu2509",
-            "source_file": "dataset/10min/fu/VAE_data/test/test_fu2509.npy",
-            "input_samples": 2,
-            "logpx": np.array([-5.0, -3.0]),
-        },
+        ContractLogpxResult(
+            contract="fu2508",
+            source_file="dataset/10min/fu/VAE_data/test/test_fu2508.npy",
+            input_samples=3,
+            logpx=np.array([-9.0, -7.0]),
+        ),
+        ContractLogpxResult(
+            contract="fu2509",
+            source_file="dataset/10min/fu/VAE_data/test/test_fu2509.npy",
+            input_samples=2,
+            logpx=np.array([-5.0, -3.0]),
+        ),
     ]
 
     summary = vae_summary.write_contract_logpx_outputs(
@@ -210,11 +285,15 @@ def test_write_contract_logpx_outputs_includes_enhanced_summary_metrics(tmp_path
         train_baseline=train_baseline,
     )
 
-    assert summary["train_baseline"]["source_file"].endswith("label_0.npy")
-    assert summary["train_baseline"]["input_samples"] == 4
-    assert summary["train_baseline"]["analyzed_samples"] == 4
-    assert summary["train_baseline"]["sample_mismatch"] is False
-    assert set(summary["train_baseline"]["quantiles"]) == {
+    assert isinstance(summary, LabelSummary)
+    summary_file = json.loads((save_path / "summary.json").read_text())
+    assert summary_file == summary.to_dict()
+    assert summary.train_baseline is not None
+    assert summary.train_baseline.source_file.endswith("label_0.npy")
+    assert summary.train_baseline.summary.integrity.input_samples == 4
+    assert summary.train_baseline.summary.integrity.analyzed_samples == 4
+    assert summary.train_baseline.summary.integrity.sample_mismatch is False
+    assert set(summary.train_baseline.summary.stats.quantiles) == {
         "q01",
         "q05",
         "q25",
@@ -223,20 +302,23 @@ def test_write_contract_logpx_outputs_includes_enhanced_summary_metrics(tmp_path
         "q95",
         "q99",
     }
-    fu2508 = summary["test"]["contracts"]["fu2508"]
-    assert fu2508["input_samples"] == 3
-    assert fu2508["analyzed_samples"] == 2
-    assert fu2508["sample_mismatch"] is True
-    assert fu2508["samples"] == 2
-    assert set(fu2508["quantiles"]) == set(summary["train_baseline"]["quantiles"])
-    assert set(fu2508["acceptance"]) == {
+    fu2508 = summary.test.contracts["fu2508"]
+    assert fu2508.summary.integrity.input_samples == 3
+    assert fu2508.summary.integrity.analyzed_samples == 2
+    assert fu2508.summary.integrity.sample_mismatch is True
+    assert fu2508.summary.stats.samples == 2
+    assert set(fu2508.summary.stats.quantiles) == set(
+        summary.train_baseline.summary.stats.quantiles
+    )
+    assert fu2508.summary.acceptance is not None
+    assert set(fu2508.summary.acceptance.to_dict()) == {
         "ge_train_q01_pct",
         "ge_train_q05_pct",
         "ge_train_q50_pct",
     }
-    assert summary["test"]["all"]["analyzed_samples"] == 4
-    assert "roc_auc" not in json.dumps(summary).lower()
-    assert "accuracy" not in json.dumps(summary).lower()
+    assert summary.test.all.integrity.analyzed_samples == 4
+    assert "roc_auc" not in json.dumps(summary_file).lower()
+    assert "accuracy" not in json.dumps(summary_file).lower()
 
 
 def test_parser_accepts_explicit_train_and_analyze_only_flags():
@@ -310,18 +392,21 @@ def test_write_routing_summary_compares_labels_by_contract(tmp_path):
         low_margin_threshold=1.0,
     )
 
-    assert summary["dataset_name"] == "fu"
-    assert summary["labels"] == ["label_0", "label_1", "label_2"]
-    assert summary["score_type"] == "raw_logpx"
-    assert summary["contracts"]["fu2508"]["samples"] == 2
-    assert summary["contracts"]["fu2508"]["input_samples_by_label"]["label_0"] == 3
-    assert summary["contracts"]["fu2508"]["sample_mismatch"] is True
-    assert summary["contracts"]["fu2508"]["winner_counts"] == {
+    assert isinstance(summary, RoutingSummary)
+    summary_file = json.loads((result_root / "routing_summary.json").read_text())
+    assert summary_file == summary.to_dict()
+    assert summary.dataset_name == "fu"
+    assert summary.labels == ["label_0", "label_1", "label_2"]
+    assert summary.score_type == "raw_logpx"
+    assert summary.contracts["fu2508"].winner.samples == 2
+    assert summary.contracts["fu2508"].input_samples_by_label["label_0"] == 3
+    assert summary.contracts["fu2508"].sample_mismatch is True
+    assert summary.contracts["fu2508"].winner.winner_counts == {
         "label_0": 1,
         "label_1": 0,
         "label_2": 1,
     }
-    assert summary["all"]["winner_counts"] == {
+    assert summary.all.winner_counts == {
         "label_0": 2,
         "label_1": 0,
         "label_2": 2,
@@ -364,8 +449,11 @@ def test_main_writes_routing_summary_after_analysis_when_all_labels_ready(tmp_pa
 
     summary = vae_summary.maybe_write_routing_summary_after_analysis(args)
 
-    assert summary["dataset_name"] == "fu"
-    assert summary["all"]["winner_counts"] == {"label_0": 1, "label_1": 1}
+    assert isinstance(summary, RoutingSummary)
+    assert summary.dataset_name == "fu"
+    assert summary.all.winner_counts == {"label_0": 1, "label_1": 1}
+    summary_file = json.loads((result_root / "routing_summary.json").read_text())
+    assert summary_file == summary.to_dict()
     assert (result_root / "routing_summary.json").exists()
 
 

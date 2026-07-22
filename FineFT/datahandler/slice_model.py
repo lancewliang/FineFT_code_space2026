@@ -13,6 +13,24 @@ import warnings
 import market_dynamics_modeling_analysis
 import label_util as util
 
+try:
+    from .manifests import (
+        SliceContractManifest,
+        SliceFileManifest,
+        SliceLabelManifest,
+        SliceManifest,
+    )
+except ImportError:
+    datahandler_parent = Path(__file__).resolve().parents[1]
+    if str(datahandler_parent) not in sys.path:
+        sys.path.insert(0, str(datahandler_parent))
+    from datahandler.manifests import (
+        SliceContractManifest,
+        SliceFileManifest,
+        SliceLabelManifest,
+        SliceManifest,
+    )
+
 parser = argparse.ArgumentParser()
 # replay buffer coffient
 parser.add_argument(
@@ -149,64 +167,42 @@ class Linear_Market_Dynamics_Model(object):
             return stem[3:]
         return stem
 
-    def _write_slice_manifest(self, manifest_path, valid_root, contract_name, processed_path, contract_labels):
+    def _load_slice_manifest(self, manifest_path, valid_root):
         if manifest_path.exists():
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        else:
-            manifest = {
-                "valid_path": str(valid_root),
-                "contracts": {},
-                "labels": {},
-                "skipped_contracts": {},
-            }
-        manifest.setdefault("skipped_contracts", {}).pop(contract_name, None)
+            return SliceManifest.from_dict(
+                json.loads(manifest_path.read_text(encoding="utf-8"))
+            )
+        return SliceManifest.new(valid_root)
 
+    def _write_slice_manifest(
+        self,
+        manifest_path,
+        valid_root,
+        contract_name,
+        processed_path,
+        contract_labels,
+    ):
+        manifest = self._load_slice_manifest(manifest_path, valid_root)
         contract_file_count = sum(
-            label_info["file_count"] for label_info in contract_labels.values()
+            label_info.file_count for label_info in contract_labels.values()
         )
         contract_total_rows = sum(
-            label_info["total_row_count"] for label_info in contract_labels.values()
+            label_info.total_row_count for label_info in contract_labels.values()
         )
-        if contract_file_count:
-            manifest.setdefault("contracts", {})[contract_name] = {
-                "contract": contract_name,
-                "processed_path": str(processed_path),
-                "file_count": contract_file_count,
-                "total_row_count": contract_total_rows,
-                "labels": contract_labels,
-            }
-        else:
-            manifest.setdefault("contracts", {}).pop(contract_name, None)
-
-        manifest["labels"] = self._build_label_manifest(manifest)
-        manifest["contracts"] = dict(sorted(manifest.get("contracts", {}).items()))
-        manifest["skipped_contracts"] = dict(
-            sorted(manifest.get("skipped_contracts", {}).items())
+        manifest.replace_contract(
+            SliceContractManifest(
+                contract=contract_name,
+                processed_path=str(processed_path),
+                file_count=contract_file_count,
+                total_row_count=contract_total_rows,
+                labels=contract_labels,
+            )
         )
         self._write_manifest(manifest_path, manifest)
 
-    def _build_label_manifest(self, manifest):
-        labels = {}
-        for contract_record in manifest.get("contracts", {}).values():
-            for label, label_info in contract_record.get("labels", {}).items():
-                target = labels.setdefault(
-                    label, {"label": label, "file_count": 0, "total_row_count": 0, "files": []}
-                )
-                target["file_count"] += label_info["file_count"]
-                target["total_row_count"] += label_info["total_row_count"]
-                for file_info in label_info["files"]:
-                    target["files"].append(
-                        {
-                            "contract": contract_record["contract"],
-                            "path": file_info["path"],
-                            "output_row_count": file_info["output_row_count"],
-                        }
-                    )
-        return dict(sorted(labels.items()))
-
     def _write_manifest(self, manifest_path, manifest):
         manifest_path.write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
 
@@ -219,26 +215,12 @@ class Linear_Market_Dynamics_Model(object):
         reason,
         input_row_count,
     ):
-        if manifest_path.exists():
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        else:
-            manifest = {
-                "valid_path": str(valid_root),
-                "contracts": {},
-                "labels": {},
-                "skipped_contracts": {},
-            }
-        manifest.setdefault("contracts", {}).pop(contract_name, None)
-        manifest.setdefault("skipped_contracts", {})[contract_name] = {
-            "contract": contract_name,
-            "processed_path": str(processed_path),
-            "reason": reason,
-            "input_row_count": int(input_row_count),
-        }
-        manifest["labels"] = self._build_label_manifest(manifest)
-        manifest["contracts"] = dict(sorted(manifest.get("contracts", {}).items()))
-        manifest["skipped_contracts"] = dict(
-            sorted(manifest.get("skipped_contracts", {}).items())
+        manifest = self._load_slice_manifest(manifest_path, valid_root)
+        manifest.record_skipped_contract(
+            contract=contract_name,
+            processed_path=str(processed_path),
+            reason=reason,
+            input_row_count=input_row_count,
         )
         self._write_manifest(manifest_path, manifest)
 
@@ -348,13 +330,16 @@ class Linear_Market_Dynamics_Model(object):
             segment.to_feather(output_file)
             label_info = contract_labels.setdefault(
                 label_name,
-                {"label": label_name, "file_count": 0, "total_row_count": 0, "files": []},
+                SliceLabelManifest(label=label_name),
             )
             output_row_count = int(len(segment))
-            label_info["file_count"] += 1
-            label_info["total_row_count"] += output_row_count
-            label_info["files"].append(
-                {"path": str(output_file), "output_row_count": output_row_count}
+            label_info.file_count += 1
+            label_info.total_row_count += output_row_count
+            label_info.files.append(
+                SliceFileManifest(
+                    path=str(output_file),
+                    output_row_count=output_row_count,
+                )
             )
             label_counter[label] += 1
 

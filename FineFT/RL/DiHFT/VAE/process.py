@@ -16,6 +16,7 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "utils")))
 from RL.DiHFT.VAE.util import compute_roc_pr_metrics
 import RL.DiHFT.VAE.vae as VAEs
+from RL.DiHFT.VAE.manifests import ContractDatasetLoader, ContractLogpxResult
 from RL.DiHFT.VAE.summary import write_contract_logpx_outputs
 from datahandler.vae_dataset import One_Dim_Dataset
 
@@ -87,21 +88,27 @@ def prepare_contract_dataset_loader_list(test_sources, expected_feature_dim):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     kwargs = {"num_workers": 1, "pin_memory": True} if device.type == "cuda" else {}
     for source in test_sources:
-        data = np.load(source["source_file"])
+        data = np.load(source.source_file)
         if data.ndim != 2:
             raise ValueError(
-                f"{source['source_file']} for contract {source['contract']} must be two-dimensional"
+                f"{source.source_file} for contract {source.contract} must be two-dimensional"
             )
         if int(data.shape[1]) != int(expected_feature_dim):
             raise ValueError(
-                f"feature dimension mismatch for {source['contract']} at {source['source_file']}: "
+                f"feature dimension mismatch for {source.contract} at {source.source_file}: "
                 f"expected {expected_feature_dim}, got {data.shape[1]}"
             )
-        dataset = One_Dim_Dataset(source["source_file"])
+        dataset = One_Dim_Dataset(source.source_file)
         dataloader = torch.utils.data.DataLoader(
             dataset, batch_size=1, shuffle=False, **kwargs
         )
-        dataloader_list.append({**source, "loader": dataloader})
+        dataloader_list.append(
+            ContractDatasetLoader(
+                contract=source.contract,
+                source_file=source.source_file,
+                loader=dataloader,
+            )
+        )
     return dataloader_list
 
 
@@ -119,14 +126,14 @@ def analyze_contract_tests(
     model.load_state_dict(torch.load(pretrained_model_path))
     contract_results = []
     for item in contract_loader_list:
-        ood_mus, ood_logpx = VAEs.analyze(model, item["loader"], device)
+        ood_mus, ood_logpx = VAEs.analyze(model, item.loader, device)
         contract_results.append(
-            {
-                "contract": item["contract"],
-                "source_file": item["source_file"],
-                "input_samples": len(item["loader"].dataset),
-                "logpx": np.asarray(ood_logpx, dtype=float),
-            }
+            ContractLogpxResult(
+                contract=item.contract,
+                source_file=item.source_file,
+                input_samples=len(item.loader.dataset),
+                logpx=np.asarray(ood_logpx, dtype=float),
+            )
         )
     return write_contract_logpx_outputs(
         contract_results,
