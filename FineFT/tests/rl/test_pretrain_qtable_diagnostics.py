@@ -64,16 +64,19 @@ def test_select_sample_from_plan_randomly_picks_one_combination(monkeypatch):
     assert diag.select_sample_from_plan(sample_plan) == diag.SamplePlanItem(1, 1)
 
 
-def test_get_sample_action_from_cache_raises_when_combination_missing():
+def test_get_sample_action_from_cache_supports_dataclass_and_legacy_tuple_keys():
     from RL.DiHFT.low_level import pretrain_qtable_diagnostics as diag
 
-    sample_action_cache_by_plan = {diag.SamplePlanItem(0, 0): [1, 2]}
+    dataclass_keyed_cache = {diag.SamplePlanItem(0, 0): [1, 2]}
+    legacy_tuple_keyed_cache = {(0, 1): [3, 4]}
 
     assert diag.get_sample_action_from_cache(
-        sample_action_cache_by_plan, 0, 0
+        dataclass_keyed_cache, diag.SamplePlanItem(0, 0)
     ) == [1, 2]
+    assert diag.get_sample_action_from_cache(legacy_tuple_keyed_cache, 0, 1) == [3, 4]
+
     with pytest.raises(KeyError, match="df_index=0.*initial_action=1"):
-        diag.get_sample_action_from_cache(sample_action_cache_by_plan, 0, 1)
+        diag.get_sample_action_from_cache(dataclass_keyed_cache, 0, 1)
 
 
 def test_diagnostics_cache_qtables_once_and_export_one_csv_per_df_action(

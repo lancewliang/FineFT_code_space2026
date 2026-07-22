@@ -13,6 +13,65 @@ def test_effective_df_indices_use_total_df_index_length_without_extra_drop():
     assert pwap.build_effective_df_indices(3) == [0, 1, 2]
 
 
+def test_summarize_rollout_metrics_uses_rollout_metric_objects():
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+
+    metrics = [
+        pwap.RolloutMetrics(
+            epoch_index=0,
+            context_index=0,
+            initial_action=1,
+            df_index=0,
+            transition_count=3,
+            reward_sum=100.0,
+            final_balance=110000.0,
+            return_rate=1.1,
+        ),
+        pwap.RolloutMetrics(
+            epoch_index=0,
+            context_index=0,
+            initial_action=1,
+            df_index=1,
+            transition_count=2,
+            reward_sum=-20.0,
+            final_balance=99000.0,
+            return_rate=0.99,
+        ),
+    ]
+
+    summary = pwap.summarize_rollout_metrics(metrics)
+
+    assert summary == pwap.RolloutMetricsSummary(
+        mean_reward_sum=40.0,
+        mean_return_rate=1.045,
+        mean_final_balance=104500.0,
+    )
+    assert summary.to_dict() == {
+        "mean_reward_sum": 40.0,
+        "mean_return_rate": 1.045,
+        "mean_final_balance": 104500.0,
+    }
+
+
+def test_summarize_rollout_diagnostics_returns_object():
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+
+    summary = pwap.summarize_rollout_diagnostics(
+        actions=[3, 1, 3, 2],
+        positions=[0.0, -1.0, -1.0, 1.0],
+        preview_limit=3,
+    )
+
+    assert summary == pwap.RolloutDiagnosticsSummary(
+        action_counts=[(1, 1), (2, 1), (3, 2)],
+        position_counts=[(-1.0, 2), (0.0, 1), (1.0, 1)],
+        first_actions=[3, 1, 3],
+        first_positions=[0.0, -1.0, -1.0],
+        position_switches=2,
+    )
+    assert summary.to_dict()["position_switches"] == 2
+
+
 def test_parallel_rollout_task_order_is_epoch_context_initial_action():
     from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
 
@@ -24,20 +83,14 @@ def test_parallel_rollout_task_order_is_epoch_context_initial_action():
         )
     )
 
-    assert tasks == [
+    assert tasks[0] == pwap.ParallelRolloutTask(0, 0, 0)
+    assert tasks[-1] == pwap.ParallelRolloutTask(1, 1, 2)
+    assert [task.to_dict() for task in tasks[:3]] == [
         {"epoch_index": 0, "context_index": 0, "initial_action": 0},
         {"epoch_index": 0, "context_index": 0, "initial_action": 1},
         {"epoch_index": 0, "context_index": 0, "initial_action": 2},
-        {"epoch_index": 0, "context_index": 1, "initial_action": 0},
-        {"epoch_index": 0, "context_index": 1, "initial_action": 1},
-        {"epoch_index": 0, "context_index": 1, "initial_action": 2},
-        {"epoch_index": 1, "context_index": 0, "initial_action": 0},
-        {"epoch_index": 1, "context_index": 0, "initial_action": 1},
-        {"epoch_index": 1, "context_index": 0, "initial_action": 2},
-        {"epoch_index": 1, "context_index": 1, "initial_action": 0},
-        {"epoch_index": 1, "context_index": 1, "initial_action": 1},
-        {"epoch_index": 1, "context_index": 1, "initial_action": 2},
     ]
+    assert len(tasks) == 12
 
 
 def test_compute_epoch_schedules_match_decay_requirements():
@@ -74,9 +127,10 @@ def test_compute_epoch_schedules_match_decay_requirements():
         lr_min=0.001,
     )
 
-    assert first == {"epsilon": 1.0, "ada": 256.0, "lr": 0.005}
-    assert middle == {"epsilon": 0.6, "ada": 256.0, "lr": 0.005}
-    assert last == {"epsilon": 0.2, "ada": 0.0, "lr": 0.001}
+    assert first == pwap.EpochTrainingParams(epsilon=1.0, ada=256.0, lr=0.005)
+    assert middle == pwap.EpochTrainingParams(epsilon=0.6, ada=256.0, lr=0.005)
+    assert last == pwap.EpochTrainingParams(epsilon=0.2, ada=0.0, lr=0.001)
+    assert first.to_dict() == {"epsilon": 1.0, "ada": 256.0, "lr": 0.005}
 
 
 def test_single_epoch_schedule_keeps_initial_values():
@@ -91,32 +145,49 @@ def test_single_epoch_schedule_keeps_initial_values():
         ada_min=0.0,
         lr_init=0.005,
         lr_min=0.001,
-    ) == {"epsilon": 1.0, "ada": 256.0, "lr": 0.005}
+    ) == pwap.EpochTrainingParams(epsilon=1.0, ada=256.0, lr=0.005)
 
 
 def test_sort_round_results_orders_by_df_index_and_step_index():
     from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
 
     results = [
-        {
-            "type": "round_result",
-            "df_index": 2,
-            "worker_steps": 1,
-            "transitions": [{"step_index": 1, "transition": "df2-step1"}],
-            "rollout_metrics": [],
-            "done": False,
-        },
-        {
-            "type": "round_result",
-            "df_index": 1,
-            "worker_steps": 2,
-            "transitions": [
-                {"step_index": 1, "transition": "df1-step1"},
-                {"step_index": 0, "transition": "df1-step0"},
+        pwap.WorkerRoundResult(
+            df_index=2,
+            epoch_index=0,
+            context_index=0,
+            initial_action=0,
+            round_counter=0,
+            worker_steps=1,
+            transitions=[
+                pwap.WorkerTransitionRecord(
+                    step_index=1,
+                    transition="df2-step1",
+                )
             ],
-            "rollout_metrics": [],
-            "done": True,
-        },
+            rollout_metrics=[],
+            done=False,
+        ),
+        pwap.WorkerRoundResult(
+            df_index=1,
+            epoch_index=0,
+            context_index=0,
+            initial_action=0,
+            round_counter=0,
+            worker_steps=2,
+            transitions=[
+                pwap.WorkerTransitionRecord(
+                    step_index=1,
+                    transition="df1-step1",
+                ),
+                pwap.WorkerTransitionRecord(
+                    step_index=0,
+                    transition="df1-step0",
+                ),
+            ],
+            rollout_metrics=[],
+            done=True,
+        ),
     ]
 
     assert pwap.sort_round_transitions(results) == [
@@ -132,15 +203,14 @@ def test_raise_for_worker_error_includes_df_and_traceback():
 
     with pytest.raises(RuntimeError, match="df_index=3.*boom"):
         pwap.raise_for_worker_error(
-            {
-                "type": "worker_error",
-                "df_index": 3,
-                "epoch_index": 0,
-                "context_index": 1,
-                "initial_action": 2,
-                "round_counter": 4,
-                "traceback": "boom",
-            }
+            pwap.WorkerErrorMessage(
+                df_index=3,
+                epoch_index=0,
+                context_index=1,
+                initial_action=2,
+                round_counter=4,
+                traceback="boom",
+            )
         )
 
 
@@ -238,18 +308,38 @@ def test_buffer_writes_use_sorted_transition_payloads():
     pwap.write_round_transitions_to_buffer(
         buffer,
         [
-            {
-                "type": "round_result",
-                "df_index": 1,
-                "worker_steps": 1,
-                "transitions": [{"step_index": 0, "transition": transition_b}],
-            },
-            {
-                "type": "round_result",
-                "df_index": 0,
-                "worker_steps": 1,
-                "transitions": [{"step_index": 0, "transition": transition_a}],
-            },
+            pwap.WorkerRoundResult(
+                df_index=1,
+                epoch_index=0,
+                context_index=0,
+                initial_action=0,
+                round_counter=0,
+                worker_steps=1,
+                transitions=[
+                    pwap.WorkerTransitionRecord(
+                        step_index=0,
+                        transition=transition_b,
+                    )
+                ],
+                rollout_metrics=[],
+                done=False,
+            ),
+            pwap.WorkerRoundResult(
+                df_index=0,
+                epoch_index=0,
+                context_index=0,
+                initial_action=0,
+                round_counter=0,
+                worker_steps=1,
+                transitions=[
+                    pwap.WorkerTransitionRecord(
+                        step_index=0,
+                        transition=transition_a,
+                    )
+                ],
+                rollout_metrics=[],
+                done=False,
+            ),
         ],
     )
 
@@ -265,14 +355,44 @@ def test_summarize_round_results_counts_steps_and_updates():
         context_index=2,
         initial_action=3,
         round_results=[
-            {"df_index": 0, "worker_steps": 5, "done": False},
-            {"df_index": 1, "worker_steps": 4, "done": True},
+            pwap.WorkerRoundResult(
+                df_index=0,
+                epoch_index=1,
+                context_index=2,
+                initial_action=3,
+                round_counter=4,
+                worker_steps=5,
+                transitions=[],
+                rollout_metrics=[],
+                done=False,
+            ),
+            pwap.WorkerRoundResult(
+                df_index=1,
+                epoch_index=1,
+                context_index=2,
+                initial_action=3,
+                round_counter=4,
+                worker_steps=4,
+                transitions=[],
+                rollout_metrics=[],
+                done=True,
+            ),
         ],
         buffer_size=99,
         update_count=20,
     )
 
-    assert summary == {
+    assert summary == pwap.ParallelRoundSummary(
+        round_counter=4,
+        epoch_index=1,
+        context_index=2,
+        initial_action=3,
+        round_steps=9,
+        active_worker_count=2,
+        buffer_size=99,
+        update_count=20,
+    )
+    assert summary.to_dict() == {
         "round_counter": 4,
         "epoch_index": 1,
         "context_index": 2,

@@ -1169,17 +1169,19 @@ class Weighted_Contexts_DQN:
             "initial_wallet_balance": self.initial_wallet_balance,
             "initial_unrealized_pnl": self.initial_unrealized_pnL,
         }
-        sample_plan, q_table_cache, train_df_cache, _, sample_action_cache = (
-            prepare_pretrain_qtable_diagnostics(             
-                total_df_index_length=self.total_df_index_length,
-                position_choices=self.position_choices,
-                train_data_path=self.train_data_path,
-                qtable_kwargs=qtable_kwargs,
-                env_kwargs=env_kwargs,
-                output_dir=qtable_diagnostics_dir,
-                logger=logger,
-            )
+        diagnostics_result = prepare_pretrain_qtable_diagnostics(
+            total_df_index_length=self.total_df_index_length,
+            position_choices=self.position_choices,
+            train_data_path=self.train_data_path,
+            qtable_kwargs=qtable_kwargs,
+            env_kwargs=env_kwargs,
+            output_dir=qtable_diagnostics_dir,
+            logger=logger,
         )
+        sample_plan = diagnostics_result.sample_plan
+        q_table_cache = diagnostics_result.q_table_cache
+        train_df_cache = diagnostics_result.train_df_cache
+        sample_action_cache = diagnostics_result.sample_action_cache
         if self.full_df_warmup:
             q_table_cache, train_df_cache = extend_q_table_cache(
                 df_indices=range(self.total_df_index_length),
@@ -1199,7 +1201,9 @@ class Weighted_Contexts_DQN:
             logger.info("===== 第 %d/%d 轮采样 =====", sample + 1, self.num_sample)
             pretrain = sample < self.pretrain_epoch
             logger.info("当前阶段: %s", "预训练" if pretrain else "多样化训练")
-            df_index, initial_action = select_sample_from_plan(sample_plan)
+            sample_item = select_sample_from_plan(sample_plan)
+            df_index = sample_item.df_index
+            initial_action = sample_item.initial_action
             logger.info(
                 "正在使用 df_%d 进行训练, 初始动作=%d",
                 df_index,
@@ -1217,8 +1221,7 @@ class Weighted_Contexts_DQN:
             if pretrain:
                 self.perfection_action_list = get_sample_action_from_cache(
                     sample_action_cache,
-                    df_index,
-                    initial_action,
+                    sample_item,
                 )
 
                 for index in range(4):

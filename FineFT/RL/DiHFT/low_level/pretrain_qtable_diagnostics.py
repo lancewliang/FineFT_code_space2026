@@ -3,6 +3,7 @@ import multiprocessing as mp
 import os
 import random
 import re
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -22,9 +23,126 @@ DIAGNOSTIC_CSV_PATTERN = re.compile(
 DIAGNOSTIC_MANIFEST_NAME = "manifest.json"
 
 
+@dataclass(frozen=True, order=True)
+class SamplePlanItem:
+    df_index: int
+    initial_action: int
+
+    def to_tuple(self):
+        return (self.df_index, self.initial_action)
+
+
+@dataclass(frozen=True)
+class QTableDiagnosticsManifest:
+    diagnostic_count: int
+    total_df_index_length: int
+    position_choices: int
+    qtable_kwargs: dict
+    env_kwargs: dict
+
+    def to_dict(self):
+        return _normalize_manifest_value(
+            {
+                "diagnostic_count": self.diagnostic_count,
+                "total_df_index_length": self.total_df_index_length,
+                "position_choices": self.position_choices,
+                "qtable_kwargs": self.qtable_kwargs,
+                "env_kwargs": self.env_kwargs,
+            }
+        )
+
+
+@dataclass(frozen=True)
+class DiagnosticCsvRow:
+    df_index: int
+    initial_action: int
+    step_index: int
+    timestamp: object
+    open: object
+    high: object
+    low: object
+    close: object
+    volume: object
+    mark_price: object
+    action: int
+    previous_action: int
+    position: float
+    leverage: float
+    commission_rate: float
+    step_slippage: float
+    step_reward: float
+    cumulative_profit: float
+    profitable: bool
+
+    def to_dict(self):
+        return {
+            "df_index": self.df_index,
+            "initial_action": self.initial_action,
+            "step_index": self.step_index,
+            "timestamp": self.timestamp,
+            "open": self.open,
+            "high": self.high,
+            "low": self.low,
+            "close": self.close,
+            "volume": self.volume,
+            "mark_price": self.mark_price,
+            "action": self.action,
+            "previous_action": self.previous_action,
+            "position": self.position,
+            "leverage": self.leverage,
+            "commission_rate": self.commission_rate,
+            "step_slippage": self.step_slippage,
+            "step_reward": self.step_reward,
+            "cumulative_profit": self.cumulative_profit,
+            "profitable": self.profitable,
+        }
+
+
+@dataclass(frozen=True)
+class SampleDiagnostic:
+    df_index: int
+    initial_action: int
+    episode_reward_sum: float
+    profitable: bool
+    csv_path: str
+    action_list: list[int]
+
+    @property
+    def sample_item(self):
+        return SamplePlanItem(self.df_index, self.initial_action)
+
+    def to_dict(self, include_action_list=True):
+        payload = {
+            "df_index": self.df_index,
+            "initial_action": self.initial_action,
+            "episode_reward_sum": self.episode_reward_sum,
+            "profitable": self.profitable,
+            "csv_path": self.csv_path,
+        }
+        if include_action_list:
+            payload["action_list"] = list(self.action_list)
+        return payload
+
+
+@dataclass(frozen=True)
+class QTableCacheBuildResult:
+    q_table_cache: dict
+    train_df_cache: dict
+    diagnostics: list[SampleDiagnostic]
+
+
+@dataclass(frozen=True)
+class PretrainQTableDiagnosticsResult:
+    sample_plan: list[SamplePlanItem]
+    q_table_cache: dict
+    train_df_cache: dict
+    diagnostics: list[SampleDiagnostic]
+    sample_action_cache: dict[SamplePlanItem, list[int]]
+
+
 def build_sample_plan(total_df_index_length, position_choices):
     return [
-        (df_index, initial_action)
+        SamplePlanItem(df_index, initial_action)
         for df_index in range(total_df_index_length)
         for initial_action in range(position_choices)
     ]
@@ -34,12 +152,30 @@ def select_sample_from_plan(sample_plan):
     return random.choice(sample_plan)
 
 
-def get_sample_action_from_cache(sample_action_cache_by_plan, df_index, initial_action):
-    sample_key = (df_index, initial_action)
+def _coerce_sample_item(sample_item):
+    if isinstance(sample_item, SamplePlanItem):
+        return sample_item
+    df_index, initial_action = sample_item
+    return SamplePlanItem(int(df_index), int(initial_action))
+
+
+def get_sample_action_from_cache(
+    sample_action_cache_by_plan,
+    sample_item_or_df_index,
+    initial_action=None,
+):
+    if isinstance(sample_item_or_df_index, SamplePlanItem):
+        sample_key = sample_item_or_df_index
+    else:
+        sample_key = SamplePlanItem(int(sample_item_or_df_index), int(initial_action))
     if sample_key not in sample_action_cache_by_plan:
+        legacy_sample_key = sample_key.to_tuple()
+        if legacy_sample_key in sample_action_cache_by_plan:
+            return sample_action_cache_by_plan[legacy_sample_key]
         raise KeyError(
             "sample_action_cache missing for df_index={} initial_action={}".format(
-                df_index, initial_action
+                sample_key.df_index,
+                sample_key.initial_action,
             )
         )
     return sample_action_cache_by_plan[sample_key]
@@ -70,7 +206,11 @@ def _create_q_table_worker(args):
                     output_dir,
                 )
             )
-    return df_index, train_df, q_table, diagnostics
+    return QTableCacheBuildResult(
+        q_table_cache={df_index: q_table},
+        train_df_cache={df_index: train_df},
+        diagnostics=diagnostics,
+    )
 
 
 def build_q_table_cache(
@@ -81,15 +221,18 @@ def build_q_table_cache(
     output_dir=None,
     process_count=None,
 ):
-    unique_df_indices = sorted({df_index for df_index, _ in sample_plan})
+    sample_plan = [_coerce_sample_item(item) for item in sample_plan]
+    unique_df_indices = sorted({item.df_index for item in sample_plan})
     if process_count is None:
         process_count = min(len(unique_df_indices), os.cpu_count() or 1)
     process_count = max(1, process_count)
 
     sample_tasks_by_df = {}
     if env_kwargs is not None and output_dir is not None:
-        for df_index, initial_action in sample_plan:
-            sample_tasks_by_df.setdefault(df_index, []).append(initial_action)
+        for item in sample_plan:
+            sample_tasks_by_df.setdefault(item.df_index, []).append(
+                item.initial_action
+            )
 
     worker_args = [
         (
@@ -111,11 +254,11 @@ def build_q_table_cache(
     train_df_cache = {}
     q_table_cache = {}
     diagnostics = []
-    for df_index, train_df, q_table, worker_diagnostics in results:
-        train_df_cache[df_index] = train_df
-        q_table_cache[df_index] = q_table
-        diagnostics.extend(worker_diagnostics)
-    return q_table_cache, train_df_cache, diagnostics
+    for result in results:
+        q_table_cache.update(result.q_table_cache)
+        train_df_cache.update(result.train_df_cache)
+        diagnostics.extend(result.diagnostics)
+    return QTableCacheBuildResult(q_table_cache, train_df_cache, diagnostics)
 
 
 def extend_q_table_cache(
@@ -136,15 +279,15 @@ def extend_q_table_cache(
     if not missing_df_indices:
         return q_table_cache, train_df_cache
 
-    missing_plan = [(df_index, 0) for df_index in missing_df_indices]
-    missing_q_table_cache, missing_train_df_cache, _ = build_q_table_cache(
+    missing_plan = [SamplePlanItem(df_index, 0) for df_index in missing_df_indices]
+    cache_result = build_q_table_cache(
         missing_plan,
         train_data_path,
         qtable_kwargs,
         process_count=process_count,
     )
-    q_table_cache.update(missing_q_table_cache)
-    train_df_cache.update(missing_train_df_cache)
+    q_table_cache.update(cache_result.q_table_cache)
+    train_df_cache.update(cache_result.train_df_cache)
     return q_table_cache, train_df_cache
 
 
@@ -212,15 +355,17 @@ def _build_diagnostics_manifest(
     qtable_kwargs,
     env_kwargs,
 ):
-    return _normalize_manifest_value(
-        {
-            "diagnostic_count": diagnostic_count,
-            "total_df_index_length": total_df_index_length,
-            "position_choices": position_choices,
-            "qtable_kwargs": qtable_kwargs,
-            "env_kwargs": env_kwargs,
-        }
+    return QTableDiagnosticsManifest(
+        diagnostic_count=diagnostic_count,
+        total_df_index_length=total_df_index_length,
+        position_choices=position_choices,
+        qtable_kwargs=qtable_kwargs,
+        env_kwargs=env_kwargs,
     )
+
+
+def _manifest_payload(manifest):
+    return manifest.to_dict() if hasattr(manifest, "to_dict") else manifest
 
 
 def _manifest_matches(output_dir, expected_manifest):
@@ -232,14 +377,14 @@ def _manifest_matches(output_dir, expected_manifest):
             existing_manifest = json.load(manifest_file)
     except (OSError, json.JSONDecodeError):
         return False
-    return existing_manifest == expected_manifest
+    return existing_manifest == _manifest_payload(expected_manifest)
 
 
 def _write_diagnostics_manifest(output_dir, manifest):
     os.makedirs(output_dir, exist_ok=True)
     manifest_path = os.path.join(output_dir, DIAGNOSTIC_MANIFEST_NAME)
     with open(manifest_path, "w", encoding="utf-8") as manifest_file:
-        json.dump(manifest, manifest_file, sort_keys=True, indent=2)
+        json.dump(_manifest_payload(manifest), manifest_file, sort_keys=True, indent=2)
         manifest_file.write("\n")
 
 
@@ -261,27 +406,27 @@ def _diagnostic_row(
 ):
     source_row = train_df.iloc[min(step_index, len(train_df) - 1)]
     step_slippage = env.slippage_sum - previous_slippage_sum
-    return {
-        "df_index": df_index,
-        "initial_action": initial_action,
-        "step_index": step_index,
-        "timestamp": _value_from_row(source_row, "timestamp"),
-        "open": _value_from_row(source_row, "open"),
-        "high": _value_from_row(source_row, "high"),
-        "low": _value_from_row(source_row, "low"),
-        "close": _value_from_row(source_row, "close"),
-        "volume": _value_from_row(source_row, "volume"),
-        "mark_price": _value_from_row(source_row, "mark_price"),
-        "action": action,
-        "previous_action": previous_action,
-        "position": env.position,
-        "leverage": env.leverage,
-        "commission_rate": env.commission_rate,
-        "step_slippage": step_slippage,
-        "step_reward": reward,
-        "cumulative_profit": cumulative_profit,
-        "profitable": cumulative_profit > 0,
-    }
+    return DiagnosticCsvRow(
+        df_index=df_index,
+        initial_action=initial_action,
+        step_index=step_index,
+        timestamp=_value_from_row(source_row, "timestamp"),
+        open=_value_from_row(source_row, "open"),
+        high=_value_from_row(source_row, "high"),
+        low=_value_from_row(source_row, "low"),
+        close=_value_from_row(source_row, "close"),
+        volume=_value_from_row(source_row, "volume"),
+        mark_price=_value_from_row(source_row, "mark_price"),
+        action=action,
+        previous_action=previous_action,
+        position=env.position,
+        leverage=env.leverage,
+        commission_rate=env.commission_rate,
+        step_slippage=step_slippage,
+        step_reward=reward,
+        cumulative_profit=cumulative_profit,
+        profitable=cumulative_profit > 0,
+    )
 
 
 def evaluate_and_export_sample(
@@ -334,15 +479,15 @@ def evaluate_and_export_sample(
         output_dir,
         "df_{}_initial_action_{}.csv".format(df_index, initial_action),
     )
-    pl.DataFrame(rows).write_csv(csv_path)
-    return {
-        "df_index": df_index,
-        "initial_action": initial_action,
-        "episode_reward_sum": cumulative_profit,
-        "profitable": cumulative_profit > 0,
-        "csv_path": csv_path,
-        "action_list": [row["action"] for row in rows],
-    }
+    pl.DataFrame([row.to_dict() for row in rows]).write_csv(csv_path)
+    return SampleDiagnostic(
+        df_index=df_index,
+        initial_action=initial_action,
+        episode_reward_sum=cumulative_profit,
+        profitable=cumulative_profit > 0,
+        csv_path=csv_path,
+        action_list=[row.action for row in rows],
+    )
 
 
 def _load_existing_diagnostics(
@@ -364,10 +509,12 @@ def _load_existing_diagnostics(
             continue
         df_index = int(match.group("df_index"))
         initial_action = int(match.group("initial_action"))
-        csv_by_plan[(df_index, initial_action)] = os.path.join(output_dir, file_name)
+        csv_by_plan[SamplePlanItem(df_index, initial_action)] = os.path.join(
+            output_dir, file_name
+        )
 
     sample_plan = [
-        (df_index, initial_action)
+        SamplePlanItem(df_index, initial_action)
         for df_index in range(total_df_index_length)
         for initial_action in range(position_choices)
     ]
@@ -377,8 +524,8 @@ def _load_existing_diagnostics(
     diagnostics = []
     sample_action_cache = {}
     train_df_cache = {}
-    for df_index, initial_action in sample_plan:
-        csv_path = csv_by_plan[(df_index, initial_action)]
+    for sample_item in sample_plan:
+        csv_path = csv_by_plan[sample_item]
         diagnostic_df = pl.read_csv(csv_path)
         if "action" not in diagnostic_df.columns:
             return None
@@ -389,23 +536,32 @@ def _load_existing_diagnostics(
         else:
             return None
 
-        sample_action_cache[(df_index, initial_action)] = (
-            diagnostic_df["action"].cast(pl.Int64).to_list()
-        )
+        action_list = diagnostic_df["action"].cast(pl.Int64).to_list()
+        sample_action_cache[sample_item] = action_list
+        episode_reward_sum = float(episode_reward_sum)
         diagnostics.append(
-            {
-                "df_index": df_index,
-                "initial_action": initial_action,
-                "episode_reward_sum": episode_reward_sum,
-                "profitable": episode_reward_sum > 0,
-                "csv_path": csv_path,
-            }
+            SampleDiagnostic(
+                df_index=sample_item.df_index,
+                initial_action=sample_item.initial_action,
+                episode_reward_sum=episode_reward_sum,
+                profitable=episode_reward_sum > 0,
+                csv_path=csv_path,
+                action_list=action_list,
+            )
         )
-        if df_index not in train_df_cache:
-            df_path = os.path.join(train_data_path, "df_{}.feather".format(df_index))
-            train_df_cache[df_index] = pd.read_feather(df_path)
+        if sample_item.df_index not in train_df_cache:
+            df_path = os.path.join(
+                train_data_path, "df_{}.feather".format(sample_item.df_index)
+            )
+            train_df_cache[sample_item.df_index] = pd.read_feather(df_path)
 
-    return sample_plan, {}, train_df_cache, diagnostics, sample_action_cache
+    return PretrainQTableDiagnosticsResult(
+        sample_plan=sample_plan,
+        q_table_cache={},
+        train_df_cache=train_df_cache,
+        diagnostics=diagnostics,
+        sample_action_cache=sample_action_cache,
+    )
 
 
 def prepare_pretrain_qtable_diagnostics(
@@ -435,18 +591,18 @@ def prepare_pretrain_qtable_diagnostics(
         position_choices,
     )
     if existing is not None:
-        for diagnostic in existing[3]:
+        for diagnostic in existing.diagnostics:
             message = (
                 "qtable诊断 | df_index={df_index} | "
                 "initial_action={initial_action} | episode_reward_sum={episode_reward_sum:.4f} | "
                 "profitable={profitable} | csv_path={csv_path} | source=csv"
-            ).format(**diagnostic)
+            ).format(**diagnostic.to_dict(include_action_list=False))
             if logger is not None:
                 logger.info(message)
         return existing
 
     sample_plan = build_sample_plan(total_df_index_length, position_choices)
-    q_table_cache, train_df_cache, diagnostics = build_q_table_cache(
+    cache_result = build_q_table_cache(
         sample_plan,
         train_data_path,
         qtable_kwargs,
@@ -456,18 +612,22 @@ def prepare_pretrain_qtable_diagnostics(
     )
     sample_action_cache = {}
     diagnostics = sorted(
-        diagnostics, key=lambda item: (item["df_index"], item["initial_action"])
+        cache_result.diagnostics, key=lambda item: (item.df_index, item.initial_action)
     )
     for diagnostic in diagnostics:
-        sample_action_cache[
-            (diagnostic["df_index"], diagnostic["initial_action"])
-        ] = diagnostic["action_list"]
+        sample_action_cache[diagnostic.sample_item] = diagnostic.action_list
         message = (
             "qtable诊断 | df_index={df_index} | "
             "initial_action={initial_action} | episode_reward_sum={episode_reward_sum:.4f} | "
             "profitable={profitable} | csv_path={csv_path}"
-        ).format(**diagnostic)
+        ).format(**diagnostic.to_dict(include_action_list=False))
         if logger is not None:
             logger.info(message)
     _write_diagnostics_manifest(output_dir, manifest)
-    return sample_plan, q_table_cache, train_df_cache, diagnostics, sample_action_cache
+    return PretrainQTableDiagnosticsResult(
+        sample_plan=sample_plan,
+        q_table_cache=cache_result.q_table_cache,
+        train_df_cache=cache_result.train_df_cache,
+        diagnostics=diagnostics,
+        sample_action_cache=sample_action_cache,
+    )

@@ -177,7 +177,7 @@ Run: `conda activate finetf && pytest FineFT/tests/rl/test_pretrain_qtable_diagn
 
 Expected: FAIL with missing `SamplePlanItem`, `PretrainQTableDiagnosticsResult`, or old tuple/dict return assumptions.
 
-- [ ] **Step 5: Update parallel rollout tests to require dataclass contracts**
+- [x] **Step 5: Update parallel rollout tests to require dataclass contracts**
 
 In `FineFT/tests/rl/test_parallel_weight_advantage_pretrain.py`, update key assertions:
 
@@ -263,13 +263,13 @@ pwap.raise_for_worker_error(
 )
 ```
 
-- [ ] **Step 6: Run parallel rollout tests to verify they fail**
+- [x] **Step 6: Run parallel rollout tests to verify they fail**
 
 Run: `conda activate finetf && pytest FineFT/tests/rl/test_parallel_weight_advantage_pretrain.py -q`
 
 Expected: FAIL with missing dataclass types or old dict access in implementation.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 2: Refactor loss NaN diagnostics dataclasses
 
@@ -280,7 +280,7 @@ Expected: FAIL with missing dataclass types or old dict access in implementation
 - Modify: `FineFT/RL/DiHFT/low_level/loss_nan_diagnostics.py`
 - Test: `FineFT/tests/rl/test_weight_advantage_pretrain_logging.py`
 
-- [ ] **Step 1: Add loss diagnostics dataclasses**
+- [x] **Step 1: Add loss diagnostics dataclasses**
 
 At the top of `FineFT/RL/DiHFT/low_level/loss_nan_diagnostics.py`, after imports, add:
 
@@ -356,7 +356,7 @@ class LossNanDiagnostics:
         }
 ```
 
-- [ ] **Step 2: Convert numeric summary builder to dataclass**
+- [x] **Step 2: Convert numeric summary builder to dataclass**
 
 In `_summarize_numeric_value`, replace summary dict construction with `NumericValueSummary` construction. Preserve the existing finite stats logic:
 
@@ -422,7 +422,7 @@ def _summarize_numeric_value(value, max_indices=10):
     return None
 ```
 
-- [ ] **Step 3: Convert nonfinite location and diagnostics builders**
+- [x] **Step 3: Convert nonfinite location and diagnostics builders**
 
 Update `_find_nonfinite_locations` and `build_loss_nan_diagnostics`:
 
@@ -478,7 +478,7 @@ def build_loss_nan_diagnostics(numeric_values, info_values, max_items=20):
     return diagnostics
 ```
 
-- [ ] **Step 4: Update logger usage to attributes**
+- [x] **Step 4: Update logger usage to attributes**
 
 In `log_loss_nan_diagnostics`, replace dict access with attributes:
 
@@ -497,7 +497,7 @@ else:
     logger.error("loss nan data nonfinite | no nonfinite values found in info")
 ```
 
-- [ ] **Step 5: Run loss diagnostics verification**
+- [x] **Step 5: Run loss diagnostics verification**
 
 Run: `conda activate finetf && pytest FineFT/tests/rl/test_weight_advantage_pretrain_logging.py::test_build_loss_nan_diagnostics_identifies_nonfinite_training_data -q`
 
@@ -507,7 +507,7 @@ Run: `conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/lo
 
 Expected: exits with status 0.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 3: Refactor qtable diagnostics dataclasses
 
@@ -518,7 +518,7 @@ Expected: exits with status 0.
 - Modify: `FineFT/RL/DiHFT/low_level/pretrain_qtable_diagnostics.py`
 - Test: `FineFT/tests/rl/test_pretrain_qtable_diagnostics.py`
 
-- [ ] **Step 1: Add qtable diagnostics dataclasses**
+- [x] **Step 1: Add qtable diagnostics dataclasses**
 
 Add these top-level definitions after constants in `pretrain_qtable_diagnostics.py`:
 
@@ -643,7 +643,7 @@ class PretrainQTableDiagnosticsResult:
     sample_action_cache: dict[SamplePlanItem, list[int]]
 ```
 
-- [ ] **Step 2: Convert sample plan and worker result functions**
+- [x] **Step 2: Convert sample plan and worker result functions**
 
 Update `build_sample_plan`, `_create_q_table_worker`, and `build_q_table_cache`:
 
@@ -714,7 +714,7 @@ for result in results:
 return QTableCacheBuildResult(q_table_cache, train_df_cache, diagnostics)
 ```
 
-- [ ] **Step 3: Convert manifest and CSV row writing**
+- [x] **Step 3: Convert manifest and CSV row writing**
 
 Replace `_build_diagnostics_manifest` with an object return:
 
@@ -778,7 +778,7 @@ return SampleDiagnostic(
 )
 ```
 
-- [ ] **Step 4: Convert existing-cache and prepare return path**
+- [x] **Step 4: Convert existing-cache and prepare return path**
 
 Update `_load_existing_diagnostics` so it builds `SamplePlanItem`, `SampleDiagnostic`, and `PretrainQTableDiagnosticsResult`:
 
@@ -839,7 +839,7 @@ return PretrainQTableDiagnosticsResult(
 )
 ```
 
-- [ ] **Step 5: Keep compatibility for explicit cache lookup parameters**
+- [x] **Step 5: Keep compatibility for explicit cache lookup parameters**
 
 Update `get_sample_action_from_cache` to accept either a `SamplePlanItem` or explicit legacy parameters:
 
@@ -863,7 +863,7 @@ def get_sample_action_from_cache(
     return sample_action_cache_by_plan[sample_key]
 ```
 
-- [ ] **Step 6: Run qtable diagnostics verification**
+- [x] **Step 6: Run qtable diagnostics verification**
 
 Run: `conda activate finetf && pytest FineFT/tests/rl/test_pretrain_qtable_diagnostics.py -q`
 
@@ -873,7 +873,7 @@ Run: `conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/pr
 
 Expected: exits with status 0.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 4: Update training callers for qtable dataclass results
 
@@ -886,7 +886,7 @@ Expected: exits with status 0.
 - Test: `FineFT/tests/rl/test_pretrain_qtable_diagnostics.py`
 - Test: `FineFT/tests/rl/test_parallel_weight_advantage_pretrain.py`
 
-- [ ] **Step 1: Update serial pretrain caller unpacking**
+- [x] **Step 1: Update serial pretrain caller unpacking**
 
 In `weight_advantage_pretrain.py`, replace the tuple unpacking with result attributes:
 
@@ -918,7 +918,7 @@ self.perfection_action_list = get_sample_action_from_cache(
 )
 ```
 
-- [ ] **Step 2: Update parallel pretrain caller unpacking**
+- [x] **Step 2: Update parallel pretrain caller unpacking**
 
 In `parallel_weight_advantage_pretrain.py`, apply the same `diagnostics_result` pattern to the call near `prepare_pretrain_qtable_diagnostics(...)`. Keep `q_table_cache`, `train_df_cache`, and `sample_action_cache` variable names after assignment so the rest of the train method stays narrow.
 
@@ -938,13 +938,13 @@ train_df_cache = diagnostics_result.train_df_cache
 sample_action_cache = diagnostics_result.sample_action_cache
 ```
 
-- [ ] **Step 3: Search for stale tuple cache access**
+- [x] **Step 3: Search for stale tuple cache access**
 
 Run: `rg -n "prepare_pretrain_qtable_diagnostics\\(|get_sample_action_from_cache\\(|sample_plan\\[|df_index, initial_action|\\[\"df_index\"\\]|\\[\"initial_action\"\\]" FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py FineFT/RL/DiHFT/low_level/parallel_weight_advantage_pretrain.py FineFT/tests/rl`
 
 Expected: output shows no tuple unpacking of `prepare_pretrain_qtable_diagnostics`, no sample-plan tuple destructuring, and no qtable diagnostic string-key access outside `.to_dict()` compatibility checks.
 
-- [ ] **Step 4: Run caller verification**
+- [x] **Step 4: Run caller verification**
 
 Run: `conda activate finetf && pytest FineFT/tests/rl/test_pretrain_qtable_diagnostics.py FineFT/tests/rl/test_parallel_weight_advantage_pretrain.py -q`
 
@@ -954,7 +954,7 @@ Run: `conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/we
 
 Expected: exits with status 0.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 5: Refactor parallel rollout dataclass contracts
 
@@ -965,7 +965,7 @@ Expected: exits with status 0.
 - Modify: `FineFT/RL/DiHFT/low_level/parallel_weight_advantage_pretrain.py`
 - Test: `FineFT/tests/rl/test_parallel_weight_advantage_pretrain.py`
 
-- [ ] **Step 1: Add parallel rollout dataclasses**
+- [x] **Step 1: Add parallel rollout dataclasses**
 
 Near the top of `parallel_weight_advantage_pretrain.py`, after imports and logger setup, add:
 
@@ -1130,7 +1130,7 @@ class ParallelRoundSummary:
         }
 ```
 
-- [ ] **Step 2: Convert metric and summary helpers**
+- [x] **Step 2: Convert metric and summary helpers**
 
 Update helper return values and readers:
 
@@ -1194,7 +1194,7 @@ return EpochTrainingParams(
 )
 ```
 
-- [ ] **Step 3: Convert task iterator and sorting/error helpers**
+- [x] **Step 3: Convert task iterator and sorting/error helpers**
 
 Update task iterator and sorting:
 
@@ -1239,7 +1239,7 @@ def raise_for_worker_error(message):
     )
 ```
 
-- [ ] **Step 4: Convert worker queue message handling**
+- [x] **Step 4: Convert worker queue message handling**
 
 Update `df_rollout_worker` and `DfRolloutWorkerRunner`:
 
@@ -1333,7 +1333,7 @@ transitions.append(
 )
 ```
 
-- [ ] **Step 5: Convert trainer worker send/collect and round logging**
+- [x] **Step 5: Convert trainer worker send/collect and round logging**
 
 Replace queue sends:
 
@@ -1422,7 +1422,7 @@ return ParallelRoundSummary(
 )
 ```
 
-- [ ] **Step 6: Update epoch parameter usage**
+- [x] **Step 6: Update epoch parameter usage**
 
 In `_run_parallel_diverse_training`, replace dict access:
 
@@ -1432,7 +1432,7 @@ self.ada = params.ada
 self.lr = params.lr
 ```
 
-- [ ] **Step 7: Run parallel rollout verification**
+- [x] **Step 7: Run parallel rollout verification**
 
 Run: `conda activate finetf && pytest FineFT/tests/rl/test_parallel_weight_advantage_pretrain.py -q`
 
@@ -1442,7 +1442,7 @@ Run: `conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/pa
 
 Expected: exits with status 0.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 6: Run focused verification
 
@@ -1454,7 +1454,7 @@ Expected: exits with status 0.
 - Modify: `openspec/changes/refactor-rl-diagnostics-dataclasses/plan-ready.md`
 - Modify: `docs/superpowers/plans/2026-07-22-refactor-rl-diagnostics-dataclasses.md`
 
-- [ ] **Step 1: Run focused tests**
+- [x] **Step 1: Run focused tests**
 
 Run:
 
@@ -1464,7 +1464,7 @@ conda activate finetf && pytest FineFT/tests/rl/test_weight_advantage_pretrain_l
 
 Expected: PASS.
 
-- [ ] **Step 2: Run Python compilation checks**
+- [x] **Step 2: Run Python compilation checks**
 
 Run:
 
@@ -1474,7 +1474,7 @@ conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/loss_nan
 
 Expected: exits with status 0 and prints no syntax errors.
 
-- [ ] **Step 3: Run OpenSpec strict validation**
+- [x] **Step 3: Run OpenSpec strict validation**
 
 Run:
 
@@ -1484,7 +1484,7 @@ openspec validate refactor-rl-diagnostics-dataclasses --strict
 
 Expected: `Change 'refactor-rl-diagnostics-dataclasses' is valid`.
 
-- [ ] **Step 4: Check for stale anonymous business-record access**
+- [x] **Step 4: Check for stale anonymous business-record access**
 
 Run:
 
@@ -1494,7 +1494,7 @@ rg -n "\\[\"(df_index|initial_action|worker_steps|round_counter|return_rate|rewa
 
 Expected: output is limited to legitimate external dicts such as `env_kwargs`, `info`, `worker_config`, `qtable_kwargs`, `state_dict`, and `.to_dict()` compatibility tests. Any result touching dataclass-owned fields should be changed to attribute access.
 
-- [ ] **Step 5: Update task checkboxes after implementation**
+- [x] **Step 5: Update task checkboxes after implementation**
 
 After Tasks 1-5 have passed, update:
 
@@ -1506,4 +1506,4 @@ docs/superpowers/plans/2026-07-22-refactor-rl-diagnostics-dataclasses.md
 
 Change the corresponding task-level checkboxes from `[ ]` to `[x]` only for tasks whose tests and verification commands passed.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
