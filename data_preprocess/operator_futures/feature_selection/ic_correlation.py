@@ -4,7 +4,6 @@ import numpy as np
 import os
 import argparse
 import sys
-import json
 import logging
 from pathlib import Path
 import time
@@ -15,6 +14,10 @@ sys.path.append(".")
 from operator_futures.data_quality import DataQualityValidator
 from operator_futures.util import symbol_contract_path_parts
 from operator_futures.feature_selection.cor_util import select_feature
+from operator_futures.feature_selection.manifests import (
+    FeatureScoreWindow,
+    IcCorrelationResult,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -176,7 +179,7 @@ def select_reward_state_features(df, market_type="crypto_futures", orderbook_dep
     return reward_features, state_feature
 
 
-def main(args):
+def main(args) -> IcCorrelationResult:
     started_at = time.monotonic()
     args.data_path = os.path.join(args.root_path, args.data_path)
     args.save_path = os.path.join(args.root_path, args.save_path)
@@ -220,6 +223,7 @@ def main(args):
     )
 
     ic_selection_key_all = []
+    score_windows: list[FeatureScoreWindow] = []
     for window_length in args.windows_list:
         logger.info("Calculating IC window: window=%d", window_length)
         target = calculate_target(df, "mark_price", window_length)
@@ -232,9 +236,13 @@ def main(args):
             zip(state_feature, ic_result), key=lambda x: abs(x[1]), reverse=True
         )
 
-        cor = {feature: result for feature, result in sorted_pairs}
-        with open(output_dir / "ic_window_{}.json".format(window_length), "w") as f:
-            json.dump(cor, f)
+        score_window = FeatureScoreWindow(
+            window_length=window_length,
+            scores={feature: result for feature, result in sorted_pairs},
+        )
+        score_windows.append(score_window)
+        cor = score_window.to_dict()
+        score_window.write_json(output_dir / "ic_window_{}.json".format(window_length))
         cor_abs = {}
         for key in cor.keys():
             cor_abs[key] = abs(cor[key])
@@ -271,7 +279,12 @@ def main(args):
         len(out.columns),
         time.monotonic() - started_at,
     )
-    return out
+    return IcCorrelationResult(
+        frame=out,
+        output_dir=output_dir,
+        selected_features=state_feature,
+        score_windows=score_windows,
+    )
 
 
 if __name__ == "__main__":

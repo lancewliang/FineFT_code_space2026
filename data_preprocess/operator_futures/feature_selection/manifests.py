@@ -1,0 +1,204 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import polars as pl
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+@dataclass
+class FeatureSelectionContractRecord:
+    contract: str
+    input_path: str
+    metric_path: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract": self.contract,
+            "input_path": self.input_path,
+            "metric_path": self.metric_path,
+        }
+
+
+@dataclass
+class FilteredOutputRecord:
+    contract: str
+    output_path: str
+    output_row_count: int
+    output_column_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract": self.contract,
+            "output_path": self.output_path,
+            "output_row_count": self.output_row_count,
+            "output_column_count": self.output_column_count,
+        }
+
+
+@dataclass
+class ContractOutputShape:
+    rows: int
+    columns: int
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "rows": self.rows,
+            "columns": self.columns,
+        }
+
+
+@dataclass
+class FeatureSelectionManifest:
+    symbol: str
+    target_freq: str
+    stage: str
+    split_input_dir: str
+    windows_list: list[int]
+    aggregate_metrics_path: str
+    contracts: list[FeatureSelectionContractRecord] = field(default_factory=list)
+    selected_feature_file: str | None = None
+    selected_feature_count: int | None = None
+    selected_features: list[str] | None = None
+    composite_drop_ratio: float | None = None
+    filter_results: dict[str, list[str]] | None = None
+    filtered_outputs: list[FilteredOutputRecord] | None = None
+    evaluated_feature_file: str | None = None
+    evaluated_feature_count: int | None = None
+    evaluated_features: list[str] | None = None
+    report_only: bool | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "symbol": self.symbol,
+            "target_freq": self.target_freq,
+            "stage": self.stage,
+            "split_input_dir": self.split_input_dir,
+        }
+        if self.selected_feature_file is not None:
+            payload["selected_feature_file"] = self.selected_feature_file
+            payload["selected_feature_count"] = self.selected_feature_count
+            payload["selected_features"] = list(self.selected_features or [])
+        if self.evaluated_feature_file is not None:
+            payload["evaluated_feature_file"] = self.evaluated_feature_file
+            payload["evaluated_feature_count"] = self.evaluated_feature_count
+            payload["evaluated_features"] = list(self.evaluated_features or [])
+        payload["windows_list"] = list(self.windows_list)
+        if self.composite_drop_ratio is not None:
+            payload["composite_drop_ratio"] = self.composite_drop_ratio
+        payload["aggregate_metrics_path"] = self.aggregate_metrics_path
+        if self.filter_results is not None:
+            payload["filter_results"] = {
+                key: list(values) for key, values in self.filter_results.items()
+            }
+        payload["contracts"] = [contract.to_dict() for contract in self.contracts]
+        if self.filtered_outputs is not None:
+            payload["filtered_outputs"] = [
+                output.to_dict() for output in self.filtered_outputs
+            ]
+        if self.report_only is not None:
+            payload["report_only"] = self.report_only
+        return payload
+
+    def write_json(self, path: Path) -> None:
+        _write_json(path, self.to_dict())
+
+
+@dataclass
+class FeatureUnionManifest:
+    symbol: str
+    target_freq: str
+    start_date: str
+    end_date: str
+    summary_path: str
+    contracts: list[str]
+    contract_state_feature_paths: dict[str, str]
+    per_contract_feature_counts: dict[str, int]
+    state_feature_count: int
+    state_features: list[str]
+    candidate_source_path: str | None
+    all_feature_path: str
+    ic_result_path: str
+    finalize_filtered_df: bool
+    per_contract_output_paths: dict[str, str] = field(default_factory=dict)
+    per_contract_output_shapes: dict[str, ContractOutputShape] = field(
+        default_factory=dict
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "target_freq": self.target_freq,
+            "start_date": self.start_date,
+            "end_date": self.end_date,
+            "summary_path": self.summary_path,
+            "contracts": list(self.contracts),
+            "contract_state_feature_paths": dict(self.contract_state_feature_paths),
+            "per_contract_feature_counts": dict(self.per_contract_feature_counts),
+            "state_feature_count": self.state_feature_count,
+            "state_features": list(self.state_features),
+            "candidate_source_path": self.candidate_source_path,
+            "all_feature_path": self.all_feature_path,
+            "ic_result_path": self.ic_result_path,
+            "finalize_filtered_df": self.finalize_filtered_df,
+            "per_contract_output_paths": dict(self.per_contract_output_paths),
+            "per_contract_output_shapes": {
+                contract: shape.to_dict()
+                for contract, shape in self.per_contract_output_shapes.items()
+            },
+        }
+
+    def write_json(self, path: Path) -> None:
+        _write_json(path, self.to_dict())
+
+
+@dataclass
+class FeatureScoreWindow:
+    window_length: int
+    scores: dict[str, float]
+
+    def to_dict(self) -> dict[str, float]:
+        return {
+            str(feature): float(score)
+            for feature, score in self.scores.items()
+        }
+
+    def write_json(self, path: Path) -> None:
+        _write_json(path, self.to_dict())
+
+
+@dataclass
+class FeatureSelectionResult:
+    output_dir: Path
+    manifest: FeatureSelectionManifest
+
+
+@dataclass
+class FeatureUnionResult:
+    output_dir: Path
+    manifest: FeatureUnionManifest
+
+
+@dataclass
+class IcCorrelationResult:
+    frame: pl.DataFrame
+    output_dir: Path
+    selected_features: list[str]
+    score_windows: list[FeatureScoreWindow]
+
+
+@dataclass
+class RankIcCorrelationResult:
+    frame: pl.DataFrame
+    output_dir: Path
+    selected_features: list[str]
+    score_windows: list[FeatureScoreWindow]

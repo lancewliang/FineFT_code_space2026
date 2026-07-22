@@ -17,6 +17,7 @@ from operator_futures.feature_selection.muti_contract.pipeline import (
     _ordered_filter_features,
     run_feature_selection,
 )
+from operator_futures.feature_selection.manifests import FeatureSelectionResult
 
 
 def _write_split_contract(root: Path, stage: str, contract: str, alpha, beta, gamma=None):
@@ -317,14 +318,20 @@ def test_train_stage_writes_final_features_metrics_filtered_outputs_and_manifest
     assert (stage_dir / "aggregate_metrics.csv").exists()
     assert (stage_dir / "feature_selection_manifest.json").exists()
     assert (stage_dir / "fu2601" / "df.feather").exists()
-    assert manifest["stage"] == "train"
-    assert manifest["selected_feature_file"].endswith("train/state_features.npy")
-    assert manifest["selected_feature_count"] == len(selected_features)
+    persisted_manifest = json.loads(
+        (stage_dir / "feature_selection_manifest.json").read_text(encoding="utf-8")
+    )
+    assert isinstance(manifest, FeatureSelectionResult)
+    assert manifest.output_dir == stage_dir
+    assert manifest.manifest.stage == "train"
+    assert manifest.manifest.selected_feature_file.endswith("train/state_features.npy")
+    assert manifest.manifest.selected_feature_count == len(selected_features)
+    assert persisted_manifest == manifest.manifest.to_dict()
     metrics = pl.read_csv(stage_dir / "aggregate_metrics.csv")
     assert {"IC_Mean", "IC_Std", "IC_Median", "Sharpe_Mean", "Sharpe_Std", "Sharpe_Median"}.issubset(metrics.columns)
     per_contract_metrics = pl.read_csv(stage_dir / "per_contract" / "fu2601_metrics.csv")
     assert per_contract_metrics["window"].unique().sort().to_list() == [1, 6, 12]
-    assert manifest["windows_list"] == [1, 6, 12]
+    assert manifest.manifest.windows_list == [1, 6, 12]
 
 
 def test_train_stage_rejects_illegal_feature_values_before_metrics(tmp_path, fake_catboost):
@@ -385,19 +392,19 @@ def test_valid_stage_evaluates_train_features_without_writing_downstream_feature
     assert not (stage_dir / "state_features.npy").exists()
     assert not (stage_dir / "fu2601" / "df.feather").exists()
     persisted_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["evaluated_feature_file"].endswith("train/state_features.npy")
-    assert persisted_manifest["evaluated_feature_file"] == manifest["evaluated_feature_file"]
-    assert manifest["report_only"] is True
-    assert manifest["evaluated_feature_count"] == 1
-    assert manifest["evaluated_features"] == ["alpha"]
+    assert isinstance(manifest, FeatureSelectionResult)
+    assert manifest.output_dir == stage_dir
+    assert manifest.manifest.evaluated_feature_file.endswith("train/state_features.npy")
+    assert persisted_manifest == manifest.manifest.to_dict()
+    assert persisted_manifest["evaluated_feature_file"] == manifest.manifest.evaluated_feature_file
+    assert manifest.manifest.report_only is True
+    assert manifest.manifest.evaluated_feature_count == 1
+    assert manifest.manifest.evaluated_features == ["alpha"]
     assert persisted_manifest["report_only"] is True
     assert persisted_manifest["evaluated_feature_count"] == 1
     assert persisted_manifest["evaluated_features"] == ["alpha"]
-    assert "filter_results" not in manifest
     assert "filter_results" not in persisted_manifest
-    assert "selected_feature_file" not in manifest
     assert "selected_feature_file" not in persisted_manifest
-    assert "filtered_outputs" not in manifest
     assert "filtered_outputs" not in persisted_manifest
 
 

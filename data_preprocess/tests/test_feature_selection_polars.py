@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import os
 import subprocess
@@ -9,6 +10,12 @@ import pandas as pd
 import polars as pl
 import pytest
 
+from operator_futures.feature_selection.manifests import (
+    FeatureScoreWindow,
+    IcCorrelationResult,
+    RankIcCorrelationResult,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -18,7 +25,7 @@ def _write_ic_fixture(path: Path) -> None:
     frame = pl.DataFrame(
         {
             "timestamp": list(range(12)),
-            "mark_price": [100.0 + i for i in range(12)],
+            "mark_price": [100.0 + float(i * i) for i in range(12)],
             "feature_a": [float(i) for i in range(12)],
             "feature_b": [float(12 - i) for i in range(12)],
         }
@@ -33,6 +40,23 @@ def _ic_args(tmp_path):
         save_path="PREPROCESS_DATASET/commodity-futures/IC_RESULT/",
         symbols="fu",
         contract=None,
+        target_freq="5min",
+        start_date="2026-01-05",
+        end_date="2026-01-06",
+        ic_theshold=0.01,
+        cor_theshold=0.7,
+        windows_list=[1],
+        market_type="commodity_futures",
+        orderbook_depth=5,
+    )
+
+
+def _rank_ic_args(tmp_path):
+    return SimpleNamespace(
+        root_path=str(tmp_path),
+        data_path="PREPROCESS_DATASET/commodity-futures/ALL_FEATURE/",
+        save_path="PREPROCESS_DATASET/commodity-futures/IC_RESULT/",
+        symbols="fu",
         target_freq="5min",
         start_date="2026-01-05",
         end_date="2026-01-06",
@@ -198,6 +222,68 @@ def test_ic_correlation_cli_writes_expected_files(tmp_path):
     assert (output_dir / "state_features.npy").exists()
     assert (output_dir / "correlation.csv").exists()
     assert np.load(output_dir / "state_features.npy", allow_pickle=True).size >= 0
+
+
+def test_ic_correlation_returns_result_object_and_score_window_json(tmp_path):
+    from operator_futures.feature_selection import ic_correlation
+
+    input_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/ALL_FEATURE/fu/5min"
+        / "2026-01-05-2026-01-06.feather"
+    )
+    _write_ic_fixture(input_file)
+
+    result = ic_correlation.main(_ic_args(tmp_path))
+
+    output_dir = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/IC_RESULT/fu/5min/2026-01-05-2026-01-06"
+    )
+    score_payload = json.loads(
+        (output_dir / "ic_window_1.json").read_text(encoding="utf-8")
+    )
+    assert isinstance(result, IcCorrelationResult)
+    assert result.output_dir == output_dir
+    assert result.frame.shape == pl.read_ipc(output_dir / "df.feather").shape
+    assert result.selected_features == np.load(
+        output_dir / "state_features.npy", allow_pickle=True
+    ).tolist()
+    assert len(result.score_windows) == 1
+    assert isinstance(result.score_windows[0], FeatureScoreWindow)
+    assert score_payload == result.score_windows[0].to_dict()
+    assert "feature_a" in score_payload
+
+
+def test_rank_ic_correlation_returns_result_object_and_score_window_json(tmp_path):
+    from operator_futures.feature_selection import rank_ic_correlation
+
+    input_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/ALL_FEATURE/fu/5min"
+        / "2026-01-05-2026-01-06.feather"
+    )
+    _write_ic_fixture(input_file)
+
+    result = rank_ic_correlation.main(_rank_ic_args(tmp_path))
+
+    output_dir = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/IC_RESULT/fu/5min/2026-01-05-2026-01-06"
+    )
+    score_payload = json.loads(
+        (output_dir / "rank_ic_window_1.json").read_text(encoding="utf-8")
+    )
+    assert isinstance(result, RankIcCorrelationResult)
+    assert result.output_dir == output_dir
+    assert result.frame.shape == pl.read_ipc(output_dir / "df_rank.feather").shape
+    assert result.selected_features == np.load(
+        output_dir / "state_features_rank.npy", allow_pickle=True
+    ).tolist()
+    assert len(result.score_windows) == 1
+    assert isinstance(result.score_windows[0], FeatureScoreWindow)
+    assert score_payload == result.score_windows[0].to_dict()
+    assert "feature_a" in score_payload
 
 
 def test_ic_correlation_rejects_illegal_input_values(tmp_path):

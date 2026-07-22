@@ -17,6 +17,7 @@ from operator_futures.feature_selection.contract_feature_union import (
     build_union_state_features,
     write_contract_feature_union,
 )
+from operator_futures.feature_selection.manifests import FeatureUnionResult
 
 
 def _snapshot():
@@ -275,7 +276,7 @@ def test_write_contract_feature_union_writes_symbol_level_manifest(tmp_path):
     np.save(first / "state_features.npy", np.array(["alpha", "beta"]))
     np.save(second / "state_features.npy", np.array(["beta", "gamma"]))
 
-    output_dir = write_contract_feature_union(
+    result = write_contract_feature_union(
         root_path=tmp_path,
         summary_path=summary_path,
         symbol="fu",
@@ -283,6 +284,8 @@ def test_write_contract_feature_union_writes_symbol_level_manifest(tmp_path):
         start_date="2026-01-01",
         end_date="2026-04-01",
     )
+    assert isinstance(result, FeatureUnionResult)
+    output_dir = result.output_dir
 
     assert output_dir == (
         base / "FEATURE_UNION" / "fu" / "5min" / "2026-01-01-2026-04-01"
@@ -295,9 +298,13 @@ def test_write_contract_feature_union_writes_symbol_level_manifest(tmp_path):
     manifest = json.loads(
         (output_dir / "feature_union_manifest.json").read_text(encoding="utf-8")
     )
+    assert manifest == result.manifest.to_dict()
     assert manifest["contracts"] == ["fu2601", "fu2605"]
     assert manifest["state_features"] == ["alpha", "beta", "gamma"]
     assert manifest["state_feature_count"] == 3
+    assert result.manifest.contracts == ["fu2601", "fu2605"]
+    assert result.manifest.state_features == ["alpha", "beta", "gamma"]
+    assert result.manifest.state_feature_count == 3
 
 
 def test_write_contract_feature_union_finalizes_ic_result_from_candidates(tmp_path):
@@ -333,7 +340,7 @@ def test_write_contract_feature_union_finalizes_ic_result_from_candidates(tmp_pa
             }
         ).write_ipc(all_feature_dir / f"{date_range}.feather")
 
-    output_dir = write_contract_feature_union(
+    result = write_contract_feature_union(
         root_path=tmp_path,
         summary_path=summary_path,
         symbol="fu",
@@ -347,6 +354,8 @@ def test_write_contract_feature_union_finalizes_ic_result_from_candidates(tmp_pa
         market_type="commodity_futures",
         orderbook_depth=5,
     )
+    assert isinstance(result, FeatureUnionResult)
+    output_dir = result.output_dir
 
     assert np.load(output_dir / "state_features.npy", allow_pickle=True).tolist() == [
         "alpha",
@@ -371,9 +380,12 @@ def test_write_contract_feature_union_finalizes_ic_result_from_candidates(tmp_pa
     manifest = json.loads(
         (output_dir / "feature_union_manifest.json").read_text(encoding="utf-8")
     )
+    assert manifest == result.manifest.to_dict()
     assert manifest["state_feature_count"] == 3
     assert manifest["per_contract_output_shapes"]["fu2601"]["rows"] == 2
     assert manifest["per_contract_output_shapes"]["fu2605"]["columns"] == 12
+    assert result.manifest.per_contract_output_shapes["fu2601"].rows == 2
+    assert result.manifest.per_contract_output_shapes["fu2605"].columns == 12
     assert manifest["candidate_source_path"] == "PREPROCESS_DATASET/commodity-futures/IC_RESULT"
     assert manifest["all_feature_path"] == "PREPROCESS_DATASET/commodity-futures/ALL_FEATURE"
     assert manifest["ic_result_path"] == "PREPROCESS_DATASET/commodity-futures/IC_RESULT"

@@ -1,5 +1,4 @@
 import argparse
-import json
 import logging
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -9,6 +8,11 @@ import polars as pl
 
 from operator_futures.commodity.main_contract import load_main_contract_summary
 from operator_futures.feature_selection.ic_correlation import select_reward_state_features
+from operator_futures.feature_selection.manifests import (
+    ContractOutputShape,
+    FeatureUnionManifest,
+    FeatureUnionResult,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -85,7 +89,7 @@ def write_contract_feature_union(
     finalize_filtered_df: bool = False,
     market_type: str = "commodity_futures",
     orderbook_depth: int = 5,
-) -> Path:
+) -> FeatureUnionResult:
     summary = load_main_contract_summary(summary_path)
     date_range = f"{start_date}-{end_date}"
     output_dir = root_path / save_path / symbol / target_freq / date_range
@@ -116,7 +120,7 @@ def write_contract_feature_union(
         raise ValueError("Feature union is empty; cannot finalize filtered IC_RESULT files")
 
     per_contract_outputs: dict[str, str] = {}
-    per_contract_output_shapes: dict[str, dict[str, int]] = {}
+    per_contract_output_shapes: dict[str, ContractOutputShape] = {}
     finalized_frames: dict[str, tuple[Path, pl.DataFrame]] = {}
     if finalize_filtered_df:
         for contract in summary.contracts:
@@ -153,10 +157,10 @@ def write_contract_feature_union(
             out = df.select(required_columns)
             finalized_frames[contract.contract] = (contract_output_dir, out)
             per_contract_outputs[contract.contract] = str(contract_output_dir / "df.feather")
-            per_contract_output_shapes[contract.contract] = {
-                "rows": out.height,
-                "columns": len(out.columns),
-            }
+            per_contract_output_shapes[contract.contract] = ContractOutputShape(
+                rows=out.height,
+                columns=len(out.columns),
+            )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     np.save(output_dir / "state_features.npy", np.array(union))
@@ -165,30 +169,27 @@ def write_contract_feature_union(
         out.write_ipc(contract_output_dir / "df.feather")
         np.save(contract_output_dir / "state_features.npy", np.array(union))
 
-    manifest = {
-        "symbol": symbol,
-        "target_freq": target_freq,
-        "start_date": start_date,
-        "end_date": end_date,
-        "summary_path": str(summary_path),
-        "contracts": list(contract_features),
-        "contract_state_feature_paths": contract_feature_paths,
-        "per_contract_feature_counts": {
+    manifest = FeatureUnionManifest(
+        symbol=symbol,
+        target_freq=target_freq,
+        start_date=start_date,
+        end_date=end_date,
+        summary_path=str(summary_path),
+        contracts=list(contract_features),
+        contract_state_feature_paths=contract_feature_paths,
+        per_contract_feature_counts={
             contract: len(features) for contract, features in contract_features.items()
         },
-        "state_feature_count": len(union),
-        "state_features": union,
-        "candidate_source_path": candidate_path,
-        "all_feature_path": all_feature_path,
-        "ic_result_path": ic_result_path,
-        "finalize_filtered_df": finalize_filtered_df,
-        "per_contract_output_paths": per_contract_outputs,
-        "per_contract_output_shapes": per_contract_output_shapes,
-    }
-    (output_dir / "feature_union_manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+        state_feature_count=len(union),
+        state_features=union,
+        candidate_source_path=candidate_path,
+        all_feature_path=all_feature_path,
+        ic_result_path=ic_result_path,
+        finalize_filtered_df=finalize_filtered_df,
+        per_contract_output_paths=per_contract_outputs,
+        per_contract_output_shapes=per_contract_output_shapes,
     )
+    manifest.write_json(output_dir / "feature_union_manifest.json")
     logger.info(
         "Wrote contract feature union: symbol=%s contracts=%d state_features=%d output_dir=%s",
         symbol,
@@ -196,7 +197,7 @@ def write_contract_feature_union(
         len(union),
         output_dir,
     )
-    return output_dir
+    return FeatureUnionResult(output_dir=output_dir, manifest=manifest)
 
 
 parser = argparse.ArgumentParser()

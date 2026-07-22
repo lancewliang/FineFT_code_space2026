@@ -1,7 +1,6 @@
 # utlize the correlation between the return of the mark price and feature.
 # select the features with high correlation with markprice return and low correlation with existing features.
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
@@ -11,6 +10,10 @@ import polars as pl
 
 sys.path.append(".")
 from operator_futures.feature_selection.cor_util import select_feature
+from operator_futures.feature_selection.manifests import (
+    FeatureScoreWindow,
+    RankIcCorrelationResult,
+)
 
 # TODO add multi-labelling: the target is calculated as a list of window lengths
 parser = argparse.ArgumentParser()
@@ -45,6 +48,19 @@ parser.add_argument(
     nargs="*",
     default=[1, 6, 12],
     help="List of threshold values",
+)
+parser.add_argument(
+    "--market_type",
+    type=str,
+    default="crypto_futures",
+    choices=["crypto_futures", "commodity_futures"],
+    help="the market type of the preprocessed data",
+)
+parser.add_argument(
+    "--orderbook_depth",
+    type=int,
+    default=25,
+    help="the available orderbook depth",
 )
 
 
@@ -88,7 +104,7 @@ def _select_reward_state_features(df: pl.DataFrame, market_type="crypto_futures"
     return reward_features, state_feature
 
 
-def main(args):
+def main(args) -> RankIcCorrelationResult:
     args.data_path = os.path.join(args.root_path, args.data_path)
     args.save_path = os.path.join(args.root_path, args.save_path)
     input_path = Path(args.data_path) / args.symbols / args.target_freq / f"{args.start_date}-{args.end_date}.feather"
@@ -100,14 +116,19 @@ def main(args):
         reward_features, state_feature = _select_reward_state_features(df, args.market_type, args.orderbook_depth)
 
     ic_selection_key_all = []
+    score_windows: list[FeatureScoreWindow] = []
     for window_length in args.windows_list:
         target = calculate_target(df, "mark_price", window_length)
         df_ic = df.slice(0, max(df.height - window_length, 0))
         ic_result = [calculate_cor(df_ic[feature].to_numpy(), target.to_numpy()) for feature in state_feature]
         sorted_pairs = sorted(zip(state_feature, ic_result), key=lambda x: abs(x[1]), reverse=True)
-        cor = {feature: result for feature, result in sorted_pairs}
-        with open(output_dir / f"rank_ic_window_{window_length}.json", "w") as f:
-            json.dump(cor, f)
+        score_window = FeatureScoreWindow(
+            window_length=window_length,
+            scores={feature: result for feature, result in sorted_pairs},
+        )
+        score_windows.append(score_window)
+        cor = score_window.to_dict()
+        score_window.write_json(output_dir / f"rank_ic_window_{window_length}.json")
         ic_selection_key_all.extend([key for key, value in cor.items() if abs(value) > args.ic_theshold])
 
     ic_selection_key = remove_duplicates_preserve_order(ic_selection_key_all)
@@ -119,7 +140,12 @@ def main(args):
     out = df.select([*reward_features, *selected_feature_names])
     out.write_ipc(output_dir / "df_rank.feather")
     np.save(output_dir / "state_features_rank.npy", np.array(selected_feature_names))
-    return out
+    return RankIcCorrelationResult(
+        frame=out,
+        output_dir=output_dir,
+        selected_features=selected_feature_names,
+        score_windows=score_windows,
+    )
 
 
 if __name__ == "__main__":

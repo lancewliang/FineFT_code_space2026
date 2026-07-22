@@ -83,27 +83,30 @@ def test_build_loss_nan_diagnostics_identifies_nonfinite_training_data():
         },
     )
 
-    assert diagnostics["numeric"]["loss"]["nan_count"] == 1
-    assert diagnostics["numeric"]["td_loss"]["finite_count"] == 1
-    assert diagnostics["numeric"]["states"]["inf_count"] == 1
-    assert diagnostics["info_nonfinite"] == [
-        {
-            "path": "info.q_value",
-            "shape": [1, 2],
-            "dtype": "torch.float32",
-            "nan_count": 1,
-            "inf_count": 0,
-            "first_nonfinite_indices": [[0, 1]],
-        },
-        {
-            "path": "info.funding_count_down_hour",
-            "shape": [2],
-            "dtype": "float64",
-            "nan_count": 0,
-            "inf_count": 1,
-            "first_nonfinite_indices": [[1]],
-        },
+    assert isinstance(diagnostics, loss_nan_diagnostics.LossNanDiagnostics)
+    assert diagnostics.numeric["loss"].nan_count == 1
+    assert diagnostics.numeric["td_loss"].finite_count == 1
+    assert diagnostics.numeric["states"].inf_count == 1
+    assert diagnostics.info_nonfinite == [
+        loss_nan_diagnostics.NonfiniteLocation(
+            path="info.q_value",
+            shape=[1, 2],
+            dtype="torch.float32",
+            nan_count=1,
+            inf_count=0,
+            first_nonfinite_indices=[[0, 1]],
+        ),
+        loss_nan_diagnostics.NonfiniteLocation(
+            path="info.funding_count_down_hour",
+            shape=[2],
+            dtype="float64",
+            nan_count=0,
+            inf_count=1,
+            first_nonfinite_indices=[[1]],
+        ),
     ]
+    assert diagnostics.to_dict()["numeric"]["loss"]["nan_count"] == 1
+    assert diagnostics.to_dict()["info_nonfinite"][1]["inf_count"] == 1
 
 
 def test_record_diverse_rollout_latest_metric_overwrites_existing_key():

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import math
 from pathlib import Path
 
@@ -15,6 +14,12 @@ from operator_futures.feature_selection.muti_contract.metrics import (
     DEFAULT_WINDOWS_LIST,
     aggregate_metric_frames,
     calculate_metric_frame,
+)
+from operator_futures.feature_selection.manifests import (
+    FeatureSelectionContractRecord,
+    FeatureSelectionManifest,
+    FeatureSelectionResult,
+    FilteredOutputRecord,
 )
 
 
@@ -188,9 +193,9 @@ def _write_filtered_outputs(
     *,
     symbol: str,
     orderbook_depth: int,
-) -> list[dict[str, object]]:
+) -> list[FilteredOutputRecord]:
     reward_columns = get_reward_execution_columns(orderbook_depth)
-    outputs = []
+    outputs: list[FilteredOutputRecord] = []
     for contract, frame in frames.items():
         missing = [feature for feature in selected_features if feature not in frame.columns]
         if missing:
@@ -206,12 +211,12 @@ def _write_filtered_outputs(
         output_path = contract_dir / "df.feather"
         filtered.write_ipc(output_path)
         outputs.append(
-            {
-                "contract": contract,
-                "output_path": str(output_path),
-                "output_row_count": filtered.height,
-                "output_column_count": len(filtered.columns),
-            }
+            FilteredOutputRecord(
+                contract=contract,
+                output_path=str(output_path),
+                output_row_count=filtered.height,
+                output_column_count=len(filtered.columns),
+            )
         )
     return outputs
 
@@ -230,7 +235,7 @@ def run_feature_selection(
     max_correlation: float = 0.7,
     windows_list: list[int] | None = None,
     composite_drop_ratio: float = 0.1,
-) -> dict[str, object]:
+) -> FeatureSelectionResult:
     if stage not in {"train", "valid"}:
         raise ValueError("stage must be 'train' or 'valid'")
 
@@ -257,7 +262,7 @@ def run_feature_selection(
     per_contract_dir = output_dir / "per_contract"
     per_contract_dir.mkdir(parents=True, exist_ok=True)
     metric_frames = []
-    per_contract = []
+    per_contract: list[FeatureSelectionContractRecord] = []
     for contract, frame in frames.items():
         missing = [feature for feature in feature_universe if feature not in frame.columns]
         if missing:
@@ -275,36 +280,33 @@ def run_feature_selection(
         metrics.write_csv(metric_path)
         metric_frames.append(metrics)
         per_contract.append(
-            {
-                "contract": contract,
-                "input_path": str(input_dir / f"{contract}.feather"),
-                "metric_path": str(metric_path),
-            }
+            FeatureSelectionContractRecord(
+                contract=contract,
+                input_path=str(input_dir / f"{contract}.feather"),
+                metric_path=str(metric_path),
+            )
         )
 
     aggregate = aggregate_metric_frames(metric_frames)
     aggregate_path = output_dir / "aggregate_metrics.csv"
     aggregate.write_csv(aggregate_path)
     if stage == "valid":
-        manifest = {
-            "symbol": symbol,
-            "target_freq": target_freq,
-            "stage": stage,
-            "split_input_dir": str(input_dir),
-            "evaluated_feature_file": str(train_feature_file),
-            "evaluated_feature_count": len(feature_universe),
-            "evaluated_features": feature_universe,
-            "windows_list": windows_list,
-            "aggregate_metrics_path": str(aggregate_path),
-            "contracts": per_contract,
-            "report_only": True,
-        }
-        manifest_path = output_dir / "feature_selection_manifest.json"
-        manifest_path.write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
+        manifest = FeatureSelectionManifest(
+            symbol=symbol,
+            target_freq=target_freq,
+            stage=stage,
+            split_input_dir=str(input_dir),
+            evaluated_feature_file=str(train_feature_file),
+            evaluated_feature_count=len(feature_universe),
+            evaluated_features=feature_universe,
+            windows_list=windows_list,
+            aggregate_metrics_path=str(aggregate_path),
+            contracts=per_contract,
+            report_only=True,
         )
-        return manifest
+        manifest_path = output_dir / "feature_selection_manifest.json"
+        manifest.write_json(manifest_path)
+        return FeatureSelectionResult(output_dir=output_dir, manifest=manifest)
 
     selected_features, filter_results = _ordered_filter_features(
         frames,
@@ -324,27 +326,24 @@ def run_feature_selection(
         symbol=symbol,
         orderbook_depth=orderbook_depth,
     )
-    manifest = {
-        "symbol": symbol,
-        "target_freq": target_freq,
-        "stage": stage,
-        "split_input_dir": str(input_dir),
-        "selected_feature_file": str(selected_file),
-        "selected_feature_count": len(selected_features),
-        "selected_features": selected_features,
-        "windows_list": windows_list,
-        "composite_drop_ratio": composite_drop_ratio,
-        "aggregate_metrics_path": str(aggregate_path),
-        "filter_results": filter_results,
-        "contracts": per_contract,
-        "filtered_outputs": filtered_outputs,
-    }
-    manifest_path = output_dir / "feature_selection_manifest.json"
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    manifest = FeatureSelectionManifest(
+        symbol=symbol,
+        target_freq=target_freq,
+        stage=stage,
+        split_input_dir=str(input_dir),
+        selected_feature_file=str(selected_file),
+        selected_feature_count=len(selected_features),
+        selected_features=selected_features,
+        windows_list=windows_list,
+        composite_drop_ratio=composite_drop_ratio,
+        aggregate_metrics_path=str(aggregate_path),
+        filter_results=filter_results,
+        contracts=per_contract,
+        filtered_outputs=filtered_outputs,
     )
-    return manifest
+    manifest_path = output_dir / "feature_selection_manifest.json"
+    manifest.write_json(manifest_path)
+    return FeatureSelectionResult(output_dir=output_dir, manifest=manifest)
 
 
 def build_parser() -> argparse.ArgumentParser:
