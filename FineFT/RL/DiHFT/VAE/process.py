@@ -16,6 +16,7 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "utils")))
 from RL.DiHFT.VAE.util import compute_roc_pr_metrics
 import RL.DiHFT.VAE.vae as VAEs
+from RL.DiHFT.VAE.summary import write_contract_logpx_outputs
 from datahandler.vae_dataset import One_Dim_Dataset
 
 
@@ -48,14 +49,17 @@ def prepare_model(
 
     train_data = One_Dim_Dataset(train_data_path)
     test_data = One_Dim_Dataset(train_data_path)
-    ood_test_data = One_Dim_Dataset(ood_test_dataset_path)
+    if ood_test_dataset_path is None:
+        ood_test_data = One_Dim_Dataset(train_data_path)
+    else:
+        ood_test_data = One_Dim_Dataset(ood_test_dataset_path)
     INPUT_DIM = train_data.input_dim
 
     print(f"Input_dim: {INPUT_DIM} hidden_dim: {hidden_dims} z_dim: {z_dim}")
 
     # pin memory provides improved transfer
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpus")
-    kwargs = {"num_workers": 1, "pin_memory": True} if device == "cuda" else {}
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    kwargs = {"num_workers": 1, "pin_memory": True} if device.type == "cuda" else {}
 
     train_loader = torch.utils.data.DataLoader(
         train_data, batch_size=batch_size, shuffle=True, **kwargs
@@ -76,6 +80,61 @@ def prepare_model(
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     return model, optimizer, train_loader, test_loader, ood_test_loader, device
+
+
+def prepare_contract_dataset_loader_list(test_sources, expected_feature_dim):
+    dataloader_list = []
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    kwargs = {"num_workers": 1, "pin_memory": True} if device.type == "cuda" else {}
+    for source in test_sources:
+        data = np.load(source["source_file"])
+        if data.ndim != 2:
+            raise ValueError(
+                f"{source['source_file']} for contract {source['contract']} must be two-dimensional"
+            )
+        if int(data.shape[1]) != int(expected_feature_dim):
+            raise ValueError(
+                f"feature dimension mismatch for {source['contract']} at {source['source_file']}: "
+                f"expected {expected_feature_dim}, got {data.shape[1]}"
+            )
+        dataset = One_Dim_Dataset(source["source_file"])
+        dataloader = torch.utils.data.DataLoader(
+            dataset, batch_size=1, shuffle=False, **kwargs
+        )
+        dataloader_list.append({**source, "loader": dataloader})
+    return dataloader_list
+
+
+def analyze_contract_tests(
+    pretrained_model_path,
+    model,
+    contract_loader_list,
+    device,
+    save_path,
+    dataset_name,
+    label,
+    train_baseline=None,
+):
+    print("Start contract analyzing...")
+    model.load_state_dict(torch.load(pretrained_model_path))
+    contract_results = []
+    for item in contract_loader_list:
+        ood_mus, ood_logpx = VAEs.analyze(model, item["loader"], device)
+        contract_results.append(
+            {
+                "contract": item["contract"],
+                "source_file": item["source_file"],
+                "input_samples": len(item["loader"].dataset),
+                "logpx": np.asarray(ood_logpx, dtype=float),
+            }
+        )
+    return write_contract_logpx_outputs(
+        contract_results,
+        save_path=save_path,
+        dataset_name=dataset_name,
+        label=label,
+        train_baseline=train_baseline,
+    )
 
 
 def train_test(

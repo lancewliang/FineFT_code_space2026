@@ -60,6 +60,50 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
+## 5. Python Code Style
+
+**Readable, typed, and boring Python. Follow existing project style first.**
+
+Formatting and imports:
+- Prefer `black`-compatible formatting with an 88 character line width when formatting Python.
+- Keep imports grouped as standard library, third-party packages, then local project imports.
+- Do not reformat unrelated code or expand diffs just to satisfy style preferences.
+
+Naming:
+- Use `snake_case` for functions, variables, modules, and attributes.
+- Use `PascalCase` for classes and `UPPER_SNAKE_CASE` for constants.
+- Avoid vague names such as `foo`, `data1`, or `tmp` unless the scope is tiny and obvious.
+
+Types and interfaces:
+- Add type hints for new or changed functions when practical.
+- Public functions, cross-module interfaces, and non-trivial data structures should have explicit types.
+- Avoid broad `Any`; if it is necessary, keep it local and explain why through the surrounding code.
+- Prefer built-in generics such as `list[str]` and `dict[str, int]` when the supported Python version allows it.
+
+Functions and structure:
+- Keep functions focused on one job.
+- Avoid hidden side effects; make I/O, mutation, and randomness visible at the call site when possible.
+- Do not create abstractions for one-off logic.
+- If parameters become hard to understand, prefer a small dataclass, config object, or clearer split.
+
+Errors and logging:
+- Catch specific exceptions, not bare `except:`.
+- Do not swallow exceptions unless there is a clear fallback or recovery path.
+- Include useful context in error messages.
+- Use `logging` for library code; reserve `print` for CLI or script user output.
+
+Files and data:
+- Prefer `pathlib.Path` for path manipulation.
+- Specify file encodings explicitly, usually `encoding="utf-8"`.
+- Use context managers for resources.
+- Prefer structured types such as `dataclass`, `TypedDict`, `Enum`, or `NamedTuple` when they clarify shared data.
+
+Tests:
+- For bug fixes, write or update a test that reproduces the failure before fixing it when feasible.
+- For new behavior, cover the main path and important edge cases.
+- Keep tests deterministic; avoid real network, wall-clock time, and order dependencies unless explicitly required.
+- Name tests by behavior, for example `test_rejects_empty_symbol`.
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
