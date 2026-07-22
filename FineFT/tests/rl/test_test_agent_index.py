@@ -116,12 +116,21 @@ class FakeEnsemble:
         raise AssertionError("act_test should not evaluate the full ensemble")
 
 
-def _make_test_trader(tai, tmp_path, save_trading_detail_csv=False):
-    valid_dir = tmp_path / "valid" / "label"
+def _write_valid_slice(
+    tmp_path, contract, label, filename="df_0.feather", mark_prices=None
+):
+    if mark_prices is None:
+        mark_prices = [100.0]
+    valid_dir = tmp_path / "valid" / contract / label
     valid_dir.mkdir(parents=True, exist_ok=True)
-    df_path = valid_dir / "df_0.feather"
+    df_path = valid_dir / filename
     if not df_path.exists():
-        pd.DataFrame({"mark_price": [100.0]}).to_feather(df_path)
+        pd.DataFrame({"mark_price": mark_prices}).to_feather(df_path)
+    return df_path
+
+
+def _make_test_trader(tai, tmp_path, save_trading_detail_csv=False):
+    _write_valid_slice(tmp_path, "fu2507", "label_0")
 
     trader = tai.weighted_trader.__new__(tai.weighted_trader)
     trader.eval_net = FakeNet()
@@ -194,19 +203,23 @@ def test_weighted_trader_passes_order_book_depth_to_base_env(monkeypatch, tmp_pa
     assert csv_path.exists()
 
     result = np.load(npy_path, allow_pickle=True).tolist()
-    assert result[0]["df_path"] == ["df_0.feather"]
+    assert result[0]["label"] == "label_0"
+    assert result[0]["contract"] == ["fu2507"]
+    assert result[0]["df_path"] == ["fu2507/label_0/df_0.feather"]
 
     csv_df = pd.read_csv(csv_path)
     assert list(csv_df.columns) == [
         "标签",
         "初始动作",
         "分箱索引",
+        "合约",
         "数据文件",
         "奖励总和",
         "数据长度",
         "换手率",
     ]
-    assert json.loads(csv_df.loc[0, "数据文件"]) == ["df_0.feather"]
+    assert json.loads(csv_df.loc[0, "合约"]) == ["fu2507"]
+    assert json.loads(csv_df.loc[0, "数据文件"]) == ["fu2507/label_0/df_0.feather"]
     assert json.loads(csv_df.loc[0, "奖励总和"]) == [1.0]
     assert json.loads(csv_df.loc[0, "数据长度"]) == [1]
     assert json.loads(csv_df.loc[0, "换手率"]) == [0.0]
@@ -241,7 +254,7 @@ def test_trading_detail_csv_records_actions_trades_and_execution_metrics(
 ):
     from RL.DiHFT.low_level import test_agent_index as tai
 
-    valid_dir = tmp_path / "valid" / "label"
+    valid_dir = tmp_path / "valid" / "fu2507" / "label_0"
     valid_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(
         {
@@ -284,8 +297,8 @@ def test_trading_detail_csv_records_actions_trades_and_execution_metrics(
         "累计滑点",
     ]:
         assert column in detail_df.columns
-    assert detail_df.loc[0, "标签"] == "label"
-    assert detail_df.loc[0, "数据文件"] == "df_0.feather"
+    assert detail_df.loc[0, "标签"] == "label_0"
+    assert detail_df.loc[0, "数据文件"] == "fu2507/label_0/df_0.feather"
     assert detail_df.loc[0, "目标仓位"] == 1
     assert detail_df.loc[0, "目标杠杆"] == 1
     assert detail_df.loc[0, "动作变化"] == 1
@@ -310,9 +323,14 @@ def test_weighted_trader_handles_nested_contract_label_directories(
 ):
     from RL.DiHFT.low_level import test_agent_index as tai
 
-    nested_dir = tmp_path / "valid" / "fu2507" / "label_2"
-    nested_dir.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame({"mark_price": [100.0]}).to_feather(nested_dir / "df_0.feather")
+    _write_valid_slice(tmp_path, "fu2507", "label_2")
+    (tmp_path / "valid" / "processed").mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"mark_price": [100.0]}).to_feather(
+        tmp_path / "valid" / "processed" / "valid_processed_fu2507.feather"
+    )
+    pd.DataFrame({"mark_price": [100.0]}).to_feather(
+        tmp_path / "valid" / "fu2507.feather"
+    )
 
     monkeypatch.setattr(tai, "initiate_base_env", lambda **kwargs: FakeEnv())
     monkeypatch.setattr(tai, "map_action_to_position_leverage", lambda *args: (0, 1))
@@ -321,5 +339,9 @@ def test_weighted_trader_handles_nested_contract_label_directories(
     trader.test()
 
     result = np.load(tmp_path / "analysis_result.npy", allow_pickle=True).tolist()
-    assert result[0]["label"] == "fu2507/label_2"
-    assert result[0]["df_path"] == ["df_0.feather"]
+    assert result[0]["label"] == "label_0"
+    assert result[0]["contract"] == ["fu2507"]
+    assert result[0]["df_path"] == ["fu2507/label_0/df_0.feather"]
+    label_2_records = [row for row in result if row["label"] == "label_2"]
+    assert label_2_records[0]["contract"] == ["fu2507"]
+    assert label_2_records[0]["df_path"] == ["fu2507/label_2/df_0.feather"]

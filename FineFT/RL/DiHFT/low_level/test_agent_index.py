@@ -7,6 +7,7 @@ import os
 import random
 import argparse
 import json
+import re
 import numpy as np
 import torch
 from torch import nn
@@ -187,12 +188,14 @@ def build_serial_model_path(result_path, dataset_name, experiment_name):
     )
 
 
-AGGREGATE_JSON_COLUMNS = ["df_path", "reward_sum", "df_length", "turnover"]
+AGGREGATE_JSON_COLUMNS = ["contract", "df_path", "reward_sum", "df_length", "turnover"]
+LABEL_DIR_PATTERN = re.compile(r"^label_\d+$")
 
 CSV_HEADER_LABELS = {
     "label": "标签",
     "initial_action": "初始动作",
     "bin_index": "分箱索引",
+    "contract": "合约",
     "df_path": "数据文件",
     "reward_sum": "奖励总和",
     "df_length": "数据长度",
@@ -262,14 +265,36 @@ def write_trading_detail_csv(detail_rows, csv_path):
 
 
 def _iter_valid_feather_files(root_dir):
-    for dirpath, dirnames, filenames in os.walk(root_dir):
-        dirnames.sort()
-        rel_dir = os.path.relpath(dirpath, root_dir)
-        if rel_dir == ".":
+    entries = []
+    if not os.path.isdir(root_dir):
+        raise FileNotFoundError(f"valid data path does not exist: {root_dir}")
+
+    for contract in sorted(os.listdir(root_dir)):
+        contract_dir = os.path.join(root_dir, contract)
+        if contract == "processed" or not os.path.isdir(contract_dir):
             continue
-        for filename in sorted(filenames):
-            if filename.startswith("df_") and filename.endswith(".feather"):
-                yield rel_dir, filename
+        for label in sorted(os.listdir(contract_dir)):
+            label_dir = os.path.join(contract_dir, label)
+            if not os.path.isdir(label_dir) or not LABEL_DIR_PATTERN.fullmatch(label):
+                continue
+            for filename in sorted(os.listdir(label_dir)):
+                if filename.startswith("df_") and filename.endswith(".feather"):
+                    rel_path = os.path.join(contract, label, filename)
+                    entries.append(
+                        {
+                            "contract": contract,
+                            "label": label,
+                            "df_path": rel_path,
+                            "abs_path": os.path.join(root_dir, rel_path),
+                        }
+                    )
+
+    if not entries:
+        raise FileNotFoundError(
+            f"no validation label slices found under {root_dir}; expected "
+            "valid/<contract>/label_*/df_*.feather"
+        )
+    return entries
 
 
 DETAIL_MARKET_COLUMNS = ["timestamp", "open", "high", "low", "close", "volume", "mark_price"]
@@ -498,22 +523,23 @@ class weighted_trader:
         overall_result = []
         trading_detail_rows = []
         self.eval_net.eval()
-        df_entries = list(_iter_valid_feather_files(self.valid_data_path))
-        label_list = sorted({label for label, _ in df_entries})
+        df_entries = _iter_valid_feather_files(self.valid_data_path)
+        label_list = sorted({entry["label"] for entry in df_entries})
         for label in label_list:
             print('start label {}'.format(label))
-            df_list = [
-                df_path
-                for label_path, df_path in df_entries
-                if label_path == label
+            label_entries = [
+                entry for entry in df_entries if entry["label"] == label
             ]
             for initial_action in self.initial_action_list:
                 for bin_index in range(self.N):
                     single_label_initial_action_bin_index_reward_sum_result = []
                     single_label_initial_action_bin_index_df_length_result = []
                     single_label_initial_action_bin_index_turnover_result = []
+                    single_label_initial_action_bin_index_contract_result = []
                     single_label_initial_action_bin_index_df_path_result = []
-                    for df_path in df_list:
+                    for entry in label_entries:
+                        contract = entry["contract"]
+                        df_path = entry["df_path"]
                         initial_position, initial_leverage = (
                             map_action_to_position_leverage(
                                 initial_action,
@@ -521,9 +547,7 @@ class weighted_trader:
                                 self.position_list,
                             )
                         )
-                        self.test_df = pd.read_feather(
-                            os.path.join(self.valid_data_path, label, df_path)
-                        )
+                        self.test_df = pd.read_feather(entry["abs_path"])
                         current_markprice = self.test_df["mark_price"].values[0]
                         self.initial_margin = np.abs(
                             initial_position * current_markprice / initial_leverage
@@ -697,6 +721,9 @@ class weighted_trader:
                         single_label_initial_action_bin_index_turnover_result.append(
                             turn_over
                         )
+                        single_label_initial_action_bin_index_contract_result.append(
+                            contract
+                        )
                         single_label_initial_action_bin_index_df_path_result.append(
                             df_path
                         )
@@ -704,6 +731,7 @@ class weighted_trader:
                             "label": label,
                             "initial_action": initial_action,
                             "bin_index": bin_index,
+                            "contract": single_label_initial_action_bin_index_contract_result,
                             "df_path": single_label_initial_action_bin_index_df_path_result,
                             "reward_sum": single_label_initial_action_bin_index_reward_sum_result,
                             "df_length": single_label_initial_action_bin_index_df_length_result,

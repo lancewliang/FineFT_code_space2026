@@ -10,6 +10,7 @@ PREPROCESS_DATASET/
 dataset/
 result/
 log
+analysis_result
 dataset_v1
 dataset_v2
 catboost_info
