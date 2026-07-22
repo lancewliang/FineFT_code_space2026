@@ -1,6 +1,6 @@
 # Select Cross Contract Low Level Agents Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Build a clean cross-contract low-level agent selection path where each pure `label_i` maps to one reusable low-level qnet.
 
@@ -17,13 +17,13 @@
 
 ### Task 1: Update low-level test-agent discovery tests and helper fixtures to model `valid/<contract>/<label>/df_*.feather`.
 
-> **trace:** plan-ready.md → `### Task 1: Update low-level test-agent discovery tests and helper fixtures to model `valid/<contract>/<label>/df_*.feather`.` | tasks.md → `- [ ] 1.1 Update low-level test-agent discovery tests and helper fixtures to model `valid/<contract>/<label>/df_*.feather`.`
-> **sync:** tasks.md → `- [ ] 1.1 Update low-level test-agent discovery tests and helper fixtures to model `valid/<contract>/<label>/df_*.feather`.` | plan-ready.md → `### Task 1: Update low-level test-agent discovery tests and helper fixtures to model `valid/<contract>/<label>/df_*.feather`.`
+> **trace:** plan-ready.md → `### Task 1: Update low-level test-agent discovery tests and helper fixtures to model `valid/<contract>/<label>/df_*.feather`.` | tasks.md → `- [x] 1.1 Update low-level test-agent discovery tests and helper fixtures to model `valid/<contract>/<label>/df_*.feather`.`
+> **sync:** tasks.md → `- [x] 1.1 Update low-level test-agent discovery tests and helper fixtures to model `valid/<contract>/<label>/df_*.feather`.` | plan-ready.md → `### Task 1: Update low-level test-agent discovery tests and helper fixtures to model `valid/<contract>/<label>/df_*.feather`.`
 
 **Files:**
 - Modify: `FineFT/tests/rl/test_test_agent_index.py`
 
-- [ ] **Step 1: Add a helper that writes commodity valid label slices**
+- [x] **Step 1: Add a helper that writes commodity valid label slices**
 
 In `FineFT/tests/rl/test_test_agent_index.py`, add this helper below `FakeEnsemble`:
 
@@ -38,7 +38,7 @@ def _write_valid_slice(tmp_path, contract, label, filename="df_0.feather", mark_
     return df_path
 ```
 
-- [ ] **Step 2: Update `_make_test_trader` to use the new nested fixture**
+- [x] **Step 2: Update `_make_test_trader` to use the new nested fixture**
 
 Replace the current fixture setup inside `_make_test_trader(...)` with:
 
@@ -48,7 +48,7 @@ Replace the current fixture setup inside `_make_test_trader(...)` with:
 
 Keep the rest of `_make_test_trader(...)` unchanged.
 
-- [ ] **Step 3: Update aggregate assertions to expect the new schema**
+- [x] **Step 3: Update aggregate assertions to expect the new schema**
 
 In `test_weighted_trader_passes_order_book_depth_to_base_env`, replace the npy and CSV assertions with:
 
@@ -76,7 +76,7 @@ In `test_weighted_trader_passes_order_book_depth_to_base_env`, replace the npy a
     assert json.loads(csv_df.loc[0, "换手率"]) == [0.0]
 ```
 
-- [ ] **Step 4: Update the nested contract-label test expectation**
+- [x] **Step 4: Update the nested contract-label test expectation**
 
 In `test_weighted_trader_handles_nested_contract_label_directories`, replace the setup and assertions with:
 
@@ -105,7 +105,7 @@ In `test_weighted_trader_handles_nested_contract_label_directories`, replace the
     assert label_2_records[0]["df_path"] == ["fu2507/label_2/df_0.feather"]
 ```
 
-- [ ] **Step 5: Run the focused test to verify the RED state**
+- [x] **Step 5: Run the focused test to verify the RED state**
 
 Run:
 
@@ -115,17 +115,17 @@ source /home/lanceliang/miniconda3/etc/profile.d/conda.sh && conda activate fine
 
 Expected: FAIL because `result[0]["contract"]` is missing or `label` still contains a contract path.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 2: Refactor `test_agent_index.py` validation file discovery and aggregate result construction to emit pure `label`, aligned `contract`, and contract-relative `df_path` arrays.
 
-> **trace:** plan-ready.md → `### Task 2: Refactor `test_agent_index.py` validation file discovery and aggregate result construction to emit pure `label`, aligned `contract`, and contract-relative `df_path` arrays.` | tasks.md → `- [ ] 1.2 Refactor `test_agent_index.py` validation file discovery and aggregate result construction to emit pure `label`, aligned `contract`, and contract-relative `df_path` arrays.`
-> **sync:** tasks.md → `- [ ] 1.2 Refactor `test_agent_index.py` validation file discovery and aggregate result construction to emit pure `label`, aligned `contract`, and contract-relative `df_path` arrays.` | plan-ready.md → `### Task 2: Refactor `test_agent_index.py` validation file discovery and aggregate result construction to emit pure `label`, aligned `contract`, and contract-relative `df_path` arrays.`
+> **trace:** plan-ready.md → `### Task 2: Refactor `test_agent_index.py` validation file discovery and aggregate result construction to emit pure `label`, aligned `contract`, and contract-relative `df_path` arrays.` | tasks.md → `- [x] 1.2 Refactor `test_agent_index.py` validation file discovery and aggregate result construction to emit pure `label`, aligned `contract`, and contract-relative `df_path` arrays.`
+> **sync:** tasks.md → `- [x] 1.2 Refactor `test_agent_index.py` validation file discovery and aggregate result construction to emit pure `label`, aligned `contract`, and contract-relative `df_path` arrays.` | plan-ready.md → `### Task 2: Refactor `test_agent_index.py` validation file discovery and aggregate result construction to emit pure `label`, aligned `contract`, and contract-relative `df_path` arrays.`
 
 **Files:**
 - Modify: `FineFT/RL/DiHFT/low_level/test_agent_index.py`
 
-- [ ] **Step 1: Add a label pattern import and constant**
+- [x] **Step 1: Add a label pattern import and constant**
 
 Add `import re` near the existing imports and add this constant near `AGGREGATE_JSON_COLUMNS`:
 
@@ -133,7 +133,7 @@ Add `import re` near the existing imports and add this constant near `AGGREGATE_
 LABEL_DIR_PATTERN = re.compile(r"^label_\d+$")
 ```
 
-- [ ] **Step 2: Replace `_iter_valid_feather_files` with strict commodity discovery**
+- [x] **Step 2: Replace `_iter_valid_feather_files` with strict commodity discovery**
 
 Replace the existing `_iter_valid_feather_files(root_dir)` with:
 
@@ -171,7 +171,7 @@ def _iter_valid_feather_files(root_dir):
     return entries
 ```
 
-- [ ] **Step 3: Update `weighted_trader.test()` to group by pure label**
+- [x] **Step 3: Update `weighted_trader.test()` to group by pure label**
 
 In `weighted_trader.test()`, replace:
 
@@ -204,7 +204,7 @@ And replace `for df_path in df_list:` with:
                         df_path = entry["df_path"]
 ```
 
-- [ ] **Step 4: Read feather files from `abs_path` and append contract metadata**
+- [x] **Step 4: Read feather files from `abs_path` and append contract metadata**
 
 Inside the slice loop, replace the dataframe read with:
 
@@ -226,7 +226,7 @@ Then include `contract` in `_overall_result` before `df_path`:
                             "contract": single_label_initial_action_bin_index_contract_result,
 ```
 
-- [ ] **Step 5: Run the focused test to verify the GREEN state**
+- [x] **Step 5: Run the focused test to verify the GREEN state**
 
 Run:
 
@@ -236,18 +236,18 @@ source /home/lanceliang/miniconda3/etc/profile.d/conda.sh && conda activate fine
 
 Expected: PASS.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 3: Update aggregate CSV serialization and Chinese headers to include `合约` while preserving JSON array cells.
 
-> **trace:** plan-ready.md → `### Task 3: Update aggregate CSV serialization and Chinese headers to include `合约` while preserving JSON array cells.` | tasks.md → `- [ ] 1.3 Update aggregate CSV serialization and Chinese headers to include `合约` while preserving JSON array cells.`
-> **sync:** tasks.md → `- [ ] 1.3 Update aggregate CSV serialization and Chinese headers to include `合约` while preserving JSON array cells.` | plan-ready.md → `### Task 3: Update aggregate CSV serialization and Chinese headers to include `合约` while preserving JSON array cells.`
+> **trace:** plan-ready.md → `### Task 3: Update aggregate CSV serialization and Chinese headers to include `合约` while preserving JSON array cells.` | tasks.md → `- [x] 1.3 Update aggregate CSV serialization and Chinese headers to include `合约` while preserving JSON array cells.`
+> **sync:** tasks.md → `- [x] 1.3 Update aggregate CSV serialization and Chinese headers to include `合约` while preserving JSON array cells.` | plan-ready.md → `### Task 3: Update aggregate CSV serialization and Chinese headers to include `合约` while preserving JSON array cells.`
 
 **Files:**
 - Modify: `FineFT/RL/DiHFT/low_level/test_agent_index.py`
 - Modify: `FineFT/tests/rl/test_test_agent_index.py`
 
-- [ ] **Step 1: Include `contract` in aggregate JSON columns**
+- [x] **Step 1: Include `contract` in aggregate JSON columns**
 
 In `FineFT/RL/DiHFT/low_level/test_agent_index.py`, replace:
 
@@ -261,7 +261,7 @@ with:
 AGGREGATE_JSON_COLUMNS = ["contract", "df_path", "reward_sum", "df_length", "turnover"]
 ```
 
-- [ ] **Step 2: Add the Chinese header label**
+- [x] **Step 2: Add the Chinese header label**
 
 In `CSV_HEADER_LABELS`, add:
 
@@ -275,7 +275,7 @@ immediately after:
     "bin_index": "分箱索引",
 ```
 
-- [ ] **Step 3: Run all low-level test-agent tests**
+- [x] **Step 3: Run all low-level test-agent tests**
 
 Run:
 
@@ -285,17 +285,17 @@ source /home/lanceliang/miniconda3/etc/profile.d/conda.sh && conda activate fine
 
 Expected: PASS.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 4: Add picker schema-validation and sample-equal scoring tests for the new cross-contract result schema and legacy schema rejection.
 
-> **trace:** plan-ready.md → `### Task 4: Add picker schema-validation and sample-equal scoring tests for the new cross-contract result schema and legacy schema rejection.` | tasks.md → `- [ ] 1.4 Add picker schema-validation and sample-equal scoring tests for the new cross-contract result schema and legacy schema rejection.`
-> **sync:** tasks.md → `- [ ] 1.4 Add picker schema-validation and sample-equal scoring tests for the new cross-contract result schema and legacy schema rejection.` | plan-ready.md → `### Task 4: Add picker schema-validation and sample-equal scoring tests for the new cross-contract result schema and legacy schema rejection.`
+> **trace:** plan-ready.md → `### Task 4: Add picker schema-validation and sample-equal scoring tests for the new cross-contract result schema and legacy schema rejection.` | tasks.md → `- [x] 1.4 Add picker schema-validation and sample-equal scoring tests for the new cross-contract result schema and legacy schema rejection.`
+> **sync:** tasks.md → `- [x] 1.4 Add picker schema-validation and sample-equal scoring tests for the new cross-contract result schema and legacy schema rejection.` | plan-ready.md → `### Task 4: Add picker schema-validation and sample-equal scoring tests for the new cross-contract result schema and legacy schema rejection.`
 
 **Files:**
 - Modify: `FineFT/tests/analysis/test_pick_agent.py`
 
-- [ ] **Step 1: Add imports for error assertions and JSON manifest checks**
+- [x] **Step 1: Add imports for error assertions and JSON manifest checks**
 
 At the top of `FineFT/tests/analysis/test_pick_agent.py`, add:
 
@@ -304,7 +304,7 @@ import json
 import pytest
 ```
 
-- [ ] **Step 2: Add a cross-contract result factory**
+- [x] **Step 2: Add a cross-contract result factory**
 
 Add this helper below `_picker(tmp_path)`:
 
@@ -326,7 +326,7 @@ def _cross_contract_record(label, initial_action, bin_index, rewards, lengths):
     }
 ```
 
-- [ ] **Step 3: Add the sample-equal transform test**
+- [x] **Step 3: Add the sample-equal transform test**
 
 Add this test:
 
@@ -350,7 +350,7 @@ def test_transform_single_epoch_result_uses_sample_equal_cross_contract_rewards(
     assert transformed[0]["trans_reward_std"] == 0.0
 ```
 
-- [ ] **Step 4: Add legacy schema rejection and label coverage tests**
+- [x] **Step 4: Add legacy schema rejection and label coverage tests**
 
 Add these tests:
 
@@ -390,7 +390,7 @@ def test_picker_rejects_label_set_mismatch(tmp_path):
         p.pick_best_agent_regarding_dynamics_bin_index_path(result_all)
 ```
 
-- [ ] **Step 5: Add final aggregation and manifest tests**
+- [x] **Step 5: Add final aggregation and manifest tests**
 
 Add these tests:
 
@@ -462,7 +462,7 @@ def test_write_selection_manifest_records_label_choices(tmp_path):
     assert manifest["labels"][0]["model_path"] == "epoch_0/trained_model.pkl"
 ```
 
-- [ ] **Step 6: Run picker tests to verify the RED state**
+- [x] **Step 6: Run picker tests to verify the RED state**
 
 Run:
 
@@ -472,17 +472,17 @@ source /home/lanceliang/miniconda3/etc/profile.d/conda.sh && conda activate fine
 
 Expected: FAIL because picker does not yet validate schema, enforce label coverage, include `source_rows`, or provide `write_selection_manifest`.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 5: Refactor `FineFT_single_agent_with_different_position.py` to validate new schema, preserve current first-stage and final-stage selection logic, and fail fast on invalid labels or metrics.
 
-> **trace:** plan-ready.md → `### Task 5: Refactor `FineFT_single_agent_with_different_position.py` to validate new schema, preserve current first-stage and final-stage selection logic, and fail fast on invalid labels or metrics.` | tasks.md → `- [ ] 1.5 Refactor `FineFT_single_agent_with_different_position.py` to validate new schema, preserve current first-stage and final-stage selection logic, and fail fast on invalid labels or metrics.`
-> **sync:** tasks.md → `- [ ] 1.5 Refactor `FineFT_single_agent_with_different_position.py` to validate new schema, preserve current first-stage and final-stage selection logic, and fail fast on invalid labels or metrics.` | plan-ready.md → `### Task 5: Refactor `FineFT_single_agent_with_different_position.py` to validate new schema, preserve current first-stage and final-stage selection logic, and fail fast on invalid labels or metrics.`
+> **trace:** plan-ready.md → `### Task 5: Refactor `FineFT_single_agent_with_different_position.py` to validate new schema, preserve current first-stage and final-stage selection logic, and fail fast on invalid labels or metrics.` | tasks.md → `- [x] 1.5 Refactor `FineFT_single_agent_with_different_position.py` to validate new schema, preserve current first-stage and final-stage selection logic, and fail fast on invalid labels or metrics.`
+> **sync:** tasks.md → `- [x] 1.5 Refactor `FineFT_single_agent_with_different_position.py` to validate new schema, preserve current first-stage and final-stage selection logic, and fail fast on invalid labels or metrics.` | plan-ready.md → `### Task 5: Refactor `FineFT_single_agent_with_different_position.py` to validate new schema, preserve current first-stage and final-stage selection logic, and fail fast on invalid labels or metrics.`
 
 **Files:**
 - Modify: `FineFT/analysis/pick_agent/FineFT_single_agent_with_different_position.py`
 
-- [ ] **Step 1: Add imports and validation constants**
+- [x] **Step 1: Add imports and validation constants**
 
 Add near the top:
 
@@ -498,7 +498,7 @@ ARRAY_FIELDS = ["contract", "df_path", "reward_sum", "df_length", "turnover"]
 REQUIRED_RESULT_FIELDS = ["label", "initial_action", "bin_index"] + ARRAY_FIELDS
 ```
 
-- [ ] **Step 2: Add record validation helpers inside `picker`**
+- [x] **Step 2: Add record validation helpers inside `picker`**
 
 Add these methods to `class picker` before `transform_single_epoch_result`:
 
@@ -554,7 +554,7 @@ Add these methods to `class picker` before `transform_single_epoch_result`:
             raise ValueError(f"label coverage mismatch; missing={missing}, extra={extra}")
 ```
 
-- [ ] **Step 3: Validate and copy records before computing metrics**
+- [x] **Step 3: Validate and copy records before computing metrics**
 
 In `transform_single_epoch_result`, replace the first lines inside the loop with:
 
@@ -568,7 +568,7 @@ In `transform_single_epoch_result`, replace the first lines inside the loop with
 
 Keep the existing `trans_reward_mean`, `trans_reward_std`, `mean_turnover`, and `epoch_path` assignments.
 
-- [ ] **Step 4: Preserve final-stage logic while adding coverage and source row counts**
+- [x] **Step 4: Preserve final-stage logic while adding coverage and source row counts**
 
 In `pick_best_agent_regarding_dynamics_bin_index_path`, add at the beginning:
 
@@ -602,7 +602,7 @@ Replace the grouped calculation block with:
 
 Add `source_rows_list = []` next to the other output lists, append `source_rows`, and include `"source_rows": source_rows_list` in `best_agent_info`.
 
-- [ ] **Step 5: Run picker tests for validation and selection**
+- [x] **Step 5: Run picker tests for validation and selection**
 
 Run:
 
@@ -612,18 +612,18 @@ source /home/lanceliang/miniconda3/etc/profile.d/conda.sh && conda activate fine
 
 Expected: PASS for the validation and selection tests, FAIL only if manifest is still missing.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 6: Add `selection_manifest.json` output and enforce label-order model assembly for `model.pth`.
 
-> **trace:** plan-ready.md → `### Task 6: Add `selection_manifest.json` output and enforce label-order model assembly for `model.pth`.` | tasks.md → `- [ ] 1.6 Add `selection_manifest.json` output and enforce label-order model assembly for `model.pth`.`
-> **sync:** tasks.md → `- [ ] 1.6 Add `selection_manifest.json` output and enforce label-order model assembly for `model.pth`.` | plan-ready.md → `### Task 6: Add `selection_manifest.json` output and enforce label-order model assembly for `model.pth`.`
+> **trace:** plan-ready.md → `### Task 6: Add `selection_manifest.json` output and enforce label-order model assembly for `model.pth`.` | tasks.md → `- [x] 1.6 Add `selection_manifest.json` output and enforce label-order model assembly for `model.pth`.`
+> **sync:** tasks.md → `- [x] 1.6 Add `selection_manifest.json` output and enforce label-order model assembly for `model.pth`.` | plan-ready.md → `### Task 6: Add `selection_manifest.json` output and enforce label-order model assembly for `model.pth`.`
 
 **Files:**
 - Modify: `FineFT/analysis/pick_agent/FineFT_single_agent_with_different_position.py`
 - Modify: `FineFT/tests/analysis/test_pick_agent.py`
 
-- [ ] **Step 1: Add JSON import**
+- [x] **Step 1: Add JSON import**
 
 At the top of `FineFT_single_agent_with_different_position.py`, add:
 
@@ -631,7 +631,7 @@ At the top of `FineFT_single_agent_with_different_position.py`, add:
 import json
 ```
 
-- [ ] **Step 2: Add final selection validation and sorting helpers**
+- [x] **Step 2: Add final selection validation and sorting helpers**
 
 Add these methods inside `class picker` before `create_potential_result`:
 
@@ -675,7 +675,7 @@ Add these methods inside `class picker` before `create_potential_result`:
         return manifest_path
 ```
 
-- [ ] **Step 3: Sort labels before model assembly and write manifest after save**
+- [x] **Step 3: Sort labels before model assembly and write manifest after save**
 
 At the start of `create_potential_result`, add:
 
@@ -689,7 +689,7 @@ After `torch.save(...)`, add:
         self.write_selection_manifest(best_agent_df)
 ```
 
-- [ ] **Step 4: Run picker tests**
+- [x] **Step 4: Run picker tests**
 
 Run:
 
@@ -699,18 +699,18 @@ source /home/lanceliang/miniconda3/etc/profile.d/conda.sh && conda activate fine
 
 Expected: PASS.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 7: Update commodity low-level test and picker shell scripts so `fu` runs pass the required base path, experiment name, position choices, and label count.
 
-> **trace:** plan-ready.md → `### Task 7: Update commodity low-level test and picker shell scripts so `fu` runs pass the required base path, experiment name, position choices, and label count.` | tasks.md → `- [ ] 1.7 Update commodity low-level test and picker shell scripts so `fu` runs pass the required base path, experiment name, position choices, and label count.`
-> **sync:** tasks.md → `- [ ] 1.7 Update commodity low-level test and picker shell scripts so `fu` runs pass the required base path, experiment name, position choices, and label count.` | plan-ready.md → `### Task 7: Update commodity low-level test and picker shell scripts so `fu` runs pass the required base path, experiment name, position choices, and label count.`
+> **trace:** plan-ready.md → `### Task 7: Update commodity low-level test and picker shell scripts so `fu` runs pass the required base path, experiment name, position choices, and label count.` | tasks.md → `- [x] 1.7 Update commodity low-level test and picker shell scripts so `fu` runs pass the required base path, experiment name, position choices, and label count.`
+> **sync:** tasks.md → `- [x] 1.7 Update commodity low-level test and picker shell scripts so `fu` runs pass the required base path, experiment name, position choices, and label count.` | plan-ready.md → `### Task 7: Update commodity low-level test and picker shell scripts so `fu` runs pass the required base path, experiment name, position choices, and label count.`
 
 **Files:**
 - Modify: `FineFT/script/test/DiHFT/low_level/test_util_fu.sh`
 - Modify: `FineFT/script/analysis/pick_agent/low_level_fu.sh`
 
-- [ ] **Step 1: Parameterize `test_util_fu.sh` active run**
+- [x] **Step 1: Parameterize `test_util_fu.sh` active run**
 
 At the bottom of `FineFT/script/test/DiHFT/low_level/test_util_fu.sh`, replace the active `run_ddqn_context fu ...` call with:
 
@@ -725,7 +725,7 @@ EXPERIMENT_NAME=${EXPERIMENT_NAME:-10min_nstep6_costw5}
 run_ddqn_context "${DATASET_NAME}" "${MAX_HOLDING_NUMBER}" "${EPOCH_START}" "${EPOCH_END}" "${BASE_PATH}" "${EXPERIMENT_NAME}"
 ```
 
-- [ ] **Step 2: Pass ensemble count to `test_agent_index.py`**
+- [x] **Step 2: Pass ensemble count to `test_agent_index.py`**
 
 Inside `run_ddqn_context`, add:
 
@@ -739,7 +739,7 @@ Then add this argument to the `python FineFT/RL/DiHFT/low_level/test_agent_index
             --N "${ensemble_number}" \
 ```
 
-- [ ] **Step 3: Parameterize `low_level_fu.sh`**
+- [x] **Step 3: Parameterize `low_level_fu.sh`**
 
 Replace the hard-coded command in `FineFT/script/analysis/pick_agent/low_level_fu.sh` with:
 
@@ -756,7 +756,7 @@ nohup python FineFT/analysis/pick_agent/FineFT_single_agent_with_different_posit
     >"log/analysis/pick_agent/DiHFT/${DATASET_NAME}/${EXPERIMENT_NAME}.log" 2>&1 &
 ```
 
-- [ ] **Step 4: Run shell syntax checks**
+- [x] **Step 4: Run shell syntax checks**
 
 Run:
 
@@ -766,18 +766,18 @@ bash -n FineFT/script/test/DiHFT/low_level/test_util_fu.sh FineFT/script/analysi
 
 Expected: PASS.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 8: Run `conda activate finetf && PYTHONPATH=FineFT pytest FineFT/tests/rl/test_test_agent_index.py FineFT/tests/analysis/test_pick_agent.py -q`.
 
-> **trace:** plan-ready.md → `### Task 8: Run `conda activate finetf && PYTHONPATH=FineFT pytest FineFT/tests/rl/test_test_agent_index.py FineFT/tests/analysis/test_pick_agent.py -q`.` | tasks.md → `- [ ] 2.1 Run `conda activate finetf && PYTHONPATH=FineFT pytest FineFT/tests/rl/test_test_agent_index.py FineFT/tests/analysis/test_pick_agent.py -q`.`
-> **sync:** tasks.md → `- [ ] 2.1 Run `conda activate finetf && PYTHONPATH=FineFT pytest FineFT/tests/rl/test_test_agent_index.py FineFT/tests/analysis/test_pick_agent.py -q`.` | plan-ready.md → `### Task 8: Run `conda activate finetf && PYTHONPATH=FineFT pytest FineFT/tests/rl/test_test_agent_index.py FineFT/tests/analysis/test_pick_agent.py -q`.`
+> **trace:** plan-ready.md → `### Task 8: Run `conda activate finetf && PYTHONPATH=FineFT pytest FineFT/tests/rl/test_test_agent_index.py FineFT/tests/analysis/test_pick_agent.py -q`.` | tasks.md → `- [x] 2.1 Run `conda activate finetf && PYTHONPATH=FineFT pytest FineFT/tests/rl/test_test_agent_index.py FineFT/tests/analysis/test_pick_agent.py -q`.`
+> **sync:** tasks.md → `- [x] 2.1 Run `conda activate finetf && PYTHONPATH=FineFT pytest FineFT/tests/rl/test_test_agent_index.py FineFT/tests/analysis/test_pick_agent.py -q`.` | plan-ready.md → `### Task 8: Run `conda activate finetf && PYTHONPATH=FineFT pytest FineFT/tests/rl/test_test_agent_index.py FineFT/tests/analysis/test_pick_agent.py -q`.`
 
 **Files:**
 - Verify: `FineFT/tests/rl/test_test_agent_index.py`
 - Verify: `FineFT/tests/analysis/test_pick_agent.py`
 
-- [ ] **Step 1: Run focused pytest**
+- [x] **Step 1: Run focused pytest**
 
 Run:
 
@@ -787,18 +787,18 @@ source /home/lanceliang/miniconda3/etc/profile.d/conda.sh && conda activate fine
 
 Expected: PASS with all tests in both files passing.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 9: Run `conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/test_agent_index.py FineFT/analysis/pick_agent/FineFT_single_agent_with_different_position.py`.
 
-> **trace:** plan-ready.md → `### Task 9: Run `conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/test_agent_index.py FineFT/analysis/pick_agent/FineFT_single_agent_with_different_position.py`.` | tasks.md → `- [ ] 2.2 Run `conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/test_agent_index.py FineFT/analysis/pick_agent/FineFT_single_agent_with_different_position.py`.`
-> **sync:** tasks.md → `- [ ] 2.2 Run `conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/test_agent_index.py FineFT/analysis/pick_agent/FineFT_single_agent_with_different_position.py`.` | plan-ready.md → `### Task 9: Run `conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/test_agent_index.py FineFT/analysis/pick_agent/FineFT_single_agent_with_different_position.py`.`
+> **trace:** plan-ready.md → `### Task 9: Run `conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/test_agent_index.py FineFT/analysis/pick_agent/FineFT_single_agent_with_different_position.py`.` | tasks.md → `- [x] 2.2 Run `conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/test_agent_index.py FineFT/analysis/pick_agent/FineFT_single_agent_with_different_position.py`.`
+> **sync:** tasks.md → `- [x] 2.2 Run `conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/test_agent_index.py FineFT/analysis/pick_agent/FineFT_single_agent_with_different_position.py`.` | plan-ready.md → `### Task 9: Run `conda activate finetf && python -m py_compile FineFT/RL/DiHFT/low_level/test_agent_index.py FineFT/analysis/pick_agent/FineFT_single_agent_with_different_position.py`.`
 
 **Files:**
 - Verify: `FineFT/RL/DiHFT/low_level/test_agent_index.py`
 - Verify: `FineFT/analysis/pick_agent/FineFT_single_agent_with_different_position.py`
 
-- [ ] **Step 1: Run py_compile**
+- [x] **Step 1: Run py_compile**
 
 Run:
 
@@ -808,17 +808,17 @@ source /home/lanceliang/miniconda3/etc/profile.d/conda.sh && conda activate fine
 
 Expected: command exits with status 0 and prints no traceback.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 10: Run `openspec validate select-cross-contract-low-level-agents --strict`.
 
-> **trace:** plan-ready.md → `### Task 10: Run `openspec validate select-cross-contract-low-level-agents --strict`.` | tasks.md → `- [ ] 2.3 Run `openspec validate select-cross-contract-low-level-agents --strict`.`
-> **sync:** tasks.md → `- [ ] 2.3 Run `openspec validate select-cross-contract-low-level-agents --strict`.` | plan-ready.md → `### Task 10: Run `openspec validate select-cross-contract-low-level-agents --strict`.`
+> **trace:** plan-ready.md → `### Task 10: Run `openspec validate select-cross-contract-low-level-agents --strict`.` | tasks.md → `- [x] 2.3 Run `openspec validate select-cross-contract-low-level-agents --strict`.`
+> **sync:** tasks.md → `- [x] 2.3 Run `openspec validate select-cross-contract-low-level-agents --strict`.` | plan-ready.md → `### Task 10: Run `openspec validate select-cross-contract-low-level-agents --strict`.`
 
 **Files:**
 - Verify: `openspec/changes/select-cross-contract-low-level-agents/`
 
-- [ ] **Step 1: Run strict OpenSpec validation**
+- [x] **Step 1: Run strict OpenSpec validation**
 
 Run:
 
@@ -828,5 +828,5 @@ openspec validate select-cross-contract-low-level-agents --strict
 
 Expected: `Change 'select-cross-contract-low-level-agents' is valid`.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
