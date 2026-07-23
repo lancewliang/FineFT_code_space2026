@@ -749,6 +749,44 @@ def _safe_divide(numerator: pl.Expr, denominator: pl.Expr) -> pl.Expr:
     return pl.when(invalid_denominator).then(0.0).otherwise(numerator / denominator)
 
 
+def _quote_microstructure_required_columns() -> list[str]:
+    return ["timestamp", "BidPrice1", "AskPrice1", "BidVolume1", "AskVolume1"]
+
+
+def _validate_quote_microstructure_input(
+    second_df: pl.DataFrame, window_rows: int
+) -> list[str]:
+    if window_rows <= 0:
+        raise ValueError("window_rows must be positive")
+    if second_df.height == 0:
+        raise ValueError("Microstructure input has no quote snapshots")
+
+    required_columns = _quote_microstructure_required_columns()
+    missing = [column for column in required_columns if column not in second_df.columns]
+    if missing:
+        raise ValueError(
+            f"Missing microstructure columns: {', '.join(missing)}"
+        )
+
+    non_finite_counts = second_df.select(
+        [
+            _non_finite_expr(column).sum().alias(column)
+            for column in required_columns
+            if column != "timestamp"
+        ]
+    ).row(0, named=True)
+    non_finite_columns = [
+        column for column, count in non_finite_counts.items() if count > 0
+    ]
+    if non_finite_columns:
+        raise ValueError(
+            "Microstructure columns contain non-finite values: "
+            f"{', '.join(non_finite_columns)}"
+        )
+
+    return required_columns
+
+
 def _quote_depth_volume_columns(depth: int = 5) -> list[str]:
     columns = []
     for level in range(1, depth + 1):
@@ -937,6 +975,97 @@ def downscale_quote_ofi_features(
         "ofi_bid_norm",
         "ofi_ask_norm",
         "ofi_norm",
+    )
+
+
+def downscale_quote_microstructure_features(
+    second_df: pl.DataFrame, window_rows: int = 12
+) -> pl.DataFrame:
+    required_columns = _validate_quote_microstructure_input(second_df, window_rows)
+    quote = second_df.sort("timestamp").select(
+        required_columns
+    ).with_columns(
+        pl.col("BidPrice1").cast(pl.Float64, strict=False).alias("bid_price"),
+        pl.col("AskPrice1").cast(pl.Float64, strict=False).alias("ask_price"),
+        pl.col("BidVolume1").cast(pl.Float64, strict=False).alias("bid_size"),
+        pl.col("AskVolume1").cast(pl.Float64, strict=False).alias("ask_size"),
+    )
+    quote = quote.with_columns(
+        (pl.col("ask_price") - pl.col("bid_price")).alias("spread"),
+        ((pl.col("ask_price") + pl.col("bid_price")) / 2).alias("mid"),
+    ).with_columns(
+        _safe_divide(
+            pl.col("ask_price") * pl.col("bid_size")
+            + pl.col("bid_price") * pl.col("ask_size"),
+            pl.col("bid_size") + pl.col("ask_size"),
+        ).alias("microprice"),
+        _safe_divide(pl.col("spread"), pl.col("mid")).alias("relative_spread"),
+    ).with_columns(
+        _safe_divide(
+            pl.col("microprice") - pl.col("mid"),
+            pl.col("spread"),
+        ).alias("microprice_pressure"),
+    )
+    quote = quote.with_row_index("_microstructure_row_index").with_columns(
+        (pl.col("_microstructure_row_index") // window_rows).alias(
+            "_microstructure_window"
+        ),
+        (pl.col("_microstructure_row_index") % window_rows).alias(
+            "_microstructure_window_pos"
+        ),
+        pl.col("spread").diff().alias("_spread_diff"),
+    )
+    quote = quote.with_columns(
+        (
+            (pl.col("_microstructure_window_pos") == 0)
+            | (pl.col("_spread_diff") == 0)
+        )
+        .fill_null(True)
+        .alias("_spread_flat"),
+        (
+            (pl.col("_microstructure_window_pos") != 0)
+            & (pl.col("_spread_diff") > 0)
+        )
+        .fill_null(False)
+        .alias("_spread_widen"),
+        (
+            (pl.col("_microstructure_window_pos") != 0)
+            & (pl.col("_spread_diff") < 0)
+        )
+        .fill_null(False)
+        .alias("_spread_narrow"),
+    )
+
+    grouped = (
+        quote.group_by("_microstructure_window", maintain_order=True)
+        .agg(
+            pl.col("timestamp").last().alias("timestamp"),
+            pl.len().alias("nquote"),
+            pl.col("microprice_pressure").mean().alias(
+                "mean_microprice_pressure"
+            ),
+            pl.col("relative_spread").mean().alias("mean_relative_spread"),
+            pl.col("_spread_widen").sum().alias("spread_widen_count"),
+            pl.col("_spread_narrow").sum().alias("spread_narrow_count"),
+            pl.col("_spread_flat").sum().alias("spread_flat_count"),
+        )
+        .sort("_microstructure_window")
+    )
+    grouped = grouped.with_columns(
+        _safe_divide(
+            pl.col("spread_widen_count"),
+            pl.col("nquote").cast(pl.Float64, strict=False),
+        ).alias("spread_widen_ratio")
+    )
+    return grouped.select(
+        "timestamp",
+        "nquote",
+        "mean_microprice_pressure",
+        "mean_relative_spread",
+        "spread_widen_count",
+        "spread_narrow_count",
+        "spread_flat_count",
+        "spread_widen_ratio",
     )
 
 

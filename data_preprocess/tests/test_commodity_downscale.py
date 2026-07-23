@@ -19,6 +19,7 @@ from operator_futures.commodity.downscale import (
     downscale_derivative_reference,
     downscale_orderbook,
     downscale_quote_features,
+    downscale_quote_microstructure_features,
     downscale_quote_ofi_features,
     validate_best_quotes,
 )
@@ -56,6 +57,124 @@ def _assert_finite_imbalance_outputs(row: dict) -> None:
             continue
         assert value is not None, f"{name} is null"
         assert math.isfinite(float(value)), f"{name} is not finite: {value!r}"
+
+
+def test_downscale_quote_microstructure_features_computes_pressure_and_spread_counts():
+    frame = _five_depth_quote_frame(
+        [
+            {
+                "BidPrice1": 99.0,
+                "AskPrice1": 101.0,
+                "BidVolume1": 30.0,
+                "AskVolume1": 10.0,
+            },
+            {
+                "BidPrice1": 99.0,
+                "AskPrice1": 102.0,
+                "BidVolume1": 10.0,
+                "AskVolume1": 30.0,
+            },
+            {
+                "BidPrice1": 99.0,
+                "AskPrice1": 102.0,
+                "BidVolume1": 10.0,
+                "AskVolume1": 30.0,
+            },
+            {
+                "BidPrice1": 100.0,
+                "AskPrice1": 101.0,
+                "BidVolume1": 10.0,
+                "AskVolume1": 10.0,
+            },
+        ]
+    )
+
+    result = downscale_quote_microstructure_features(frame, window_rows=12)
+    row = result.row(0, named=True)
+
+    assert row["timestamp"] == datetime(2026, 2, 2, 9, 0, 3)
+    assert row["nquote"] == 4
+    assert row["mean_microprice_pressure"] == pytest.approx(-0.0625)
+    assert row["mean_relative_spread"] == pytest.approx(
+        (0.02 + (3.0 / 100.5) + (3.0 / 100.5) + (1.0 / 100.5)) / 4.0
+    )
+    assert row["spread_widen_count"] == 1
+    assert row["spread_narrow_count"] == 1
+    assert row["spread_flat_count"] == 2
+    assert row["spread_widen_ratio"] == pytest.approx(0.25)
+
+
+def test_downscale_quote_microstructure_features_aggregates_every_twelve_rows_and_keeps_tail():
+    frame = _five_depth_quote_frame(
+        [{"BidVolume1": float(10 + index)} for index in range(13)]
+    )
+
+    result = downscale_quote_microstructure_features(frame)
+
+    assert result["timestamp"].to_list() == [
+        datetime(2026, 2, 2, 9, 0, 11),
+        datetime(2026, 2, 2, 9, 0, 12),
+    ]
+    assert result["nquote"].to_list() == [12, 1]
+    assert result["spread_flat_count"].to_list() == [12, 1]
+    assert result["spread_widen_count"].to_list() == [0, 0]
+    assert result["spread_narrow_count"].to_list() == [0, 0]
+    assert result["spread_widen_ratio"].to_list() == [0.0, 0.0]
+
+
+def test_downscale_quote_microstructure_features_zeroes_division_results_when_spread_is_zero():
+    frame = _five_depth_quote_frame(
+        [
+            {
+                "BidPrice1": 100.0,
+                "AskPrice1": 100.0,
+                "BidVolume1": 12.0,
+                "AskVolume1": 18.0,
+            }
+        ]
+    )
+
+    result = downscale_quote_microstructure_features(frame, window_rows=12)
+    row = result.row(0, named=True)
+
+    assert row["mean_microprice_pressure"] == 0.0
+    assert row["mean_relative_spread"] == 0.0
+    assert row["spread_widen_ratio"] == 0.0
+
+
+def test_downscale_quote_microstructure_features_rejects_empty_input():
+    with pytest.raises(
+        ValueError, match="Microstructure input has no quote snapshots"
+    ):
+        downscale_quote_microstructure_features(pl.DataFrame())
+
+
+def test_downscale_quote_microstructure_features_rejects_missing_depth_columns():
+    frame = _five_depth_quote_frame([{}]).drop("AskVolume1")
+
+    with pytest.raises(
+        ValueError, match="Missing microstructure columns: AskVolume1"
+    ):
+        downscale_quote_microstructure_features(frame)
+
+
+def test_downscale_quote_microstructure_features_rejects_non_finite_depth_values():
+    frame = _five_depth_quote_frame(
+        [{"BidVolume1": float("nan"), "AskPrice1": float("inf")}]
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Microstructure columns contain non-finite values: AskPrice1, BidVolume1",
+    ):
+        downscale_quote_microstructure_features(frame)
+
+
+def test_downscale_quote_microstructure_features_rejects_invalid_window_rows():
+    frame = _five_depth_quote_frame([{}])
+
+    with pytest.raises(ValueError, match="window_rows must be positive"):
+        downscale_quote_microstructure_features(frame, window_rows=0)
 
 
 def test_downscale_quote_ofi_features_computes_five_depth_direction_math():
