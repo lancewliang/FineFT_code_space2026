@@ -177,6 +177,51 @@ def test_downscale_quote_microstructure_features_rejects_invalid_window_rows():
         downscale_quote_microstructure_features(frame, window_rows=0)
 
 
+@pytest.mark.parametrize("window_rows", [2.5, True])
+def test_downscale_quote_microstructure_features_rejects_non_integer_window_rows(
+    window_rows,
+):
+    frame = _five_depth_quote_frame([{}])
+
+    with pytest.raises(ValueError, match="window_rows must be a positive integer"):
+        downscale_quote_microstructure_features(frame, window_rows=window_rows)
+
+
+def test_downscale_quote_microstructure_features_rejects_null_required_values():
+    frame = _five_depth_quote_frame([{"BidPrice1": None}])
+
+    with pytest.raises(
+        ValueError, match="Microstructure columns contain null values: BidPrice1"
+    ):
+        downscale_quote_microstructure_features(frame)
+
+
+def test_downscale_quote_microstructure_features_zeroes_degenerate_pressure_inputs():
+    frame = _five_depth_quote_frame(
+        [
+            {
+                "BidPrice1": 99.0,
+                "AskPrice1": 101.0,
+                "BidVolume1": 0.0,
+                "AskVolume1": 0.0,
+            },
+            {
+                "BidPrice1": 0.0,
+                "AskPrice1": 0.0,
+                "BidVolume1": 10.0,
+                "AskVolume1": 10.0,
+            },
+        ]
+    )
+
+    result = downscale_quote_microstructure_features(frame, window_rows=12)
+    row = result.row(0, named=True)
+
+    assert row["mean_microprice_pressure"] == 0.0
+    assert row["mean_relative_spread"] == pytest.approx(0.01)
+    assert row["spread_widen_ratio"] == 0.0
+
+
 def test_downscale_quote_ofi_features_computes_five_depth_direction_math():
     frame = _five_depth_quote_frame(
         [
@@ -287,6 +332,14 @@ def test_downscale_quote_ofi_features_rejects_invalid_window_rows():
 
     with pytest.raises(ValueError, match="window_rows must be positive"):
         downscale_quote_ofi_features(frame, window_rows=0)
+
+
+@pytest.mark.parametrize("window_rows", [2.5, True])
+def test_downscale_quote_ofi_features_rejects_non_integer_window_rows(window_rows):
+    frame = _five_depth_quote_frame([{}])
+
+    with pytest.raises(ValueError, match="window_rows must be a positive integer"):
+        downscale_quote_ofi_features(frame, window_rows=window_rows)
 
 
 def test_downscale_quote_ofi_features_outputs_normalized_ofi():

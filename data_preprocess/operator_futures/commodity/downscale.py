@@ -1,4 +1,5 @@
 import logging
+import numbers
 from datetime import datetime, timedelta
 from typing import List
 
@@ -670,8 +671,7 @@ def _non_finite_expr(column: str) -> pl.Expr:
 def _validate_ofi_input(
     second_df: pl.DataFrame, window_rows: int, depth: int
 ) -> list[str]:
-    if window_rows <= 0:
-        raise ValueError("window_rows must be positive")
+    window_rows = _validate_positive_integer_window_rows(window_rows)
     if second_df.height == 0:
         raise ValueError("OFI input has no quote snapshots")
 
@@ -749,6 +749,14 @@ def _safe_divide(numerator: pl.Expr, denominator: pl.Expr) -> pl.Expr:
     return pl.when(invalid_denominator).then(0.0).otherwise(numerator / denominator)
 
 
+def _validate_positive_integer_window_rows(window_rows: int) -> int:
+    if isinstance(window_rows, bool) or not isinstance(window_rows, numbers.Integral):
+        raise ValueError("window_rows must be a positive integer")
+    if window_rows <= 0:
+        raise ValueError("window_rows must be positive")
+    return int(window_rows)
+
+
 def _quote_microstructure_required_columns() -> list[str]:
     return ["timestamp", "BidPrice1", "AskPrice1", "BidVolume1", "AskVolume1"]
 
@@ -756,8 +764,7 @@ def _quote_microstructure_required_columns() -> list[str]:
 def _validate_quote_microstructure_input(
     second_df: pl.DataFrame, window_rows: int
 ) -> list[str]:
-    if window_rows <= 0:
-        raise ValueError("window_rows must be positive")
+    window_rows = _validate_positive_integer_window_rows(window_rows)
     if second_df.height == 0:
         raise ValueError("Microstructure input has no quote snapshots")
 
@@ -766,6 +773,15 @@ def _validate_quote_microstructure_input(
     if missing:
         raise ValueError(
             f"Missing microstructure columns: {', '.join(missing)}"
+        )
+
+    null_counts = second_df.select(
+        [pl.col(column).null_count().alias(column) for column in required_columns]
+    ).row(0, named=True)
+    null_columns = [column for column, count in null_counts.items() if count > 0]
+    if null_columns:
+        raise ValueError(
+            f"Microstructure columns contain null values: {', '.join(null_columns)}"
         )
 
     non_finite_counts = second_df.select(
@@ -1000,11 +1016,21 @@ def downscale_quote_microstructure_features(
             pl.col("bid_size") + pl.col("ask_size"),
         ).alias("microprice"),
         _safe_divide(pl.col("spread"), pl.col("mid")).alias("relative_spread"),
+        (pl.col("bid_size") + pl.col("ask_size")).alias("_microprice_total_size"),
     ).with_columns(
-        _safe_divide(
-            pl.col("microprice") - pl.col("mid"),
-            pl.col("spread"),
-        ).alias("microprice_pressure"),
+        pl.when(
+            (pl.col("_microprice_total_size") == 0)
+            | (pl.col("spread") == 0)
+            | (pl.col("mid") == 0)
+        )
+        .then(0.0)
+        .otherwise(
+            _safe_divide(
+                pl.col("microprice") - pl.col("mid"),
+                pl.col("spread"),
+            )
+        )
+        .alias("microprice_pressure"),
     )
     quote = quote.with_row_index("_microstructure_row_index").with_columns(
         (pl.col("_microstructure_row_index") // window_rows).alias(
