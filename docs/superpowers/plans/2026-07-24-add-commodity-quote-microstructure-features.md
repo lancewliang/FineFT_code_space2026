@@ -30,7 +30,7 @@
 - Modify: `data_preprocess/tests/test_commodity_downscale.py`
 - Test: `data_preprocess/tests/test_commodity_downscale.py`
 
-- [ ] **Step 1: Import the new feature function and add a positive-path regression test**
+- [x] **Step 1: Import the new feature function and add a positive-path regression test**
 
 Update the test import block to include the new function:
 
@@ -95,7 +95,7 @@ def test_downscale_quote_microstructure_features_computes_pressure_and_spread_co
     assert row["spread_widen_ratio"] == pytest.approx(0.25)
 ```
 
-- [ ] **Step 2: Add fixed-window and zero-denominator regression tests**
+- [x] **Step 2: Add fixed-window and zero-denominator regression tests**
 
 Add this aggregation test:
 
@@ -141,7 +141,7 @@ def test_downscale_quote_microstructure_features_zeroes_division_results_when_sp
     assert row["spread_widen_ratio"] == 0.0
 ```
 
-- [ ] **Step 3: Add input validation regression tests**
+- [x] **Step 3: Add input validation regression tests**
 
 Add these tests:
 
@@ -181,7 +181,7 @@ def test_downscale_quote_microstructure_features_rejects_invalid_window_rows():
         downscale_quote_microstructure_features(frame, window_rows=0)
 ```
 
-- [ ] **Step 4: Run the focused test subset and confirm it fails before implementation**
+- [x] **Step 4: Run the focused test subset and confirm it fails before implementation**
 
 Run:
 
@@ -191,14 +191,14 @@ source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf &&
 
 Expected: FAIL because `downscale_quote_microstructure_features` is not implemented yet.
 
-- [ ] **Step 5: Commit the red test change**
+- [x] **Step 5: Commit the red test change**
 
 ```bash
 git add data_preprocess/tests/test_commodity_downscale.py
 git commit -m "test: cover commodity quote microstructure features"
 ```
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 2: Implement quote microstructure row-window function
 
@@ -215,7 +215,7 @@ git commit -m "test: cover commodity quote microstructure features"
 - Modify: `data_preprocess/operator_futures/commodity/downscale.py`
 - Test: `data_preprocess/tests/test_commodity_downscale.py`
 
-- [ ] **Step 1: Add the validation helper and the new public function**
+- [x] **Step 1: Add the validation helper and the new public function**
 
 Insert these helpers near the existing OFI helpers in `data_preprocess/operator_futures/commodity/downscale.py`:
 
@@ -333,7 +333,7 @@ def downscale_quote_microstructure_features(
     )
 ```
 
-- [ ] **Step 2: Confirm the new function passes the focused regression tests**
+- [x] **Step 2: Confirm the new function passes the focused regression tests**
 
 Run:
 
@@ -343,7 +343,7 @@ source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf &&
 
 Expected: PASS after the implementation is in place.
 
-- [ ] **Step 3: Verify the new function does not affect OFI or quote downscale behavior**
+- [x] **Step 3: Verify the new function does not affect OFI or quote downscale behavior**
 
 Run the nearby regression subset:
 
@@ -353,14 +353,14 @@ source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf &&
 
 Expected: PASS with the new microstructure tests and existing OFI tests both green.
 
-- [ ] **Step 4: Commit the implementation**
+- [x] **Step 4: Commit the implementation**
 
 ```bash
 git add data_preprocess/operator_futures/commodity/downscale.py data_preprocess/tests/test_commodity_downscale.py
 git commit -m "feat: add commodity quote microstructure features"
 ```
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 3: Validate quote microstructure artifacts
 
@@ -379,7 +379,7 @@ git commit -m "feat: add commodity quote microstructure features"
 - Modify: `openspec/changes/add-commodity-quote-microstructure-features/{proposal.md,specs/,tasks.md,plan-ready.md}`
 - Modify: `docs/superpowers/plans/2026-07-24-add-commodity-quote-microstructure-features.md`
 
-- [ ] **Step 1: Compile the changed Python files**
+- [x] **Step 1: Compile the changed Python files**
 
 Run:
 
@@ -389,7 +389,7 @@ source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf &&
 
 Expected: PASS with no syntax errors.
 
-- [ ] **Step 2: Run the focused regression suite**
+- [x] **Step 2: Run the focused regression suite**
 
 Run:
 
@@ -399,7 +399,7 @@ source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf &&
 
 Expected: PASS.
 
-- [ ] **Step 3: Validate the OpenSpec change**
+- [x] **Step 3: Validate the OpenSpec change**
 
 Run:
 
@@ -409,11 +409,11 @@ openspec validate add-commodity-quote-microstructure-features --strict
 
 Expected: PASS.
 
-- [ ] **Step 4: Commit the validation checkpoint**
+- [x] **Step 4: Commit the validation checkpoint**
 
 ```bash
 git add openspec/changes/add-commodity-quote-microstructure-features docs/superpowers/plans/2026-07-24-add-commodity-quote-microstructure-features.md
 git commit -m "docs: finalize commodity quote microstructure plan"
 ```
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
