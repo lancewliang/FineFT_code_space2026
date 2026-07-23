@@ -64,6 +64,36 @@ def test_select_sample_from_plan_randomly_picks_one_combination(monkeypatch):
     assert diag.select_sample_from_plan(sample_plan) == diag.SamplePlanItem(1, 1)
 
 
+def test_build_balanced_training_schedule_covers_each_df_before_repeating(monkeypatch):
+    from RL.DiHFT.low_level import pretrain_qtable_diagnostics as diag
+
+    monkeypatch.setattr(diag.random, "shuffle", lambda items: None)
+
+    sample_plan = [
+        diag.SamplePlanItem(0, 0),
+        diag.SamplePlanItem(0, 1),
+        diag.SamplePlanItem(1, 0),
+        diag.SamplePlanItem(1, 1),
+        diag.SamplePlanItem(2, 0),
+        diag.SamplePlanItem(2, 1),
+    ]
+
+    schedule = diag.build_balanced_training_schedule(sample_plan, num_sample=8)
+
+    assert [item.df_index for item in schedule[:3]] == [0, 1, 2]
+    assert [item.df_index for item in schedule[3:6]] == [0, 1, 2]
+    assert [item.to_tuple() for item in schedule] == [
+        (0, 0),
+        (1, 0),
+        (2, 0),
+        (0, 1),
+        (1, 1),
+        (2, 1),
+        (0, 0),
+        (1, 0),
+    ]
+
+
 def test_get_sample_action_from_cache_supports_dataclass_and_legacy_tuple_keys():
     from RL.DiHFT.low_level import pretrain_qtable_diagnostics as diag
 

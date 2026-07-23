@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
-### Requirement: Merge, concat, scale, and feature selection compatibility
-The system SHALL migrate merge, concat, scale/save, and feature-selection preprocessing to Polars while preserving existing output contracts.
+### Requirement: Operator futures Polars preprocessing compatibility
+The system SHALL migrate operator-futures preprocessing paths under `data_preprocess/operator_futures` to Polars and preserve existing output contracts.
 
 #### Scenario: Orderbook and derivative ticker downscale compatibility
 - **WHEN** orderbook or derivative ticker downscale runs for a symbol, date, and target frequency supported by the existing scripts
@@ -36,6 +36,8 @@ The system SHALL migrate merge, concat, scale/save, and feature-selection prepro
 - **AND** `muti_contract_scale_save.py` SHALL write a debug csv next to each feather output under `SCALE_SAVE/fu/5min/{stage}/{contract}.csv`
 - **AND** `muti_contract_scale_save.py` SHALL write `SCALE_SAVE/fu/5min/scaler_manifest.json` and `SCALE_SAVE/fu/5min/scale_diagnostics.csv`
 - **AND** reward/execution columns remain unscaled and state columns are scaled by the train-only manifest with default clip bounds `[-20, 20]`
+
+## ADDED Requirements
 
 ### Requirement: Commodity split-stage scale-save manifest and diagnostics
 The system SHALL make the train-only robust split-stage scaler auditable by writing a manifest and diagnostics file next to the stage outputs.

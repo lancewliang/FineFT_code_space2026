@@ -849,17 +849,30 @@
 - **AND** `SPLIT-TRAIN-VALID-TEST/5min/fu/train/fu2601.feather` 存在
 - **AND** `SPLIT-TRAIN-VALID-TEST/5min/fu/valid/fu2601.feather` 不存在
 - **THEN** `muti_contract_scale_save.py` SHALL 使用 train `state_features.npy` 作为 state feature 清单
+- **AND** `muti_contract_scale_save.py` SHALL 只从 train split 全量拟合 robust scaler，一次生成整套 `center`、`scale`、`fallback` 和 `clip` 参数
+- **AND** `muti_contract_scale_save.py` SHALL 将同一套 scaler 参数应用到 train、valid 和 test split 文件
+- **AND** `muti_contract_scale_save.py` SHALL NOT 在 valid 或 test split 上重新拟合 scaler
 - **AND** `muti_contract_scale_save.py` SHALL 处理存在的 `train/fu2601.feather`
 - **AND** `muti_contract_scale_save.py` SHALL NOT 要求为缺失的 `valid/fu2601.feather` 生成输出
 - **AND** `muti_contract_scale_save.py` SHALL 继续处理扫描到的其他存在阶段合约文件
 - **AND** `muti_contract_scale_save.py` SHALL NOT 使用 valid 阶段产生的特征清单
+- **AND** `muti_contract_scale_save.py` SHALL 写出 `SCALE_SAVE/fu/5min/scaler_manifest.json`
+- **AND** `muti_contract_scale_save.py` SHALL 写出 `SCALE_SAVE/fu/5min/scale_diagnostics.csv`
 
 #### Scenario: scale-save 输出只包含训练集选中特征
 - **WHEN** `muti_contract_scale_save.py` 处理任一存在的 split 阶段合约文件
 - **THEN** `muti_contract_scale_save.py` SHALL 写出 `SCALE_SAVE/fu/5min/{stage}/fu2601.feather`
 - **AND** `muti_contract_scale_save.py` SHALL 同步写出 `SCALE_SAVE/fu/5min/{stage}/fu2601.csv`
 - **AND** 输出 feather 和 csv SHALL 包含商品 reward/execution 列、train `state_features.npy` 中的 state features 和 `symbol`
+- **AND** 系统 SHALL 将 state features 按 train-only robust scaler 进行标准化并默认裁剪到 `[-20, 20]`
 - **AND** 系统 SHALL NOT 将未入选 state features 写入 scale-save 输出 feather 或 csv
+
+#### Scenario: split-stage robust scaler fail-fast
+- **WHEN** train split 输入目录不存在、没有合约 feather、train feature universe 为空、train 筛选结果为空、required feature column 缺失、clip bounds 无效或拟合统计量非有限
+- **THEN** `muti_contract_scale_save.py` SHALL 报错并停止当前阶段
+- **AND** 错误信息 SHALL 包含阶段名、缺失或为空的资源路径，以及相关合约或特征名
+- **AND** 系统 SHALL NOT 静默跳过该合约
+- **AND** 系统 SHALL NOT 写出下游可消费的 train `state_features.npy`
 
 #### Scenario: 特征选择 fail-fast
 - **WHEN** train 或 valid split 输入目录不存在、没有合约 feather、train feature universe 为空、train 筛选结果为空或 required feature column 缺失
@@ -1114,4 +1127,49 @@
 - **THEN** 测试 SHALL 断言 `json.loads(...)` 的结果等于对应 summary 对象 `to_dict()` 的结果
 - **AND** 测试 SHALL 保留关键字段、层级、合约顺序和交易日窗口裁剪字段的兼容性断言
 - **AND** focused verification SHALL 使用 `conda activate finetf && pytest data_preprocess/tests/test_commodity_main_contract.py`
+
+### Requirement: 商品期货五档 OFI row-window 特征
+系统 SHALL 从连续五档 quote 快照计算标准五档 OFI，并按固定输入行数聚合输出。
+
+#### Scenario: 五档相邻快照 OFI 明细
+- **WHEN** 输入 quote 快照包含 `timestamp`、`BidPrice1` 到 `BidPrice5`、`AskPrice1` 到 `AskPrice5`、`BidVolume1` 到 `BidVolume5` 和 `AskVolume1` 到 `AskVolume5`
+- **THEN** 系统 SHALL 按 `timestamp` 全局排序后比较每条快照与上一条快照
+- **AND** 第一条快照的每档 OFI SHALL 为 `0`
+- **AND** 对每个 bid 档位，价格上移时使用 `+ 当前 BidVolume`，价格不变时使用 `当前 BidVolume - 上一条 BidVolume`，价格下移时使用 `- 上一条 BidVolume`
+- **AND** 对每个 ask 档位，价格下移时使用 `- 当前 AskVolume`，价格不变时使用 `-(当前 AskVolume - 上一条 AskVolume)`，价格上移时使用 `+ 上一条 AskVolume`
+- **AND** 输出 SHALL 包含 `ofi_bid1` 到 `ofi_bid5`、`ofi_ask1` 到 `ofi_ask5`、`ofi_bid`、`ofi_ask` 和 `ofi`
+- **AND** `ofi_bid` SHALL 等于 `ofi_bid1` 到 `ofi_bid5` 的和，`ofi_ask` SHALL 等于 `ofi_ask1` 到 `ofi_ask5` 的和，`ofi` SHALL 等于 `ofi_bid + ofi_ask`
+
+#### Scenario: 固定 12 行聚合
+- **WHEN** 用户使用默认 `window_rows=12` 生成五档 OFI 特征
+- **THEN** 系统 SHALL 每 12 条按时间排序后的输入快照输出一行 OFI bar
+- **AND** 每行输出的 `timestamp` SHALL 为该组内最后一条快照的 `timestamp`
+- **AND** 每行输出的 `nquote` SHALL 为该组输入快照数量
+- **AND** 每行输出的所有 OFI 明细列和汇总列 SHALL 为该组内逐快照 OFI 的求和
+- **AND** 最后不足 12 条输入快照的尾组 SHALL 保留输出
+
+#### Scenario: OFI 归一化特征
+- **WHEN** 系统输出五档 OFI bar
+- **THEN** 输出 SHALL 包含 `ofi_norm`、`ofi_bid_norm` 和 `ofi_ask_norm`
+- **AND** `ofi_norm` SHALL 等于 `ofi / sum(BidVolume1-5 + AskVolume1-5)`，分母为同一 OFI bar 内所有输入快照的五档 bid 与 ask volume 合计
+- **AND** `ofi_bid_norm` SHALL 等于 `ofi_bid / sum(BidVolume1-5)`，分母为同一 OFI bar 内所有输入快照的五档 bid volume 合计
+- **AND** `ofi_ask_norm` SHALL 等于 `ofi_ask / sum(AskVolume1-5)`，分母为同一 OFI bar 内所有输入快照的五档 ask volume 合计
+- **AND** 当任一归一化分母为 `0` 时，对应归一化输出 SHALL 为 `0`
+
+#### Scenario: OFI 比较跨行窗口连续
+- **WHEN** 第 13 条快照开始新的 12 行 OFI bar
+- **THEN** 第 13 条快照的 OFI SHALL 使用第 12 条快照作为上一条快照计算
+- **AND** 系统 MUST NOT 在固定行数窗口边界重置相邻快照状态
+
+#### Scenario: OFI 输入 fail-fast
+- **WHEN** OFI 输入没有任何 quote 快照
+- **THEN** 系统 SHALL 报错并说明没有 quote snapshot
+- **WHEN** OFI 输入缺少任一五档价格或数量必需列
+- **THEN** 系统 SHALL 报错并列出缺失列名
+- **WHEN** OFI 输入的任一五档价格或数量必需列存在 null
+- **THEN** 系统 SHALL 报错并列出存在 null 的列名
+- **WHEN** OFI 输入的任一五档价格或数量必需列存在 NaN、`inf` 或 `-inf`
+- **THEN** 系统 SHALL 报错并列出存在非有限值的列名
+- **WHEN** `window_rows <= 0`
+- **THEN** 系统 SHALL 报错并说明 `window_rows` 必须为正数
 

@@ -179,11 +179,11 @@ from env.env_class.futures_util import (
 from env.env_class.policy_util import get_close_element
 from RL.DiHFT.low_level.pretrain_qtable_diagnostics import (
     build_initial_state,
+    build_balanced_training_schedule,
     create_demo_env,
     extend_q_table_cache,
     get_sample_action_from_cache,
     prepare_pretrain_qtable_diagnostics,
-    select_sample_from_plan,
 )
 from RL.DiHFT.low_level.loss_nan_diagnostics import log_loss_nan_diagnostics
 import copy
@@ -1192,6 +1192,10 @@ class Weighted_Contexts_DQN:
         q_table_cache = diagnostics_result.q_table_cache
         train_df_cache = diagnostics_result.train_df_cache
         sample_action_cache = diagnostics_result.sample_action_cache
+        sample_schedule = build_balanced_training_schedule(
+            sample_plan,
+            self.num_sample,
+        )
         if self.full_df_warmup:
             q_table_cache, train_df_cache = extend_q_table_cache(
                 df_indices=range(self.total_df_index_length),
@@ -1207,11 +1211,10 @@ class Weighted_Contexts_DQN:
             buffer_pretrain=buffer_pretrain,
             step_counter_pretrain=step_counter_pretrain,
         )
-        for sample in range(self.num_sample):
+        for sample, sample_item in enumerate(sample_schedule):
             logger.info("===== 第 %d/%d 轮采样 =====", sample + 1, self.num_sample)
             pretrain = sample < self.pretrain_epoch
             logger.info("当前阶段: %s", "预训练" if pretrain else "多样化训练")
-            sample_item = select_sample_from_plan(sample_plan)
             df_index = sample_item.df_index
             initial_action = sample_item.initial_action
             logger.info(

@@ -39,6 +39,20 @@ The system SHALL migrate operator-futures preprocessing paths under `data_prepro
 - **THEN** inner joins, duplicate timestamp `first` semantics, future feature shift, forward fill, reward/execution column selection, state feature selection, and saved file paths remain compatible with existing downstream readers
 - **AND** float outputs compare within `rtol=1e-12, atol=1e-12`
 
+#### Scenario: Commodity multi-contract scale save reads split-stage input with train feature list
+- **WHEN** commodity full process has written `FEATURE_SELECTION/5min/fu/train/state_features.npy`
+- **AND** `SPLIT-TRAIN-VALID-TEST/5min/fu/train/fu2601.feather` exists
+- **AND** `SPLIT-TRAIN-VALID-TEST/5min/fu/valid/fu2601.feather` does not exist
+- **THEN** `muti_contract_scale_save.py` SHALL support reading the existing split-stage input path for contract `fu2601`
+- **AND** `muti_contract_scale_save.py` SHALL use `FEATURE_SELECTION/5min/fu/train/state_features.npy` as the state feature list
+- **AND** `muti_contract_scale_save.py` SHALL fit a train-only robust scaler from all train split rows once, then apply that manifest to train/valid/test split inputs
+- **AND** `muti_contract_scale_save.py` SHALL NOT require an output for the missing `valid/fu2601.feather` stage
+- **AND** `muti_contract_scale_save.py` SHALL continue processing all discovered split-stage inputs
+- **AND** `muti_contract_scale_save.py` SHALL keep writing final feather outputs under `SCALE_SAVE/fu/5min/{stage}/{contract}.feather`
+- **AND** `muti_contract_scale_save.py` SHALL write a debug csv next to each feather output under `SCALE_SAVE/fu/5min/{stage}/{contract}.csv`
+- **AND** `muti_contract_scale_save.py` SHALL write `SCALE_SAVE/fu/5min/scaler_manifest.json` and `SCALE_SAVE/fu/5min/scale_diagnostics.csv`
+- **AND** reward/execution columns remain unscaled and state columns are scaled by the train-only manifest with default clip bounds `[-20, 20]`
+
 ### Requirement: Output compatibility decisions
 The system SHALL preserve preprocessing output compatibility and make any unresolved behavior difference explicit before implementation proceeds past the affected path.
 
@@ -197,4 +211,17 @@ The system SHALL stop `scale_save.py` before writing outputs when the main input
 - **AND** the final `out` DataFrame contains no floating-point NaN values
 - **THEN** the script SHALL preserve the existing successful scale-save output behavior
 - **AND** the existing CLI arguments, path layout, feature selection rules, scaling rules, and output file formats SHALL remain compatible
+
+### Requirement: Commodity split-stage scale-save manifest and diagnostics
+The system SHALL make the train-only robust split-stage scaler auditable by writing a manifest and diagnostics file next to the stage outputs.
+
+#### Scenario: Manifest records fit scope and per-feature statistics
+- **WHEN** `muti_contract_scale_save.py` fits the train-only robust scaler for `fu`
+- **THEN** `scaler_manifest.json` SHALL record `symbol`, `target_freq`, `scaler_version`, `feature_list_path`, `train_input_files`, `clip_min`, `clip_max`, and `row_count`
+- **AND** the manifest SHALL record each selected feature's center, scale, scale method, fallback reason, and summary statistics needed to reproduce the fit
+
+#### Scenario: Diagnostics records clipping and output accounting
+- **WHEN** `muti_contract_scale_save.py` applies the manifest to a split-stage input file
+- **THEN** `scale_diagnostics.csv` SHALL record `stage`, `contract`, `input_file`, `output_file`, `rows`, `state_feature_count`, `clip_enabled`, `total_clipped_values`, and per-file clip ratios
+- **AND** the diagnostics SHALL make it possible to identify features or contracts that were clipped heavily without reading the feather outputs
 

@@ -152,6 +152,40 @@ def select_sample_from_plan(sample_plan):
     return random.choice(sample_plan)
 
 
+def build_balanced_training_schedule(sample_plan, num_sample):
+    if num_sample < 0:
+        raise ValueError("num_sample must be non-negative")
+    if num_sample == 0:
+        return []
+
+    sample_plan = [_coerce_sample_item(item) for item in sample_plan]
+    if not sample_plan:
+        raise ValueError("sample_plan must not be empty when num_sample > 0")
+
+    sample_items_by_df = {}
+    for item in sorted(
+        sample_plan,
+        key=lambda item: (item.df_index, item.initial_action),
+    ):
+        sample_items_by_df.setdefault(item.df_index, []).append(item)
+
+    df_indices = sorted(sample_items_by_df)
+    remaining_items_by_df = {df_index: [] for df_index in df_indices}
+    schedule = []
+    while len(schedule) < num_sample:
+        df_cycle = list(df_indices)
+        random.shuffle(df_cycle)
+        for df_index in df_cycle:
+            if len(schedule) >= num_sample:
+                break
+            remaining_items = remaining_items_by_df[df_index]
+            if not remaining_items:
+                remaining_items.extend(sample_items_by_df[df_index])
+                random.shuffle(remaining_items)
+            schedule.append(remaining_items.pop(0))
+    return schedule
+
+
 def _coerce_sample_item(sample_item):
     if isinstance(sample_item, SamplePlanItem):
         return sample_item
