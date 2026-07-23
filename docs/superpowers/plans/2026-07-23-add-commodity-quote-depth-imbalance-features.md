@@ -30,7 +30,7 @@
 - Modify: `data_preprocess/tests/test_commodity_downscale.py`
 - Test: `data_preprocess/tests/test_commodity_downscale.py`
 
-- [ ] **Step 1: Add test utilities for finite checks and one-depth manual fixtures**
+- [x] **Step 1: Add test utilities for finite checks and one-depth manual fixtures**
 
 In `data_preprocess/tests/test_commodity_downscale.py`, change the import block and add helper functions below `_five_depth_quote_frame()`:
 
@@ -57,7 +57,7 @@ def _assert_finite_imbalance_outputs(row: dict) -> None:
             assert math.isfinite(value), column
 ```
 
-- [ ] **Step 2: Add regression tests for depth imbalance outputs**
+- [x] **Step 2: Add regression tests for depth imbalance outputs**
 
 Add these tests near the existing quote downscale tests in `data_preprocess/tests/test_commodity_downscale.py`:
 
@@ -182,7 +182,7 @@ def test_downscale_quote_features_rejects_missing_depth_volume_column():
         downscale_quote_features(frame, "5min")
 ```
 
-- [ ] **Step 3: Update existing one-depth quote fixtures to include depth volume columns**
+- [x] **Step 3: Update existing one-depth quote fixtures to include depth volume columns**
 
 In `data_preprocess/tests/test_commodity_downscale.py`, update these four tests so the manual quote fixture is built with `_quote_frame_with_depth(...)` instead of `pl.DataFrame(...)`:
 
@@ -260,7 +260,7 @@ def test_intermediate_empty_quote_window_in_same_session_fails_fast():
 
 Leave each test's existing assertions unchanged after the fixture construction.
 
-- [ ] **Step 4: Run the new focused tests and confirm old implementation fails**
+- [x] **Step 4: Run the new focused tests and confirm old implementation fails**
 
 Run:
 
@@ -270,7 +270,7 @@ source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf &&
 
 Expected: FAIL before implementation because `downscale_quote_features()` does not output `imbalance_1`, `imbalance_3`, `imbalance_5`, or `std_imbalance_volume`, and does not raise the new quote depth volume validation errors.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 2: Implement quote depth imbalance helpers and aggregation
 
@@ -287,7 +287,7 @@ Expected: FAIL before implementation because `downscale_quote_features()` does n
 - Modify: `data_preprocess/operator_futures/commodity/downscale.py`
 - Test: `data_preprocess/tests/test_commodity_downscale.py`
 
-- [ ] **Step 1: Add quote depth imbalance constants and helper functions**
+- [x] **Step 1: Add quote depth imbalance constants and helper functions**
 
 In `data_preprocess/operator_futures/commodity/downscale.py`, add these helpers after `_safe_divide()` and before `_normalize_limit_single_sided_quote_prices()`:
 
@@ -359,7 +359,7 @@ def _quote_window_stat_aggs(
     return aggs
 ```
 
-- [ ] **Step 2: Harden `_safe_divide()` for null and non-finite denominators**
+- [x] **Step 2: Harden `_safe_divide()` for null and non-finite denominators**
 
 In `data_preprocess/operator_futures/commodity/downscale.py`, replace `_safe_divide()` with:
 
@@ -377,7 +377,7 @@ def _safe_divide(numerator: pl.Expr, denominator: pl.Expr) -> pl.Expr:
     )
 ```
 
-- [ ] **Step 3: Extend `downscale_quote_features()` select and derived columns**
+- [x] **Step 3: Extend `downscale_quote_features()` select and derived columns**
 
 In `data_preprocess/operator_futures/commodity/downscale.py`, replace the first part of `downscale_quote_features()` through the first `quote.with_columns(...)` block with:
 
@@ -419,7 +419,7 @@ def downscale_quote_features(
 
 Leave the existing quote change count block below this code unchanged.
 
-- [ ] **Step 4: Replace manual aggregation loop with `_quote_window_stat_aggs()`**
+- [x] **Step 4: Replace manual aggregation loop with `_quote_window_stat_aggs()`**
 
 In `data_preprocess/operator_futures/commodity/downscale.py`, replace the existing `for name in [...]` aggregation loop with:
 
@@ -448,7 +448,7 @@ In `data_preprocess/operator_futures/commodity/downscale.py`, replace the existi
     )
 ```
 
-- [ ] **Step 5: Run focused tests and fix only failures caused by this change**
+- [x] **Step 5: Run focused tests and fix only failures caused by this change**
 
 Run:
 
@@ -458,7 +458,7 @@ source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf &&
 
 Expected: PASS after implementation. If a failure is unrelated to quote depth imbalance, record the failure and continue with the narrower command from Step 6 before broadening validation.
 
-- [ ] **Step 6: Run the whole commodity downscale test file**
+- [x] **Step 6: Run the whole commodity downscale test file**
 
 Run:
 
@@ -468,7 +468,7 @@ source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf &&
 
 Expected: PASS.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ### Task 3: Validate quote depth imbalance artifacts
 
@@ -488,7 +488,7 @@ Expected: PASS.
 - Test: `data_preprocess/operator_futures/commodity/downscale.py`
 - Test: `data_preprocess/tests/test_commodity_downscale.py`
 
-- [ ] **Step 1: Run Python compile checks**
+- [x] **Step 1: Run Python compile checks**
 
 Run:
 
@@ -498,7 +498,7 @@ source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf &&
 
 Expected: command exits with status 0 and prints no syntax errors.
 
-- [ ] **Step 2: Run focused quote validation**
+- [x] **Step 2: Run focused quote validation**
 
 Run:
 
@@ -508,7 +508,7 @@ source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate finetf &&
 
 Expected: PASS.
 
-- [ ] **Step 3: Run OpenSpec strict validation**
+- [x] **Step 3: Run OpenSpec strict validation**
 
 Run:
 
@@ -518,7 +518,7 @@ openspec validate add-commodity-quote-depth-imbalance-features --strict
 
 Expected: `Change 'add-commodity-quote-depth-imbalance-features' is valid`.
 
-- [ ] **Step 4: Update task-level checkboxes after implementation verification**
+- [x] **Step 4: Update task-level checkboxes after implementation verification**
 
 After Steps 1-3 pass during build, update:
 
@@ -530,7 +530,7 @@ After Steps 1-3 pass during build, update:
 
 Also update the corresponding `- [ ] **任务完成**` lines in `plan-ready.md` and the corresponding `- [ ] **Task complete**` lines in this plan.
 
-- [ ] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
+- [x] **Task complete**（本 Task 全部 Step 为 `[x]` 后勾选；与 plan-ready **任务完成**、tasks.md 对应行同步）
 
 ## Self-Review
 

@@ -1,5 +1,6 @@
 from datetime import datetime
 import logging
+import math
 from types import SimpleNamespace
 
 import polars as pl
@@ -38,6 +39,23 @@ def _five_depth_quote_frame(row_overrides: list[dict]) -> pl.DataFrame:
         row.update(overrides)
         rows.append(row)
     return pl.DataFrame(rows)
+
+
+def _quote_frame_with_depth(data: dict) -> pl.DataFrame:
+    row_count = len(next(iter(data.values())))
+    columns = dict(data)
+    for level in range(2, 6):
+        columns.setdefault(f"BidVolume{level}", [0.0] * row_count)
+        columns.setdefault(f"AskVolume{level}", [0.0] * row_count)
+    return pl.DataFrame(columns)
+
+
+def _assert_finite_imbalance_outputs(row: dict) -> None:
+    for name, value in row.items():
+        if "imbalance" not in name:
+            continue
+        assert value is not None, f"{name} is null"
+        assert math.isfinite(float(value)), f"{name} is not finite: {value!r}"
 
 
 def test_downscale_quote_ofi_features_computes_five_depth_direction_math():
@@ -205,6 +223,123 @@ def test_downscale_quote_ofi_features_zeroes_normalized_ofi_when_denominator_is_
     assert row["ofi_bid_norm"] == 0.0
     assert row["ofi_ask_norm"] == 0.0
     assert row["ofi_norm"] == 0.0
+
+
+def test_downscale_quote_features_outputs_depth_imbalance_statistics():
+    frame = _five_depth_quote_frame(
+        [
+            {
+                "timestamp": datetime(2026, 2, 2, 9, 0, 1),
+                **{f"BidVolume{level}": 10.0 for level in range(1, 6)},
+                **{f"AskVolume{level}": 0.0 for level in range(1, 6)},
+            },
+            {
+                "timestamp": datetime(2026, 2, 2, 9, 0, 2),
+                **{f"BidVolume{level}": 10.0 for level in range(1, 6)},
+                **{f"AskVolume{level}": 10.0 for level in range(1, 6)},
+            },
+            {
+                "timestamp": datetime(2026, 2, 2, 9, 0, 3),
+                **{f"BidVolume{level}": 0.0 for level in range(1, 6)},
+                **{f"AskVolume{level}": 10.0 for level in range(1, 6)},
+            },
+        ]
+    )
+
+    result = downscale_quote_features(frame, "5min")
+    row = result.filter(pl.col("timestamp") == datetime(2026, 2, 2, 9, 5, 0)).row(
+        0, named=True
+    )
+
+    for depth in (1, 3, 5):
+        assert row[f"open_imbalance_{depth}"] == pytest.approx(1.0)
+        assert row[f"high_imbalance_{depth}"] == pytest.approx(1.0)
+        assert row[f"low_imbalance_{depth}"] == pytest.approx(-1.0)
+        assert row[f"close_imbalance_{depth}"] == pytest.approx(-1.0)
+        assert row[f"awap_imbalance_{depth}"] == pytest.approx(0.0)
+        assert row[f"twap_imbalance_{depth}"] == pytest.approx(0.0)
+        assert row[f"std_imbalance_{depth}"] == pytest.approx(1.0)
+
+    for statistic in ("open", "high", "low", "close", "awap", "twap", "std"):
+        assert row[f"{statistic}_imbalance_1"] == pytest.approx(
+            row[f"{statistic}_imbalance_volume"]
+        )
+    _assert_finite_imbalance_outputs(row)
+
+
+def test_downscale_quote_features_depth_imbalance_zero_denominator_is_neutral():
+    frame = _five_depth_quote_frame(
+        [
+            {
+                "timestamp": datetime(2026, 2, 2, 9, 0, 1),
+                **{f"BidVolume{level}": 0.0 for level in range(1, 6)},
+                **{f"AskVolume{level}": 0.0 for level in range(1, 6)},
+            },
+            {
+                "timestamp": datetime(2026, 2, 2, 9, 0, 2),
+                **{f"BidVolume{level}": 0.0 for level in range(1, 6)},
+                **{f"AskVolume{level}": 0.0 for level in range(1, 6)},
+            },
+        ]
+    )
+
+    result = downscale_quote_features(frame, "5min")
+    row = result.filter(pl.col("timestamp") == datetime(2026, 2, 2, 9, 5, 0)).row(
+        0, named=True
+    )
+
+    assert row["open_imbalance_1"] == 0.0
+    assert row["open_imbalance_3"] == 0.0
+    assert row["open_imbalance_5"] == 0.0
+    assert row["std_imbalance_volume"] == 0.0
+    _assert_finite_imbalance_outputs(row)
+
+
+def test_downscale_quote_features_depth_imbalance_null_volume_is_neutral():
+    frame = _five_depth_quote_frame(
+        [
+            {
+                "timestamp": datetime(2026, 2, 2, 9, 0, 1),
+                **{f"BidVolume{level}": None for level in range(1, 6)},
+                **{f"AskVolume{level}": None for level in range(1, 6)},
+            },
+            {
+                "timestamp": datetime(2026, 2, 2, 9, 0, 2),
+                **{f"BidVolume{level}": None for level in range(1, 6)},
+                **{f"AskVolume{level}": None for level in range(1, 6)},
+            },
+        ]
+    )
+
+    result = downscale_quote_features(frame, "5min")
+    row = result.filter(pl.col("timestamp") == datetime(2026, 2, 2, 9, 5, 0)).row(
+        0, named=True
+    )
+
+    assert row["open_imbalance_1"] == 0.0
+    assert row["open_imbalance_3"] == 0.0
+    assert row["open_imbalance_5"] == 0.0
+    _assert_finite_imbalance_outputs(row)
+
+
+def test_downscale_quote_features_quote_depth_rejects_non_finite_volume():
+    frame = _five_depth_quote_frame([{"BidVolume3": float("nan")}])
+
+    with pytest.raises(
+        ValueError,
+        match="Quote volume columns contain non-finite values: BidVolume3",
+    ):
+        downscale_quote_features(frame, "5min")
+
+
+def test_downscale_quote_features_quote_depth_rejects_missing_volume_column():
+    frame = _five_depth_quote_frame([{}]).drop("AskVolume5")
+
+    with pytest.raises(
+        ValueError,
+        match="Missing quote depth volume columns: AskVolume5",
+    ):
+        downscale_quote_features(frame, "5min")
 
 
 def test_iter_summary_trading_days_accepts_summary_model(tmp_path):
@@ -498,7 +633,7 @@ def test_continuous_downscale_rejects_illegal_second_level_values(tmp_path, capl
     assert not list(tmp_path.rglob("*.feather"))
 
 
-def test_continuous_downscale_rejects_illegal_feature_outputs(tmp_path, caplog):
+def test_continuous_downscale_keeps_safe_quote_outputs(tmp_path, caplog):
     raw = pl.read_csv(SAMPLE_PATH).head(2).fill_null(0).with_columns(
         pl.lit(0.0).alias("ClosePrice"),
         pl.lit(0.0).alias("SettlementPrice"),
@@ -509,16 +644,11 @@ def test_continuous_downscale_rejects_illegal_feature_outputs(tmp_path, caplog):
         pl.lit(0).alias("AskVolume1"),
     )
 
-    with pytest.raises(ValueError) as exc_info:
-        _write_downscaled_day(raw, tmp_path, "5min", "fu", "fu2302", depth=5)
+    trading_day = _write_downscaled_day(raw, tmp_path, "5min", "fu", "fu2302", depth=5)
 
-    message = str(exc_info.value)
-    assert "stage=feature_output" in message
-    assert "feature=COMMODITY_QUOTE_FEATURE" in message
-    assert "imbalance_volume" in message
-    assert "nan=1" in message
-    assert "Illegal data detected" in caplog.text
-    assert not list(tmp_path.rglob("*.feather"))
+    assert trading_day == "20230104"
+    assert list(tmp_path.rglob("*.feather"))
+    assert "Illegal data detected" not in caplog.text
 
 
 def test_second_level_snapshots_handle_string_quote_columns():
@@ -903,7 +1033,7 @@ def test_empty_quote_window_fails_fast():
 
 
 def test_limit_down_single_sided_quote_window_counts_as_quote():
-    second = pl.DataFrame(
+    second = _quote_frame_with_depth(
         {
             "timestamp": [
                 datetime(2026, 2, 2, 13, 50, 1),
@@ -931,7 +1061,7 @@ def test_limit_down_single_sided_quote_window_counts_as_quote():
 
 
 def test_limit_up_single_sided_quote_window_counts_as_quote():
-    second = pl.DataFrame(
+    second = _quote_frame_with_depth(
         {
             "timestamp": [
                 datetime(2026, 2, 2, 13, 50, 1),
@@ -959,7 +1089,7 @@ def test_limit_up_single_sided_quote_window_counts_as_quote():
 
 
 def test_cross_session_quote_gap_does_not_fail():
-    second = pl.DataFrame(
+    second = _quote_frame_with_depth(
         {
             "timestamp": [
                 datetime(2025, 10, 31, 23, 0, 0),
@@ -981,7 +1111,7 @@ def test_cross_session_quote_gap_does_not_fail():
 
 
 def test_intermediate_empty_quote_window_in_same_session_fails_fast():
-    second = pl.DataFrame(
+    second = _quote_frame_with_depth(
         {
             "timestamp": [
                 datetime(2023, 1, 3, 9, 0, 0),

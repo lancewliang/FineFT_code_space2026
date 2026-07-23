@@ -14,6 +14,7 @@ BID_PRICE_COLUMNS = [f"BidPrice{level}" for level in range(1, 6)]
 ASK_PRICE_COLUMNS = [f"AskPrice{level}" for level in range(1, 6)]
 BID_VOLUME_COLUMNS = [f"BidVolume{level}" for level in range(1, 6)]
 ASK_VOLUME_COLUMNS = [f"AskVolume{level}" for level in range(1, 6)]
+QUOTE_DEPTH_IMBALANCE_LEVELS = (1, 3, 5)
 DEPTH_PRICE_COLUMNS = BID_PRICE_COLUMNS + ASK_PRICE_COLUMNS
 SECOND_LEVEL_PRICE_COLUMNS = (
     DEPTH_PRICE_COLUMNS
@@ -738,7 +739,77 @@ def _ofi_ask_expr(level: int) -> pl.Expr:
 
 
 def _safe_divide(numerator: pl.Expr, denominator: pl.Expr) -> pl.Expr:
-    return pl.when(denominator != 0).then(numerator / denominator).otherwise(0.0)
+    invalid_denominator = (
+        denominator.is_null()
+        | (denominator == 0)
+        | denominator.is_nan()
+        | (denominator == float("inf"))
+        | (denominator == -float("inf"))
+    ).fill_null(True)
+    return pl.when(invalid_denominator).then(0.0).otherwise(numerator / denominator)
+
+
+def _quote_depth_volume_columns(depth: int = 5) -> list[str]:
+    columns = []
+    for level in range(1, depth + 1):
+        columns.extend([f"BidVolume{level}", f"AskVolume{level}"])
+    return columns
+
+
+def _validate_quote_depth_imbalance_input(second_df: pl.DataFrame) -> None:
+    volume_columns = _quote_depth_volume_columns()
+    missing = [column for column in volume_columns if column not in second_df.columns]
+    if missing:
+        raise ValueError(
+            f"Missing quote depth volume columns: {', '.join(missing)}"
+        )
+
+    non_finite_counts = second_df.select(
+        [_non_finite_expr(column).sum().alias(column) for column in volume_columns]
+    ).row(0, named=True)
+    non_finite_columns = [
+        column for column, count in non_finite_counts.items() if count > 0
+    ]
+    if non_finite_columns:
+        raise ValueError(
+            "Quote volume columns contain non-finite values: "
+            f"{', '.join(non_finite_columns)}"
+        )
+
+
+def _quote_volume_expr(column: str) -> pl.Expr:
+    return pl.col(column).cast(pl.Float64, strict=False).fill_null(0.0)
+
+
+def _depth_imbalance_expr(depth: int) -> pl.Expr:
+    bid_volume = pl.sum_horizontal(
+        [_quote_volume_expr(f"BidVolume{level}") for level in range(1, depth + 1)]
+    )
+    ask_volume = pl.sum_horizontal(
+        [_quote_volume_expr(f"AskVolume{level}") for level in range(1, depth + 1)]
+    )
+    return _safe_divide(bid_volume - ask_volume, bid_volume + ask_volume)
+
+
+def _quote_window_stat_aggs(
+    names: list[str], std_names: set[str] | None = None
+) -> list[pl.Expr]:
+    std_names = std_names or set()
+    aggs: list[pl.Expr] = []
+    for name in names:
+        aggs.extend(
+            [
+                pl.col(name).first().alias(f"open_{name}"),
+                pl.col(name).max().alias(f"high_{name}"),
+                pl.col(name).min().alias(f"low_{name}"),
+                pl.col(name).last().alias(f"close_{name}"),
+                pl.col(name).mean().alias(f"awap_{name}"),
+                pl.col(name).mean().alias(f"twap_{name}"),
+            ]
+        )
+        if name in std_names:
+            aggs.append(pl.col(name).std().fill_null(0.0).alias(f"std_{name}"))
+    return aggs
 
 
 def _normalize_limit_single_sided_quote_prices(df: pl.DataFrame) -> pl.DataFrame:
@@ -874,6 +945,7 @@ def downscale_quote_features(
 ) -> pl.DataFrame:
     if second_df.height == 0:
         raise ValueError("Target window has no quote snapshots")
+    _validate_quote_depth_imbalance_input(second_df)
 
     quote = _normalize_limit_single_sided_quote_prices(second_df).sort("timestamp").select(
         "timestamp",
@@ -881,14 +953,16 @@ def downscale_quote_features(
         pl.col("AskPrice1").alias("ask_price"),
         pl.col("BidVolume1").alias("bid_amount"),
         pl.col("AskVolume1").alias("ask_amount"),
+        *_quote_depth_volume_columns(),
     )
     quote = quote.with_columns(
         (pl.col("ask_price") - pl.col("bid_price")).alias("spread"),
         ((pl.col("ask_price") + pl.col("bid_price")) / 2).alias("mid"),
-        (
-            (pl.col("bid_amount") - pl.col("ask_amount"))
-            / (pl.col("bid_amount") + pl.col("ask_amount"))
-        ).alias("imbalance_volume"),
+        _depth_imbalance_expr(1).alias("imbalance_volume"),
+        *[
+            _depth_imbalance_expr(depth).alias(f"imbalance_{depth}")
+            for depth in QUOTE_DEPTH_IMBALANCE_LEVELS
+        ],
         pl.col("bid_price").alias("bid"),
         pl.col("ask_price").alias("ask"),
         pl.col("bid_amount").alias("bidsize"),
@@ -912,17 +986,23 @@ def downscale_quote_features(
         pl.col("_nquote_ask_up").sum().alias("nquote_ask_up"),
         pl.col("_nquote_ask_down").sum().alias("nquote_ask_down"),
     ]
-    for name in ["spread", "mid", "imbalance_volume", "bid", "ask", "bidsize", "asksize"]:
-        aggs.extend(
+    aggs.extend(
+        _quote_window_stat_aggs(
             [
-                pl.col(name).first().alias(f"open_{name}"),
-                pl.col(name).max().alias(f"high_{name}"),
-                pl.col(name).min().alias(f"low_{name}"),
-                pl.col(name).last().alias(f"close_{name}"),
-                pl.col(name).mean().alias(f"awap_{name}"),
-                pl.col(name).mean().alias(f"twap_{name}"),
-            ]
+                "spread",
+                "mid",
+                "imbalance_volume",
+                "imbalance_1",
+                "imbalance_3",
+                "imbalance_5",
+                "bid",
+                "ask",
+                "bidsize",
+                "asksize",
+            ],
+            {"imbalance_volume", "imbalance_1", "imbalance_3", "imbalance_5"},
         )
+    )
 
     result = _resample(quote, target_freq, aggs)
     timestamps = result["timestamp"].to_list()
