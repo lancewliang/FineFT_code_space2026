@@ -1,5 +1,39 @@
 source data_preprocess/script_preprocess/future_upgraded/commodity/commodity_process.sh
 
+COMMODITY_FU_FEATURE_BLACKLIST=(
+    vwap
+    awap
+    twap
+    open_buy
+    open_sell
+    high_buy
+    high_sell
+    low_buy
+    low_sell
+    close_buy
+    close_sell
+    vwap_buy
+    vwap_sell
+    awap_buy
+    awap_sell
+    twap_buy
+    twap_sell
+    tradeval
+    volume_buy
+    volume_sell
+    buy_volume
+    sell_volume
+    tradeval_buy
+    tradeval_sell
+    midprice
+    wap_1
+    wap_2
+    buy_wap
+    sell_wap
+    buy_volume_oe
+    sell_volume_oe
+)
+
 run_commodity_logged_step() {
     local log_dir=$1
     local symbol=$2
@@ -335,6 +369,10 @@ run_commodity_feature_selection() {
     local target_freq=$3
     local symbol=$4
     local root_path=$5
+    local feature_blacklist_args=()
+    if [ "${#COMMODITY_FU_FEATURE_BLACKLIST[@]}" -gt 0 ]; then
+        feature_blacklist_args=(--feature_blacklist "${COMMODITY_FU_FEATURE_BLACKLIST[@]}")
+    fi
 
     PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" python -u -m operator_futures.feature_selection.muti_contract \
         --root_path "${root_path}" \
@@ -343,7 +381,8 @@ run_commodity_feature_selection() {
         --symbol "${symbol}" \
         --target_freq "${target_freq}" \
         --stage "${stage}" \
-        --orderbook_depth 5
+        --orderbook_depth 5 \
+        "${feature_blacklist_args[@]}"
 }
 
 run_commodity_maintenance_margin_dict() {

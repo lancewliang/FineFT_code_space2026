@@ -169,6 +169,17 @@ def _ordered_filter_features(
     }
 
 
+def _apply_feature_blacklist(
+    selected_features: list[str], feature_blacklist: list[str] | None
+) -> tuple[list[str], list[str]]:
+    if not feature_blacklist:
+        return selected_features, []
+    blacklist = set(feature_blacklist)
+    filtered = [feature for feature in selected_features if feature not in blacklist]
+    dropped = [feature for feature in selected_features if feature in blacklist]
+    return filtered, dropped
+
+
 def _validate_contract_frame(
     frame: pl.DataFrame,
     *,
@@ -235,6 +246,7 @@ def run_feature_selection(
     max_correlation: float = 0.7,
     windows_list: list[int] | None = None,
     composite_drop_ratio: float = 0.1,
+    feature_blacklist: list[str] | None = None,
 ) -> FeatureSelectionResult:
     if stage not in {"train", "valid"}:
         raise ValueError("stage must be 'train' or 'valid'")
@@ -317,6 +329,18 @@ def run_feature_selection(
         max_correlation=max_correlation,
         composite_drop_ratio=composite_drop_ratio,
     )
+    selected_features, blacklisted_features = _apply_feature_blacklist(
+        selected_features, feature_blacklist
+    )
+    if feature_blacklist and not selected_features:
+        raise ValueError(
+            "feature selection produced an empty list after Feature Blacklist"
+        )
+    if blacklisted_features:
+        filter_results = {
+            **filter_results,
+            "Feature Blacklist Dropped": blacklisted_features,
+        }
     selected_file = output_dir / "state_features.npy"
     np.save(selected_file, np.array(selected_features))
     filtered_outputs = _write_filtered_outputs(
@@ -367,6 +391,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max_metric_std", type=float, default=1.0)
     parser.add_argument("--max_correlation", type=float, default=0.7)
     parser.add_argument("--composite_drop_ratio", type=float, default=0.1)
+    parser.add_argument("--feature_blacklist", nargs="*", default=None)
     parser.add_argument(
         "--windows_list",
         "--windows",
@@ -393,4 +418,5 @@ def main(argv=None):
         max_correlation=args.max_correlation,
         windows_list=args.windows_list,
         composite_drop_ratio=args.composite_drop_ratio,
+        feature_blacklist=args.feature_blacklist,
     )

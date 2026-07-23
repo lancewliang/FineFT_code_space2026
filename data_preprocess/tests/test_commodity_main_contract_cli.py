@@ -1358,6 +1358,23 @@ def test_commodity_full_process_shell_runs_scale_after_feature_selection_valid()
     assert text.rindex('"scale_save"') < text.index('"maintenance_margin_dict"')
 
 
+def test_commodity_full_process_shell_passes_feature_blacklist():
+    script = (
+        REPO_ROOT
+        / "data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
+    )
+    text = script.read_text(encoding="utf-8")
+
+    assert "--feature_blacklist" in text
+    assert "wap_1" in text
+    assert "midprice" in text
+    assert "buy_volume_oe" in text
+    assert "volume_buy" in text
+    assert "mark_price" not in text
+    assert '"ask${level}_price"' not in text
+    assert '"bid${level}_size"' not in text
+
+
 def test_validate_features_checks_feature_union_outputs():
     script = (
         REPO_ROOT

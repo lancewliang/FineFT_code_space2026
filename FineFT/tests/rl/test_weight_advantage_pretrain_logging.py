@@ -575,6 +575,17 @@ def test_build_train_data_paths_prefers_train_slice_when_present(tmp_path):
     assert paths["train_data_path"] == str(dataset_root / "train" / "slice")
 
 
+def test_count_training_data_files_includes_last_df_file(tmp_path):
+    from RL.DiHFT.low_level import weight_advantage_pretrain as wap
+
+    train_data_path = tmp_path / "train"
+    train_data_path.mkdir()
+    for df_index in range(3):
+        (train_data_path / f"df_{df_index}.feather").touch()
+
+    assert wap.count_training_data_files(str(train_data_path)) == 3
+
+
 def test_build_file_log_path_includes_experiment_name():
     from RL.DiHFT.low_level import weight_advantage_pretrain as wap
 

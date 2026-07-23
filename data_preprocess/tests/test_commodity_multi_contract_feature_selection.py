@@ -15,6 +15,7 @@ from operator_futures.feature_selection.muti_contract.metrics import (
 from operator_futures.feature_selection.muti_contract import metrics
 from operator_futures.feature_selection.muti_contract.pipeline import (
     _ordered_filter_features,
+    build_parser,
     run_feature_selection,
 )
 from operator_futures.feature_selection.manifests import FeatureSelectionResult
@@ -50,7 +51,13 @@ def _write_split_contract(root: Path, stage: str, contract: str, alpha, beta, ga
 
 
 def _write_long_split_contract(
-    root: Path, stage: str, contract: str, alpha, beta, gamma=None
+    root: Path,
+    stage: str,
+    contract: str,
+    alpha,
+    beta,
+    gamma=None,
+    extra_features=None,
 ):
     stage_dir = (
         root
@@ -75,6 +82,8 @@ def _write_long_split_contract(
     }
     if gamma is not None:
         values["gamma"] = gamma
+    if extra_features is not None:
+        values.update(extra_features)
     frame = pl.DataFrame(values).with_columns(pl.col("timestamp").str.strptime(pl.Datetime))
     output = stage_dir / f"{contract}.feather"
     frame.write_ipc(output)
@@ -279,6 +288,24 @@ def test_hard_filter_rejects_high_ic_feature_when_rankic_is_too_low():
     assert "sufficient_rankic" in filter_results["Hard Filter"]
 
 
+def test_parser_accepts_runtime_feature_blacklist():
+    args = build_parser().parse_args(
+        [
+            "--symbol",
+            "fu",
+            "--target_freq",
+            "5min",
+            "--stage",
+            "train",
+            "--feature_blacklist",
+            "wap_1",
+            "last_price",
+        ]
+    )
+
+    assert args.feature_blacklist == ["wap_1", "last_price"]
+
+
 def test_train_stage_writes_final_features_metrics_filtered_outputs_and_manifest(tmp_path, fake_catboost):
     _write_long_split_contract(
         tmp_path,
@@ -332,6 +359,94 @@ def test_train_stage_writes_final_features_metrics_filtered_outputs_and_manifest
     per_contract_metrics = pl.read_csv(stage_dir / "per_contract" / "fu2601_metrics.csv")
     assert per_contract_metrics["window"].unique().sort().to_list() == [1, 6, 12]
     assert manifest.manifest.windows_list == [1, 6, 12]
+
+
+def test_train_stage_applies_feature_blacklist_only_to_final_outputs(tmp_path, fake_catboost):
+    _write_long_split_contract(
+        tmp_path,
+        "train",
+        "fu2601",
+        [float(index) for index in range(15)],
+        [float(14 - index) for index in range(15)],
+        extra_features={
+            "wap_1": [
+                0.0,
+                2.0,
+                1.0,
+                4.0,
+                3.0,
+                6.0,
+                5.0,
+                8.0,
+                7.0,
+                10.0,
+                9.0,
+                12.0,
+                11.0,
+                14.0,
+                13.0,
+            ]
+        },
+    )
+    _write_long_split_contract(
+        tmp_path,
+        "train",
+        "fu2605",
+        [float(index + 1) for index in range(15)],
+        [float(15 - index) for index in range(15)],
+        extra_features={
+            "wap_1": [
+                1.0,
+                3.0,
+                2.0,
+                5.0,
+                4.0,
+                7.0,
+                6.0,
+                9.0,
+                8.0,
+                11.0,
+                10.0,
+                13.0,
+                12.0,
+                15.0,
+                14.0,
+            ]
+        },
+    )
+
+    manifest = run_feature_selection(
+        root_path=tmp_path,
+        split_path="PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST",
+        save_path="PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION",
+        symbol="fu",
+        target_freq="5min",
+        stage="train",
+        orderbook_depth=5,
+        min_abs_ic=0.01,
+        max_correlation=1.0,
+        composite_drop_ratio=0.0,
+        feature_blacklist=["wap_1", "mark_price", "ask1_price"],
+    )
+
+    stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
+    selected_features = np.load(
+        stage_dir / "state_features.npy", allow_pickle=True
+    ).tolist()
+    filtered = pl.read_ipc(stage_dir / "fu2601" / "df.feather")
+    aggregate = pl.read_csv(stage_dir / "aggregate_metrics.csv")
+    persisted_manifest = json.loads(
+        (stage_dir / "feature_selection_manifest.json").read_text(encoding="utf-8")
+    )
+
+    assert "wap_1" in aggregate["feature"].to_list()
+    assert "wap_1" not in selected_features
+    assert "wap_1" not in filtered.columns
+    assert "mark_price" in filtered.columns
+    assert "ask1_price" in filtered.columns
+    assert manifest.manifest.filter_results["Feature Blacklist Dropped"] == ["wap_1"]
+    assert persisted_manifest["filter_results"]["Feature Blacklist Dropped"] == ["wap_1"]
+    assert manifest.manifest.selected_feature_count == len(selected_features)
 
 
 def test_train_stage_rejects_illegal_feature_values_before_metrics(tmp_path, fake_catboost):

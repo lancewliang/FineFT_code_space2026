@@ -55,6 +55,16 @@ def build_training_data_paths(base_path, dataset_name):
     }
 
 
+def count_training_data_files(train_data_path: str) -> int:
+    return len(
+        [
+            file_name
+            for file_name in os.listdir(train_data_path)
+            if file_name.startswith("df_") and file_name.endswith(".feather")
+        ]
+    )
+
+
 def configure_logger(dataset_name, experiment_name):
     log_path = build_train_log_path(dataset_name, experiment_name)
     log_dir = os.path.dirname(log_path)
@@ -508,7 +518,7 @@ class Weighted_Contexts_DQN:
             self.dataset_name,
         )
         self.train_data_path = training_data_paths["train_data_path"]
-        self.total_df_index_length = len(os.listdir(self.train_data_path)) - 1
+        self.total_df_index_length = count_training_data_files(self.train_data_path)
         self.tech_indicator_list = np.load(training_data_paths["state_features_path"])
         self.maintenance_margin_ratio_dict = np.load(
             training_data_paths["maintenance_margin_ratio_path"],
