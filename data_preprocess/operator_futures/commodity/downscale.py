@@ -851,7 +851,9 @@ def _quote_queue_event_expr(
 
 def _quote_side_empty_expr(price_column: str, size_column: str) -> pl.Expr:
     return (
-        pl.col(price_column).is_null() | (pl.col(size_column) <= 0)
+        pl.col(price_column).is_null()
+        | (pl.col(price_column) <= 0)
+        | (pl.col(size_column) <= 0)
     ).fill_null(False)
 
 

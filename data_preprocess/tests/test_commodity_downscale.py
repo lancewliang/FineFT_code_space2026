@@ -341,6 +341,39 @@ def test_downscale_quote_microstructure_features_queue_events_cross_window_bound
     assert tail["queue_refill_imbalance"] == pytest.approx(1.0)
 
 
+def test_downscale_quote_microstructure_features_counts_zero_price_as_empty_side():
+    frame = _five_depth_quote_frame(
+        [
+            {
+                "BidPrice1": 100.0,
+                "AskPrice1": 0.0,
+                "BidVolume1": 10.0,
+                "AskVolume1": 10.0,
+                "LastPrice": 105.0,
+                "HighPrice": 105.0,
+                "UpperLimitPrice": 105.0,
+            },
+            {
+                "BidPrice1": 0.0,
+                "AskPrice1": 100.0,
+                "BidVolume1": 10.0,
+                "AskVolume1": 10.0,
+                "LastPrice": 95.0,
+                "LowPrice": 95.0,
+                "LowerLimitPrice": 95.0,
+            },
+        ]
+    )
+
+    result = downscale_quote_microstructure_features(frame, window_rows=12)
+    row = result.row(0, named=True)
+
+    assert row["ask_side_empty_ratio"] == pytest.approx(0.5)
+    assert row["bid_side_empty_ratio"] == pytest.approx(0.5)
+    assert row["limit_up_single_sided_ratio"] == pytest.approx(0.5)
+    assert row["limit_down_single_sided_ratio"] == pytest.approx(0.5)
+
+
 def test_downscale_quote_microstructure_features_rejects_missing_limit_columns():
     frame = _five_depth_quote_frame([{}]).drop("UpperLimitPrice")
 
