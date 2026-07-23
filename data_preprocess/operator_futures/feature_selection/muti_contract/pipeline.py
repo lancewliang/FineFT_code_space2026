@@ -360,6 +360,9 @@ def run_feature_selection(
         selected_features=selected_features,
         windows_list=windows_list,
         composite_drop_ratio=composite_drop_ratio,
+        feature_blacklist=(
+            list(feature_blacklist) if feature_blacklist is not None else None
+        ),
         aggregate_metrics_path=str(aggregate_path),
         filter_results=filter_results,
         contracts=per_contract,

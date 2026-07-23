@@ -643,6 +643,104 @@ def _change_count_expr(column: str, direction: str | None = None) -> pl.Expr:
     return diff.ne(0).fill_null(True)
 
 
+def _ofi_required_columns(depth: int) -> list[str]:
+    columns = ["timestamp"]
+    for level in range(1, depth + 1):
+        columns.extend(
+            [
+                f"BidPrice{level}",
+                f"AskPrice{level}",
+                f"BidVolume{level}",
+                f"AskVolume{level}",
+            ]
+        )
+    return columns
+
+
+def _non_finite_expr(column: str) -> pl.Expr:
+    value = pl.col(column).cast(pl.Float64, strict=False)
+    return (
+        value.is_nan()
+        | (value == float("inf"))
+        | (value == -float("inf"))
+    ).fill_null(False)
+
+
+def _validate_ofi_input(
+    second_df: pl.DataFrame, window_rows: int, depth: int
+) -> list[str]:
+    if window_rows <= 0:
+        raise ValueError("window_rows must be positive")
+    if second_df.height == 0:
+        raise ValueError("OFI input has no quote snapshots")
+
+    required_columns = _ofi_required_columns(depth)
+    missing = [column for column in required_columns if column not in second_df.columns]
+    if missing:
+        raise ValueError(f"Missing OFI columns: {', '.join(missing)}")
+
+    null_counts = second_df.select(
+        [pl.col(column).null_count().alias(column) for column in required_columns]
+    ).row(0, named=True)
+    null_columns = [column for column, count in null_counts.items() if count > 0]
+    if null_columns:
+        raise ValueError(
+            f"OFI columns contain null values: {', '.join(null_columns)}"
+        )
+
+    numeric_columns = [column for column in required_columns if column != "timestamp"]
+    non_finite_counts = second_df.select(
+        [_non_finite_expr(column).sum().alias(column) for column in numeric_columns]
+    ).row(0, named=True)
+    non_finite_columns = [
+        column for column, count in non_finite_counts.items() if count > 0
+    ]
+    if non_finite_columns:
+        raise ValueError(
+            f"OFI columns contain non-finite values: {', '.join(non_finite_columns)}"
+        )
+
+    return required_columns
+
+
+def _ofi_bid_expr(level: int) -> pl.Expr:
+    price = pl.col(f"BidPrice{level}").cast(pl.Float64, strict=False)
+    size = pl.col(f"BidVolume{level}").cast(pl.Float64, strict=False)
+    previous_price = price.shift(1)
+    previous_size = size.shift(1)
+    return (
+        pl.when(previous_price.is_null())
+        .then(pl.lit(0.0))
+        .when(price > previous_price)
+        .then(size)
+        .when(price == previous_price)
+        .then(size - previous_size)
+        .otherwise(-previous_size)
+        .alias(f"ofi_bid{level}")
+    )
+
+
+def _ofi_ask_expr(level: int) -> pl.Expr:
+    price = pl.col(f"AskPrice{level}").cast(pl.Float64, strict=False)
+    size = pl.col(f"AskVolume{level}").cast(pl.Float64, strict=False)
+    previous_price = price.shift(1)
+    previous_size = size.shift(1)
+    return (
+        pl.when(previous_price.is_null())
+        .then(pl.lit(0.0))
+        .when(price < previous_price)
+        .then(-size)
+        .when(price == previous_price)
+        .then(-(size - previous_size))
+        .otherwise(previous_size)
+        .alias(f"ofi_ask{level}")
+    )
+
+
+def _safe_divide(numerator: pl.Expr, denominator: pl.Expr) -> pl.Expr:
+    return pl.when(denominator != 0).then(numerator / denominator).otherwise(0.0)
+
+
 def _normalize_limit_single_sided_quote_prices(df: pl.DataFrame) -> pl.DataFrame:
     def optional_column(name: str) -> pl.Expr:
         if name in df.columns:
@@ -691,6 +789,83 @@ def _normalize_limit_single_sided_quote_prices(df: pl.DataFrame) -> pl.DataFrame
         .then(pl.lit(0))
         .otherwise(pl.col("AskVolume1"))
         .alias("AskVolume1"),
+    )
+
+
+def downscale_quote_ofi_features(
+    second_df: pl.DataFrame, window_rows: int = 12, depth: int = 5
+) -> pl.DataFrame:
+    required_columns = _validate_ofi_input(second_df, window_rows, depth)
+    quote = second_df.sort("timestamp").select(required_columns)
+
+    bid_columns = [f"ofi_bid{level}" for level in range(1, depth + 1)]
+    ask_columns = [f"ofi_ask{level}" for level in range(1, depth + 1)]
+    bid_size_columns = [f"BidVolume{level}" for level in range(1, depth + 1)]
+    ask_size_columns = [f"AskVolume{level}" for level in range(1, depth + 1)]
+    ofi_columns = bid_columns + ask_columns
+
+    quote = quote.with_columns(
+        *[_ofi_bid_expr(level) for level in range(1, depth + 1)],
+        *[_ofi_ask_expr(level) for level in range(1, depth + 1)],
+        pl.sum_horizontal(
+            [
+                pl.col(column).cast(pl.Float64, strict=False)
+                for column in bid_size_columns
+            ]
+        ).alias("_ofi_bid_volume"),
+        pl.sum_horizontal(
+            [
+                pl.col(column).cast(pl.Float64, strict=False)
+                for column in ask_size_columns
+            ]
+        ).alias("_ofi_ask_volume"),
+    ).with_columns(
+        pl.sum_horizontal([pl.col(column) for column in bid_columns]).alias("ofi_bid"),
+        pl.sum_horizontal([pl.col(column) for column in ask_columns]).alias("ofi_ask"),
+    )
+    quote = quote.with_columns((pl.col("ofi_bid") + pl.col("ofi_ask")).alias("ofi"))
+    quote = quote.with_columns(
+        (pl.col("_ofi_bid_volume") + pl.col("_ofi_ask_volume")).alias(
+            "_ofi_total_volume"
+        )
+    )
+
+    grouped = (
+        quote.with_row_index("_ofi_row_index")
+        .with_columns((pl.col("_ofi_row_index") // window_rows).alias("_ofi_window"))
+        .group_by("_ofi_window", maintain_order=True)
+        .agg(
+            pl.col("timestamp").last().alias("timestamp"),
+            pl.len().alias("nquote"),
+            *[pl.col(column).sum().alias(column) for column in ofi_columns],
+            pl.col("ofi_bid").sum().alias("ofi_bid"),
+            pl.col("ofi_ask").sum().alias("ofi_ask"),
+            pl.col("ofi").sum().alias("ofi"),
+            pl.col("_ofi_bid_volume").sum().alias("_ofi_bid_volume"),
+            pl.col("_ofi_ask_volume").sum().alias("_ofi_ask_volume"),
+            pl.col("_ofi_total_volume").sum().alias("_ofi_total_volume"),
+        )
+        .sort("_ofi_window")
+    )
+    grouped = grouped.with_columns(
+        _safe_divide(pl.col("ofi_bid"), pl.col("_ofi_bid_volume")).alias(
+            "ofi_bid_norm"
+        ),
+        _safe_divide(pl.col("ofi_ask"), pl.col("_ofi_ask_volume")).alias(
+            "ofi_ask_norm"
+        ),
+        _safe_divide(pl.col("ofi"), pl.col("_ofi_total_volume")).alias("ofi_norm"),
+    )
+    return grouped.select(
+        "timestamp",
+        "nquote",
+        *ofi_columns,
+        "ofi_bid",
+        "ofi_ask",
+        "ofi",
+        "ofi_bid_norm",
+        "ofi_ask_norm",
+        "ofi_norm",
     )
 
 

@@ -18,11 +18,193 @@ from operator_futures.commodity.downscale import (
     downscale_derivative_reference,
     downscale_orderbook,
     downscale_quote_features,
+    downscale_quote_ofi_features,
     validate_best_quotes,
 )
 
 
 SAMPLE_PATH = "docs/上海商品交易所/fu2302.csv"
+
+
+def _five_depth_quote_frame(row_overrides: list[dict]) -> pl.DataFrame:
+    rows = []
+    for index, overrides in enumerate(row_overrides):
+        row = {"timestamp": datetime(2026, 2, 2, 9, 0, index)}
+        for level in range(1, 6):
+            row[f"BidPrice{level}"] = 100.0 - level
+            row[f"AskPrice{level}"] = 100.0 + level
+            row[f"BidVolume{level}"] = float(level * 10)
+            row[f"AskVolume{level}"] = float(level * 20)
+        row.update(overrides)
+        rows.append(row)
+    return pl.DataFrame(rows)
+
+
+def test_downscale_quote_ofi_features_computes_five_depth_direction_math():
+    frame = _five_depth_quote_frame(
+        [
+            {},
+            {
+                "BidPrice1": 100.0,
+                "BidVolume1": 11.0,
+                "BidVolume2": 25.0,
+                "BidPrice3": 96.0,
+                "BidVolume3": 35.0,
+                "BidVolume4": 35.0,
+                "AskPrice1": 100.0,
+                "AskVolume1": 21.0,
+                "AskVolume2": 42.0,
+                "AskPrice3": 104.0,
+                "AskVolume3": 65.0,
+                "AskVolume4": 70.0,
+            },
+        ]
+    )
+
+    result = downscale_quote_ofi_features(frame, window_rows=12)
+    row = result.row(0, named=True)
+
+    assert row["timestamp"] == datetime(2026, 2, 2, 9, 0, 1)
+    assert row["nquote"] == 2
+    assert row["ofi_bid1"] == 11.0
+    assert row["ofi_bid2"] == 5.0
+    assert row["ofi_bid3"] == -30.0
+    assert row["ofi_bid4"] == -5.0
+    assert row["ofi_bid5"] == 0.0
+    assert row["ofi_ask1"] == -21.0
+    assert row["ofi_ask2"] == -2.0
+    assert row["ofi_ask3"] == 60.0
+    assert row["ofi_ask4"] == 10.0
+    assert row["ofi_ask5"] == 0.0
+    assert row["ofi_bid"] == -19.0
+    assert row["ofi_ask"] == 47.0
+    assert row["ofi"] == 28.0
+
+
+def test_downscale_quote_ofi_features_aggregates_every_twelve_rows_and_keeps_tail():
+    frame = _five_depth_quote_frame(
+        [{"BidVolume1": float(10 + index)} for index in range(13)]
+    )
+
+    result = downscale_quote_ofi_features(frame)
+
+    assert result["timestamp"].to_list() == [
+        datetime(2026, 2, 2, 9, 0, 11),
+        datetime(2026, 2, 2, 9, 0, 12),
+    ]
+    assert result["nquote"].to_list() == [12, 1]
+    assert result["ofi_bid1"].to_list() == [11.0, 1.0]
+    assert result["ofi_bid"].to_list() == [11.0, 1.0]
+    assert result["ofi_ask"].to_list() == [0.0, 0.0]
+    assert result["ofi"].to_list() == [11.0, 1.0]
+
+
+def test_downscale_quote_ofi_features_compares_across_row_window_boundary():
+    frame = _five_depth_quote_frame(
+        [{} for _ in range(12)] + [{"BidPrice1": 100.0, "BidVolume1": 77.0}]
+    )
+
+    result = downscale_quote_ofi_features(frame)
+    boundary_row = result.row(1, named=True)
+
+    assert boundary_row["timestamp"] == datetime(2026, 2, 2, 9, 0, 12)
+    assert boundary_row["nquote"] == 1
+    assert boundary_row["ofi_bid1"] == 77.0
+    assert boundary_row["ofi_bid"] == 77.0
+    assert boundary_row["ofi"] == 77.0
+
+
+def test_downscale_quote_ofi_features_rejects_empty_input():
+    with pytest.raises(ValueError, match="OFI input has no quote snapshots"):
+        downscale_quote_ofi_features(pl.DataFrame())
+
+
+def test_downscale_quote_ofi_features_rejects_missing_depth_columns():
+    frame = _five_depth_quote_frame([{}]).drop("BidPrice5")
+
+    with pytest.raises(ValueError, match="Missing OFI columns: BidPrice5"):
+        downscale_quote_ofi_features(frame)
+
+
+def test_downscale_quote_ofi_features_rejects_null_depth_values():
+    frame = _five_depth_quote_frame([{"AskVolume4": None}])
+
+    with pytest.raises(ValueError, match="OFI columns contain null values: AskVolume4"):
+        downscale_quote_ofi_features(frame)
+
+
+def test_downscale_quote_ofi_features_rejects_non_finite_depth_values():
+    frame = _five_depth_quote_frame(
+        [{"BidVolume2": float("nan"), "AskPrice3": float("inf")}]
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="OFI columns contain non-finite values: BidVolume2, AskPrice3",
+    ):
+        downscale_quote_ofi_features(frame)
+
+
+def test_downscale_quote_ofi_features_rejects_invalid_window_rows():
+    frame = _five_depth_quote_frame([{}])
+
+    with pytest.raises(ValueError, match="window_rows must be positive"):
+        downscale_quote_ofi_features(frame, window_rows=0)
+
+
+def test_downscale_quote_ofi_features_outputs_normalized_ofi():
+    frame = _five_depth_quote_frame(
+        [
+            {},
+            {
+                "BidPrice1": 100.0,
+                "BidVolume1": 11.0,
+                "BidVolume2": 25.0,
+                "BidPrice3": 96.0,
+                "BidVolume3": 35.0,
+                "BidVolume4": 35.0,
+                "AskPrice1": 100.0,
+                "AskVolume1": 21.0,
+                "AskVolume2": 42.0,
+                "AskPrice3": 104.0,
+                "AskVolume3": 65.0,
+                "AskVolume4": 70.0,
+            },
+        ]
+    )
+
+    result = downscale_quote_ofi_features(frame, window_rows=12)
+    row = result.row(0, named=True)
+
+    assert row["ofi_bid_norm"] == pytest.approx(-19.0 / 306.0)
+    assert row["ofi_ask_norm"] == pytest.approx(47.0 / 598.0)
+    assert row["ofi_norm"] == pytest.approx(28.0 / 904.0)
+
+
+def test_downscale_quote_ofi_features_zeroes_normalized_ofi_when_denominator_is_zero():
+    frame = _five_depth_quote_frame(
+        [
+            {
+                "BidVolume1": 0.0,
+                "BidVolume2": 0.0,
+                "BidVolume3": 0.0,
+                "BidVolume4": 0.0,
+                "BidVolume5": 0.0,
+                "AskVolume1": 0.0,
+                "AskVolume2": 0.0,
+                "AskVolume3": 0.0,
+                "AskVolume4": 0.0,
+                "AskVolume5": 0.0,
+            }
+        ]
+    )
+
+    result = downscale_quote_ofi_features(frame, window_rows=12)
+    row = result.row(0, named=True)
+
+    assert row["ofi_bid_norm"] == 0.0
+    assert row["ofi_ask_norm"] == 0.0
+    assert row["ofi_norm"] == 0.0
 
 
 def test_iter_summary_trading_days_accepts_summary_model(tmp_path):

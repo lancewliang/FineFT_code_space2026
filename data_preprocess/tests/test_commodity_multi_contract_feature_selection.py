@@ -444,6 +444,12 @@ def test_train_stage_applies_feature_blacklist_only_to_final_outputs(tmp_path, f
     assert "wap_1" not in filtered.columns
     assert "mark_price" in filtered.columns
     assert "ask1_price" in filtered.columns
+    assert manifest.manifest.feature_blacklist == ["wap_1", "mark_price", "ask1_price"]
+    assert persisted_manifest["feature_blacklist"] == [
+        "wap_1",
+        "mark_price",
+        "ask1_price",
+    ]
     assert manifest.manifest.filter_results["Feature Blacklist Dropped"] == ["wap_1"]
     assert persisted_manifest["filter_results"]["Feature Blacklist Dropped"] == ["wap_1"]
     assert manifest.manifest.selected_feature_count == len(selected_features)
