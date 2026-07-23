@@ -37,6 +37,15 @@ def _five_depth_quote_frame(row_overrides: list[dict]) -> pl.DataFrame:
             row[f"AskPrice{level}"] = 100.0 + level
             row[f"BidVolume{level}"] = float(level * 10)
             row[f"AskVolume{level}"] = float(level * 20)
+        row.update(
+            {
+                "LastPrice": 100.0,
+                "LowPrice": 99.0,
+                "HighPrice": 101.0,
+                "LowerLimitPrice": 95.0,
+                "UpperLimitPrice": 105.0,
+            }
+        )
         row.update(overrides)
         rows.append(row)
     return pl.DataFrame(rows)
@@ -220,6 +229,151 @@ def test_downscale_quote_microstructure_features_zeroes_degenerate_pressure_inpu
     assert row["mean_microprice_pressure"] == 0.0
     assert row["mean_relative_spread"] == pytest.approx(0.01)
     assert row["spread_widen_ratio"] == 0.0
+
+
+def test_downscale_quote_microstructure_features_computes_queue_pressure_and_state_ratios():
+    frame = _five_depth_quote_frame(
+        [
+            {
+                "BidPrice1": 99.0,
+                "AskPrice1": 101.0,
+                "BidVolume1": 10.0,
+                "AskVolume1": 20.0,
+            },
+            {
+                "BidPrice1": 99.0,
+                "AskPrice1": 101.0,
+                "BidVolume1": 15.0,
+                "AskVolume1": 15.0,
+            },
+            {
+                "BidPrice1": 99.0,
+                "AskPrice1": 101.0,
+                "BidVolume1": 10.0,
+                "AskVolume1": 25.0,
+            },
+            {
+                "BidPrice1": 105.0,
+                "AskPrice1": 105.0,
+                "BidVolume1": 10.0,
+                "AskVolume1": 0.0,
+                "LastPrice": 105.0,
+                "HighPrice": 105.0,
+                "UpperLimitPrice": 105.0,
+            },
+            {
+                "BidPrice1": 95.0,
+                "AskPrice1": 100.0,
+                "BidVolume1": 0.0,
+                "AskVolume1": 10.0,
+                "LastPrice": 95.0,
+                "LowPrice": 95.0,
+                "LowerLimitPrice": 95.0,
+            },
+        ]
+    )
+
+    result = downscale_quote_microstructure_features(frame, window_rows=12)
+    row = result.row(0, named=True)
+
+    assert row["bid_refill_count"] == 1
+    assert row["bid_deplete_count"] == 1
+    assert row["ask_refill_count"] == 1
+    assert row["ask_deplete_count"] == 1
+    assert row["queue_refill_imbalance"] == pytest.approx(0.0)
+    assert row["bid_side_empty_ratio"] == pytest.approx(0.2)
+    assert row["ask_side_empty_ratio"] == pytest.approx(0.2)
+    assert row["limit_up_single_sided_ratio"] == pytest.approx(0.2)
+    assert row["limit_down_single_sided_ratio"] == pytest.approx(0.2)
+    assert math.isfinite(float(row["mean_microprice_pressure"]))
+    assert math.isfinite(float(row["mean_relative_spread"]))
+    assert row["spread_widen_count"] >= 0
+    assert row["spread_narrow_count"] >= 0
+    assert row["spread_flat_count"] >= 0
+    assert row["spread_widen_ratio"] >= 0.0
+
+
+def test_downscale_quote_microstructure_features_zeroes_queue_refill_imbalance_when_no_queue_events():
+    frame = _five_depth_quote_frame(
+        [
+            {"BidVolume1": 10.0, "AskVolume1": 20.0},
+            {"BidVolume1": 10.0, "AskVolume1": 20.0},
+        ]
+    )
+
+    result = downscale_quote_microstructure_features(frame, window_rows=12)
+    row = result.row(0, named=True)
+
+    assert row["bid_refill_count"] == 0
+    assert row["bid_deplete_count"] == 0
+    assert row["ask_refill_count"] == 0
+    assert row["ask_deplete_count"] == 0
+    assert row["queue_refill_imbalance"] == 0.0
+
+
+def test_downscale_quote_microstructure_features_queue_events_cross_window_boundary():
+    frame = _five_depth_quote_frame(
+        [
+            {
+                "BidPrice1": 99.0,
+                "AskPrice1": 101.0,
+                "BidVolume1": 10.0,
+                "AskVolume1": 20.0,
+            }
+            for _ in range(12)
+        ]
+        + [
+            {
+                "BidPrice1": 99.0,
+                "AskPrice1": 101.0,
+                "BidVolume1": 15.0,
+                "AskVolume1": 10.0,
+            }
+        ]
+    )
+
+    result = downscale_quote_microstructure_features(frame, window_rows=12)
+    tail = result.row(1, named=True)
+
+    assert tail["nquote"] == 1
+    assert tail["bid_refill_count"] == 1
+    assert tail["ask_deplete_count"] == 1
+    assert tail["queue_refill_imbalance"] == pytest.approx(1.0)
+
+
+def test_downscale_quote_microstructure_features_rejects_missing_limit_columns():
+    frame = _five_depth_quote_frame([{}]).drop("UpperLimitPrice")
+
+    with pytest.raises(
+        ValueError, match="Missing microstructure columns: UpperLimitPrice"
+    ):
+        downscale_quote_microstructure_features(frame)
+
+
+def test_downscale_quote_microstructure_features_rejects_non_finite_queue_pressure_inputs():
+    frame = _five_depth_quote_frame(
+        [
+            {
+                "UpperLimitPrice": float("inf"),
+            }
+        ]
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Microstructure columns contain non-finite values: UpperLimitPrice",
+    ):
+        downscale_quote_microstructure_features(frame)
+
+
+def test_downscale_quote_microstructure_features_rejects_non_numeric_required_values():
+    frame = _five_depth_quote_frame([{"BidVolume1": "bad"}])
+
+    with pytest.raises(
+        ValueError,
+        match="Microstructure columns contain non-numeric values: BidVolume1",
+    ):
+        downscale_quote_microstructure_features(frame)
 
 
 def test_downscale_quote_ofi_features_computes_five_depth_direction_math():

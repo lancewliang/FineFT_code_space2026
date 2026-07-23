@@ -70,9 +70,9 @@
 
 ## 验收标准
 
-- [ ] `downscale_quote_ofi_features(second_df, window_rows=12)` 输出 `bid_refill_count`、`bid_deplete_count`、`ask_refill_count`、`ask_deplete_count`。
+- [ ] `downscale_quote_microstructure_features(second_df, window_rows=12)` 输出 `bid_refill_count`、`bid_deplete_count`、`ask_refill_count`、`ask_deplete_count`。
 - [ ] 输出 `queue_refill_imbalance`，且分母为 0 时返回 `0.0`。
 - [ ] 输出 `limit_up_single_sided_ratio`、`limit_down_single_sided_ratio`、`bid_side_empty_ratio`、`ask_side_empty_ratio`。
 - [ ] 所有新增比例和归一化输出都不产生 `NaN` / `inf`。
 - [ ] 输入缺少必要 quote 列或包含非有限值时，系统 fail-fast。
-- [ ] 现有 `nquote` 和 OFI 相关输出保持不变。
+- [ ] 现有 `nquote` 和 microstructure 相关输出保持不变，且不改变 OFI 函数行为。

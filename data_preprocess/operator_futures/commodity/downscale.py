@@ -758,7 +758,18 @@ def _validate_positive_integer_window_rows(window_rows: int) -> int:
 
 
 def _quote_microstructure_required_columns() -> list[str]:
-    return ["timestamp", "BidPrice1", "AskPrice1", "BidVolume1", "AskVolume1"]
+    return [
+        "timestamp",
+        "BidPrice1",
+        "AskPrice1",
+        "BidVolume1",
+        "AskVolume1",
+        "LastPrice",
+        "LowPrice",
+        "HighPrice",
+        "LowerLimitPrice",
+        "UpperLimitPrice",
+    ]
 
 
 def _validate_quote_microstructure_input(
@@ -784,12 +795,29 @@ def _validate_quote_microstructure_input(
             f"Microstructure columns contain null values: {', '.join(null_columns)}"
         )
 
-    non_finite_counts = second_df.select(
+    numeric_columns = [column for column in required_columns if column != "timestamp"]
+    non_numeric_counts = second_df.select(
         [
-            _non_finite_expr(column).sum().alias(column)
-            for column in required_columns
-            if column != "timestamp"
+            (
+                pl.col(column).is_not_null()
+                & pl.col(column).cast(pl.Float64, strict=False).is_null()
+            )
+            .sum()
+            .alias(column)
+            for column in numeric_columns
         ]
+    ).row(0, named=True)
+    non_numeric_columns = [
+        column for column, count in non_numeric_counts.items() if count > 0
+    ]
+    if non_numeric_columns:
+        raise ValueError(
+            "Microstructure columns contain non-numeric values: "
+            f"{', '.join(non_numeric_columns)}"
+        )
+
+    non_finite_counts = second_df.select(
+        [_non_finite_expr(column).sum().alias(column) for column in numeric_columns]
     ).row(0, named=True)
     non_finite_columns = [
         column for column, count in non_finite_counts.items() if count > 0
@@ -801,6 +829,54 @@ def _validate_quote_microstructure_input(
         )
 
     return required_columns
+
+
+def _quote_queue_event_expr(
+    price_column: str, size_column: str, direction: str
+) -> pl.Expr:
+    same_price = pl.col(price_column).diff() == 0
+    size_diff = pl.col(size_column).diff()
+    if direction == "refill":
+        size_event = size_diff > 0
+    elif direction == "deplete":
+        size_event = size_diff < 0
+    else:
+        raise ValueError(f"Unsupported queue event direction: {direction}")
+
+    return (
+        same_price
+        & size_event
+    ).fill_null(False)
+
+
+def _quote_side_empty_expr(price_column: str, size_column: str) -> pl.Expr:
+    return (
+        pl.col(price_column).is_null() | (pl.col(size_column) <= 0)
+    ).fill_null(False)
+
+
+def _limit_single_sided_expr(side: str) -> pl.Expr:
+    if side == "up":
+        return (
+            _quote_side_empty_expr("ask_price", "ask_size")
+            & (
+                (pl.col("LastPrice") == pl.col("UpperLimitPrice"))
+                | (pl.col("HighPrice") == pl.col("UpperLimitPrice"))
+            )
+            & (pl.col("bid_price") > 0)
+            & (pl.col("bid_size") > 0)
+        ).fill_null(False)
+    if side == "down":
+        return (
+            _quote_side_empty_expr("bid_price", "bid_size")
+            & (
+                (pl.col("LastPrice") == pl.col("LowerLimitPrice"))
+                | (pl.col("LowPrice") == pl.col("LowerLimitPrice"))
+            )
+            & (pl.col("ask_price") > 0)
+            & (pl.col("ask_size") > 0)
+        ).fill_null(False)
+    raise ValueError(f"Unsupported single-sided side: {side}")
 
 
 def _quote_depth_volume_columns(depth: int = 5) -> list[str]:
@@ -1060,6 +1136,22 @@ def downscale_quote_microstructure_features(
         )
         .fill_null(False)
         .alias("_spread_narrow"),
+        _quote_queue_event_expr("bid_price", "bid_size", "refill").alias(
+            "_bid_refill"
+        ),
+        _quote_queue_event_expr("bid_price", "bid_size", "deplete").alias(
+            "_bid_deplete"
+        ),
+        _quote_queue_event_expr("ask_price", "ask_size", "refill").alias(
+            "_ask_refill"
+        ),
+        _quote_queue_event_expr("ask_price", "ask_size", "deplete").alias(
+            "_ask_deplete"
+        ),
+        _quote_side_empty_expr("bid_price", "bid_size").alias("_bid_side_empty"),
+        _quote_side_empty_expr("ask_price", "ask_size").alias("_ask_side_empty"),
+        _limit_single_sided_expr("up").alias("_limit_up_single_sided"),
+        _limit_single_sided_expr("down").alias("_limit_down_single_sided"),
     )
 
     grouped = (
@@ -1074,14 +1166,56 @@ def downscale_quote_microstructure_features(
             pl.col("_spread_widen").sum().alias("spread_widen_count"),
             pl.col("_spread_narrow").sum().alias("spread_narrow_count"),
             pl.col("_spread_flat").sum().alias("spread_flat_count"),
+            pl.col("_bid_refill").sum().alias("bid_refill_count"),
+            pl.col("_bid_deplete").sum().alias("bid_deplete_count"),
+            pl.col("_ask_refill").sum().alias("ask_refill_count"),
+            pl.col("_ask_deplete").sum().alias("ask_deplete_count"),
+            pl.col("_bid_side_empty").sum().alias("_bid_side_empty_count"),
+            pl.col("_ask_side_empty").sum().alias("_ask_side_empty_count"),
+            pl.col("_limit_up_single_sided").sum().alias(
+                "_limit_up_single_sided_count"
+            ),
+            pl.col("_limit_down_single_sided").sum().alias(
+                "_limit_down_single_sided_count"
+            ),
         )
         .sort("_microstructure_window")
     )
     grouped = grouped.with_columns(
+        (
+            pl.col("bid_refill_count")
+            + pl.col("bid_deplete_count")
+            + pl.col("ask_refill_count")
+            + pl.col("ask_deplete_count")
+        ).alias("_total_queue_events"),
+    ).with_columns(
         _safe_divide(
             pl.col("spread_widen_count"),
             pl.col("nquote").cast(pl.Float64, strict=False),
-        ).alias("spread_widen_ratio")
+        ).alias("spread_widen_ratio"),
+        _safe_divide(
+            pl.col("bid_refill_count")
+            + pl.col("ask_deplete_count")
+            - pl.col("bid_deplete_count")
+            - pl.col("ask_refill_count"),
+            pl.col("_total_queue_events").cast(pl.Float64, strict=False),
+        ).alias("queue_refill_imbalance"),
+        _safe_divide(
+            pl.col("_bid_side_empty_count"),
+            pl.col("nquote").cast(pl.Float64, strict=False),
+        ).alias("bid_side_empty_ratio"),
+        _safe_divide(
+            pl.col("_ask_side_empty_count"),
+            pl.col("nquote").cast(pl.Float64, strict=False),
+        ).alias("ask_side_empty_ratio"),
+        _safe_divide(
+            pl.col("_limit_up_single_sided_count"),
+            pl.col("nquote").cast(pl.Float64, strict=False),
+        ).alias("limit_up_single_sided_ratio"),
+        _safe_divide(
+            pl.col("_limit_down_single_sided_count"),
+            pl.col("nquote").cast(pl.Float64, strict=False),
+        ).alias("limit_down_single_sided_ratio"),
     )
     return grouped.select(
         "timestamp",
@@ -1092,6 +1226,15 @@ def downscale_quote_microstructure_features(
         "spread_narrow_count",
         "spread_flat_count",
         "spread_widen_ratio",
+        "bid_refill_count",
+        "bid_deplete_count",
+        "ask_refill_count",
+        "ask_deplete_count",
+        "queue_refill_imbalance",
+        "bid_side_empty_ratio",
+        "ask_side_empty_ratio",
+        "limit_up_single_sided_ratio",
+        "limit_down_single_sided_ratio",
     )
 
 
