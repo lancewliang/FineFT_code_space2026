@@ -391,6 +391,28 @@ def _write_scale_fixture(path: Path, feature_values=None) -> None:
     frame.write_ipc(path)
 
 
+def _write_multi_scale_fixture(
+    path: Path,
+    *,
+    wap_values: list[float],
+    awap_values: list[float],
+    spike_values: list[float],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame = pl.DataFrame(
+        {
+            "timestamp": list(range(len(wap_values))),
+            "mark_price": wap_values,
+            "bid1_price": [value - 1.0 for value in wap_values],
+            "ask1_price": [value + 1.0 for value in wap_values],
+            "wap_1": wap_values,
+            "awap": awap_values,
+            "spike_feature": spike_values,
+        }
+    )
+    frame.write_ipc(path)
+
+
 def _scale_input_file(tmp_path: Path) -> Path:
     return (
         tmp_path
@@ -519,7 +541,10 @@ def test_scale_save_cli_reads_feature_selection_filtered_input(tmp_path):
 
 
 def _run_multi_contract_scale_save_cli(
-    tmp_path: Path, *, check: bool = True
+    tmp_path: Path,
+    *,
+    check: bool = True,
+    extra_args: list[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     command = [
         sys.executable,
@@ -545,6 +570,8 @@ def _run_multi_contract_scale_save_cli(
         "--feature_list_path",
         "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy",
     ]
+    if extra_args:
+        command.extend(extra_args)
     return subprocess.run(
         command,
         cwd=REPO_ROOT,
@@ -596,6 +623,59 @@ def test_multi_contract_scale_save_cli_scans_all_split_stage_contracts(tmp_path)
         assert "timestamp" in csv.columns
 
 
+def test_multi_contract_scale_save_cli_uses_train_only_robust_scaler(tmp_path):
+    feature_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy"
+    )
+    feature_file.parent.mkdir(parents=True)
+    np.save(feature_file, np.array(["wap_1", "awap", "spike_feature"]))
+
+    _write_multi_scale_fixture(
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train/fu2601.feather",
+        wap_values=[2600.0, 2700.0, 2900.0, 3000.0],
+        awap_values=[2600.0, 2700.0, 2900.0, 3000.0],
+        spike_values=[0.0, 1.0, 2.0, 3.0],
+    )
+    _write_multi_scale_fixture(
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/test/fu2510.feather",
+        wap_values=[2848.0, 2849.0, 2850.0, 2851.0],
+        awap_values=[2848.0, 2849.0, 2850.0, 2851.0],
+        spike_values=[1000.0, 1000.0, 1000.0, 1000.0],
+    )
+
+    _run_multi_contract_scale_save_cli(tmp_path)
+
+    output_root = tmp_path / "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/5min"
+    test_output = pl.read_ipc(output_root / "test/fu2510.feather")
+    manifest = json.loads((output_root / "scaler_manifest.json").read_text(encoding="utf-8"))
+    diagnostics = pl.read_csv(output_root / "scale_diagnostics.csv")
+
+    expected_wap = (2849.5 - 2800.0) / 250.0
+    assert abs(float(test_output["wap_1"].median()) - expected_wap) < 1e-9
+    assert abs(float(test_output["awap"].median()) - expected_wap) < 1e-9
+    assert float(test_output["spike_feature"].max()) == 20.0
+    assert manifest["scaler_version"] == "robust_v1"
+    assert manifest["fit_scope"] == "train_all_contracts"
+    assert manifest["clip"]["enabled"] is True
+    assert manifest["clip"]["min"] == -20.0
+    assert manifest["clip"]["max"] == 20.0
+    assert {item["feature"] for item in manifest["features"]} == {
+        "wap_1",
+        "awap",
+        "spike_feature",
+    }
+    assert set(diagnostics["stage"].to_list()) == {"train", "test"}
+    assert (
+        diagnostics.filter(
+            (pl.col("stage") == "test") & (pl.col("contract") == "fu2510")
+        )["total_clipped_values"].item()
+        == 4
+    )
+
+
 def test_multi_contract_scale_save_cli_rejects_missing_split_stage_inputs(tmp_path):
     feature_file = (
         tmp_path
@@ -630,6 +710,88 @@ def test_multi_contract_scale_save_cli_rejects_missing_selected_feature(tmp_path
     assert result.returncode != 0
     assert "missing selected state feature columns" in (result.stdout + result.stderr)
     assert "missing_feature" in (result.stdout + result.stderr)
+
+
+def test_multi_contract_scale_save_cli_rejects_missing_train_split_inputs(tmp_path):
+    input_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/valid/fu2601.feather"
+    )
+    _write_scale_fixture(input_file)
+    feature_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy"
+    )
+    feature_file.parent.mkdir(parents=True)
+    np.save(feature_file, np.array(["feature_a"]))
+
+    result = _run_multi_contract_scale_save_cli(tmp_path, check=False)
+
+    assert result.returncode != 0
+    assert "no train split-stage inputs found" in (result.stdout + result.stderr)
+
+
+def test_multi_contract_scale_save_cli_rejects_invalid_clip_bounds(tmp_path):
+    input_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train/fu2601.feather"
+    )
+    _write_scale_fixture(input_file)
+    feature_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy"
+    )
+    feature_file.parent.mkdir(parents=True)
+    np.save(feature_file, np.array(["feature_a"]))
+
+    result = _run_multi_contract_scale_save_cli(
+        tmp_path,
+        check=False,
+        extra_args=["--clip_min", "20", "--clip_max", "20"],
+    )
+
+    assert result.returncode != 0
+    assert "clip_min must be less than clip_max" in (result.stdout + result.stderr)
+
+
+def test_multi_contract_scale_save_cli_does_not_leave_partial_outputs_on_later_split_failure(
+    tmp_path,
+):
+    feature_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy"
+    )
+    feature_file.parent.mkdir(parents=True)
+    np.save(feature_file, np.array(["feature_a"]))
+
+    train_input = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train/fu2601.feather"
+    )
+    _write_scale_fixture(train_input)
+    invalid_valid_input = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/valid/fu2602.feather"
+    )
+    invalid_valid_input.parent.mkdir(parents=True, exist_ok=True)
+    pl.DataFrame(
+        {
+            "timestamp": [0],
+            "mark_price": [1.0],
+            "bid1_price": [0.0],
+            "ask1_price": [2.0],
+            "wrong_feature": [10.0],
+        }
+    ).write_ipc(invalid_valid_input)
+
+    result = _run_multi_contract_scale_save_cli(tmp_path, check=False)
+
+    output_root = tmp_path / "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/5min"
+    assert result.returncode != 0
+    assert not (output_root / "scaler_manifest.json").exists()
+    assert not (output_root / "train/fu2601.feather").exists()
+    assert not (output_root / "train/fu2601.csv").exists()
+    assert not (output_root / "scale_diagnostics.csv").exists()
 
 
 def test_multi_contract_scale_save_cli_rejects_empty_train_feature_list(tmp_path):
