@@ -194,6 +194,32 @@
 - **WHEN** 目标频率窗口存在秒频 quote 快照
 - **THEN** 输出包含 Bid1/Ask1 价格和数量变化计数
 - **AND** 输出包含 `spread`、`mid`、`imbalance_volume`、`bid`、`ask`、`bidsize` 和 `asksize` 的 OHLC/TWAP/AWAP 值
+- **AND** 输出包含 `std_imbalance_volume`
+
+#### Scenario: 多档盘口压力窗口统计
+- **WHEN** quote 下采样输入包含 `BidVolume1` 到 `BidVolume5` 和 `AskVolume1` 到 `AskVolume5`
+- **THEN** 系统 SHALL 在每条秒频 quote 快照上计算 `imbalance_1`、`imbalance_3` 和 `imbalance_5`
+- **AND** `imbalance_1` SHALL 等于 `(BidVolume1 - AskVolume1) / (BidVolume1 + AskVolume1)`
+- **AND** `imbalance_3` SHALL 等于 `(sum(BidVolume1..3) - sum(AskVolume1..3)) / (sum(BidVolume1..3) + sum(AskVolume1..3))`
+- **AND** `imbalance_5` SHALL 等于 `(sum(BidVolume1..5) - sum(AskVolume1..5)) / (sum(BidVolume1..5) + sum(AskVolume1..5))`
+- **AND** 目标频率窗口输出 SHALL 包含 `imbalance_1`、`imbalance_3` 和 `imbalance_5` 的 `open`、`high`、`low`、`close`、`awap`、`twap` 和 `std` 统计列
+- **AND** `twap` 和 `awap` SHALL 与现有 quote 统计一致，使用窗口内简单均值
+- **AND** `imbalance_1` 的窗口统计 SHALL 与旧 `imbalance_volume` 的同名统计数值一致
+
+#### Scenario: 多档盘口压力零分母处理
+- **WHEN** 某条 quote 快照在 `imbalance_1`、`imbalance_3` 或 `imbalance_5` 的 bid 与 ask volume 合计为 `0` 或为空
+- **THEN** 对应逐快照压力值 SHALL 为 `0.0`
+- **AND** 目标频率窗口内的多档压力统计 SHALL NOT 产生 `NaN`、`inf` 或 `-inf`
+
+#### Scenario: 多档盘口压力输入非有限值 fail-fast
+- **WHEN** quote 下采样输入的 `BidVolume1` 到 `BidVolume5` 或 `AskVolume1` 到 `AskVolume5` 任一列包含 `NaN`、`inf` 或 `-inf`
+- **THEN** 系统 SHALL fail-fast
+- **AND** 错误信息 SHALL 说明 quote volume 包含非有限值
+
+#### Scenario: 多档盘口压力缺少深度列 fail-fast
+- **WHEN** quote 下采样输入缺少 `BidVolume2` 到 `BidVolume5` 或 `AskVolume2` 到 `AskVolume5` 中任一必要列
+- **THEN** 系统 SHALL fail-fast
+- **AND** 系统 SHALL NOT 静默填充缺失深度或合成二到五档盘口数量
 
 ### Requirement: 商品期货 cross-section 与时间特征
 系统 SHALL 使用可配置深度和显式 reward/execution manifest 生成商品期货特征。
