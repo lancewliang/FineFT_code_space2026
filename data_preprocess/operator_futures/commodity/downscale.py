@@ -1314,11 +1314,17 @@ def downscale_quote_features(
             current - previous > target_delta
             and _same_trading_session(previous, current, trading_sessions)
         ):
-            raise ValueError(f"Target window has no quote snapshots: {missing}")
+            logger.warning(
+                "Target window has no quote snapshots: %s", missing
+            )
 
     empty_windows = result.filter(pl.col("nquote") == 0)
     if empty_windows.height:
         first = empty_windows.item(0, "timestamp")
         if _session_for_timestamp(first, trading_sessions) is not None:
-            raise ValueError(f"Target window has no quote snapshots: {first}")
-    return result
+            logger.warning(
+                "Dropping %d empty quote window(s); first: %s",
+                empty_windows.height,
+                first,
+            )
+    return result.filter(pl.col("nquote") > 0)

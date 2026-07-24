@@ -1469,7 +1469,7 @@ def test_cross_session_quote_gap_does_not_fail():
     ]
 
 
-def test_intermediate_empty_quote_window_in_same_session_fails_fast():
+def test_intermediate_empty_quote_window_in_same_session_warns(caplog):
     second = _quote_frame_with_depth(
         {
             "timestamp": [
@@ -1483,5 +1483,7 @@ def test_intermediate_empty_quote_window_in_same_session_fails_fast():
         }
     )
 
-    with pytest.raises(ValueError, match="2023-01-03 09:05:00"):
+    with caplog.at_level(logging.WARNING, logger="operator_futures.commodity.downscale"):
         downscale_quote_features(second, "5min")
+
+    assert any("2023-01-03 09:05:00" in record.message for record in caplog.records)
