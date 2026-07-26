@@ -26,9 +26,9 @@
 
 **Feature Validation** (`data_preprocess/operator_futures/feature_validation/`): 特征正确性验证框架，包含 pandas reference 实现、expected columns 和 comparison/validators 工具。
 
-**Futures Trading Environment** (`FineFT/env/`): 期货交易环境实现，暴露 mark-price 估值、orderbook 执行、手续费、滑点、funding、保证金、强平约束和 Reverse Position（best-effort 先平后开）；`futures_util.py` 提供 `change_of_wallet` 和 `calculate_avaiable_action` 的交易动作路由与可用性计算；`commodity_env.py` 提供商品期货专用环境。
+**Futures Trading Environment** (`FineFT/env/`): 期货交易环境实现，暴露 mark-price 估值、orderbook 执行、手续费、滑点、funding、保证金、强平约束、Reverse Position（best-effort 先平后开）和 `trading_info` 交易过程特征；`futures_util.py` 提供 `change_of_wallet` 和 `calculate_avaiable_action` 的交易动作路由与可用性计算；`commodity_env.py` 提供商品期货专用环境。
 
-**Stage I Low-level Training** (`FineFT/RL/DiHFT/low_level/`): 价值基低层 agent 集成训练，包含 full-df warmup、qtable 预计算、diverse training 和 parallel rollout；暴露 `weight_advantage_pretrain.py` 和 `parallel_weight_advantage_pretrain.py`。
+**Stage I Low-level Training** (`FineFT/RL/DiHFT/low_level/`): 价值基低层 agent 集成训练，消费 state、previous_action、time、avaliable_action 和 `trading_info` 五路 Q 网络输入，包含 full-df warmup、qtable 预计算、diverse training 和 parallel rollout；暴露 `weight_advantage_pretrain.py` 和 `parallel_weight_advantage_pretrain.py`。
 
 **Stage II VAE Training** (`FineFT/RL/DiHFT/VAE/`): VAE 训练与分析，支持跨合约 label 训练数据物化、分合约测试分析和 routing summary 生成；暴露 `main.py` 作为 CLI 入口，`merge_vae_train.py` 负责跨合约训练数据合并和 `LabelTrainingManifest` 生成。
 

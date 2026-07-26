@@ -228,6 +228,18 @@ _Avoid_: 明细 CSV、交易明细
 环境每步暴露的真实手续费、已实现利润和滑点指标，供测试明细和诊断使用。
 _Avoid_: 执行指标、交易指标
 
+**Trading Process Feature (交易过程特征)**:
+Agent 侧动作执行后的实时交易状态输入，由归一化 signed position exposure 和当前持仓的收益率/最大回撤率组成。
+_Avoid_: 交易特征、过程特征、3 个比率特征
+
+**Previous Action**:
+现有低层 Q 网络输入名，实际表示当前 position/leverage 映射到 action space 的编码。
+_Avoid_: 上一条交易命令、完整交易状态
+
+**当前持仓 (Current Holding)**:
+从 position 由 0 变为非 0 或持仓方向改变时开始，并在平仓到 0 或持仓方向再次改变时结束的一笔交易；同方向加仓或减仓不结束当前持仓。
+_Avoid_: 未平仓交易、连续非零仓位
+
 **Experiment Name**:
 Stage I 串行训练的实验名参数，用于隔离模型输出和日志目录。
 _Avoid_: 实验名、实验标识
@@ -252,6 +264,10 @@ _Avoid_: 翻仓、仓位翻转、flip position
 - **VAE 跨合约训练** 合并多合约数据 → **VAE Training Manifest** → **Label Summary** → **Routing Summary**
 - **Aggregate CSV** 和 **Detail CSV** 使用 **Execution Metrics**
 - **单边盘口** 和 **涨跌停价** 属于 **Reward/Execution 列**，不进入 **State Feature**
+- **Trading Process Feature** 与 **State Feature** 互补，前者描述 agent 当前持仓暴露和风险收益状态，后者描述市场状态。
+- **Trading Process Feature** 中的 single_holding_return_rate 和 single_holding_max_drawdown 属于 **当前持仓**，平仓或持仓方向改变都会结束当前这一笔交易。
+- **Trading Process Feature** 表示动作执行后的可观测状态，空仓、正常平仓和爆仓后的风险收益字段均为 0。
+- **Previous Action** 与 **Trading Process Feature** 互补：前者是当前 position/leverage 的 action-space 编码，后者保留归一化 signed exposure 和当前持仓风险收益。
 
 ## Example dialogue
 
@@ -267,8 +283,17 @@ _Avoid_: 翻仓、仓位翻转、flip position
 > **Dev:** "VAE 训练为什么要跨合约合并数据？"
 > **Domain expert:** "商品期货单个合约的训练数据量可能不足，**VAE 跨合约训练** 将同一品种多个合约的训练数据合并为统一训练集，校验特征维度一致性后物化。输出 **VAE Training Manifest** 记录每个合约的样本数和缺失情况，确保可追溯。"
 
+> **Dev:** "position exposure 能和 return_rate 一起叫 3 个比率特征吗？"
+> **Domain expert:** "不能。position exposure 是由原始 position 归一化得到的 signed exposure，只有 single_holding_return_rate 和 single_holding_max_drawdown 是当前持仓的比率型风险收益特征；三者合称 **Trading Process Feature**。"
+
+> **Dev:** "加仓后 single_holding_return_rate 要重新开始算吗？"
+> **Domain expert:** "不会。同方向加仓或减仓仍然延续同一笔 **当前持仓**；只有平仓或持仓方向改变才会结束当前持仓。"
+
 ## Flagged ambiguities
 
 - "主力合约" 在旧代码中可能指"月度成交量最高的合约"或"连续主力拼接后的数据"——已统一为"按月度 top 2 + 高成交量天数入选的合约集合"。
 - "IC" 在 feature selection 中可能指 Pearson IC 或 Rank IC——已明确 IC 为 Pearson correlation，RankIC 为 rank correlation。
 - "pretrain" 可能指 sample-level pretrain 或 full-df warmup——已明确 full-df warmup 是训练前的独立阶段，pretrain_epoch 默认为 0。
+- "3 个比率特征" 会误把 position exposure 当作收益/风险比率——已统一为 **Trading Process Feature**：1 个归一化 signed position exposure + 2 个当前持仓比率型风险收益特征。
+- "这笔交易" 的边界不清——已统一为 **当前持仓**，同方向变仓不结束，平仓或持仓方向改变时结束。
+- "`previous_action`" 容易被误读为上一条交易命令——已明确为当前 position/leverage 的 action-space 编码。
