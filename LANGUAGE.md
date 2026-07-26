@@ -15,7 +15,7 @@ _Avoid_: 主力连续、连续合约
 _Avoid_: 连续主力文件、日度连续数据
 
 **主力合约 Summary (Main Contract Summary)**:
-描述日期范围内入选合约集合、交易日窗口和源文件路径的 JSON 文件，由 `stitch_main_contract.py` 生成。
+描述日期范围内入选合约集合、交易日窗口、源文件路径、每个合约最后交易日和完整交易日数量的 JSON 文件，由 `stitch_main_contract.py` 生成。
 _Avoid_: summary JSON、主力合约 JSON
 
 **交易日 (TradingDay)**:
@@ -68,9 +68,33 @@ _Avoid_: NaN 检查、空值校验
 从单条快照或单 bar 数据直接计算的 KLINE、QUOTE 和 SNAPSHOT 特征。
 _Avoid_: 横截面特征、快照特征
 
-**时间特征 (Time Feature)**:
+**Base_Time_feature**:
+与 Base Feature 平级的商品期货时间编码特征产物，描述交易时间分钟、早盘/下午盘/夜间盘及开收盘半小时、合约所在月份和合约剩余生命周期；属于必须保留的 State Feature，不能被 Feature Selection 过滤掉，也不参与 Scale Save 缩放。
+_Avoid_: 时间滚动窗口特征、绝对时间特征、日历特征
+
+**Trading Session 内进度 (Trading Session Progress)**:
+当前 timestamp 在所属 Trading Session 内按 session 持续分钟数归一化得到的进度，不跨午休或非交易空档连续计算。
+_Avoid_: 全天分钟进度、绝对分钟数
+
+**合约交割月份 (Contract Delivery Month)**:
+合约代码中表示交割月份的月份字段，如 `fu2605` 中的 `05`。
+_Avoid_: 当前交易日月份、自然月
+
+**合约最后交易日 (Contract Last Trading Day)**:
+在选择合约数据文件时，从原始下载中该合约全部 `TradingDay` 取最大值得到的真实最后交易日，用于计算合约剩余生命周期。
+_Avoid_: 主力合约窗口结束日、样本结束日
+
+**合约完整交易日数量 (Contract Total Trading Day Count)**:
+在选择合约数据文件时，从原始下载中该合约全部不同 `TradingDay` 计数得到的交易日总数，用作合约剩余生命周期比例的分母。
+_Avoid_: 主力窗口交易日数量、样本交易日数量
+
+**合约剩余生命周期比例 (Contract Life Remaining Ratio)**:
+当前 `TradingDay` 到合约最后交易日的剩余交易日数量除以合约完整交易日数量得到的非绝对生命周期特征。
+_Avoid_: 剩余天数、自然日倒计时
+
+**滚动窗口特征 (Rolling Window Feature)**:
 基于历史窗口滚动计算的衍生特征，如移动平均、波动率等。
-_Avoid_: 滚动特征、时序特征
+_Avoid_: Base_Time_feature、时序特征
 
 **Reward/Execution 列**:
 环境执行所需的非训练列，包括 orderbook 深度列、涨跌停价、derivative reference 列等，不参与特征选择和缩放。
@@ -85,7 +109,7 @@ _Avoid_: 状态特征、观测特征
 _Avoid_: 特征筛选、因子选择
 
 **Feature Selection Manifest**:
-Feature Selection 输出的 JSON 清单，记录候选特征来源、IC 结果路径、过滤配置和最终特征列表，使用 `FeatureSelectionManifest` dataclass 表达。
+Feature Selection 输出的 JSON 清单，记录候选特征来源、IC 结果路径、过滤配置、mandatory state feature 和最终特征列表，使用 `FeatureSelectionManifest` dataclass 表达。
 _Avoid_: 特征选择清单、选择描述
 
 **Feature Union**:
@@ -101,7 +125,7 @@ _Avoid_: 特征联合清单、联合描述
 _Avoid_: 缩放保存、标准化输出
 
 **Scale Manifest**:
-Scale Save 输出的 JSON 清单，记录 scaler 版本、拟合范围（`fit_scope="train_all_contracts"`）、特征统计和裁剪配置，使用 `ScaleManifest` dataclass 表达。
+Scale Save 输出的 JSON 清单，记录 scaler 版本、拟合范围（`fit_scope="train_all_contracts"`）、passthrough state feature、特征统计和裁剪配置，使用 `ScaleManifest` dataclass 表达。
 _Avoid_: 缩放清单、scaler 描述
 
 **OFI (Order Flow Imbalance)**:

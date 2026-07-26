@@ -12,11 +12,13 @@
 
 ## Components
 
-**Commodity Preprocessing** (`data_preprocess/operator_futures/commodity/`): 商品期货数据接入、主力合约拼接、五档下采样和特征生成的预处理管线；暴露 `stitch_main_contract.py`（主力合约日文件生成）和 `downscale_continuous_by_trading_day.py` 作为 CLI 入口；`downscale.py` 提供 OFI（`downscale_quote_ofi_features`）、深度不平衡（`_depth_imbalance_expr`）、队列压力（`_queue_change_expr`）和微观结构（`downscale_quote_microstructure_features`）特征计算器。
+**Commodity Preprocessing** (`data_preprocess/operator_futures/commodity/`): 商品期货数据接入、主力合约拼接、五档下采样和特征生成的预处理管线；暴露 `stitch_main_contract.py`（主力合约日文件生成，并在 Main Contract Summary 记录每个合约最后交易日和完整交易日数量）和 `downscale_continuous_by_trading_day.py` 作为 CLI 入口；`downscale.py` 提供 OFI（`downscale_quote_ofi_features`）、深度不平衡（`_depth_imbalance_expr`）、队列压力（`_queue_change_expr`）和微观结构（`downscale_quote_microstructure_features`）特征计算器。
+
+**Base_Time_feature Generator** (`PREPROCESS_DATASET/commodity-futures/Base_Time_feature/`): 与 `BASE_FEATURE` 平级的商品期货时间编码产物层，按 symbol/contract/target_freq/date 输出非绝对时间和合约生命周期特征，并在 daily merge 阶段并入 `FUTURE_FEATURE`。
 
 **Cross-section Feature Generator** (`data_preprocess/operator_futures/cross_section/`): 从下采样后的 base feature 和 orderbook 生成 KLINE、QUOTE 和 SNAPSHOT 截面特征；支持 `--contract` 参数按合约读写日文件。
 
-**Time Feature Generator** (`data_preprocess/operator_futures/time_operator/`): 从合并后的截面特征生成滚动时间特征；已迁移到 Polars，支持 depth-aware 特征生成。
+**Rolling Window Feature Generator** (`data_preprocess/operator_futures/time_operator/`): 从合并后的截面特征生成滚动窗口特征；已迁移到 Polars，支持 depth-aware 特征生成。
 
 **Feature Selection** (`data_preprocess/operator_futures/feature_selection/`): 多合约特征评估与筛选流水线，包含 IC、RankIC、CatBoost、Permutation Importance 和 Sharpe 指标；暴露 `pipeline.py` 作为多合约入口，输出 `FeatureSelectionManifest` dataclass 表达的 `feature_selection_manifest.json` 和 `state_features.npy`；`contract_feature_union.py` 输出 `FeatureUnionManifest` dataclass 表达的品种级统一特征列表。
 
