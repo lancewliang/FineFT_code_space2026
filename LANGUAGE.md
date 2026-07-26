@@ -96,6 +96,18 @@ _Avoid_: 剩余天数、自然日倒计时
 基于历史窗口滚动计算的衍生特征，如移动平均、波动率等。
 _Avoid_: Base_Time_feature、时序特征
 
+**风险状态特征 (Risk State Feature)**:
+基于 OHLC 和收益率历史窗口计算的波动率类 State Feature，如 ATR%、Historical Volatility、Rolling Volatility、Parkinson Volatility、Garman-Klass Volatility 和 Realized Volatility。
+_Avoid_: 交易过程特征、账户风险特征
+
+**流动性状态特征 (Liquidity State Feature)**:
+基于成交量、成交额和持仓量历史窗口计算的市场活跃度 State Feature，如 Relative Volume、Relative Amount、Relative Open Interest 和 Open Interest Change Ratio。
+_Avoid_: 盘口深度特征、Microstructure 特征
+
+**日内 Bar 数 (Bars Per Day)**:
+根据商品期货品种 `Trading Session` 总交易时长和目标频率推导的每日 bar 数，用于 Historical Volatility 等日化计算。
+_Avoid_: 24 小时固定 bar 数、自然日 bar 数
+
 **Reward/Execution 列**:
 环境执行所需的非训练列，包括 orderbook 深度列、涨跌停价、derivative reference 列等，不参与特征选择和缩放。
 _Avoid_: 奖励列、执行列
