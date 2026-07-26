@@ -1,11 +1,53 @@
 {
   "version": 1,
   "skills": {
-    "grill-with-docs": {
-      "source": "mattpocock/skills",
+    "grill-me": {
+      "source": "rjminsha/skills",
       "sourceType": "github",
-      "skillPath": "skills/engineering/grill-with-docs/SKILL.md",
-      "computedHash": "e7ef25bbee50cda2eb7b3a8ef541db0a0396dad7d369f7d14fb610671dd1864b"
+      "skillPath": "skills/productivity/grill-me/SKILL.md",
+      "computedHash": "784f0dbb7403b0f00324bce9a112f715342777a0daee7bbb7385f9c6f0a170ea"
+    },
+    "grill-me-with-docs": {
+      "source": "rjminsha/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/grill-me-with-docs/SKILL.md",
+      "computedHash": "1556c92088b5c3f09f4c041a635ed3342f0c323bd432aba2c834cb060907c3dd"
+    },
+    "handoff": {
+      "source": "rjminsha/skills",
+      "sourceType": "github",
+      "skillPath": "skills/productivity/handoff/SKILL.md",
+      "computedHash": "d543685cbfb0c64b7bc51a8dc3465975528da9b64f987f863765973b2f3867ab"
+    },
+    "requirements-interlock": {
+      "source": "rjminsha/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/requirements-interlock/SKILL.md",
+      "computedHash": "26da8b0671fbf720aa0e627eaf7ec6d9efca985b4b14da166c29c9969172b08e"
+    },
+    "setup-rjminsha-skills": {
+      "source": "rjminsha/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/setup-rjminsha-skills/SKILL.md",
+      "computedHash": "c9453a4b84a986f42b94642f722ab01b209ea1d6984e09fc6cdc8e1c14dcbfd1"
+    },
+    "tdd": {
+      "source": "rjminsha/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/tdd/SKILL.md",
+      "computedHash": "d734ee3f47be670952ccce725255a6551599bfebf4b4f7ff0d59bd6970a7c9ab"
+    },
+    "user-story": {
+      "source": "rjminsha/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/user-story/SKILL.md",
+      "computedHash": "835a8791471a2a2dccfda866c74c8d22af42ddb61a8948273a56e8a83830d22f"
+    },
+    "write-a-skill": {
+      "source": "rjminsha/skills",
+      "sourceType": "github",
+      "skillPath": "skills/productivity/write-a-skill/SKILL.md",
+      "computedHash": "85e9c07aa96465b9ff81397e078ef9b57d785d821bb49f14961f5e56ea658531"
     }
   }
 }
