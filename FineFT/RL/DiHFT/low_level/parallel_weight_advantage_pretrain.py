@@ -419,6 +419,11 @@ parser.add_argument(
     default=1,
     help="initial leverage",
 )
+parser.add_argument(
+    "--allow_reverse_position",
+    action="store_true",
+    help="allow reverse position in single step",
+)
 
 # network setting
 parser.add_argument(
@@ -1026,6 +1031,7 @@ class Weighted_Contexts_DQN:
         # pretrain
         self.pretrain_epoch = args.pretrain_epoch
         self.full_df_warmup = args.full_df_warmup
+        self.allow_reverse_position = getattr(args, "allow_reverse_position", False)
         self._log_internal_parameters("init_end")
 
     def _format_internal_parameter_value(self, value):
@@ -1783,6 +1789,7 @@ class Weighted_Contexts_DQN:
             "commission_rate": self.transcation_cost,
             "max_punishment": 1e10,
             "gamma": 1,
+            "allow_reverse_position": self.allow_reverse_position,
         }
         env_kwargs = {
             "feature_list": self.tech_indicator_list,
@@ -1799,6 +1806,7 @@ class Weighted_Contexts_DQN:
             "gamma": self.gamma,
             "initial_wallet_balance": self.initial_wallet_balance,
             "initial_unrealized_pnl": self.initial_unrealized_pnL,
+            "allow_reverse_position": self.allow_reverse_position,
         }
         diagnostics_result = prepare_pretrain_qtable_diagnostics(
             total_df_index_length=self.total_df_index_length,

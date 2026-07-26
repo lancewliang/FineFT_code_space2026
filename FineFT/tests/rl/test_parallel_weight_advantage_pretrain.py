@@ -408,3 +408,13 @@ def test_epoch_model_path_uses_epoch_index():
     from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
 
     assert pwap.build_epoch_model_path("/tmp/model", 2).endswith("epoch_3")
+
+
+def test_parallel_parser_allow_reverse_position_default_and_flag():
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+
+    args_default = pwap.parser.parse_args([])
+    assert args_default.allow_reverse_position is False
+
+    args_flag = pwap.parser.parse_args(["--allow_reverse_position"])
+    assert args_flag.allow_reverse_position is True

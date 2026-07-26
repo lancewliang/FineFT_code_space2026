@@ -593,3 +593,13 @@ def test_build_file_log_path_includes_experiment_name():
         dataset_name="fu",
         experiment_name="5min_gamma097",
     ) == "log_futures/fu/low_level/train/5min_gamma097/advantage.log"
+
+
+def test_parser_allow_reverse_position_default_and_flag():
+    from RL.DiHFT.low_level import weight_advantage_pretrain as wap
+
+    args_default = wap.parser.parse_args([])
+    assert args_default.allow_reverse_position is False
+
+    args_flag = wap.parser.parse_args(["--allow_reverse_position"])
+    assert args_flag.allow_reverse_position is True
