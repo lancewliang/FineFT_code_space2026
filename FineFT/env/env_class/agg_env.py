@@ -56,6 +56,7 @@ class Agg_Env(Base_Env):
         # the device for the low level model
         device="cpu",
         time_info_dim=2,
+        allow_reverse_position=False,
     ):
         super().__init__(
             state_array,
@@ -76,6 +77,7 @@ class Agg_Env(Base_Env):
             maintenance_margin_ratio_dict,
             early_stop,
             initial_state,
+            allow_reverse_position=allow_reverse_position,
         )
         self.adjust_freq = adjust_len
         self.state_dim = self.state_array.shape[1]

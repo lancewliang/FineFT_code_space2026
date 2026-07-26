@@ -364,6 +364,7 @@ def create_demo_env(train_df, env_kwargs, initial_state):
         initial_state=initial_state,
         gamma=env_kwargs["gamma"],
         max_punishment=1e10,
+        allow_reverse_position=env_kwargs.get("allow_reverse_position", False),
     )
 
 

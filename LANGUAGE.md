@@ -10,6 +10,10 @@ FineFT 是面向期货交易的高效且具有风险感知能力的集成强化�
 按自然月成交量最高的前 2 个合约加上高成交量天数入选合约的并集，用于拼接连续主力数据。
 _Avoid_: 主力连续、连续合约
 
+**主力合约日文件 (Main Contract Daily File)**:
+按 `TradingDay` 拆分的主力合约 CSV 文件，路径格式为 `CONTINUOUS_RAW/{symbol}/{YYYY-MM-DD}.csv`，由 `stitch_main_contract.py` 生成。
+_Avoid_: 连续主力文件、日度连续数据
+
 **主力合约 Summary (Main Contract Summary)**:
 描述日期范围内入选合约集合、交易日窗口和源文件路径的 JSON 文件，由 `stitch_main_contract.py` 生成。
 _Avoid_: summary JSON、主力合约 JSON
@@ -54,6 +58,10 @@ _Avoid_: 成交方向规则、tick 方向
 遇到数据异常（缺失列、非有限值、空结果）时立即报错停止，不静默跳过或填充。
 _Avoid_: 快速失败、报错中断
 
+**NaN 校验 (NaN Validation)**:
+Scale Save 前后对 state feature 进行的 NaN 检查，发现 NaN 时立即报错并输出含 NaN 的特征名和行号，防止下游训练静默失败。
+_Avoid_: NaN 检查、空值校验
+
 ### 特征工程
 
 **截面特征 (Cross-section Feature)**:
@@ -76,13 +84,25 @@ _Avoid_: 状态特征、观测特征
 通过 IC、RankIC、CatBoost Importance、Permutation Importance、Sharpe 等指标评估和筛选 state feature 的流水线。
 _Avoid_: 特征筛选、因子选择
 
+**Feature Selection Manifest**:
+Feature Selection 输出的 JSON 清单，记录候选特征来源、IC 结果路径、过滤配置和最终特征列表，使用 `FeatureSelectionManifest` dataclass 表达。
+_Avoid_: 特征选择清单、选择描述
+
 **Feature Union**:
 将多个合约的 candidate state feature 去重合并为品种级统一特征列表的过程。
 _Avoid_: 特征合集、特征合并
 
+**Feature Union Manifest**:
+Feature Union 输出的 JSON 清单，记录品种、合约列表、各合约特征数、state feature 列表和输出路径，使用 `FeatureUnionManifest` dataclass 表达。
+_Avoid_: 特征联合清单、联合描述
+
 **Scale Save**:
 使用 train-only robust scaler 对 state feature 进行标准化并裁剪到 `[-20, 20]`，输出下游可消费的 feather 和 csv 文件。
 _Avoid_: 缩放保存、标准化输出
+
+**Scale Manifest**:
+Scale Save 输出的 JSON 清单，记录 scaler 版本、拟合范围（`fit_scope="train_all_contracts"`）、特征统计和裁剪配置，使用 `ScaleManifest` dataclass 表达。
+_Avoid_: 缩放清单、scaler 描述
 
 **OFI (Order Flow Imbalance)**:
 从连续五档 quote 快照计算的订单流不平衡指标，按固定行数窗口聚合输出。
@@ -174,6 +194,10 @@ _Avoid_: 选择清单、选择描述
 
 ### VAE 与路由
 
+**VAE 跨合约训练 (VAE Cross-contract Training)**:
+从多合约训练数据合并生成统一 VAE 训练集的过程，通过 `merge_vae_train.py` 物化 label 训练数据，校验特征维度一致性，输出 `LabelTrainingManifest`。
+_Avoid_: 跨合约 VAE、多合约 VAE
+
 **VAE Training Manifest**:
 描述跨合约 label 训练数据物化结果的 JSON 文件，包含 included/missing contracts。
 _Avoid_: VAE 训练清单
@@ -208,16 +232,24 @@ _Avoid_: 执行指标、交易指标
 Stage I 串行训练的实验名参数，用于隔离模型输出和日志目录。
 _Avoid_: 实验名、实验标识
 
+### 交易动作
+
+**Reverse Position (反手)**:
+在一步内先平掉当前仓位再反向开仓的动作；持多时先平多后开空，持空时先平空后开多；采用 best-effort 语义，平仓一定成功，反向开仓可能因保证金不足或深度不足而失败（position 归零或截断到 position_list 中最大可行值）；通过 `allow_reverse_position` 开关控制，默认关闭。
+_Avoid_: 翻仓、仓位翻转、flip position
+
 ## Relationships
 
 - 一个 **主力合约 Summary** 包含多个 **主力合约**，每个合约有 **交易日** 窗口和 **事件时间戳**
+- **主力合约日文件** 是 **主力合约** 按 **交易日** 拆分的输出，供 **下采样** 消费
 - **下采样** 使用 **右闭右标窗口** 从秒级快照生成目标频率 bar
-- **截面特征** + **时间特征** → **Feature Selection** → **State Feature** → **Scale Save**
-- **Feature Union** 合并多合约 **State Feature** 为品种级列表
+- **截面特征** + **时间特征** → **Feature Selection** → **Feature Selection Manifest** → **State Feature**
+- **Feature Union** 合并多合约 **State Feature** 为品种级列表，输出 **Feature Union Manifest**
+- **State Feature** → **Scale Save** → **Scale Manifest**，前后执行 **NaN 校验**
 - **Dataset Split** → **Dataset Manifest** → **Train Slice** + **Valid 动态切片**
 - **Stage I** 训练低层 agent → **Stage II** 筛选 agent 并训练 VAE → **Stage III** 路由
 - **Full-df Warmup** 使用 **Qtable 预计算** 生成 **DP Expert Action Path**
-- **VAE Training Manifest** → **Label Summary** → **Routing Summary**
+- **VAE 跨合约训练** 合并多合约数据 → **VAE Training Manifest** → **Label Summary** → **Routing Summary**
 - **Aggregate CSV** 和 **Detail CSV** 使用 **Execution Metrics**
 - **单边盘口** 和 **涨跌停价** 属于 **Reward/Execution 列**，不进入 **State Feature**
 
@@ -231,6 +263,9 @@ _Avoid_: 实验名、实验标识
 
 > **Dev:** "OFI 和 microstructure 特征有什么区别？"
 > **Domain expert:** "**OFI** 从五档快照计算订单流不平衡，按固定行数窗口聚合。**Microstructure 特征** 从一档快照派生 microprice pressure、spread 变化和 queue pressure，也是独立固定行窗口。两者互不包含，也不改变现有时间窗口 quote 下采样输出。"
+
+> **Dev:** "VAE 训练为什么要跨合约合并数据？"
+> **Domain expert:** "商品期货单个合约的训练数据量可能不足，**VAE 跨合约训练** 将同一品种多个合约的训练数据合并为统一训练集，校验特征维度一致性后物化。输出 **VAE Training Manifest** 记录每个合约的样本数和缺失情况，确保可追溯。"
 
 ## Flagged ambiguities
 

@@ -20,6 +20,6 @@ python -u FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py \
     --max_holding_number 1 --short_estimated_rate 0 --long_estimated_rate 0 \
     --position_choices 3 --transcation_cost 0.0002 --n_step 12 --gamma 0.99 \
     --order_book_depth 5 --early_stop 2 \
-    --pretrain_epoch 50 --lr_init 0.001 --epsilon_min 0.05 \
-    --ada_min 1.0 --ada_step 2000000 \
+    --pretrain_epoch 100 --lr_init 0.0005 --epsilon_min 0.05 \
+    --ada_min 2.0 --ada_step 8000000 \
     >"log_futures/fu/low_level/train/10min/${EXPERIMENT_NAME}/advantage-10min.log"

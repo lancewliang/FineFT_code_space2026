@@ -31,6 +31,7 @@ def initiate_demo_env(
     gamma=1,
     max_punishment=1e10,
     order_book_depth=25,
+    allow_reverse_position=False,
 ):
 
     # 对应钱包余额，起始保证金，未实现盈亏，持仓量，对应的杠杆):
@@ -73,5 +74,6 @@ def initiate_demo_env(
         initial_state=initial_state,
         max_punishment=max_punishment,
         gamma=gamma,
+        allow_reverse_position=allow_reverse_position,
     )
     return env

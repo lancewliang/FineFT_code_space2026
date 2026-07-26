@@ -12,33 +12,33 @@
 
 ## Components
 
-**Commodity Preprocessing** (`data_preprocess/operator_futures/commodity/`): 商品期货数据接入、主力合约拼接、五档下采样和特征生成的预处理管线；暴露 `stitch_main_contract.py` 和 `downscale_continuous_by_trading_day.py` 作为 CLI 入口。
+**Commodity Preprocessing** (`data_preprocess/operator_futures/commodity/`): 商品期货数据接入、主力合约拼接、五档下采样和特征生成的预处理管线；暴露 `stitch_main_contract.py`（主力合约日文件生成）和 `downscale_continuous_by_trading_day.py` 作为 CLI 入口；`downscale.py` 提供 OFI（`downscale_quote_ofi_features`）、深度不平衡（`_depth_imbalance_expr`）、队列压力（`_queue_change_expr`）和微观结构（`downscale_quote_microstructure_features`）特征计算器。
 
 **Cross-section Feature Generator** (`data_preprocess/operator_futures/cross_section/`): 从下采样后的 base feature 和 orderbook 生成 KLINE、QUOTE 和 SNAPSHOT 截面特征；支持 `--contract` 参数按合约读写日文件。
 
 **Time Feature Generator** (`data_preprocess/operator_futures/time_operator/`): 从合并后的截面特征生成滚动时间特征；已迁移到 Polars，支持 depth-aware 特征生成。
 
-**Feature Selection** (`data_preprocess/operator_futures/feature_selection/`): 多合约特征评估与筛选流水线，包含 IC、RankIC、CatBoost、Permutation Importance 和 Sharpe 指标；暴露 `pipeline.py` 作为多合约入口，输出 `state_features.npy` 和 `feature_selection_manifest.json`。
+**Feature Selection** (`data_preprocess/operator_futures/feature_selection/`): 多合约特征评估与筛选流水线，包含 IC、RankIC、CatBoost、Permutation Importance 和 Sharpe 指标；暴露 `pipeline.py` 作为多合约入口，输出 `FeatureSelectionManifest` dataclass 表达的 `feature_selection_manifest.json` 和 `state_features.npy`；`contract_feature_union.py` 输出 `FeatureUnionManifest` dataclass 表达的品种级统一特征列表。
 
-**Scale Save** (`data_preprocess/operator_futures/scale_describe_save/`): 使用 train-only robust scaler 标准化 state feature 并裁剪输出；暴露 `muti_contract_scale_save.py` 处理多合约 split-stage 文件，输出 `scaler_manifest.json` 和 `scale_diagnostics.csv`。
+**Scale Save** (`data_preprocess/operator_futures/scale_describe_save/`): 使用 train-only robust scaler 标准化 state feature 并裁剪输出；暴露 `muti_contract_scale_save.py` 处理多合约 split-stage 文件，从训练集拟合单一 scaler（`fit_scope="train_all_contracts"`），输出 `ScaleManifest` dataclass 表达的 `scaler_manifest.json` 和 `scale_diagnostics.csv`；前后执行 NaN 校验。
 
 **Dataset Split** (`data_preprocess/operator_futures/dataset_split/`): 按时间边界将数据分为 train/valid/test 集合；输出 `dataset_split_manifest.json` 记录合约级归属和行数。
 
 **Feature Validation** (`data_preprocess/operator_futures/feature_validation/`): 特征正确性验证框架，包含 pandas reference 实现、expected columns 和 comparison/validators 工具。
 
-**Futures Trading Environment** (`FineFT/env/`): 期货交易环境实现，暴露 mark-price 估值、orderbook 执行、手续费、滑点、funding、保证金和强平约束；`commodity_env.py` 提供商品期货专用环境。
+**Futures Trading Environment** (`FineFT/env/`): 期货交易环境实现，暴露 mark-price 估值、orderbook 执行、手续费、滑点、funding、保证金、强平约束和 Reverse Position（best-effort 先平后开）；`futures_util.py` 提供 `change_of_wallet` 和 `calculate_avaiable_action` 的交易动作路由与可用性计算；`commodity_env.py` 提供商品期货专用环境。
 
 **Stage I Low-level Training** (`FineFT/RL/DiHFT/low_level/`): 价值基低层 agent 集成训练，包含 full-df warmup、qtable 预计算、diverse training 和 parallel rollout；暴露 `weight_advantage_pretrain.py` 和 `parallel_weight_advantage_pretrain.py`。
 
-**Stage II VAE Training** (`FineFT/RL/DiHFT/VAE/`): VAE 训练与分析，支持跨合约 label 训练数据物化、分合约测试分析和 routing summary 生成；暴露 `main.py` 作为 CLI 入口。
+**Stage II VAE Training** (`FineFT/RL/DiHFT/VAE/`): VAE 训练与分析，支持跨合约 label 训练数据物化、分合约测试分析和 routing summary 生成；暴露 `main.py` 作为 CLI 入口，`merge_vae_train.py` 负责跨合约训练数据合并和 `LabelTrainingManifest` 生成。
 
 **Stage III High-level Routing** (`FineFT/RL/DiHFT/high_level/`): 使用 VAE 重构损失进行风险感知路由，包含 heuristic routing 和 Optuna 调参。
 
-**Data Handler** (`FineFT/datahandler/`): FineFT 数据集装配、train slice 生成和 valid 动态切片；暴露 `commodity_contract_dataset.py` 和 `slice_model.py`。
+**Data Handler** (`FineFT/datahandler/`): FineFT 数据集装配、train slice 生成和 valid 动态切片；暴露 `commodity_contract_dataset.py`（从 `dataset_split_manifest.json` 读取拆分元数据）和 `slice_model.py`；使用 `DatasetSplitManifest` 和 `DatasetManifest` dataclass 表达内部状态。
 
-**Low-level Agent Selection** (`FineFT/analysis/pick_agent/`): 低层 agent 两阶段选择算法，从跨合约 label 结果中选择最优 bin 和 epoch，输出 potential model 和 selection manifest。
+**Low-level Agent Selection** (`FineFT/analysis/pick_agent/`): 低层 agent 两阶段选择算法，从跨合约 label 结果中选择最优 bin 和 epoch，输出 potential model 和 `selection_manifest.json`；重构后支持按合约和标签聚合结果。
 
-**Diagnostics** (`FineFT/RL/DiHFT/low_level/`): Loss NaN 诊断、qtable 诊断和 parallel rollout metrics，使用 dataclass 对象表达内部状态。
+**Diagnostics** (`FineFT/RL/DiHFT/low_level/`): Loss NaN 诊断、qtable 诊断和 parallel rollout metrics，使用 `LossNanDiagnostics`、`PretrainQTableDiagnosticsResult` 等 dataclass 对象表达内部状态。
 
 **Baselines** (`FineFT/RL/base/` and `FineFT/RL/EarnHFT/`): 对比基线算法，包括 DQN、PPO、DRA、CRP/QR-DQN、rule-based、EDQN/SUNRISE 和 EarnHFT 层级 RL。
 

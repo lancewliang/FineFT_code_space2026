@@ -46,6 +46,7 @@ class Demo_Env(Base_Env):
         # unique for demo_env
         max_punishment=1e10,
         gamma=1,
+        allow_reverse_position=False,
     ):
 
         super(Demo_Env, self).__init__(
@@ -71,6 +72,7 @@ class Demo_Env(Base_Env):
             early_stop=early_stop,
             # initial_personal_state
             initial_state=initial_state,
+            allow_reverse_position=allow_reverse_position,
         )
         self.q_table = create_optimal_q_table(
             ask_prices_array,
@@ -91,6 +93,7 @@ class Demo_Env(Base_Env):
             # the default is for btcusdt perpetual contract
             max_punishment=max_punishment,
             gamma=gamma,
+            allow_reverse_position=allow_reverse_position,
         )
 
     def reset(self):

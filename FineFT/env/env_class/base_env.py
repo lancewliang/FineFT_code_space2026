@@ -76,6 +76,7 @@ class Base_Env(gym.Env):
         initial_state=(1e5, 0, 0, 0, 1),
         buy_fee_rate=None,
         sell_fee_rate=None,
+        allow_reverse_position=False,
     ):
         # trading setting
         self.max_holding_number = max_holding_number
@@ -87,6 +88,7 @@ class Base_Env(gym.Env):
         self.commission_rate = commission_rate
         self.buy_fee_rate = buy_fee_rate
         self.sell_fee_rate = sell_fee_rate
+        self.allow_reverse_position = allow_reverse_position
         # RL setting
         self.single_side_action_num = int((position_choices - 1) / 2)
         self.action_space = spaces.Discrete(
@@ -232,6 +234,7 @@ class Base_Env(gym.Env):
                 # action space setting
                 leverage_choices=self.leverage_choices,
                 position_choices=self.position_list,
+                allow_reverse_position=self.allow_reverse_position,
             )
         )
 
@@ -296,6 +299,7 @@ class Base_Env(gym.Env):
         )
 
     def step(self, action):
+        old_position = self.position
         target_position, target_leverage = self.env_map_action_to_position_leverage(
             action
         )
@@ -325,6 +329,8 @@ class Base_Env(gym.Env):
             silent=False,
             buy_fee_rate=self.buy_fee_rate,
             sell_fee_rate=self.sell_fee_rate,
+            allow_reverse_position=self.allow_reverse_position,
+            position_list=self.position_list,
         )
         leverage = wallet_change.leverage
         position = wallet_change.position
@@ -610,6 +616,7 @@ class Base_Env(gym.Env):
                         # action space setting
                         leverage_choices=self.leverage_choices,
                         position_choices=self.position_list,
+                        allow_reverse_position=self.allow_reverse_position,
                     )
                 )
                 avaiable_actions = []
@@ -651,7 +658,7 @@ class Base_Env(gym.Env):
                     )
                 )
                 # 在step之后才对single holding进行重置
-                if self.position == 0:
+                if self.position == 0 or (self.allow_reverse_position and old_position * self.position < 0):
                     self.single_holding_return = 0
                     self.single_holding_history = [0]
 

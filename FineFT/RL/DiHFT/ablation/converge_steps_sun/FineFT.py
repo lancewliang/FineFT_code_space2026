@@ -274,6 +274,11 @@ parser.add_argument(
     default=2,
     help="the coffient for decay",
 )
+parser.add_argument(
+    "--allow_reverse_position",
+    action="store_true",
+    help="allow reverse position in single step",
+)
 
 
 def seed_torch(seed):
@@ -407,6 +412,7 @@ class Weighted_Contexts_DQN:
         self.loss_func_pretrain = nn.SmoothL1Loss(reduction="none")
         # pretrain
         self.pretrain_epoch = args.pretrain_epoch
+        self.allow_reverse_position = getattr(args, "allow_reverse_position", False)
 
     def update(
         self,
@@ -743,6 +749,7 @@ class Weighted_Contexts_DQN:
                 initial_state=self.initial_state,
                 gamma=self.gamma,
                 max_punishment=1e10,
+                allow_reverse_position=self.allow_reverse_position,
             )
             if pretrain:
                 q_table = create_optimal_q_table_from_df(
@@ -757,6 +764,7 @@ class Weighted_Contexts_DQN:
                     # the default is for btcusdt perpetual contract
                     max_punishment=1e10,
                     gamma=1,
+                    allow_reverse_position=self.allow_reverse_position,
                 )
                 self.perfection_action_list = get_dp_action_from_qtable(
                     q_table, initial_action

@@ -62,6 +62,8 @@ def change_of_wallet(
     silent=True,
     buy_fee_rate=None,
     sell_fee_rate=None,
+    allow_reverse_position=False,
+    position_list=None,
 ):
     buy_fee_rate = commission_rate if buy_fee_rate is None else buy_fee_rate
     sell_fee_rate = commission_rate if sell_fee_rate is None else sell_fee_rate
@@ -96,20 +98,183 @@ def change_of_wallet(
         )
     else:
         if current_position * previous_position < 0:
-            if not silent:
-                print(
-                    "You can not turn over the position in just one step, the position will stick to the previous situation (the position and the leverage)"
+            if not allow_reverse_position:
+                if not silent:
+                    print(
+                        "You can not turn over the position in just one step, the position will stick to the previous situation (the position and the leverage)"
+                    )
+                return WalletChangeResult(
+                    leverage=previous_leverage,
+                    position=previous_position,
+                    initial_margin=previous_initial_margine,
+                    unrealized_pnl=previous_unrealized_pnL,
+                    wallet_balance=previous_wallet_balance,
+                    slippage_step=0,
+                    commission_fee_step=0,
+                    realized_pnl_step=0,
                 )
-            return WalletChangeResult(
-                leverage=previous_leverage,
-                position=previous_position,
-                initial_margin=previous_initial_margine,
-                unrealized_pnl=previous_unrealized_pnL,
-                wallet_balance=previous_wallet_balance,
-                slippage_step=0,
-                commission_fee_step=0,
-                realized_pnl_step=0,
-            )
+            else:
+                # Reverse position logic: 2 steps (close existing, open opposite)
+                if previous_position > 0 and current_position < 0:
+                    # Close long position to 0
+                    close_result = close_long_position(
+                        markprice,
+                        bid_prices,
+                        bid_qtys,
+                        sell_fee_rate,
+                        previous_leverage,
+                        previous_position,
+                        previous_initial_margine,
+                        previous_unrealized_pnL,
+                        previous_wallet_balance,
+                        previous_leverage,
+                        0,
+                        silent=silent,
+                    )
+                    if close_result.position != 0:
+                        return close_result
+                    
+                    # Open short position from 0 to current_position with current_leverage
+                    open_result = open_short_position(
+                        markprice,
+                        bid_prices,
+                        bid_qtys,
+                        short_estimated_rate,
+                        sell_fee_rate,
+                        current_leverage,
+                        0,
+                        close_result.initial_margin,
+                        close_result.unrealized_pnl,
+                        close_result.wallet_balance,
+                        current_leverage,
+                        current_position,
+                        silent=silent,
+                    )
+                    
+                    # Truncate to position_list if depth/margin limited actual opened position
+                    if position_list is not None and open_result.position != current_position and open_result.position != 0:
+                        valid_positions = [p for p in position_list if open_result.position <= p <= 0]
+                        if valid_positions:
+                            target_pos = int(min(valid_positions))
+                            if target_pos != open_result.position:
+                                if target_pos == 0:
+                                    open_result = WalletChangeResult(
+                                        leverage=current_leverage,
+                                        position=0,
+                                        initial_margin=0.0,
+                                        unrealized_pnl=0.0,
+                                        wallet_balance=close_result.wallet_balance,
+                                        slippage_step=0.0,
+                                        commission_fee_step=0.0,
+                                        realized_pnl_step=0.0,
+                                    )
+                                else:
+                                    open_result = open_short_position(
+                                        markprice,
+                                        bid_prices,
+                                        bid_qtys,
+                                        short_estimated_rate,
+                                        sell_fee_rate,
+                                        current_leverage,
+                                        0,
+                                        close_result.initial_margin,
+                                        close_result.unrealized_pnl,
+                                        close_result.wallet_balance,
+                                        current_leverage,
+                                        target_pos,
+                                        silent=silent,
+                                    )
+                                    
+                    return WalletChangeResult(
+                        leverage=open_result.leverage,
+                        position=open_result.position,
+                        initial_margin=open_result.initial_margin,
+                        unrealized_pnl=open_result.unrealized_pnl,
+                        wallet_balance=open_result.wallet_balance,
+                        slippage_step=close_result.slippage_step + open_result.slippage_step,
+                        commission_fee_step=close_result.commission_fee_step + open_result.commission_fee_step,
+                        realized_pnl_step=close_result.realized_pnl_step + open_result.realized_pnl_step,
+                    )
+                elif previous_position < 0 and current_position > 0:
+                    # Close short position to 0
+                    close_result = close_short_position(
+                        markprice,
+                        ask_prices,
+                        ask_qtys,
+                        buy_fee_rate,
+                        previous_leverage,
+                        previous_position,
+                        previous_initial_margine,
+                        previous_unrealized_pnL,
+                        previous_wallet_balance,
+                        previous_leverage,
+                        0,
+                        silent=silent,
+                    )
+                    if close_result.position != 0:
+                        return close_result
+                    
+                    # Open long position from 0 to current_position with current_leverage
+                    open_result = open_long_position(
+                        markprice,
+                        ask_prices,
+                        ask_qtys,
+                        long_estimated_rate,
+                        buy_fee_rate,
+                        current_leverage,
+                        0,
+                        close_result.initial_margin,
+                        close_result.unrealized_pnl,
+                        close_result.wallet_balance,
+                        current_leverage,
+                        current_position,
+                        silent=silent,
+                    )
+                    
+                    # Truncate to position_list if depth/margin limited actual opened position
+                    if position_list is not None and open_result.position != current_position and open_result.position != 0:
+                        valid_positions = [p for p in position_list if 0 <= p <= open_result.position]
+                        if valid_positions:
+                            target_pos = int(max(valid_positions))
+                            if target_pos != open_result.position:
+                                if target_pos == 0:
+                                    open_result = WalletChangeResult(
+                                        leverage=current_leverage,
+                                        position=0,
+                                        initial_margin=0.0,
+                                        unrealized_pnl=0.0,
+                                        wallet_balance=close_result.wallet_balance,
+                                        slippage_step=0.0,
+                                        commission_fee_step=0.0,
+                                        realized_pnl_step=0.0,
+                                    )
+                                else:
+                                    open_result = open_long_position(
+                                        markprice,
+                                        ask_prices,
+                                        ask_qtys,
+                                        long_estimated_rate,
+                                        buy_fee_rate,
+                                        current_leverage,
+                                        0,
+                                        close_result.initial_margin,
+                                        close_result.unrealized_pnl,
+                                        close_result.wallet_balance,
+                                        current_leverage,
+                                        target_pos,
+                                        silent=silent,
+                                    )
+
+                    return WalletChangeResult(
+                        leverage=open_result.leverage,
+                        position=open_result.position,
+                        initial_margin=open_result.initial_margin,
+                        unrealized_pnl=open_result.unrealized_pnl,
+                        wallet_balance=open_result.wallet_balance,
+                        slippage_step=close_result.slippage_step + open_result.slippage_step,
+                        commission_fee_step=close_result.commission_fee_step + open_result.commission_fee_step,
+                        realized_pnl_step=close_result.realized_pnl_step + open_result.realized_pnl_step,
+                    )
         elif max(current_position, previous_position) > 0:
             # 多头情况，分close long 和 open long
             if current_position - previous_position > 0:
@@ -840,6 +1005,7 @@ def calculate_avaiable_action(
     position_choices=[-8, -6, -4, -2, 0, 2, 4, 6, 8],
     buy_fee_rate=None,
     sell_fee_rate=None,
+    allow_reverse_position=False,
 ):
     buy_fee_rate = commission_rate if buy_fee_rate is None else buy_fee_rate
     sell_fee_rate = commission_rate if sell_fee_rate is None else sell_fee_rate
@@ -861,13 +1027,14 @@ def calculate_avaiable_action(
     position_upper = min(position + buy_size_max, max(position_choices))
     position_lower = max(position - sell_size_max, min(position_choices))
     # 由position限定的范围
-    if position == 0:
-        position_upper = position_upper
-        position_lower = position_lower
-    elif position > 0:
-        position_lower = max(0, position_lower)
-    else:
-        position_upper = min(0, position_upper)
+    if not allow_reverse_position:
+        if position == 0:
+            position_upper = position_upper
+            position_lower = position_lower
+        elif position > 0:
+            position_lower = max(0, position_lower)
+        else:
+            position_upper = min(0, position_upper)
 
     available_positions = [
         position
@@ -886,6 +1053,53 @@ def calculate_avaiable_action(
                 elif margine_balalnce >= np.abs(
                     markprice * available_position / available_leverage
                 ):
+                    avaiable_position_choices.append(available_position)
+                    avaiable_leverage_choices.append(available_leverage)
+        elif available_position * position < 0:
+            # 反手：先平仓到0，再开反向仓位 available_position
+            if position > 0:
+                close_position = position
+                value, _ = calculate_open_short_close_long_position(
+                    bid_prices, bid_qtys, close_position
+                )
+                realized_pnL = (
+                    unrealized_pnL
+                    + value
+                    - markprice * close_position
+                    - value * sell_fee_rate
+                )
+            else:
+                close_position = np.abs(position)
+                value, _ = calculate_open_long_close_short_position(
+                    ask_prices, ask_qtys, close_position
+                )
+                realized_pnL = (
+                    unrealized_pnL
+                    - value
+                    + markprice * close_position
+                    - value * buy_fee_rate
+                )
+            wallet_balance_new = wallet_balance + realized_pnL
+            open_position = np.abs(available_position)
+            if available_position > 0:
+                open_losses, _ = calculate_open_long_loss(
+                    ask_prices,
+                    ask_qtys,
+                    open_position,
+                    markprice,
+                    long_estimated_rate,
+                )
+            else:
+                open_losses, _ = calculate_open_short_loss(
+                    bid_prices,
+                    bid_qtys,
+                    open_position,
+                    markprice,
+                    short_estimated_rate,
+                )
+            for available_leverage in leverage_choices:
+                new_margin = open_position * markprice / available_leverage
+                if wallet_balance_new >= open_losses + new_margin:
                     avaiable_position_choices.append(available_position)
                     avaiable_leverage_choices.append(available_leverage)
         elif np.abs(available_position) > np.abs(position):
@@ -1029,6 +1243,7 @@ def create_optimal_q_table(
     # the default is for btcusdt perpetual contract
     max_punishment=1e10,
     gamma=1,
+    allow_reverse_position=False,
 ):
     assert (
         len(ask_prices_array)
@@ -1101,8 +1316,8 @@ def create_optimal_q_table(
                 future_position, future_leverage = map_action_to_position_leverage(
                     future_action, leverage_choice, position_list
                 )
-                if future_position * current_position < 0:
-                    #   仓位反转，直接惩罚
+                if future_position * current_position < 0 and not allow_reverse_position:
+                    #   仓位反转且开关关闭，直接惩罚
                     q_table[current_timestamp_index, current_action, future_action] = (
                         -max_punishment
                     )
@@ -1110,15 +1325,8 @@ def create_optimal_q_table(
                     previous_margine_balance = (
                         previous_wallet_balance + previous_unrealized_pnL
                     )
-                    # 仓位未反转，计算reward
-                    (
-                        changed_leverage,
-                        changed_position,
-                        current_initial_margine,
-                        current_unrealized_pnL,
-                        current_wallet_balance,
-                        slippage,
-                    ) = change_of_wallet(
+                    # 计算reward
+                    wallet_change = change_of_wallet(
                         markprice=current_markprice,
                         ask_prices=current_ask_prices,
                         ask_qtys=current_ask_qtys,
@@ -1137,7 +1345,15 @@ def create_optimal_q_table(
                         current_leverage=future_leverage,
                         current_position=future_position,
                         silent=True,
+                        allow_reverse_position=allow_reverse_position,
+                        position_list=position_list,
                     )
+                    changed_leverage = wallet_change.leverage
+                    changed_position = wallet_change.position
+                    current_initial_margine = wallet_change.initial_margin
+                    current_unrealized_pnL = wallet_change.unrealized_pnl
+                    current_wallet_balance = wallet_change.wallet_balance
+                    slippage = wallet_change.slippage_step
                     if (
                         changed_leverage != future_leverage
                         or changed_position != future_position
@@ -1184,6 +1400,7 @@ def create_optimal_q_table_from_df(
     max_punishment=1e10,
     gamma=1,
     order_book_depth=25,
+    allow_reverse_position=False,
 ):
     bid_prices_names = ["bid{}_price".format(i) for i in range(1, order_book_depth + 1)]
     ask_prices_names = ["ask{}_price".format(i) for i in range(1, order_book_depth + 1)]
@@ -1217,6 +1434,7 @@ def create_optimal_q_table_from_df(
         # the default is for btcusdt perpetual contract
         max_punishment,
         gamma,
+        allow_reverse_position,
     )
 
 
