@@ -32,6 +32,7 @@ def initiate_base_env(
     initial_state=(1e5, 0, 0, 0, 5),
     order_book_depth=25,
     allow_reverse_position=False,
+    holding_duration_norm_steps=180,
 ):
 
     # 对应钱包余额，起始保证金，未实现盈亏，持仓量，对应的杠杆):
@@ -81,5 +82,6 @@ def initiate_base_env(
         # initial_personal_state
         initial_state=initial_state,
         allow_reverse_position=allow_reverse_position,
+        holding_duration_norm_steps=holding_duration_norm_steps,
     )
     return env

@@ -6,8 +6,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] `trading_info` exposes four fields in the documented order, ending with `current_holding_duration_norm`.
-- [ ] The default normalization window is 180 env steps.
-- [ ] `current_holding_duration_norm` is calculated as `min(current_holding_duration / holding_duration_norm_steps, 1.0)`.
-- [ ] Invalid normalization windows fail fast instead of creating an environment with invalid duration values.
-- [ ] Focused environment tests cover flat reset, non-zero reset, open, hold, same-direction add, same-direction reduce, close, reverse, and clipping to 1.0.
+- [x] `trading_info` exposes four fields in the documented order, ending with `current_holding_duration_norm`.
+- [x] The default normalization window is 180 env steps.
+- [x] `current_holding_duration_norm` is calculated as `min(current_holding_duration / holding_duration_norm_steps, 1.0)`.
+- [x] Invalid normalization windows fail fast instead of creating an environment with invalid duration values.
+- [x] Focused environment tests cover flat reset, non-zero reset, open, hold, same-direction add, same-direction reduce, close, reverse, and clipping to 1.0.

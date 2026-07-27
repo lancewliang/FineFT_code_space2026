@@ -418,3 +418,92 @@ def test_parallel_parser_allow_reverse_position_default_and_flag():
 
     args_flag = pwap.parser.parse_args(["--allow_reverse_position"])
     assert args_flag.allow_reverse_position is True
+
+
+def _make_parallel_update_trainer(pwap):
+    import torch
+
+    trainer = pwap.Weighted_Contexts_DQN.__new__(pwap.Weighted_Contexts_DQN)
+    trainer.device = "cpu"
+    trainer.batch_size = 2
+    trainer.N = 2
+    trainer.N_ACTIONS = 3
+    trainer.gamma = 0.99
+    trainer.if_use_hubber_loss = False
+    trainer.outer_bond = 4
+    trainer.reachout_index = 1
+    trainer.ada = 0.0
+    trainer.grad_clip = None
+    trainer.tau = 1.0
+    trainer.update_counter = 0
+    trainer.eval_net = pwap.ensemble_Qnet(
+        N_STATES=4,
+        N_ACTIONS=trainer.N_ACTIONS,
+        hidden_nodes=16,
+        TIME_INFO_DIM=2,
+        ensemble_number=trainer.N,
+    )
+    trainer.target_net = pwap.ensemble_Qnet(
+        N_STATES=4,
+        N_ACTIONS=trainer.N_ACTIONS,
+        hidden_nodes=16,
+        TIME_INFO_DIM=2,
+        ensemble_number=trainer.N,
+    )
+    trainer.optimizer = torch.optim.Adam(trainer.eval_net.parameters(), lr=0.001)
+    trainer.loss_func_pretrain = torch.nn.SmoothL1Loss(reduction="none")
+    return trainer
+
+
+def _sample_parallel_update_batch():
+    import torch
+
+    states = torch.randn(2, 4)
+    next_states = torch.randn(2, 4)
+    info = {
+        "previous_action": torch.zeros(2),
+        "avaliable_action": torch.ones(2, 3),
+        "funding_count_down_hour": torch.zeros(2),
+        "funding_count_down_minute": torch.ones(2),
+        "trading_info": torch.tensor(
+            [[0.5, 0.02, -0.01, 0.1], [0.0, 0.0, 0.0, 0.0]],
+            dtype=torch.float32,
+        ),
+        "q_value": torch.zeros(2, 3),
+    }
+    next_info = {
+        "previous_action": torch.ones(2),
+        "avaliable_action": torch.ones(2, 3),
+        "funding_count_down_hour": torch.ones(2),
+        "funding_count_down_minute": torch.zeros(2),
+        "trading_info": torch.tensor(
+            [[0.5, 0.03, -0.01, 0.2], [0.5, 0.01, -0.02, 0.1]],
+            dtype=torch.float32,
+        ),
+    }
+    actions = torch.tensor([0, 2], dtype=torch.long)
+    rewards = torch.tensor([[0.1], [-0.2]], dtype=torch.float32)
+    dones = torch.tensor([[0.0], [1.0]], dtype=torch.float32)
+    return states, info, actions, rewards, next_states, next_info, dones
+
+
+def test_parallel_training_update_uses_four_field_trading_info():
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+
+    trainer = _make_parallel_update_trainer(pwap)
+
+    losses = trainer.update(*_sample_parallel_update_batch())
+
+    assert len(losses) == 3
+    assert trainer.update_counter == 1
+
+
+def test_parallel_training_pretrain_update_uses_four_field_trading_info():
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+
+    trainer = _make_parallel_update_trainer(pwap)
+
+    losses = trainer.update_pretrain(*_sample_parallel_update_batch())
+
+    assert len(losses) == 3
+    assert trainer.update_counter == 1

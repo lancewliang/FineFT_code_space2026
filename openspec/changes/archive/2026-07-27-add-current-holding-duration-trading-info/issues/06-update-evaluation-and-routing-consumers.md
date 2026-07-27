@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-- [ ] Low-level evaluation paths construct and call models with four-field `trading_info`.
-- [ ] Aggregate environment and routing consumers no longer hard-code the old three-field dimension.
-- [ ] Focused inference-path tests or smoke checks cover the upgraded contract.
-- [ ] Old three-field checkpoint loading is allowed to fail with a shape mismatch and is not silently adapted.
+- [x] Low-level evaluation paths construct and call models with four-field `trading_info`.
+- [x] Aggregate environment and routing consumers no longer hard-code the old three-field dimension.
+- [x] Focused inference-path tests or smoke checks cover the upgraded contract.
+- [x] Old three-field checkpoint loading is allowed to fail with a shape mismatch and is not silently adapted.

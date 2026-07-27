@@ -77,15 +77,15 @@ Stage I 训练研究者希望低层 agent 能知道当前持仓已持续的 env 
 
 ## 验收标准
 
-- [ ] `TRADING_INFO_KEYS` 包含 `current_holding_duration_norm`，且 `trading_info` 返回四维数组。
-- [ ] 默认 `holding_duration_norm_steps` 为 `180`，并可通过环境初始化参数覆盖。
-- [ ] reset 空仓时 `current_holding_duration_norm == 0`。
-- [ ] reset 非零初始仓位时 `current_holding_duration_norm == 1 / holding_duration_norm_steps`。
-- [ ] 开仓后第一个可观测状态 `current_holding_duration_norm == 1 / holding_duration_norm_steps`。
-- [ ] 同方向持仓、加仓、减仓会继续累加当前持仓时长。
-- [ ] 平仓到 0 后 `current_holding_duration_norm == 0`。
-- [ ] 反手后新方向 `current_holding_duration_norm == 1 / holding_duration_norm_steps`。
-- [ ] 当前持仓时长超过归一化窗口后，`current_holding_duration_norm` 截断为 `1.0`。
-- [ ] Qnet / ensemble_Qnet 默认接受四维 `trading_info`。
-- [ ] Stage I 低层训练和测试路径与新的四维 `trading_info` 契约同步。
-- [ ] 相关 focused tests 和 OpenSpec strict validation 通过。
+- [x] `TRADING_INFO_KEYS` 包含 `current_holding_duration_norm`，且 `trading_info` 返回四维数组。
+- [x] 默认 `holding_duration_norm_steps` 为 `180`，并可通过环境初始化参数覆盖。
+- [x] reset 空仓时 `current_holding_duration_norm == 0`。
+- [x] reset 非零初始仓位时 `current_holding_duration_norm == 1 / holding_duration_norm_steps`。
+- [x] 开仓后第一个可观测状态 `current_holding_duration_norm == 1 / holding_duration_norm_steps`。
+- [x] 同方向持仓、加仓、减仓会继续累加当前持仓时长。
+- [x] 平仓到 0 后 `current_holding_duration_norm == 0`。
+- [x] 反手后新方向 `current_holding_duration_norm == 1 / holding_duration_norm_steps`。
+- [x] 当前持仓时长超过归一化窗口后，`current_holding_duration_norm` 截断为 `1.0`。
+- [x] Qnet / ensemble_Qnet 默认接受四维 `trading_info`。
+- [x] Stage I 低层训练和测试路径与新的四维 `trading_info` 契约同步。
+- [x] 相关 focused tests 和 OpenSpec strict validation 通过。

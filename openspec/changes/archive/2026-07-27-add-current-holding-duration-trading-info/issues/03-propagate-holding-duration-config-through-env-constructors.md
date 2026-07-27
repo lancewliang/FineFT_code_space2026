@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-- [ ] Environment construction paths accept `holding_duration_norm_steps` without requiring every caller to set it.
-- [ ] The default value remains 180 wherever no explicit value is provided.
-- [ ] Demo, commodity, aggregate, and base initiation flows expose compatible four-field `trading_info`.
-- [ ] Focused smoke tests or constructor tests verify the default and an overridden normalization window.
+- [x] Environment construction paths accept `holding_duration_norm_steps` without requiring every caller to set it.
+- [x] The default value remains 180 wherever no explicit value is provided.
+- [x] Demo, commodity, aggregate, and base initiation flows expose compatible four-field `trading_info`.
+- [x] Focused smoke tests or constructor tests verify the default and an overridden normalization window.

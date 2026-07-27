@@ -10,42 +10,42 @@ if str(FINEFT_ROOT) not in sys.path:
 from model.low_level import Qnet, ensemble_Qnet
 
 
-def test_qnet_forward_with_trading_info():
+def test_qnet_forward_with_default_trading_info():
     batch_size = 4
     n_states = 10
     n_actions = 5
     hidden_nodes = 64
     time_info_dim = 2
-    trading_info_dim = 3
 
-    model = Qnet(n_states, n_actions, hidden_nodes, time_info_dim, TRADING_INFO_DIM=trading_info_dim)
+    model = Qnet(n_states, n_actions, hidden_nodes, time_info_dim)
+    assert model.fc_trading.in_features == 4
     state = torch.randn(batch_size, n_states)
     time_tensor = torch.randn(batch_size, time_info_dim)
     previous_action = torch.zeros(batch_size, 1)
     avaliable_action = torch.ones(batch_size, n_actions)
-    trading_info = torch.randn(batch_size, trading_info_dim)
+    trading_info = torch.randn(batch_size, 4)
 
     out = model(state, time_tensor, previous_action, avaliable_action, trading_info)
     assert out.shape == (batch_size, n_actions)
 
 
-def test_ensemble_qnet_forward_and_get_best_q():
+def test_ensemble_qnet_forward_with_default_trading_info():
     batch_size = 4
     n_states = 10
     n_actions = 5
     hidden_nodes = 64
     time_info_dim = 2
     ensemble_number = 3
-    trading_info_dim = 3
 
     model = ensemble_Qnet(
-        n_states, n_actions, hidden_nodes, time_info_dim, ensemble_number, TRADING_INFO_DIM=trading_info_dim
+        n_states, n_actions, hidden_nodes, time_info_dim, ensemble_number
     )
+    assert model.qnet_list[0].fc_trading.in_features == 4
     state = torch.randn(batch_size, n_states)
     time_tensor = torch.randn(batch_size, time_info_dim)
     previous_action = torch.zeros(batch_size, 1)
     avaliable_action = torch.ones(batch_size, n_actions)
-    trading_info = torch.randn(batch_size, trading_info_dim)
+    trading_info = torch.randn(batch_size, 4)
 
     q_vals = model(state, time_tensor, previous_action, avaliable_action, trading_info)
     assert q_vals.shape == (batch_size, ensemble_number, n_actions)
@@ -70,3 +70,4 @@ def test_qnet_state_dict_contains_fc_trading():
     state_dict = model.state_dict()
     assert "fc_trading.weight" in state_dict
     assert "fc_trading.bias" in state_dict
+    assert state_dict["fc_trading.weight"].shape[1] == 4

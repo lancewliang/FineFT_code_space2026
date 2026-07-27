@@ -6,8 +6,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] Focused environment, low-level model, replay buffer, training, and inference tests pass in the project conda environment.
-- [ ] Changed Python entry points compile successfully.
-- [ ] OpenSpec strict validation passes for `add-current-holding-duration-trading-info`.
-- [ ] Any remaining broad-suite failures are documented with whether they are related to this contract upgrade.
-- [ ] The OpenSpec task list is updated to reflect completed implementation and verification work.
+- [x] Focused environment, low-level model, replay buffer, training, and inference tests pass in the project conda environment.
+- [x] Changed Python entry points compile successfully.
+- [x] OpenSpec strict validation passes for `add-current-holding-duration-trading-info`.
+- [x] Any remaining broad-suite failures are documented with whether they are related to this contract upgrade.
+- [x] The OpenSpec task list is updated to reflect completed implementation and verification work.

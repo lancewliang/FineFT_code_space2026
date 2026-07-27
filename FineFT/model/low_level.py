@@ -11,7 +11,7 @@ MAX_PUNISHMENT = 1e12
 # without holding length as input
 class Qnet(nn.Module):
     def __init__(
-        self, N_STATES, N_ACTIONS, hidden_nodes, TIME_INFO_DIM, TRADING_INFO_DIM=3
+        self, N_STATES, N_ACTIONS, hidden_nodes, TIME_INFO_DIM, TRADING_INFO_DIM=4
     ):
         super(Qnet, self).__init__()
         self.time_bedding = int(hidden_nodes / 2)
@@ -54,7 +54,7 @@ class ensemble_Qnet(nn.Module):
         hidden_nodes,
         TIME_INFO_DIM,
         ensemble_number,
-        TRADING_INFO_DIM=3,
+        TRADING_INFO_DIM=4,
     ):
         super(ensemble_Qnet, self).__init__()
         self.ensemble_number = ensemble_number
@@ -140,7 +140,7 @@ def create_new_ensemble_qnet_from_different_save_path(
     TIME_INFO_DIM,
     saved_model_path_list,
     selected_indices,
-    TRADING_INFO_DIM=3,
+    TRADING_INFO_DIM=4,
 ):
     new_ensemble = ensemble_Qnet(
         N_STATES, N_ACTIONS, hidden_nodes, TIME_INFO_DIM, len(selected_indices), TRADING_INFO_DIM
@@ -179,7 +179,7 @@ def load_selected_qnets(saved_model_path, selected_indices):
 
 
 def create_new_ensemble_qnet(
-    N_STATES, N_ACTIONS, hidden_nodes, TIME_INFO_DIM, selected_indices, saved_model_path, TRADING_INFO_DIM=3
+    N_STATES, N_ACTIONS, hidden_nodes, TIME_INFO_DIM, selected_indices, saved_model_path, TRADING_INFO_DIM=4
 ):
     new_ensemble = ensemble_Qnet(
         N_STATES, N_ACTIONS, hidden_nodes, TIME_INFO_DIM, len(selected_indices), TRADING_INFO_DIM

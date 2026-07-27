@@ -38,7 +38,7 @@ def test_replay_buffer_multi_info_samples_trading_info():
         "high_level_state": np.zeros(5, dtype=np.float32),
         "funding_count_down_hour": 1.0,
         "funding_count_down_minute": 30.0,
-        "trading_info": np.array([0.5, 0.02, -0.01], dtype=np.float32),
+        "trading_info": np.array([0.5, 0.02, -0.01, 0.1], dtype=np.float32),
     }
     next_info = {
         "avaliable_action": np.array([1, 1, 0], dtype=np.float32),
@@ -47,7 +47,7 @@ def test_replay_buffer_multi_info_samples_trading_info():
         "high_level_state": np.zeros(5, dtype=np.float32),
         "funding_count_down_hour": 1.0,
         "funding_count_down_minute": 29.0,
-        "trading_info": np.array([0.5, 0.03, -0.01], dtype=np.float32),
+        "trading_info": np.array([0.5, 0.03, -0.01, 0.2], dtype=np.float32),
     }
 
     for _ in range(5):
@@ -58,8 +58,8 @@ def test_replay_buffer_multi_info_samples_trading_info():
     assert "trading_info" in infos
     assert "trading_info" in next_infos
     assert isinstance(infos["trading_info"], torch.Tensor)
-    assert infos["trading_info"].shape == (2, 3)
-    assert next_infos["trading_info"].shape == (2, 3)
+    assert infos["trading_info"].shape == (2, 4)
+    assert next_infos["trading_info"].shape == (2, 4)
     assert infos["trading_info"].dtype == torch.float32
 
 
@@ -83,7 +83,7 @@ def test_replay_buffer_multi_info_sample_evaluate_trading_info():
         "high_level_state": np.zeros(5, dtype=np.float32),
         "funding_count_down_hour": 1.0,
         "funding_count_down_minute": 30.0,
-        "trading_info": np.array([0.5, 0.02, -0.01], dtype=np.float32),
+        "trading_info": np.array([0.5, 0.02, -0.01, 0.1], dtype=np.float32),
     }
     next_info = {
         "avaliable_action": np.array([1, 1, 0], dtype=np.float32),
@@ -92,7 +92,7 @@ def test_replay_buffer_multi_info_sample_evaluate_trading_info():
         "high_level_state": np.zeros(5, dtype=np.float32),
         "funding_count_down_hour": 1.0,
         "funding_count_down_minute": 29.0,
-        "trading_info": np.array([0.5, 0.03, -0.01], dtype=np.float32),
+        "trading_info": np.array([0.5, 0.03, -0.01, 0.2], dtype=np.float32),
     }
 
     for _ in range(3):
@@ -102,5 +102,5 @@ def test_replay_buffer_multi_info_sample_evaluate_trading_info():
 
     assert "trading_info" in infos
     assert "trading_info" in next_infos
-    assert infos["trading_info"].shape == (3, 3)
-    assert next_infos["trading_info"].shape == (3, 3)
+    assert infos["trading_info"].shape == (3, 4)
+    assert next_infos["trading_info"].shape == (3, 4)

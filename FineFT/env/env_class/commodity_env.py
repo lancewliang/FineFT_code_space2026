@@ -37,6 +37,7 @@ class Commodity_Env(Base_Env):
         buy_fee_rate=0.0001,
         sell_fee_rate=0.0003,
         allow_reverse_position=False,
+        holding_duration_norm_steps=180,
     ):
         funding_rate_array = np.zeros(len(timestamp_array), dtype=float)
         funding_timestamp_array = timestamp_array
@@ -62,6 +63,7 @@ class Commodity_Env(Base_Env):
             buy_fee_rate=buy_fee_rate,
             sell_fee_rate=sell_fee_rate,
             allow_reverse_position=allow_reverse_position,
+            holding_duration_norm_steps=holding_duration_norm_steps,
         )
 
     @staticmethod

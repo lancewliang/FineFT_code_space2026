@@ -12,7 +12,7 @@ from env.env_initiate.base_initiate import initiate_base_env
 from env.env_class.base_env import TRADING_INFO_KEYS
 
 
-def _sample_data(rows=50):
+def _sample_data(rows=250):
     timestamps = pd.date_range("2026-01-01", periods=rows, freq="min")
     data = {
         "timestamp": timestamps,
@@ -34,7 +34,16 @@ def test_trading_info_keys_constant():
         "position_exposure",
         "single_holding_return_rate",
         "single_holding_max_drawdown",
+        "current_holding_duration_norm",
     )
+
+
+def test_invalid_holding_duration_norm_steps_raises():
+    df, features = _sample_data()
+    with pytest.raises(ValueError):
+        initiate_base_env(df, features, holding_duration_norm_steps=0)
+    with pytest.raises(ValueError):
+        initiate_base_env(df, features, holding_duration_norm_steps=-10)
 
 
 def test_reset_returns_trading_info_zeros():
@@ -43,58 +52,69 @@ def test_reset_returns_trading_info_zeros():
     state, info = env.reset()
     assert "trading_info" in info
     assert isinstance(info["trading_info"], np.ndarray)
-    assert info["trading_info"].shape == (3,)
-    np.testing.assert_array_almost_equal(info["trading_info"], np.array([0.0, 0.0, 0.0], dtype=np.float32))
+    assert info["trading_info"].shape == (4,)
+    np.testing.assert_array_almost_equal(info["trading_info"], np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32))
 
 
-def test_active_position_calculates_exposure_and_trading_info():
+def test_nonzero_reset_starts_duration_at_one_step():
     df, features = _sample_data()
-    env = initiate_base_env(df, features, allow_reverse_position=True)
+    initial_state = (10000.0, 160.0, 0.0, 8.0, 5)
+    env = initiate_base_env(df, features, initial_state=initial_state, holding_duration_norm_steps=180)
     state, info = env.reset()
-
-    # action 8 -> long position (+8.0)
-    state, reward, done, info = env.step(8)
-    assert "trading_info" in info
-    trading_info = info["trading_info"]
-    max_abs_pos = max(abs(p) for p in env.position_list)
-    expected_exposure = env.position / max_abs_pos
-    assert expected_exposure > 0.0
-    assert abs(trading_info[0] - expected_exposure) < 1e-6
-    assert len(trading_info) == 3
+    assert info["trading_info"].shape == (4,)
+    assert abs(info["trading_info"][3] - (1.0 / 180.0)) < 1e-6
 
 
-def test_close_position_resets_trading_info_to_zeros():
+def test_holding_duration_lifecycle():
     df, features = _sample_data()
-    env = initiate_base_env(df, features, allow_reverse_position=True)
+    norm_steps = 10
+    env = initiate_base_env(df, features, allow_reverse_position=True, holding_duration_norm_steps=norm_steps)
     state, info = env.reset()
+    assert info["trading_info"][3] == 0.0
 
-    # Open long position
-    state, reward, done, info = env.step(8)
-    assert info["trading_info"][0] != 0.0
+    # 1. Open long position (action for +4.0 position)
+    pos4_action = env.env_map_position_leverage_to_action(4, env.leverage_choices[0])
+    state, reward, done, info = env.step(pos4_action)
+    assert abs(info["trading_info"][3] - (1.0 / norm_steps)) < 1e-6
 
-    # Close to 0 position
+    # 2. Same-direction hold (+4.0 -> +4.0)
+    state, reward, done, info = env.step(pos4_action)
+    assert abs(info["trading_info"][3] - (2.0 / norm_steps)) < 1e-6
+
+    # 3. Same-direction add (+4.0 -> +8.0)
+    pos8_action = env.env_map_position_leverage_to_action(8, env.leverage_choices[0])
+    state, reward, done, info = env.step(pos8_action)
+    assert abs(info["trading_info"][3] - (3.0 / norm_steps)) < 1e-6
+
+    # 4. Same-direction reduce (+8.0 -> +4.0)
+    state, reward, done, info = env.step(pos4_action)
+    assert abs(info["trading_info"][3] - (4.0 / norm_steps)) < 1e-6
+
+    # 5. Reverse position (+4.0 -> -8.0)
+    neg8_action = env.env_map_position_leverage_to_action(-8, env.leverage_choices[0])
+    state, reward, done, info = env.step(neg8_action)
+    assert abs(info["trading_info"][3] - (1.0 / norm_steps)) < 1e-6
+
+    # 6. Close to flat (-8.0 -> 0)
     flat_action = env.env_map_position_leverage_to_action(0, env.leverage_choices[0])
     state, reward, done, info = env.step(flat_action)
-    np.testing.assert_array_almost_equal(info["trading_info"], np.array([0.0, 0.0, 0.0], dtype=np.float32))
+    assert info["trading_info"][3] == 0.0
 
 
-def test_direction_change_resets_holding_metrics():
-    df, features = _sample_data()
-    env = initiate_base_env(df, features, allow_reverse_position=True)
+def test_holding_duration_clipping():
+    df, features = _sample_data(rows=30)
+    norm_steps = 5
+    env = initiate_base_env(df, features, holding_duration_norm_steps=norm_steps)
     state, info = env.reset()
 
-    # Open long position (action 8)
-    state, reward, done, info = env.step(8)
-    # Next step: keep long position to accumulate return
-    state, reward, done, info = env.step(8)
+    pos8_action = env.env_map_position_leverage_to_action(8, env.leverage_choices[0])
+    # Step 1 -> duration 1/5 = 0.2
+    state, reward, done, info = env.step(pos8_action)
+    assert abs(info["trading_info"][3] - 0.2) < 1e-6
 
-    # Reverse direction from long to short (action 0 is short -8.0)
-    state, reward, done, info = env.step(0)
-    trading_info = info["trading_info"]
-    max_abs_pos = max(abs(p) for p in env.position_list)
-    expected_short_exposure = env.position / max_abs_pos
-    assert expected_short_exposure < 0.0
-    assert abs(trading_info[0] - expected_short_exposure) < 1e-6
-    # Return rate and drawdown for the brand-new short holding should be 0.0
-    assert trading_info[1] == 0.0
-    assert trading_info[2] == 0.0
+    # Step 2..6 -> duration increases past norm_steps (5)
+    for _ in range(6):
+        state, reward, done, info = env.step(pos8_action)
+
+    # Must clip to 1.0
+    assert info["trading_info"][3] == 1.0

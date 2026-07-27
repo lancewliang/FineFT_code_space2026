@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-- [ ] Trading Process Feature field order remains the single source of truth for its array dimension.
-- [ ] Reset, normal step, terminal, and liquidation paths produce zero-value `trading_info` through the same contract-aware helper.
-- [ ] Existing environment and low-level model focused tests still pass with the current three-field behavior.
-- [ ] No low-level model or training behavior is changed in this prefactor.
+- [x] Trading Process Feature field order remains the single source of truth for its array dimension.
+- [x] Reset, normal step, terminal, and liquidation paths produce zero-value `trading_info` through the same contract-aware helper.
+- [x] Existing environment and low-level model focused tests still pass with the current three-field behavior.
+- [x] No low-level model or training behavior is changed in this prefactor.

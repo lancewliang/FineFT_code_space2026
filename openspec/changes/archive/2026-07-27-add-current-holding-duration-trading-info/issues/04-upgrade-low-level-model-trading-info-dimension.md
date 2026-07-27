@@ -6,8 +6,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] Default low-level Q network construction accepts four-field `trading_info`.
-- [ ] Default ensemble low-level Q network construction accepts four-field `trading_info`.
-- [ ] Model factory helpers use the upgraded default contract.
-- [ ] Focused model tests assert four-field inputs work by default.
-- [ ] No automatic migration, padding, or compatibility shim is added for old three-field checkpoints.
+- [x] Default low-level Q network construction accepts four-field `trading_info`.
+- [x] Default ensemble low-level Q network construction accepts four-field `trading_info`.
+- [x] Model factory helpers use the upgraded default contract.
+- [x] Focused model tests assert four-field inputs work by default.
+- [x] No automatic migration, padding, or compatibility shim is added for old three-field checkpoints.

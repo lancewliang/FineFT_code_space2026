@@ -47,6 +47,7 @@ class Demo_Env(Base_Env):
         max_punishment=1e10,
         gamma=1,
         allow_reverse_position=False,
+        holding_duration_norm_steps=180,
     ):
 
         super(Demo_Env, self).__init__(
@@ -73,6 +74,7 @@ class Demo_Env(Base_Env):
             # initial_personal_state
             initial_state=initial_state,
             allow_reverse_position=allow_reverse_position,
+            holding_duration_norm_steps=holding_duration_norm_steps,
         )
         self.q_table = create_optimal_q_table(
             ask_prices_array,

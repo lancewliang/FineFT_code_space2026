@@ -57,6 +57,7 @@ class Agg_Env(Base_Env):
         device="cpu",
         time_info_dim=2,
         allow_reverse_position=False,
+        holding_duration_norm_steps=180,
     ):
         super().__init__(
             state_array,
@@ -78,6 +79,7 @@ class Agg_Env(Base_Env):
             early_stop,
             initial_state,
             allow_reverse_position=allow_reverse_position,
+            holding_duration_norm_steps=holding_duration_norm_steps,
         )
         self.adjust_freq = adjust_len
         self.state_dim = self.state_array.shape[1]
@@ -96,7 +98,6 @@ class Agg_Env(Base_Env):
                     N_ACTIONS=self.N_ACTIONS,
                     hidden_nodes=self.low_level_hidden_nodes,
                     TIME_INFO_DIM=time_info_dim,
-                    TRADING_INFO_DIM=3,
                 ).to(self.device)
                 model.load_state_dict(
                     torch.load(

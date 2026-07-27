@@ -42,7 +42,12 @@ from analysis.calculate_metric.calculate_metric import (
     calculate_single_holsing_max_draw_down,
 )
 
-TRADING_INFO_KEYS = ("position_exposure", "single_holding_return_rate", "single_holding_max_drawdown")
+TRADING_INFO_KEYS = (
+    "position_exposure",
+    "single_holding_return_rate",
+    "single_holding_max_drawdown",
+    "current_holding_duration_norm",
+)
 
 
 class Base_Env(gym.Env):
@@ -79,6 +84,7 @@ class Base_Env(gym.Env):
         buy_fee_rate=None,
         sell_fee_rate=None,
         allow_reverse_position=False,
+        holding_duration_norm_steps=180,
     ):
         # trading setting
         self.max_holding_number = max_holding_number
@@ -91,6 +97,10 @@ class Base_Env(gym.Env):
         self.buy_fee_rate = buy_fee_rate
         self.sell_fee_rate = sell_fee_rate
         self.allow_reverse_position = allow_reverse_position
+        if holding_duration_norm_steps <= 0:
+            raise ValueError(f"holding_duration_norm_steps must be positive, got {holding_duration_norm_steps}")
+        self.holding_duration_norm_steps = float(holding_duration_norm_steps)
+        self.current_holding_duration = 0
         # RL setting
         self.single_side_action_num = int((position_choices - 1) / 2)
         self.action_space = spaces.Discrete(
@@ -161,19 +171,28 @@ class Base_Env(gym.Env):
         self.single_holding_max_drawdown = 0
         # the history track the cash flow for a single holding
         self.single_holding_history = [0]
+        if self.position == 0:
+            self.current_holding_duration = 0
+        else:
+            self.current_holding_duration = 1
+
+    def _zero_trading_info(self):
+        return np.zeros(len(TRADING_INFO_KEYS), dtype=np.float32)
 
     def _calculate_trading_info(self, old_position=0):
         max_abs_position = max(abs(p) for p in self.position_list)
         position_exposure = 0.0 if max_abs_position == 0 else float(self.position / max_abs_position)
         if self.position == 0:
-            return np.array([0.0, 0.0, 0.0], dtype=np.float32)
+            return self._zero_trading_info()
+        duration_norm = min(float(self.current_holding_duration) / float(self.holding_duration_norm_steps), 1.0)
         if self.allow_reverse_position and old_position * self.position < 0:
-            return np.array([position_exposure, 0.0, 0.0], dtype=np.float32)
+            return np.array([position_exposure, 0.0, 0.0, duration_norm], dtype=np.float32)
         return np.array(
             [
                 position_exposure,
                 float(self.single_holding_return_rate),
                 float(self.single_holding_max_drawdown),
+                duration_norm,
             ],
             dtype=np.float32,
         )
@@ -473,7 +492,7 @@ class Base_Env(gym.Env):
                     "bid_qyts": self.bid_qtys,
                     "single_holding_return_rate": self.single_holding_return_rate,
                     "single_holding_max_drawdown": self.single_holding_max_drawdown,
-                    "trading_info": np.array([0.0, 0.0, 0.0], dtype=np.float32),
+                    "trading_info": self._zero_trading_info(),
                     "previous_action": self.env_map_position_leverage_to_action(
                         self.position, self.leverage
                     ),
@@ -601,7 +620,7 @@ class Base_Env(gym.Env):
                         "bid_qyts": self.bid_qtys,
                         "single_holding_return_rate": self.single_holding_return_rate,
                         "single_holding_max_drawdown": self.single_holding_max_drawdown,
-                        "trading_info": np.array([0.0, 0.0, 0.0], dtype=np.float32),
+                        "trading_info": self._zero_trading_info(),
                         "previous_action": self.env_map_position_leverage_to_action(
                             self.position, self.leverage
                         ),
@@ -678,6 +697,12 @@ class Base_Env(gym.Env):
                         self.wallet_balance_history,
                     )
                 )
+                if self.position == 0:
+                    self.current_holding_duration = 0
+                elif old_position == 0 or (self.allow_reverse_position and old_position * self.position < 0):
+                    self.current_holding_duration = 1
+                else:
+                    self.current_holding_duration += 1
                 trading_info = self._calculate_trading_info(old_position)
                 # 在step之后才对single holding进行重置
                 if self.position == 0 or (self.allow_reverse_position and old_position * self.position < 0):

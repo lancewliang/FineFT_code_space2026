@@ -450,6 +450,7 @@ class Weighted_Contexts_DQN:
         time_input = torch.cat([hour_count_down, minute_count_down], dim=1).to(
             self.device
         )
+        trading_info = info["trading_info"].float().to(self.device)
         # next input
         states_ = next_states.reshape(bs, -1)
         previous_action_ = info_["previous_action"].float().unsqueeze(1)
@@ -459,6 +460,7 @@ class Weighted_Contexts_DQN:
         time_input_ = torch.cat([hour_count_down_, minute_count_down_], dim=1).to(
             self.device
         )
+        trading_info_ = info_["trading_info"].float().to(self.device)
 
         current_sa_quantiles = evaluate_quantile_at_action(
             self.eval_net(
@@ -477,6 +479,7 @@ class Weighted_Contexts_DQN:
                 time=time_input_,
                 previous_action=previous_action_,
                 avaliable_action=avaliable_action_,
+                trading_info=trading_info_,
             )
             next_sa_quantiles = next_q.unsqueeze(1)
             assert next_sa_quantiles.shape == (bs, 1, self.N)
@@ -516,6 +519,7 @@ class Weighted_Contexts_DQN:
         time_input = torch.cat([hour_count_down, minute_count_down], dim=1).to(
             self.device
         )
+        trading_info = info["trading_info"].float().to(self.device)
         # next input
         states_ = next_states.reshape(bs, -1)
         previous_action_ = info_["previous_action"].float().unsqueeze(1)
@@ -525,6 +529,7 @@ class Weighted_Contexts_DQN:
         time_input_ = torch.cat([hour_count_down_, minute_count_down_], dim=1).to(
             self.device
         )
+        trading_info_ = info_["trading_info"].float().to(self.device)
 
         current_sa_quantiles = evaluate_quantile_at_action(
             self.eval_net(
@@ -543,6 +548,7 @@ class Weighted_Contexts_DQN:
                 time=time_input_,
                 previous_action=previous_action_,
                 avaliable_action=avaliable_action_,
+                trading_info=trading_info_,
             )
             next_sa_quantiles = next_q.unsqueeze(1)
             assert next_sa_quantiles.shape == (self.batch_size, 1, self.N)
@@ -565,6 +571,7 @@ class Weighted_Contexts_DQN:
             time=time_input,
             previous_action=previous_action,
             avaliable_action=avaliable_action,
+            trading_info=trading_info,
         )
         assert predict_action_distrbution.shape == (
             self.batch_size,
@@ -613,6 +620,7 @@ class Weighted_Contexts_DQN:
         time_input = torch.cat([hour_count_down, minute_count_down], dim=1).to(
             self.device
         )
+        trading_info = info["trading_info"].float().to(self.device)
         # next input
         states_ = next_states.reshape(bs, -1)
         previous_action_ = info_["previous_action"].float().unsqueeze(1)
@@ -622,6 +630,7 @@ class Weighted_Contexts_DQN:
         time_input_ = torch.cat([hour_count_down_, minute_count_down_], dim=1).to(
             self.device
         )
+        trading_info_ = info_["trading_info"].float().to(self.device)
 
         current_sa_quantiles = evaluate_quantile_at_action(
             self.eval_net(
@@ -641,6 +650,7 @@ class Weighted_Contexts_DQN:
                 time=time_input_,
                 previous_action=previous_action_,
                 avaliable_action=avaliable_action_,
+                trading_info=trading_info_,
             )
             next_sa_quantiles = next_q.unsqueeze(1)
             assert next_sa_quantiles.shape == (self.batch_size, 1, self.N)
@@ -665,6 +675,7 @@ class Weighted_Contexts_DQN:
             time=time_input,
             previous_action=previous_action,
             avaliable_action=avaliable_action,
+            trading_info=trading_info,
         )
         assert predict_action_distrbution.shape == (
             self.batch_size,
@@ -724,6 +735,7 @@ class Weighted_Contexts_DQN:
                 time=time_input,
                 previous_action=previous_action,
                 avaliable_action=avaliable_action,
+                trading_info=trading_info,
             )
             action_value_chosen_index = actions_value[:, context_index, :]
             action = torch.max(action_value_chosen_index, 1)[1].data.cpu().numpy()
