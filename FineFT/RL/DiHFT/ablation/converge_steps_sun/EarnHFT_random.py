@@ -396,6 +396,7 @@ class DQN(object):
             time=time_input,
             previous_action=previous_action,
             avaliable_action=avaliable_action,
+            trading_info=trading_info,
         ).gather(1, actions)
         q_next = self.target_net(
             state=states_,
@@ -416,6 +417,7 @@ class DQN(object):
             time=time_input,
             previous_action=previous_action,
             avaliable_action=avaliable_action,
+            trading_info=trading_info,
         )
 
         KL_div = F.kl_div(
@@ -472,11 +474,13 @@ class DQN(object):
             time_input = torch.cat([hour_count_down, minute_count_down], dim=1).to(
                 self.device
             )
+            trading_info = torch.unsqueeze(torch.tensor(info["trading_info"]).float().to(self.device), 0)
             actions_value = self.eval_net(
                 state=state,
                 time=time_input,
                 previous_action=previous_action,
                 avaliable_action=avaliable_action,
+                trading_info=trading_info,
             )
             action = torch.max(actions_value, 1)[1].data.cpu().numpy()
             action = action[0]

@@ -99,7 +99,7 @@ class CountingQNet:
         self.values = values
         self.calls = 0
 
-    def __call__(self, state, time, previous_action, avaliable_action):
+    def __call__(self, state, time, previous_action, avaliable_action, trading_info=None):
         self.calls += 1
         return torch.tensor([self.values], dtype=torch.float32, device=state.device)
 
@@ -171,6 +171,7 @@ def test_act_test_only_evaluates_selected_context_qnet():
             "avaliable_action": [1, 1, 1],
             "funding_count_down_hour": 1,
             "funding_count_down_minute": 30,
+            "trading_info": [0.0, 0.0, 0.0],
         },
         context_index=1,
     )

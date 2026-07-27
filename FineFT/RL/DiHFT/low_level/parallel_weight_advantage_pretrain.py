@@ -1097,6 +1097,7 @@ class Weighted_Contexts_DQN:
                 time=time_input,
                 previous_action=previous_action,
                 avaliable_action=avaliable_action,
+                trading_info=trading_info,
             ),
             actions,
         )
@@ -1194,6 +1195,7 @@ class Weighted_Contexts_DQN:
                 time=time_input,
                 previous_action=previous_action,
                 avaliable_action=avaliable_action,
+                trading_info=trading_info,
             ),
             actions,
         )

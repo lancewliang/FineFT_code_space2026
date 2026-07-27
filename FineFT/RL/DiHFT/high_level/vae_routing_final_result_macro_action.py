@@ -452,11 +452,13 @@ class vae_risk_aware_routing:
         time_input = torch.cat([hour_count_down, minute_count_down], dim=1).to(
             self.device
         )
+        trading_info = torch.unsqueeze(torch.tensor(info["trading_info"]).float().to(self.device), 0)
         actions_value = self.low_level_network(
             state=state,
             time=time_input,
             previous_action=previous_action,
             avaliable_action=avaliable_action,
+            trading_info=trading_info,
         )
         action_value_chosen_index = actions_value[:, self.selected_agent_index, :]
         action = torch.max(action_value_chosen_index, 1)[1].data.cpu().numpy()

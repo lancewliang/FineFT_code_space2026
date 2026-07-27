@@ -659,6 +659,7 @@ class Weighted_Contexts_DQN:
                 time=time_input,
                 previous_action=previous_action,
                 avaliable_action=avaliable_action,
+                trading_info=trading_info,
             ),
             actions,
         )
@@ -756,6 +757,7 @@ class Weighted_Contexts_DQN:
                 time=time_input,
                 previous_action=previous_action,
                 avaliable_action=avaliable_action,
+                trading_info=trading_info,
             ),
             actions,
         )
@@ -873,11 +875,13 @@ class Weighted_Contexts_DQN:
             time_input = torch.cat([hour_count_down, minute_count_down], dim=1).to(
                 self.device
             )
+            trading_info = torch.from_numpy(info["trading_info"]).float().reshape(1, -1).to(self.device)
             actions_value = self.eval_net(
                 state=state,
                 time=time_input,
                 previous_action=previous_action,
                 avaliable_action=avaliable_action,
+                trading_info=trading_info,
             )
             action_value_chosen_index = actions_value[:, context_index, :]
             action = torch.max(action_value_chosen_index, 1)[1].data.cpu().numpy()

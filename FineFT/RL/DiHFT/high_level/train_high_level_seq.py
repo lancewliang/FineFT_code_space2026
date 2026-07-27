@@ -489,11 +489,13 @@ class high_level_agent:
         time_input = torch.cat([hour_count_down, minute_count_down], dim=1).to(
             self.device
         )
+        trading_info = infos["trading_info"].float().to(self.device)
         predict_action_distrbution = self.low_level_network(
             state=states,
             time=time_input,
             previous_action=previous_action,
             avaliable_action=avaliable_action,
+            trading_info=trading_info,
         )
 
         # high level
@@ -563,11 +565,13 @@ class high_level_agent:
         time_input = torch.cat([hour_count_down, minute_count_down], dim=1).to(
             self.device
         )
+        trading_info = torch.unsqueeze(torch.tensor(info["trading_info"]).float().to(self.device), 0)
         actions_value = self.low_level_network(
             state=state,
             time=time_input,
             previous_action=previous_action,
             avaliable_action=avaliable_action,
+            trading_info=trading_info,
         )
 
         return actions_value

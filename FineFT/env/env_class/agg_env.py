@@ -96,6 +96,7 @@ class Agg_Env(Base_Env):
                     N_ACTIONS=self.N_ACTIONS,
                     hidden_nodes=self.low_level_hidden_nodes,
                     TIME_INFO_DIM=time_info_dim,
+                    TRADING_INFO_DIM=3,
                 ).to(self.device)
                 model.load_state_dict(
                     torch.load(
@@ -158,11 +159,13 @@ class Agg_Env(Base_Env):
         time_input = torch.cat([hour_count_down, minute_count_down], dim=1).to(
             self.device
         )
+        trading_info = torch.unsqueeze(torch.tensor(info["trading_info"]).float().to(self.device), 0)
         actions_value = self.chosen_model(
             state=state,
             time=time_input,
             previous_action=previous_action,
             avaliable_action=avaliable_action,
+            trading_info=trading_info,
         )
         action = torch.max(actions_value, 1)[1].data.cpu().numpy()
         action = action[0]

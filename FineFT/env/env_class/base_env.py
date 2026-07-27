@@ -42,6 +42,8 @@ from analysis.calculate_metric.calculate_metric import (
     calculate_single_holsing_max_draw_down,
 )
 
+TRADING_INFO_KEYS = ("position_exposure", "single_holding_return_rate", "single_holding_max_drawdown")
+
 
 class Base_Env(gym.Env):
     def __init__(
@@ -159,6 +161,22 @@ class Base_Env(gym.Env):
         self.single_holding_max_drawdown = 0
         # the history track the cash flow for a single holding
         self.single_holding_history = [0]
+
+    def _calculate_trading_info(self, old_position=0):
+        max_abs_position = max(abs(p) for p in self.position_list)
+        position_exposure = 0.0 if max_abs_position == 0 else float(self.position / max_abs_position)
+        if self.position == 0:
+            return np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        if self.allow_reverse_position and old_position * self.position < 0:
+            return np.array([position_exposure, 0.0, 0.0], dtype=np.float32)
+        return np.array(
+            [
+                position_exposure,
+                float(self.single_holding_return_rate),
+                float(self.single_holding_max_drawdown),
+            ],
+            dtype=np.float32,
+        )
 
     def _reset_execution_metrics(self):
         self.commission_fee_step = 0
@@ -294,6 +312,7 @@ class Base_Env(gym.Env):
                 "bid_qyts": self.bid_qtys,
                 "single_holding_return_rate": self.single_holding_return_rate,
                 "single_holding_max_drawdown": self.single_holding_max_drawdown,
+                "trading_info": self._calculate_trading_info(0),
                 **self._execution_metric_info(),
             },
         )
@@ -454,6 +473,7 @@ class Base_Env(gym.Env):
                     "bid_qyts": self.bid_qtys,
                     "single_holding_return_rate": self.single_holding_return_rate,
                     "single_holding_max_drawdown": self.single_holding_max_drawdown,
+                    "trading_info": np.array([0.0, 0.0, 0.0], dtype=np.float32),
                     "previous_action": self.env_map_position_leverage_to_action(
                         self.position, self.leverage
                     ),
@@ -581,6 +601,7 @@ class Base_Env(gym.Env):
                         "bid_qyts": self.bid_qtys,
                         "single_holding_return_rate": self.single_holding_return_rate,
                         "single_holding_max_drawdown": self.single_holding_max_drawdown,
+                        "trading_info": np.array([0.0, 0.0, 0.0], dtype=np.float32),
                         "previous_action": self.env_map_position_leverage_to_action(
                             self.position, self.leverage
                         ),
@@ -657,10 +678,20 @@ class Base_Env(gym.Env):
                         self.wallet_balance_history,
                     )
                 )
+                trading_info = self._calculate_trading_info(old_position)
                 # 在step之后才对single holding进行重置
                 if self.position == 0 or (self.allow_reverse_position and old_position * self.position < 0):
                     self.single_holding_return = 0
                     self.single_holding_history = [0]
+                    self.initial_margin_history = [self.initial_margin]
+                    self.wallet_balance_history = [self.wallet_balance]
+                    self.unrealized_pnl_history = [self.unrealized_pnl]
+                    self.maintain_marigine_history = [
+                        calculate_maintenance_margin(
+                            np.abs(self.current_markprice * self.position)
+                        )
+                    ]
+                    self.new_position_required_money_history = [0]
 
                 return (
                     state,
@@ -689,6 +720,7 @@ class Base_Env(gym.Env):
                         "bid_qyts": self.bid_qtys,
                         "single_holding_return_rate": self.single_holding_return_rate,
                         "single_holding_max_drawdown": self.single_holding_max_drawdown,
+                        "trading_info": trading_info,
                         **self._execution_metric_info(),
                     },
                 )

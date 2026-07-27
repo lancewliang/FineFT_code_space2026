@@ -10,14 +10,19 @@ MAX_PUNISHMENT = 1e12
 # Q network for FinFT
 # without holding length as input
 class Qnet(nn.Module):
-    def __init__(self, N_STATES, N_ACTIONS, hidden_nodes, TIME_INFO_DIM):
+    def __init__(
+        self, N_STATES, N_ACTIONS, hidden_nodes, TIME_INFO_DIM, TRADING_INFO_DIM=3
+    ):
         super(Qnet, self).__init__()
         self.time_bedding = int(hidden_nodes / 2)
         self.fc1 = nn.Linear(N_STATES, hidden_nodes)
-        self.fc2 = nn.Linear(N_ACTIONS + hidden_nodes + self.time_bedding, hidden_nodes)
+        self.fc2 = nn.Linear(
+            N_ACTIONS + 2 * hidden_nodes + self.time_bedding, hidden_nodes
+        )
         self.out = nn.Linear(hidden_nodes, N_ACTIONS)
         self.fc3 = nn.Linear(1, N_ACTIONS)
         self.fc_time = nn.Linear(TIME_INFO_DIM, self.time_bedding)
+        self.fc_trading = nn.Linear(TRADING_INFO_DIM, hidden_nodes)
         self.register_buffer("max_punish", torch.tensor(MAX_PUNISHMENT))
 
     def forward(
@@ -26,12 +31,14 @@ class Qnet(nn.Module):
         time: torch.tensor,
         previous_action: torch.tensor,
         avaliable_action: torch.tensor,
+        trading_info: torch.tensor,
     ):
         state_hidden = F.relu(self.fc1(state))
         time = self.fc_time(time)
         previous_action_hidden = F.relu(self.fc3(previous_action))
+        trading_hidden = F.relu(self.fc_trading(trading_info))
         information_hidden = torch.cat(
-            [state_hidden, previous_action_hidden, time], dim=1
+            [state_hidden, previous_action_hidden, time, trading_hidden], dim=1
         )
         information_hidden = self.fc2(information_hidden)
         action = self.out(information_hidden)
@@ -41,14 +48,26 @@ class Qnet(nn.Module):
 
 class ensemble_Qnet(nn.Module):
     def __init__(
-        self, N_STATES, N_ACTIONS, hidden_nodes, TIME_INFO_DIM, ensemble_number
+        self,
+        N_STATES,
+        N_ACTIONS,
+        hidden_nodes,
+        TIME_INFO_DIM,
+        ensemble_number,
+        TRADING_INFO_DIM=3,
     ):
         super(ensemble_Qnet, self).__init__()
         self.ensemble_number = ensemble_number
         self.N_ACTIONS = N_ACTIONS
         self.qnet_list = nn.ModuleList(
             [
-                Qnet(N_STATES, N_ACTIONS, hidden_nodes, TIME_INFO_DIM)
+                Qnet(
+                    N_STATES,
+                    N_ACTIONS,
+                    hidden_nodes,
+                    TIME_INFO_DIM,
+                    TRADING_INFO_DIM,
+                )
                 for _ in range(ensemble_number)
             ]
         )
@@ -59,10 +78,11 @@ class ensemble_Qnet(nn.Module):
         time: torch.tensor,
         previous_action: torch.tensor,
         avaliable_action: torch.tensor,
+        trading_info: torch.tensor,
     ):
         q_values = torch.stack(
             [
-                qnet(state, time, previous_action, avaliable_action)
+                qnet(state, time, previous_action, avaliable_action, trading_info)
                 for qnet in self.qnet_list
             ],
             dim=1,
@@ -70,8 +90,17 @@ class ensemble_Qnet(nn.Module):
         assert q_values.shape == (state.shape[0], self.ensemble_number, self.N_ACTIONS)
         return q_values
 
-    def get_best_q(self, state, time, previous_action, avaliable_action):
-        q_values = self.forward(state, time, previous_action, avaliable_action)
+    def get_best_q(
+        self,
+        state,
+        time,
+        previous_action,
+        avaliable_action,
+        trading_info,
+    ):
+        q_values = self.forward(
+            state, time, previous_action, avaliable_action, trading_info
+        )
         # 在不同的context下选最好的动作
         best_q, _ = q_values.max(dim=2)
         return best_q
@@ -111,9 +140,10 @@ def create_new_ensemble_qnet_from_different_save_path(
     TIME_INFO_DIM,
     saved_model_path_list,
     selected_indices,
+    TRADING_INFO_DIM=3,
 ):
     new_ensemble = ensemble_Qnet(
-        N_STATES, N_ACTIONS, hidden_nodes, TIME_INFO_DIM, len(selected_indices)
+        N_STATES, N_ACTIONS, hidden_nodes, TIME_INFO_DIM, len(selected_indices), TRADING_INFO_DIM
     )
     selected_state_dict = load_selected_qnets_from_different_save_path(
         saved_model_path_list, selected_indices
@@ -149,10 +179,10 @@ def load_selected_qnets(saved_model_path, selected_indices):
 
 
 def create_new_ensemble_qnet(
-    N_STATES, N_ACTIONS, hidden_nodes, TIME_INFO_DIM, selected_indices, saved_model_path
+    N_STATES, N_ACTIONS, hidden_nodes, TIME_INFO_DIM, selected_indices, saved_model_path, TRADING_INFO_DIM=3
 ):
     new_ensemble = ensemble_Qnet(
-        N_STATES, N_ACTIONS, hidden_nodes, TIME_INFO_DIM, len(selected_indices)
+        N_STATES, N_ACTIONS, hidden_nodes, TIME_INFO_DIM, len(selected_indices), TRADING_INFO_DIM
     )
     selected_state_dict = load_selected_qnets(saved_model_path, selected_indices)
     new_ensemble.load_state_dict(selected_state_dict, strict=False)

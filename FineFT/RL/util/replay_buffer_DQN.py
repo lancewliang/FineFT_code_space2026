@@ -7,6 +7,16 @@ import numpy as np
 from collections import deque, namedtuple
 import random
 
+NETWORK_INFO_KEYS = (
+    "avaliable_action",
+    "previous_action",
+    "q_value",
+    "high_level_state",
+    "funding_count_down_hour",
+    "funding_count_down_minute",
+    "trading_info",
+)
+
 
 # traiditional 1 step td error
 class ReplayMemory:
@@ -445,14 +455,7 @@ class Multi_step_ReplayBuffer_multi_info:
         )
         infos = dict()
         for key in self.info_key:
-            if key in [
-                "avaliable_action",
-                "previous_action",
-                "q_value",
-                "high_level_state",
-                "funding_count_down_hour",
-                "funding_count_down_minute",
-            ]:
+            if key in NETWORK_INFO_KEYS:
                 infos[key] = (
                     torch.from_numpy(
                         np.stack(
@@ -485,14 +488,7 @@ class Multi_step_ReplayBuffer_multi_info:
         )
         next_infos = dict()
         for key in self.info_key:
-            if key in [
-                "avaliable_action",
-                "previous_action",
-                "q_value",
-                "high_level_state",
-                "funding_count_down_hour",
-                "funding_count_down_minute",
-            ]:
+            if key in NETWORK_INFO_KEYS:
                 next_infos[key] = (
                     torch.from_numpy(
                         np.stack(
@@ -524,14 +520,7 @@ class Multi_step_ReplayBuffer_multi_info:
         infos = dict()
 
         for key in self.info_key:
-            if key in [
-                "avaliable_action",
-                "previous_action",
-                "q_value",
-                "high_level_state",
-                "funding_count_down_hour",
-                "funding_count_down_minute",
-            ]:
+            if key in NETWORK_INFO_KEYS:
                 infos[key] = (
                     torch.from_numpy(
                         np.stack(
@@ -564,14 +553,7 @@ class Multi_step_ReplayBuffer_multi_info:
         )
         next_infos = dict()
         for key in self.info_key:
-            if key in [
-                "avaliable_action",
-                "previous_action",
-                "q_value",
-                "high_level_state",
-                "funding_count_down_hour",
-                "funding_count_down_minute",
-            ]:
+            if key in NETWORK_INFO_KEYS:
                 next_infos[key] = (
                     torch.from_numpy(
                         np.stack(
@@ -782,14 +764,7 @@ class Multi_step_ReplayBuffer_multi_info_sunrise:
         )
         infos = dict()
         for key in self.info_key:
-            if key in [
-                "avaliable_action",
-                "previous_action",
-                "q_value",
-                "high_level_state",
-                "funding_count_down_hour",
-                "funding_count_down_minute",
-            ]:
+            if key in NETWORK_INFO_KEYS:
                 infos[key] = (
                     torch.from_numpy(
                         np.stack(
@@ -822,14 +797,7 @@ class Multi_step_ReplayBuffer_multi_info_sunrise:
         )
         next_infos = dict()
         for key in self.info_key:
-            if key in [
-                "avaliable_action",
-                "previous_action",
-                "q_value",
-                "high_level_state",
-                "funding_count_down_hour",
-                "funding_count_down_minute",
-            ]:
+            if key in NETWORK_INFO_KEYS:
                 next_infos[key] = (
                     torch.from_numpy(
                         np.stack(
