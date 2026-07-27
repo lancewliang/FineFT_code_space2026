@@ -567,6 +567,18 @@ def _second_trade_frame(second_df: pl.DataFrame, contract_unit: float) -> pl.Dat
 def downscale_base_features(
     second_df: pl.DataFrame, target_freq: str, symbol: str = "fu"
 ) -> pl.DataFrame:
+    if "OpenInterest" not in second_df.columns:
+        raise ValueError("Missing required column for BASE_FEATURE downscaling: OpenInterest")
+    oi_series = second_df.get_column("OpenInterest")
+    if oi_series.null_count() > 0:
+        raise ValueError("OpenInterest contains null values")
+    try:
+        oi_float = oi_series.cast(pl.Float64, strict=False)
+    except Exception as err:
+        raise ValueError(f"OpenInterest is non-numeric: {err}")
+    if oi_float.null_count() > 0 or oi_float.is_nan().any() or oi_float.is_infinite().any():
+        raise ValueError("OpenInterest contains null, non-numeric, or non-finite values")
+
     contract_unit = get_commodity_config(symbol).contract_unit
     frame = _with_reference_price(
         _second_trade_frame(second_df, contract_unit)
@@ -596,6 +608,7 @@ def downscale_base_features(
             pl.col("price").last().alias("close"),
             pl.col("volume").sum().alias("volume"),
             pl.col("tradeval").sum().alias("tradeval"),
+            pl.col("OpenInterest").cast(pl.Float64, strict=False).last().alias("open_interest"),
             pl.col("price").mean().alias("awap"),
             (pl.col("second_volume") > 0)
             .fill_null(False)
@@ -626,6 +639,7 @@ def downscale_base_features(
         "close",
         "volume",
         "tradeval",
+        "open_interest",
         "vwap",
         "awap",
         "twap",

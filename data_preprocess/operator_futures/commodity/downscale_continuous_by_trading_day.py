@@ -36,6 +36,7 @@ SECOND_LEVEL_DOWNSCALE_REQUIRED_COLUMNS = (
     "UpperLimitPrice",
     "Volume",
     "Turnover",
+    "OpenInterest",
     *BID_PRICE_COLUMNS,
     *ASK_PRICE_COLUMNS,
     *BID_VOLUME_COLUMNS,

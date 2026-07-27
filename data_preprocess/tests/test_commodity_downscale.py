@@ -1369,6 +1369,7 @@ def test_base_features_use_contract_unit_for_prices_but_keep_raw_tradeval():
             "BidPrice1": [2599.0, 2599.0, 2600.0],
             "AskPrice1": [2601.0, 2601.0, 2602.0],
             "LastPrice": [2600.0, 2600.0, 2601.0],
+            "OpenInterest": [3990.0, 3995.0, 4000.0],
             "Volume": [0, 1, 2],
             "Turnover": [0.0, 26000.0, 52010.0],
         }
@@ -1381,6 +1382,44 @@ def test_base_features_use_contract_unit_for_prices_but_keep_raw_tradeval():
     assert base.item(0, "volume") == 2
     assert base.item(0, "tradeval") == 52010.0
     assert base.item(0, "vwap") == 2600.5
+    assert base.item(0, "open_interest") == 4000.0
+
+
+def test_downscale_base_features_outputs_last_open_interest_in_window():
+    second = pl.DataFrame(
+        {
+            "timestamp": [
+                datetime(2023, 1, 3, 9, 0, 1),
+                datetime(2023, 1, 3, 9, 0, 2),
+                datetime(2023, 1, 3, 9, 0, 3),
+            ],
+            "InstrumentID": ["fu2302", "fu2302", "fu2302"],
+            "BidPrice1": [2599.0, 2599.0, 2600.0],
+            "AskPrice1": [2601.0, 2601.0, 2602.0],
+            "LastPrice": [2600.0, 2600.0, 2601.0],
+            "OpenInterest": [100.0, 105.0, 110.0],
+            "Volume": [0, 1, 2],
+            "Turnover": [0.0, 26000.0, 52010.0],
+        }
+    )
+
+    base = downscale_base_features(second, "5min", "fu")
+
+    assert "open_interest" in base.columns
+    assert base.height == 1
+    assert base.item(0, "open_interest") == 110.0
+
+
+def test_downscale_base_features_missing_open_interest_fails_fast():
+    second = pl.DataFrame(
+        {
+            "timestamp": [datetime(2023, 1, 3, 9, 0, 0)],
+            "LastPrice": [2600.0],
+        }
+    )
+
+    with pytest.raises(ValueError, match="OpenInterest"):
+        downscale_base_features(second, "5min", "fu")
 
 
 def test_empty_quote_window_fails_fast():

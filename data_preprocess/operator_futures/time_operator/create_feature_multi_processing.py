@@ -12,10 +12,12 @@ from operator_futures.util import (
 )
 from operator_futures.data_quality import DataQualityValidator
 import polars as pl
+from operator_futures.commodity.config import COMMODITY_CONFIGS
 from operator_futures.time_operator.multi_processing_util import (
     get_multi_window_ohlcv,
     get_multi_window_ohlc,
     get_multi_feature_window_price,
+    get_risk_and_liquidity_state_features,
     _inner_join_on_timestamp,
 )
 
@@ -165,6 +167,14 @@ def main(args):
     #         trading_day=args.start_date + "-" + args.end_date,
     #     )
     time_feature_list_all.append(df_time)
+    if "open_interest" in original_df.columns:
+        risk_liq_df = get_risk_and_liquidity_state_features(
+            original_df,
+            windows,
+            symbol=args.symbols,
+            target_freq=args.target_freq,
+        )
+        time_feature_list_all.append(risk_liq_df)
     for key in ohlcv_features:
         ohlc_features.pop(key, None)
 

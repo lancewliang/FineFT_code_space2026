@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 
+import pytest
 import pandas as pd
 import polars as pl
 
@@ -16,6 +17,7 @@ from operator_futures.time_operator.multi_processing_util import (
     _process_ohlcv_single_window_polars,
     get_multi_feature_window_price,
     get_multi_window_ohlcv,
+    get_risk_and_liquidity_state_features,
 )
 
 
@@ -38,6 +40,8 @@ def _write_concat_feature_fixture(
             "low": 2599.0 + idx,
             "close": 2600.5 + idx,
             "volume": 100.0 + idx,
+            "tradeval": (2600.0 + idx) * (100.0 + idx),
+            "open_interest": 1000.0 + idx,
             "mark_price": (
                 float("nan") if idx == mark_price_nan_index else 2600.25 + idx
             ),
@@ -430,3 +434,130 @@ def test_ohlcv_window_two_matches_pandas_reference_degenerate_windows():
         atol=1e-9,
         rtol=0,
     )
+
+
+def test_risk_and_liquidity_features_computes_expected_columns_for_windows():
+    rows = []
+    for idx in range(35):
+        rows.append(
+            {
+                "timestamp": idx,
+                "open": 2600.0 + (idx % 3),
+                "high": 2605.0 + (idx % 3),
+                "low": 2595.0 + (idx % 3),
+                "close": 2602.0 + (idx % 3),
+                "volume": 100.0 + idx * 10.0,
+                "tradeval": 260000.0 + idx * 26000.0,
+                "open_interest": 5000.0 + idx * 50.0,
+            }
+        )
+    frame = pl.DataFrame(rows)
+    res = get_risk_and_liquidity_state_features(frame, windows=[12, 20], symbol="fu", target_freq="5min")
+
+    expected_prefixes = [
+        "atr_pct",
+        "historical_volatility",
+        "rolling_volatility",
+        "parkinson_volatility",
+        "garman_klass_volatility",
+        "realized_volatility",
+        "relative_volume",
+        "relative_amount",
+        "relative_open_interest",
+        "open_interest_change_ratio",
+    ]
+    for prefix in expected_prefixes:
+        assert f"{prefix}_12" in res.columns
+        assert f"{prefix}_20" in res.columns
+        assert prefix not in res.columns
+
+    for col in res.columns:
+        if col != "timestamp":
+            series = res.get_column(col)
+            assert series.null_count() == 0
+            assert not series.is_nan().any()
+            assert not series.is_infinite().any()
+
+
+def test_risk_and_liquidity_features_bars_per_day_uses_trading_sessions():
+    rows = []
+    for idx in range(30):
+        # close increases deterministically
+        price = 2600.0 * (1.001 ** idx)
+        rows.append(
+            {
+                "timestamp": idx,
+                "open": price,
+                "high": price * 1.001,
+                "low": price * 0.999,
+                "close": price,
+                "volume": 100.0,
+                "tradeval": 260000.0,
+                "open_interest": 5000.0,
+            }
+        )
+    frame = pl.DataFrame(rows)
+    res = get_risk_and_liquidity_state_features(frame, windows=[12], symbol="fu", target_freq="5min")
+    hv_12 = res.item(0, "historical_volatility_12")
+    # fu trading sessions total 345 minutes per day. 5min bar => 69 bars_per_day
+    # log return r_t = ln(1.001) for all t
+    # std of constant r_t is 0.0, so hv_12 should be 0.0
+    assert hv_12 == pytest.approx(0.0, abs=1e-12)
+
+
+def test_risk_and_liquidity_features_garman_klass_clips_negative_mean():
+    rows = []
+    for idx in range(25):
+        rows.append(
+            {
+                "timestamp": idx,
+                "open": 100.0,
+                "high": 100.0,
+                "low": 100.0,
+                "close": 100.0,
+                "volume": 100.0,
+                "tradeval": 10000.0,
+                "open_interest": 1000.0,
+            }
+        )
+    frame = pl.DataFrame(rows)
+    res = get_risk_and_liquidity_state_features(frame, windows=[12], symbol="fu", target_freq="5min")
+    gk_12 = res.item(0, "garman_klass_volatility_12")
+    assert gk_12 == 0.0
+
+
+def test_risk_and_liquidity_features_open_interest_change_ratio_zeroes_non_positive_prev_oi():
+    rows = []
+    for idx in range(25):
+        oi = 0.0 if idx < 12 else 500.0
+        rows.append(
+            {
+                "timestamp": idx,
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.0,
+                "volume": 100.0,
+                "tradeval": 10000.0,
+                "open_interest": oi,
+            }
+        )
+    frame = pl.DataFrame(rows)
+    res = get_risk_and_liquidity_state_features(frame, windows=[12], symbol="fu", target_freq="5min")
+    # shifted 12 rows back is 0.0, so ratio output must be 0.0
+    ratio_12 = res.item(0, "open_interest_change_ratio_12")
+    assert ratio_12 == 0.0
+
+
+def test_risk_and_liquidity_features_rejects_missing_open_interest():
+    rows = [{"timestamp": 0, "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0, "volume": 100.0, "tradeval": 10000.0}]
+    frame = pl.DataFrame(rows)
+    with pytest.raises(ValueError, match="open_interest"):
+        get_risk_and_liquidity_state_features(frame, windows=[12], symbol="fu", target_freq="5min")
+
+
+def test_risk_and_liquidity_features_rejects_non_positive_prices():
+    rows = [{"timestamp": 0, "open": 0.0, "high": 101.0, "low": 99.0, "close": 100.0, "volume": 100.0, "tradeval": 10000.0, "open_interest": 1000.0}]
+    frame = pl.DataFrame(rows)
+    with pytest.raises(ValueError, match="Invalid price"):
+        get_risk_and_liquidity_state_features(frame, windows=[12], symbol="fu", target_freq="5min")

@@ -597,3 +597,150 @@ def get_multi_window_ohlc(df, windows):
     df = _ensure_polars_with_timestamp(df)
     pieces = [_process_ohlc_single_window_polars(df, window) for window in windows]
     return _clean_numeric(_inner_join_on_timestamp(pieces))
+
+
+def compute_bars_per_day(symbol: str, target_freq: str) -> float:
+    from operator_futures.commodity.config import get_commodity_config
+    freq_norm = target_freq.strip().lower()
+    if freq_norm in ("1d", "d"):
+        return 1.0
+    config = get_commodity_config(symbol)
+    trading_sessions = config.trading_sessions
+    total_minutes = sum(
+        (s.end.hour * 60 + s.end.minute + s.end.second / 60.0)
+        - (s.start.hour * 60 + s.start.minute + s.start.second / 60.0)
+        for s in trading_sessions
+    )
+    if freq_norm.endswith("min") or freq_norm.endswith("m"):
+        val_str = freq_norm.rstrip("min").rstrip("m")
+        minutes = float(val_str)
+    elif freq_norm.endswith("s"):
+        val_str = freq_norm.rstrip("s")
+        minutes = float(val_str) / 60.0
+    elif freq_norm.endswith("h"):
+        val_str = freq_norm.rstrip("h")
+        minutes = float(val_str) * 60.0
+    else:
+        minutes = 5.0
+    return total_minutes / minutes
+
+
+def get_risk_and_liquidity_state_features(
+    df: pl.DataFrame,
+    windows: list[int],
+    symbol: str = "fu",
+    target_freq: str = "5min",
+) -> pl.DataFrame:
+    df = _ensure_polars_with_timestamp(df)
+
+    required_prices = ("open", "high", "low", "close")
+    for price_col in required_prices:
+        if price_col not in df.columns:
+            raise ValueError(f"Missing required price column: {price_col}")
+        col = df.get_column(price_col)
+        if col.null_count() > 0:
+            invalid_row = df.filter(pl.col(price_col).is_null()).row(0, named=True)
+            raise ValueError(
+                f"Invalid price in column {price_col!r}: null value at timestamp={invalid_row.get('timestamp')}"
+            )
+        try:
+            col_float = col.cast(pl.Float64, strict=False)
+        except Exception as err:
+            raise ValueError(f"Price column {price_col!r} is non-numeric: {err}")
+        invalid_mask = (
+            col_float.is_null()
+            | col_float.is_nan()
+            | col_float.is_infinite()
+            | (col_float <= 0.0)
+        )
+        if invalid_mask.any():
+            invalid_row = df.filter(invalid_mask).row(0, named=True)
+            val = invalid_row.get(price_col)
+            ts = invalid_row.get("timestamp")
+            raise ValueError(
+                f"Invalid price in column {price_col!r}: value={val!r} at timestamp={ts}"
+            )
+
+    required_liquidity = ("volume", "tradeval", "open_interest")
+    for liq_col in required_liquidity:
+        if liq_col not in df.columns:
+            raise ValueError(f"Missing required column for liquidity state features: {liq_col}")
+        col = df.get_column(liq_col)
+        if col.null_count() > 0:
+            invalid_row = df.filter(pl.col(liq_col).is_null()).row(0, named=True)
+            raise ValueError(f"Column {liq_col!r} contains null at timestamp {invalid_row.get('timestamp')}")
+
+    bars_per_day = compute_bars_per_day(symbol, target_freq)
+    sqrt_bpd = math.sqrt(bars_per_day)
+
+    close = pl.col("close").cast(pl.Float64, strict=False)
+    open_p = pl.col("open").cast(pl.Float64, strict=False)
+    high = pl.col("high").cast(pl.Float64, strict=False)
+    low = pl.col("low").cast(pl.Float64, strict=False)
+    volume = pl.col("volume").cast(pl.Float64, strict=False)
+    tradeval = pl.col("tradeval").cast(pl.Float64, strict=False)
+    open_interest = pl.col("open_interest").cast(pl.Float64, strict=False)
+
+    close_prev = close.shift(1)
+    r = (close / close_prev).log()
+    r_sq = r ** 2
+
+    tr_1 = high - low
+    tr_2 = (high - close_prev).abs()
+    tr_3 = (low - close_prev).abs()
+    tr = pl.max_horizontal(tr_1, tr_2, tr_3)
+
+    log_hl_sq = (high / low).log() ** 2
+    log_co_sq = (close / open_p).log() ** 2
+    gk_term = 0.5 * log_hl_sq - (2.0 * math.log(2.0) - 1.0) * log_co_sq
+
+    all_exprs: list[pl.Expr] = []
+    max_w = max(windows)
+
+    for w in windows:
+        atr_mean = tr.rolling_mean(w)
+        atr_pct = (atr_mean / close) * 100.0
+        all_exprs.append(atr_pct.alias(f"atr_pct_{w}"))
+
+        r_std = r.rolling_std(w, ddof=1)
+        hv = r_std * sqrt_bpd
+        all_exprs.append(hv.alias(f"historical_volatility_{w}"))
+
+        rv = r.ewm_std(span=w)
+        all_exprs.append(rv.alias(f"rolling_volatility_{w}"))
+
+        pv_mean = log_hl_sq.rolling_mean(w)
+        pv_clipped = pl.when(pv_mean < 0.0).then(0.0).otherwise(pv_mean)
+        pv = (pv_clipped / (4.0 * math.log(2.0))).sqrt()
+        all_exprs.append(pv.alias(f"parkinson_volatility_{w}"))
+
+        gk_mean = gk_term.rolling_mean(w)
+        gk_clipped = pl.when(gk_mean < 0.0).then(0.0).otherwise(gk_mean)
+        gkv = gk_clipped.sqrt()
+        all_exprs.append(gkv.alias(f"garman_klass_volatility_{w}"))
+
+        realized_v = r_sq.rolling_sum(w).sqrt()
+        all_exprs.append(realized_v.alias(f"realized_volatility_{w}"))
+
+        vol_mean = volume.rolling_mean(w)
+        rel_vol = pl.when(vol_mean > 0.0).then(volume / vol_mean).otherwise(0.0)
+        all_exprs.append(rel_vol.alias(f"relative_volume_{w}"))
+
+        amt_mean = tradeval.rolling_mean(w)
+        rel_amt = pl.when(amt_mean > 0.0).then(tradeval / amt_mean).otherwise(0.0)
+        all_exprs.append(rel_amt.alias(f"relative_amount_{w}"))
+
+        oi_mean = open_interest.rolling_mean(w)
+        rel_oi = pl.when(oi_mean > 0.0).then(open_interest / oi_mean).otherwise(0.0)
+        all_exprs.append(rel_oi.alias(f"relative_open_interest_{w}"))
+
+        oi_prev = open_interest.shift(w)
+        oi_change = (
+            pl.when(oi_prev > 0.0)
+            .then((open_interest - oi_prev) / oi_prev)
+            .otherwise(0.0)
+        )
+        all_exprs.append(oi_change.alias(f"open_interest_change_ratio_{w}"))
+
+    res = df.select("timestamp", *all_exprs).slice(max_w + 1)
+    return _clean_numeric(res)
