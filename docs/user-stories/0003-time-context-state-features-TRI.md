@@ -28,9 +28,9 @@ owner: FineFT
 |-----------|----------------------|
 | Commodity Preprocessing (`data_preprocess/operator_futures/commodity/`) | 在 `Main Contract Summary` 中记录 `last_trading_day` 和 `total_trading_day_count`，并提供 Trading Session 配置。 |
 | BASE_TIME_FEATURE Generator | 新增与 `BASE_FEATURE` 平级的产物层，按 `BASE_FEATURE` timestamp 生成 9 个非绝对时间/合约生命周期特征。 |
-| Daily Merge (`data_preprocess/operator_futures/merge_concat/merge.py`) | 强校验并将同日期 `BASE_TIME_FEATURE` join 到 `FUTURE_FEATURE`。 |
-| Feature Selection (`data_preprocess/operator_futures/feature_selection/`) | 排除 BASE_TIME_FEATURE 的指标计算，但将其作为 mandatory state feature 追加到最终 `state_features.npy`。 |
-| Scale Save (`data_preprocess/operator_futures/scale_describe_save/muti_contract_scale_save.py`) | 对普通 state feature 做 robust scaling，对 BASE_TIME_FEATURE passthrough，并在 manifest 记录。 |
+| Daily Merge (`data_preprocess/operator_futures/merge_concat/merge.py`) | 尝试读取并同日期 `BASE_TIME_FEATURE` join 到 `FUTURE_FEATURE`，若不存在则置 None。 |
+| Feature Selection (`data_preprocess/operator_futures/feature_selection/`) | 通过 `--mandatory_state_features` 参数接收 mandatory 特征，排除指标计算并追加到最终 `state_features.npy`。 |
+| Scale Save (`data_preprocess/operator_futures/scale_describe_save/muti_contract_scale_save.py`) | 通过 `--passthrough_features` 参数接收 passthrough 特征，不对其做 robust scaling，并在 manifest 记录。 |
 
 ### Relevant Decisions
 
@@ -54,7 +54,7 @@ owner: FineFT
 6. `morning_session`、`afternoon_session`、`night_session` 必须为互斥 one-hot；`is_opening_30m`、`is_closing_30m` 必须按每个 Trading Session 独立计算。
 7. `contract_month_sin`/`contract_month_cos` 必须从合约交割月份计算，不使用当前交易日自然月。
 8. `contract_life_remaining_ratio` 必须使用包含当前交易日的剩余交易日数量除以 `total_trading_day_count`；最后交易日当天为 `1 / total_trading_day_count`。
-9. Daily merge 缺少 `BASE_TIME_FEATURE` 文件或 timestamp 集合不一致时必须 fail-fast。
+9. Daily merge 若存在 `BASE_TIME_FEATURE` 文件，进行 timestamp 一致性校验；若不存在则跳过。
 10. Feature Selection 指标计算 universe 必须排除 `BASE_TIME_FEATURE_COLUMNS`。
 11. 最终 `state_features.npy` 必须将普通筛选特征放在前面，并按常量顺序追加去重后的 `BASE_TIME_FEATURE_COLUMNS`。
 12. Feature Selection Manifest 必须记录 `mandatory_state_features`。
@@ -138,9 +138,9 @@ No external API changes.
 Internal CLI/function changes:
 
 - Add a commodity BASE_TIME_FEATURE generation entrypoint or runner in the commodity preprocessing flow.
-- Daily merge reads the expected `BASE_TIME_FEATURE` path when `market_type=commodity_futures` or when running the commodity scripts.
-- `run_feature_selection(...)` uses `BASE_TIME_FEATURE_COLUMNS` as mandatory excluded-from-metrics columns.
-- `muti_contract_scale_save.py` uses `BASE_TIME_FEATURE_COLUMNS` as passthrough state features.
+- Daily merge reads `BASE_TIME_FEATURE` path if file exists.
+- `run_feature_selection(...)` receives `--mandatory_state_features` passed via CLI (e.g. `BASE_TIME_FEATURE_COLUMNS` from `fu_full_process.sh`).
+- `muti_contract_scale_save.py` receives `--passthrough_features` passed via CLI (e.g. `BASE_TIME_FEATURE_COLUMNS` from `fu_full_process.sh`).
 
 ### User Interface
 

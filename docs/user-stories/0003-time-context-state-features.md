@@ -63,27 +63,16 @@ Then:
 ### Daily merge 并入 BASE_TIME_FEATURE
 
 Given:
-- 某个交易日存在 `BASE_FEATURE` 和同日期的 `BASE_TIME_FEATURE`
-
-When:
-- 运行 daily merge
-
-Then:
-- `BASE_TIME_FEATURE` 按 `timestamp` join 到 `FUTURE_FEATURE`
-- 后续 concat、Dataset Split、Feature Selection 和 Scale Save 不需要额外入口即可消费这些列
-
-### Daily merge 缺少 BASE_TIME_FEATURE 时 fail-fast
-
-Given:
 - 某个交易日存在 `BASE_FEATURE`
-- 同日期的 `BASE_TIME_FEATURE` 文件不存在
+- 同日期的 `BASE_TIME_FEATURE` 文件可能存在或不存在
 
 When:
 - 运行 daily merge
 
 Then:
-- 流程 fail-fast，并说明缺少的 `BASE_TIME_FEATURE` 路径
-- 不填 0、不跳过该特征、不生成缺失 BASE_TIME_FEATURE 的 `FUTURE_FEATURE`
+- 若 `BASE_TIME_FEATURE` 文件存在，则按 `timestamp` join 到 `FUTURE_FEATURE`
+- 若 `BASE_TIME_FEATURE` 文件不存在，则静默跳过并按普通流程生成 `FUTURE_FEATURE`
+- 后续 concat、Dataset Split、Feature Selection 和 Scale Save 不需要额外入口即可消费这些列
 
 ### Daily merge 时间戳不一致时 fail-fast
 
@@ -182,20 +171,20 @@ Then:
 - `remaining_trading_days` 按包含当前交易日计算为 1
 - `contract_life_remaining_ratio = 1 / total_trading_day_count`
 
-### Feature Selection 必须保留 BASE_TIME_FEATURE
+### Feature Selection 通过 CLI 参数接收必须保留 State Feature
 
 Given:
-- BASE_TIME_FEATURE 存在于候选 state feature universe 中
+- 通过 CLI 参数 `--mandatory_state_features` 传入必须保留特征列表（如 `BASE_TIME_FEATURE_COLUMNS`）
 
 When:
 - Feature Selection 执行 Hard Filter、Stability Filter、Composite Score、Correlation Filter 和其他过滤步骤
 
 Then:
-- BASE_TIME_FEATURE 不参与 IC、RankIC、CatBoost、Permutation Importance、Sharpe 或相关性过滤等指标计算
-- 最终 `state_features.npy` 必须包含全部 BASE_TIME_FEATURE
-- 普通 Feature Selection 选出的特征排在前面，`BASE_TIME_FEATURE_COLUMNS` 按常量定义顺序追加在后
-- 如果普通选择结果中已经包含某个 BASE_TIME_FEATURE，则最终列表去重，并只在 mandatory 追加位置保留一次
-- Feature Selection Manifest 记录 `mandatory_state_features`，列出全部 BASE_TIME_FEATURE 列
+- 传入的 mandatory 特征不参与 IC、RankIC、CatBoost、Permutation Importance、Sharpe 或相关性过滤等指标计算
+- 最终 `state_features.npy` 必须包含全部 mandatory 特征
+- 普通 Feature Selection 选出的特征排在前面，mandatory 特征按传入顺序追加在后
+- 如果普通选择结果中已经包含某个 mandatory 特征，则最终列表去重，并只在 mandatory 追加位置保留一次
+- Feature Selection Manifest 记录 `mandatory_state_features`，列出全部传入的 mandatory 特征列
 
 ### Feature Blacklist 不能删除必须保留特征
 
@@ -220,17 +209,17 @@ When:
 Then:
 - 每个输出文件都包含全部必须保留的 BASE_TIME_FEATURE 列
 
-### Scale Save 保留但不缩放 BASE_TIME_FEATURE
+### Scale Save 通过 CLI 参数接收 Passthrough State Feature
 
 Given:
-- `state_features.npy` 包含全部 BASE_TIME_FEATURE 列
+- 通过 CLI 参数 `--passthrough_features` 传入无需缩放的特征列表（如 `BASE_TIME_FEATURE_COLUMNS`）
 - Scale Save 读取过滤后的合约数据
 
 When:
 - 执行 train-only robust scaler 和最终保存
 
 Then:
-- BASE_TIME_FEATURE 列出现在最终保存的 state feature 数据中
-- BASE_TIME_FEATURE 列保持输入编码值，不参与 robust scaler 拟合或 transform
-- Scale Manifest 记录 `passthrough_state_features`，列出全部 BASE_TIME_FEATURE 列
-- 其他非 BASE_TIME_FEATURE 的 state feature 仍按现有规则缩放并裁剪
+- 指定的 passthrough 特征列出现在最终保存的 state feature 数据中
+- Passthrough 特征列保持输入编码值，不参与 robust scaler 拟合、transform 或 clip
+- Scale Manifest 记录 `passthrough_state_features`，列出全部 passthrough 特征列
+- 其他非 passthrough 的 state feature 仍按现有规则缩放并裁剪
