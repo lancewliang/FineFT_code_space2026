@@ -189,6 +189,8 @@ def _write_two_contract_summary(path):
                         "start_trading_day": "20260101",
                         "end_trading_day": "20260102",
                         "trading_day_count": 1,
+                        "last_trading_day": "20260105",
+                        "total_trading_day_count": 1,
                         "selected_months": ["2026-01"],
                         "trading_days": [
                             {
@@ -204,6 +206,8 @@ def _write_two_contract_summary(path):
                         "start_trading_day": "20260201",
                         "end_trading_day": "20260202",
                         "trading_day_count": 1,
+                        "last_trading_day": "20260105",
+                        "total_trading_day_count": 1,
                         "selected_months": ["2026-02"],
                         "trading_days": [
                             {
@@ -237,6 +241,8 @@ def test_write_contract_feature_union_writes_symbol_level_manifest(tmp_path):
                         "start_trading_day": "20260101",
                         "end_trading_day": "20260102",
                         "trading_day_count": 1,
+                        "last_trading_day": "20260105",
+                        "total_trading_day_count": 1,
                         "selected_months": ["2026-01"],
                         "trading_days": [
                             {
@@ -252,6 +258,8 @@ def test_write_contract_feature_union_writes_symbol_level_manifest(tmp_path):
                         "start_trading_day": "20260201",
                         "end_trading_day": "20260202",
                         "trading_day_count": 1,
+                        "last_trading_day": "20260105",
+                        "total_trading_day_count": 1,
                         "selected_months": ["2026-02"],
                         "trading_days": [
                             {
@@ -412,6 +420,8 @@ def test_write_contract_feature_union_fails_when_contract_state_features_missing
                         "start_trading_day": "20260201",
                         "end_trading_day": "20260202",
                         "trading_day_count": 1,
+                        "last_trading_day": "20260105",
+                        "total_trading_day_count": 1,
                         "selected_months": ["2026-02"],
                         "trading_days": [
                             {

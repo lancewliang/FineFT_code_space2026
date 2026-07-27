@@ -70,6 +70,7 @@ def build_daily_feature_frames(
     snapshot_feature: pl.DataFrame,
     quotes_feature: pl.DataFrame,
     kline_feature: pl.DataFrame,
+    base_time_feature: pl.DataFrame | None = None,
     contract: str | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     der_without_symbol = der.drop("symbol") if "symbol" in der.columns else der
@@ -83,6 +84,8 @@ def build_daily_feature_frames(
         base_feature.join(quotes_feature, on="timestamp", how="left")
         .join(kline_feature, on="timestamp", how="left")
     )
+    if base_time_feature is not None:
+        future_feature = future_feature.join(base_time_feature, on="timestamp", how="left")
     return reward_feature, future_feature
 
 
@@ -159,6 +162,24 @@ def main(args):
     snapshot_feature = pl.read_ipc(snapshot_feature_path)
     quotes_feature = pl.read_ipc(quotes_feature_path)
     kline_feature = pl.read_ipc(kline_feature_path)
+
+    base_time_feature_path = os.path.join(
+        args.data_path,
+        "BASE_TIME_FEATURE",
+        *symbol_parts,
+        args.target_freq,
+        args.date + ".feather",
+    )
+    base_time_feature = (
+        pl.read_ipc(base_time_feature_path)
+        if os.path.exists(base_time_feature_path)
+        else None
+    )
+    if base_time_feature is not None:
+        if base_feature["timestamp"].to_list() != base_time_feature["timestamp"].to_list():
+            raise ValueError(
+                f"BASE_TIME_FEATURE timestamp set does not match BASE_FEATURE for date {args.date}: {base_time_feature_path}"
+            )
     logger.info(
         "Loaded daily merge inputs: snapshot_rows=%d der_rows=%d base_rows=%d snapshot_feature_rows=%d quotes_feature_rows=%d kline_feature_rows=%d",
         snapshot.height,
@@ -177,6 +198,7 @@ def main(args):
         snapshot_feature,
         quotes_feature,
         kline_feature,
+        base_time_feature=base_time_feature,
         contract=args.contract,
     )
 

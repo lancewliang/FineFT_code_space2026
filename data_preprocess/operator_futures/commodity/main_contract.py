@@ -56,6 +56,8 @@ class MainContractSummaryContract:
     contract: str
     selected_months: List[str]
     trading_days: List[MainContractSummaryTradingDay]
+    last_trading_day: str
+    total_trading_day_count: int
 
     @property
     def ordered_trading_days(self) -> List[MainContractSummaryTradingDay]:
@@ -77,9 +79,13 @@ class MainContractSummaryContract:
     def from_dict(cls, payload: dict) -> "MainContractSummaryContract":
         if not isinstance(payload, dict):
             raise ValueError(f"summary contract must be an object: {payload}")
-        for field in ("contract", "trading_day_count", "trading_days"):
+        for field in ("contract", "trading_day_count", "trading_days", "last_trading_day", "total_trading_day_count"):
             if field not in payload:
                 raise ValueError(f"summary contract missing {field}: {payload}")
+        if not isinstance(payload["last_trading_day"], str) or not payload["last_trading_day"]:
+            raise ValueError(f"invalid last_trading_day for contract {payload['contract']}")
+        if not isinstance(payload["total_trading_day_count"], int) or payload["total_trading_day_count"] <= 0:
+            raise ValueError(f"invalid total_trading_day_count for contract {payload['contract']}")
 
         trading_days_payload = payload["trading_days"]
         if not isinstance(trading_days_payload, list):
@@ -96,6 +102,8 @@ class MainContractSummaryContract:
                 MainContractSummaryTradingDay.from_dict(item)
                 for item in trading_days_payload
             ],
+            last_trading_day=str(payload["last_trading_day"]),
+            total_trading_day_count=int(payload["total_trading_day_count"]),
         )
 
     def to_dict(self) -> dict:
@@ -104,6 +112,8 @@ class MainContractSummaryContract:
             "start_trading_day": self.start_trading_day,
             "end_trading_day": self.end_trading_day,
             "trading_day_count": self.trading_day_count,
+            "last_trading_day": self.last_trading_day,
+            "total_trading_day_count": self.total_trading_day_count,
             "selected_months": sorted(self.selected_months),
             "trading_days": [item.to_dict() for item in self.ordered_trading_days],
         }
@@ -449,6 +459,11 @@ def build_main_contract_summary_model_for_date_range(
         symbol
     ).main_contract_daily_volume_threshold
 
+    all_contract_raw_days: Dict[str, Set[str]] = {}
+    for day_sources in trading_day_sources:
+        for source in day_sources.contract_files:
+            all_contract_raw_days.setdefault(source.contract, set()).add(day_sources.trading_day)
+
     for day_sources in trading_day_sources:
         if not _trading_day_in_range(day_sources.trading_day, start_date, end_date):
             continue
@@ -494,11 +509,14 @@ def build_main_contract_summary_model_for_date_range(
             build_state.contract_days[contract],
             selected_months,
         )
+        raw_days = all_contract_raw_days[contract]
         contracts.append(
             MainContractSummaryContract(
                 contract=contract,
                 selected_months=selected_months,
                 trading_days=actual_trading_days,
+                last_trading_day=max(raw_days),
+                total_trading_day_count=len(raw_days),
             )
         )
 

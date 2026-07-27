@@ -71,6 +71,7 @@ class FeatureSelectionManifest:
     selected_features: list[str] | None = None
     composite_drop_ratio: float | None = None
     feature_blacklist: list[str] | None = None
+    mandatory_state_features: list[str] | None = None
     filter_results: dict[str, list[str]] | None = None
     filtered_outputs: list[FilteredOutputRecord] | None = None
     evaluated_feature_file: str | None = None
@@ -98,6 +99,8 @@ class FeatureSelectionManifest:
             payload["composite_drop_ratio"] = self.composite_drop_ratio
         if self.feature_blacklist is not None:
             payload["feature_blacklist"] = list(self.feature_blacklist)
+        if self.mandatory_state_features is not None:
+            payload["mandatory_state_features"] = list(self.mandatory_state_features)
         payload["aggregate_metrics_path"] = self.aggregate_metrics_path
         if self.filter_results is not None:
             payload["filter_results"] = {

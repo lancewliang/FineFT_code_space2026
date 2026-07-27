@@ -204,6 +204,18 @@ run_commodity_cross_section_process() {
     wait || return $?
 }
 
+BASE_TIME_FEATURE_COLUMNS=(
+    trading_minute_progress
+    morning_session
+    afternoon_session
+    night_session
+    is_opening_30m
+    is_closing_30m
+    contract_month_sin
+    contract_month_cos
+    contract_life_remaining_ratio
+)
+
 run_commodity_scale_save() {
     local target_freq=$1
     local start_date=$2
@@ -221,7 +233,8 @@ run_commodity_scale_save() {
         --save_path "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/" \
         --market_type commodity_futures \
         --orderbook_depth 5 \
-        --feature_list_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/${target_freq}/${symbol}/train/state_features.npy"
+        --feature_list_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/${target_freq}/${symbol}/train/state_features.npy" \
+        --passthrough_features "${BASE_TIME_FEATURE_COLUMNS[@]}"
 }
 
 run_commodity_merge_process() {
@@ -382,6 +395,7 @@ run_commodity_feature_selection() {
         --target_freq "${target_freq}" \
         --stage "${stage}" \
         --orderbook_depth 5 \
+        --mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" \
         "${feature_blacklist_args[@]}"
 }
 

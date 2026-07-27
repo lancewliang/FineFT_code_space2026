@@ -151,6 +151,8 @@ def _write_summary(path: Path, source_file: Path, contract: str = "fu2602"):
                 "start_trading_day": "20260105",
                 "end_trading_day": "20260105",
                 "trading_day_count": 1,
+                "last_trading_day": "20260105",
+                "total_trading_day_count": 1,
                 "selected_months": ["2026-01"],
                 "trading_days": [
                     {
@@ -558,6 +560,8 @@ def test_downscale_continuous_cli_filters_contract(tmp_path):
                 "start_trading_day": "20260105",
                 "end_trading_day": "20260105",
                 "trading_day_count": 1,
+                "last_trading_day": "20260105",
+                "total_trading_day_count": 1,
                 "selected_months": ["2026-01"],
                 "trading_days": [
                     {
@@ -573,6 +577,8 @@ def test_downscale_continuous_cli_filters_contract(tmp_path):
                 "start_trading_day": "20260105",
                 "end_trading_day": "20260105",
                 "trading_day_count": 1,
+                "last_trading_day": "20260105",
+                "total_trading_day_count": 1,
                 "selected_months": ["2026-01"],
                 "trading_days": [
                     {
@@ -640,6 +646,8 @@ def test_downscale_continuous_cli_ignores_missing_source_file_for_unselected_con
                 "start_trading_day": "20260105",
                 "end_trading_day": "20260105",
                 "trading_day_count": 1,
+                "last_trading_day": "20260105",
+                "total_trading_day_count": 1,
                 "selected_months": ["2026-01"],
                 "trading_days": [
                     {
@@ -655,6 +663,8 @@ def test_downscale_continuous_cli_ignores_missing_source_file_for_unselected_con
                 "start_trading_day": "20260105",
                 "end_trading_day": "20260105",
                 "trading_day_count": 1,
+                "last_trading_day": "20260105",
+                "total_trading_day_count": 1,
                 "selected_months": ["2026-01"],
                 "trading_days": [
                     {
@@ -756,6 +766,8 @@ def test_commodity_full_process_reads_contracts_from_summary(tmp_path):
                         "start_trading_day": "20260105",
                         "end_trading_day": "20260105",
                         "trading_day_count": 1,
+                        "last_trading_day": "20260105",
+                        "total_trading_day_count": 1,
                         "selected_months": ["2026-01"],
                         "trading_days": [
                             {
@@ -771,6 +783,8 @@ def test_commodity_full_process_reads_contracts_from_summary(tmp_path):
                         "start_trading_day": "20260205",
                         "end_trading_day": "20260205",
                         "trading_day_count": 1,
+                        "last_trading_day": "20260105",
+                        "total_trading_day_count": 1,
                         "selected_months": ["2026-02"],
                         "trading_days": [
                             {
@@ -869,6 +883,8 @@ summary.write_text(
                     "start_trading_day": "20260105",
                     "end_trading_day": "20260105",
                     "trading_day_count": 1,
+                    "last_trading_day": "20260105",
+                    "total_trading_day_count": 1,
                     "selected_months": ["2026-01"],
                     "trading_days": [
                         {

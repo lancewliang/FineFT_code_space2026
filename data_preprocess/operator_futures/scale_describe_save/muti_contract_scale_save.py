@@ -1,5 +1,5 @@
 import argparse
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import json
 import logging
 import math
@@ -49,6 +49,7 @@ class ScaleManifest:
     clip_min: float | None
     clip_max: float | None
     features: list[ScalerFeatureStats]
+    passthrough_state_features: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         payload = asdict(self)
@@ -132,6 +133,14 @@ parser.add_argument(
     type=str,
     default=None,
     help="train-stage state_features.npy selected by feature selection",
+)
+parser.add_argument(
+    "--passthrough_features",
+    "--passthrough_state_features",
+    dest="passthrough_features",
+    nargs="*",
+    default=None,
+    help="state features to passthrough without scaling",
 )
 
 
@@ -278,8 +287,12 @@ def fit_robust_scaler(
     feature_list_path: Path,
     args,
 ) -> ScaleManifest:
+    passthrough_targets = set(args.passthrough_features or [])
+    passthrough_features = [f for f in state_features if f in passthrough_targets]
+    scaled_features = [f for f in state_features if f not in passthrough_targets]
+
     values_by_feature: dict[str, list[np.ndarray]] = {
-        feature: [] for feature in state_features
+        feature: [] for feature in scaled_features
     }
     train_row_count = 0
     train_input_files = []
@@ -295,7 +308,7 @@ def fit_robust_scaler(
         validate_state_features_present(df, state_features, input_file)
         train_row_count += df.height
         train_input_files.append(str(input_file))
-        for feature in state_features:
+        for feature in scaled_features:
             values_by_feature[feature].append(
                 df.get_column(feature).to_numpy().astype(float, copy=False)
             )
@@ -310,7 +323,7 @@ def fit_robust_scaler(
             args.iqr_epsilon,
             args.std_epsilon,
         )
-        for feature in state_features
+        for feature in scaled_features
     ]
     return ScaleManifest(
         symbol=args.symbols,
@@ -324,6 +337,7 @@ def fit_robust_scaler(
         clip_min=None if args.disable_clip else float(args.clip_min),
         clip_max=None if args.disable_clip else float(args.clip_max),
         features=feature_stats,
+        passthrough_state_features=passthrough_features,
     )
 
 
@@ -407,9 +421,24 @@ def scale_one_input(
 
     reward_features = reward_features_for(df, args)
     df_reward = df.select(reward_features)
-    df_state = df.select(state_features)
-    df_state, diagnostics = apply_robust_scaler(df_state, manifest)
-    out = pl.concat([df_reward, df_state], how="horizontal").with_columns(
+
+    passthrough_targets = set(args.passthrough_features or [])
+    passthrough_features = [f for f in state_features if f in passthrough_targets]
+    scaled_features = [f for f in state_features if f not in passthrough_targets]
+
+    df_scaled = df.select(scaled_features)
+    df_scaled, diagnostics = apply_robust_scaler(df_scaled, manifest)
+    df_passthrough = df.select(passthrough_features)
+
+    state_cols = {}
+    for f in state_features:
+        if f in df_scaled.columns:
+            state_cols[f] = df_scaled.get_column(f)
+        elif f in df_passthrough.columns:
+            state_cols[f] = df_passthrough.get_column(f)
+
+    df_state_aligned = pl.DataFrame(state_cols)
+    out = pl.concat([df_reward, df_state_aligned], how="horizontal").with_columns(
         pl.lit(args.symbols).alias("symbol")
     )
 

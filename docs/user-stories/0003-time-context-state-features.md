@@ -3,17 +3,17 @@ status: draft
 source: user-request
 ---
 
-# Base_Time_feature State Features
+# BASE_TIME_FEATURE State Features
 
 ## User Story
 
 As a Commodity Preprocessing user
-I want commodity futures Base_Time_feature columns to be encoded as non-absolute State Feature inputs and always preserved through Feature Selection
+I want commodity futures BASE_TIME_FEATURE columns to be encoded as non-absolute State Feature inputs and always preserved through Feature Selection
 So that the RL agent can learn intraday, session, contract-month, and expiry-context patterns without overfitting to absolute calendar or clock values
 
 ## Background
 
-商品期货合约交易数据需要新增一组与 `BASE_FEATURE` 平级的 `Base_Time_feature`：
+商品期货合约交易数据需要新增一组与 `BASE_FEATURE` 平级的 `BASE_TIME_FEATURE`：
 
 | 特征语义 | 输入要求 | 说明 |
 |---|---|---|
@@ -22,11 +22,11 @@ So that the RL agent can learn intraday, session, contract-month, and expiry-con
 | 合约交割月份 | 不能使用绝对月份值 | 从合约代码解析交割月份，并使用周期编码，避免模型记住裸月份编号 |
 | 离合约结束还有多少天 | 不能使用绝对天数 | 在选择合约数据文件时从原始下载中该合约全部 `TradingDay` 找到真实最后交易日，后续归一化为合约生命周期剩余比例，或使用有界非绝对编码 |
 
-这些 `Base_Time_feature` 不是滚动窗口特征，属于必须保留的 `State Feature`。Feature Selection 的 Hard Filter、Stability Filter、Composite Score、Correlation Filter、Feature Blacklist 或其他后续过滤条件都不能删除它们；如果配置与必须保留规则冲突，应 fail-fast，而不是静默丢弃。Scale Save 必须保留这些列，但不对它们做 robust scaling。
+这些 `BASE_TIME_FEATURE` 不是滚动窗口特征，属于必须保留的 `State Feature`。Feature Selection 的 Hard Filter、Stability Filter、Composite Score、Correlation Filter、Feature Blacklist 或其他后续过滤条件都不能删除它们；如果配置与必须保留规则冲突，应 fail-fast，而不是静默丢弃。Scale Save 必须保留这些列，但不对它们做 robust scaling。
 
-`Base_Time_feature` 产物路径使用 `PREPROCESS_DATASET/commodity-futures/Base_Time_feature/{symbol}/{contract}/{target_freq}/{date}.feather`。daily merge 阶段将它 join 到 `FUTURE_FEATURE`，使后续 concat、Dataset Split、Feature Selection 和 Scale Save 自然消费这些列。上游 `Main Contract Summary` 每个 contract 记录提供 `last_trading_day` 和 `total_trading_day_count`，供 `Base_Time_feature` 计算合约剩余生命周期比例。
+`BASE_TIME_FEATURE` 产物路径使用 `PREPROCESS_DATASET/commodity-futures/BASE_TIME_FEATURE/{symbol}/{contract}/{target_freq}/{date}.feather`。daily merge 阶段将它 join 到 `FUTURE_FEATURE`，使后续 concat、Dataset Split、Feature Selection 和 Scale Save 自然消费这些列。上游 `Main Contract Summary` 每个 contract 记录提供 `last_trading_day` 和 `total_trading_day_count`，供 `BASE_TIME_FEATURE` 计算合约剩余生命周期比例。
 
-`Base_Time_feature` 输出列为：
+`BASE_TIME_FEATURE` 输出列为：
 
 | 列名 | 含义 |
 |---|---|
@@ -44,7 +44,7 @@ So that the RL agent can learn intraday, session, contract-month, and expiry-con
 
 ## Scenarios
 
-### 生成非绝对 Base_Time_feature
+### 生成非绝对 BASE_TIME_FEATURE
 
 Given:
 - 商品期货合约数据包含 `timestamp`、`TradingDay` 和 `contract`
@@ -53,50 +53,50 @@ When:
 - 运行商品期货特征工程流程
 
 Then:
-- `Base_Time_feature` 以同日期同合约的 `BASE_FEATURE` timestamp 为主输入逐行生成
-- 输出与 `BASE_FEATURE` 平级的 `Base_Time_feature`，包含交易时间分钟、交易时间段、合约月份、合约剩余生命周期相关特征
-- 输出路径为 `PREPROCESS_DATASET/commodity-futures/Base_Time_feature/{symbol}/{contract}/{target_freq}/{date}.feather`
+- `BASE_TIME_FEATURE` 以同日期同合约的 `BASE_FEATURE` timestamp 为主输入逐行生成
+- 输出与 `BASE_FEATURE` 平级的 `BASE_TIME_FEATURE`，包含交易时间分钟、交易时间段、合约月份、合约剩余生命周期相关特征
+- 输出路径为 `PREPROCESS_DATASET/commodity-futures/BASE_TIME_FEATURE/{symbol}/{contract}/{target_freq}/{date}.feather`
 - 输出文件保留 `timestamp` 用于 daily merge 强校验和 join
 - 输出文件不包含 `contract`、`TradingDay` 或其他非特征元数据列
 - 这些特征不以原始绝对值形式进入模型输入
 
-### Daily merge 并入 Base_Time_feature
+### Daily merge 并入 BASE_TIME_FEATURE
 
 Given:
-- 某个交易日存在 `BASE_FEATURE` 和同日期的 `Base_Time_feature`
+- 某个交易日存在 `BASE_FEATURE` 和同日期的 `BASE_TIME_FEATURE`
 
 When:
 - 运行 daily merge
 
 Then:
-- `Base_Time_feature` 按 `timestamp` join 到 `FUTURE_FEATURE`
+- `BASE_TIME_FEATURE` 按 `timestamp` join 到 `FUTURE_FEATURE`
 - 后续 concat、Dataset Split、Feature Selection 和 Scale Save 不需要额外入口即可消费这些列
 
-### Daily merge 缺少 Base_Time_feature 时 fail-fast
+### Daily merge 缺少 BASE_TIME_FEATURE 时 fail-fast
 
 Given:
 - 某个交易日存在 `BASE_FEATURE`
-- 同日期的 `Base_Time_feature` 文件不存在
+- 同日期的 `BASE_TIME_FEATURE` 文件不存在
 
 When:
 - 运行 daily merge
 
 Then:
-- 流程 fail-fast，并说明缺少的 `Base_Time_feature` 路径
-- 不填 0、不跳过该特征、不生成缺失 Base_Time_feature 的 `FUTURE_FEATURE`
+- 流程 fail-fast，并说明缺少的 `BASE_TIME_FEATURE` 路径
+- 不填 0、不跳过该特征、不生成缺失 BASE_TIME_FEATURE 的 `FUTURE_FEATURE`
 
 ### Daily merge 时间戳不一致时 fail-fast
 
 Given:
 - 某个交易日存在 `BASE_FEATURE`
-- 同日期的 `Base_Time_feature` 文件存在
+- 同日期的 `BASE_TIME_FEATURE` 文件存在
 - 两个文件的 timestamp 集合不一致
 
 When:
 - 运行 daily merge
 
 Then:
-- 流程 fail-fast，并说明 `Base_Time_feature` 与 `BASE_FEATURE` timestamp 不一致
+- 流程 fail-fast，并说明 `BASE_TIME_FEATURE` 与 `BASE_FEATURE` timestamp 不一致
 - 不生成 timestamp 错位的 `FUTURE_FEATURE`
 
 ### 交易时间分钟使用可泛化编码
@@ -182,25 +182,25 @@ Then:
 - `remaining_trading_days` 按包含当前交易日计算为 1
 - `contract_life_remaining_ratio = 1 / total_trading_day_count`
 
-### Feature Selection 必须保留 Base_Time_feature
+### Feature Selection 必须保留 BASE_TIME_FEATURE
 
 Given:
-- Base_Time_feature 存在于候选 state feature universe 中
+- BASE_TIME_FEATURE 存在于候选 state feature universe 中
 
 When:
 - Feature Selection 执行 Hard Filter、Stability Filter、Composite Score、Correlation Filter 和其他过滤步骤
 
 Then:
-- Base_Time_feature 不参与 IC、RankIC、CatBoost、Permutation Importance、Sharpe 或相关性过滤等指标计算
-- 最终 `state_features.npy` 必须包含全部 Base_Time_feature
+- BASE_TIME_FEATURE 不参与 IC、RankIC、CatBoost、Permutation Importance、Sharpe 或相关性过滤等指标计算
+- 最终 `state_features.npy` 必须包含全部 BASE_TIME_FEATURE
 - 普通 Feature Selection 选出的特征排在前面，`BASE_TIME_FEATURE_COLUMNS` 按常量定义顺序追加在后
-- 如果普通选择结果中已经包含某个 Base_Time_feature，则最终列表去重，并只在 mandatory 追加位置保留一次
-- Feature Selection Manifest 记录 `mandatory_state_features`，列出全部 Base_Time_feature 列
+- 如果普通选择结果中已经包含某个 BASE_TIME_FEATURE，则最终列表去重，并只在 mandatory 追加位置保留一次
+- Feature Selection Manifest 记录 `mandatory_state_features`，列出全部 BASE_TIME_FEATURE 列
 
 ### Feature Blacklist 不能删除必须保留特征
 
 Given:
-- 用户配置的 `feature_blacklist` 包含某个必须保留的 Base_Time_feature
+- 用户配置的 `feature_blacklist` 包含某个必须保留的 BASE_TIME_FEATURE
 
 When:
 - Feature Selection 运行
@@ -209,7 +209,7 @@ Then:
 - 流程 fail-fast，并说明 blacklist 与必须保留特征冲突
 - 不生成缺失必须保留特征的 `state_features.npy`
 
-### 过滤后输出保留 Base_Time_feature 列
+### 过滤后输出保留 BASE_TIME_FEATURE 列
 
 Given:
 - Feature Selection 已生成最终 state feature 列表
@@ -218,19 +218,19 @@ When:
 - 写出每个合约的过滤后 `df.feather`
 
 Then:
-- 每个输出文件都包含全部必须保留的 Base_Time_feature 列
+- 每个输出文件都包含全部必须保留的 BASE_TIME_FEATURE 列
 
-### Scale Save 保留但不缩放 Base_Time_feature
+### Scale Save 保留但不缩放 BASE_TIME_FEATURE
 
 Given:
-- `state_features.npy` 包含全部 Base_Time_feature 列
+- `state_features.npy` 包含全部 BASE_TIME_FEATURE 列
 - Scale Save 读取过滤后的合约数据
 
 When:
 - 执行 train-only robust scaler 和最终保存
 
 Then:
-- Base_Time_feature 列出现在最终保存的 state feature 数据中
-- Base_Time_feature 列保持输入编码值，不参与 robust scaler 拟合或 transform
-- Scale Manifest 记录 `passthrough_state_features`，列出全部 Base_Time_feature 列
-- 其他非 Base_Time_feature 的 state feature 仍按现有规则缩放并裁剪
+- BASE_TIME_FEATURE 列出现在最终保存的 state feature 数据中
+- BASE_TIME_FEATURE 列保持输入编码值，不参与 robust scaler 拟合或 transform
+- Scale Manifest 记录 `passthrough_state_features`，列出全部 BASE_TIME_FEATURE 列
+- 其他非 BASE_TIME_FEATURE 的 state feature 仍按现有规则缩放并裁剪

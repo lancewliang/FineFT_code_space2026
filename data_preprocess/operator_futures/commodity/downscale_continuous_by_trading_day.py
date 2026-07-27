@@ -21,6 +21,7 @@ from .downscale import (
     downscale_orderbook,
     downscale_quote_features,
 )
+from .base_time_feature import generate_base_time_features
 from .main_contract import MainContractSummary, load_main_contract_summary
 
 
@@ -63,6 +64,8 @@ class SummaryTradingDaySource:
     contract: str
     date: str
     source_file: Path
+    last_trading_day: str
+    total_trading_day_count: int
 
 
 @dataclass(frozen=True)
@@ -74,6 +77,8 @@ class DownscaleTask:
     target_freq: str
     symbol: str
     depth: int
+    last_trading_day: str
+    total_trading_day_count: int
 
 
 def iter_summary_trading_days(
@@ -93,6 +98,8 @@ def iter_summary_trading_days(
                 contract=contract_name,
                 date=day.date,
                 source_file=source_file,
+                last_trading_day=contract.last_trading_day,
+                total_trading_day_count=contract.total_trading_day_count,
             )
     if contract_filter is not None and not matched:
         raise ValueError(f"contract {contract_filter!r} not found in summary")
@@ -105,6 +112,8 @@ def _write_downscaled_day(
     symbol: str,
     contract: str,
     depth: int,
+    last_trading_day: str = "20260101",
+    total_trading_day_count: int = 1,
     source_file: str | None = None,
 ) -> str:
     trading_days = (
@@ -125,6 +134,15 @@ def _write_downscaled_day(
         trading_day=trading_day,
         columns=SECOND_LEVEL_DOWNSCALE_REQUIRED_COLUMNS,
     )
+    base_df = downscale_base_features(second, target_freq, symbol)
+    base_time_df = generate_base_time_features(
+        base_df=base_df,
+        symbol=symbol,
+        contract=contract,
+        trading_day=trading_day,
+        last_trading_day=last_trading_day,
+        total_trading_day_count=total_trading_day_count,
+    )
     outputs = {
         "DOWNSCALE_DERTIC": downscale_derivative_reference(
             second, target_freq, symbol
@@ -132,7 +150,8 @@ def _write_downscaled_day(
         "DOWNSCALE_ORDERBOOK_25": downscale_orderbook(
             second, target_freq, depth=depth
         ),
-        "BASE_FEATURE": downscale_base_features(second, target_freq, symbol),
+        "BASE_FEATURE": base_df,
+        "BASE_TIME_FEATURE": base_time_df,
         "COMMODITY_QUOTE_FEATURE": downscale_quote_features(second, target_freq),
     }
     output_name = _trading_day_output_name(trading_day)
@@ -168,6 +187,8 @@ def _downscale_task(task: DownscaleTask) -> tuple[str, str]:
         task.symbol,
         task.contract,
         task.depth,
+        last_trading_day=task.last_trading_day,
+        total_trading_day_count=task.total_trading_day_count,
         source_file=str(task.source_file),
     )
     return task.contract, trading_day
@@ -235,6 +256,8 @@ def downscale_continuous_by_trading_day(
             target_freq=target_freq,
             symbol=symbol,
             depth=depth,
+            last_trading_day=item.last_trading_day,
+            total_trading_day_count=item.total_trading_day_count,
         )
         for item in iter_summary_trading_days(summary, contract)
     ]

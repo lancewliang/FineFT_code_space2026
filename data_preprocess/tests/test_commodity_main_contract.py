@@ -70,6 +70,8 @@ def test_main_contract_summary_model_serializes_to_json_contract(tmp_path):
         contracts=[
             MainContractSummaryContract(
                 contract="fu2601",
+                last_trading_day="20260115",
+                total_trading_day_count=10,
                 selected_months=["2026-01"],
                 trading_days=[
                     MainContractSummaryTradingDay(
@@ -95,6 +97,10 @@ def test_main_contract_summary_model_serializes_to_json_contract(tmp_path):
                 "start_trading_day": "20260105",
                 "end_trading_day": "20260105",
                 "trading_day_count": 1,
+                "last_trading_day": "20260105",
+                "total_trading_day_count": 1,
+                "last_trading_day": "20260115",
+                "total_trading_day_count": 10,
                 "selected_months": ["2026-01"],
                 "trading_days": [
                     {
@@ -123,6 +129,10 @@ def test_main_contract_summary_model_deserializes_from_json_contract(tmp_path):
                 "start_trading_day": "20260105",
                 "end_trading_day": "20260105",
                 "trading_day_count": 1,
+                "last_trading_day": "20260105",
+                "total_trading_day_count": 1,
+                "last_trading_day": "20260115",
+                "total_trading_day_count": 10,
                 "selected_months": ["2026-01"],
                 "trading_days": [
                     {
@@ -160,6 +170,10 @@ def test_load_main_contract_summary_reads_model(tmp_path):
                 "start_trading_day": "20260105",
                 "end_trading_day": "20260105",
                 "trading_day_count": 1,
+                "last_trading_day": "20260105",
+                "total_trading_day_count": 1,
+                "last_trading_day": "20260115",
+                "total_trading_day_count": 10,
                 "selected_months": ["2026-01"],
                 "trading_days": [
                     {

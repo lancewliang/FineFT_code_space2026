@@ -41,6 +41,15 @@ def _write_split_contract(root: Path, stage: str, contract: str, alpha, beta, ga
         "ask1_price": [10.1, 11.1, 13.1, 16.1],
         "alpha": alpha,
         "beta": beta,
+        "trading_minute_progress": [0.0] * 4,
+        "morning_session": [1.0] * 4,
+        "afternoon_session": [0.0] * 4,
+        "night_session": [0.0] * 4,
+        "is_opening_30m": [1.0] * 4,
+        "is_closing_30m": [0.0] * 4,
+        "contract_month_sin": [0.5] * 4,
+        "contract_month_cos": [0.5] * 4,
+        "contract_life_remaining_ratio": [0.8] * 4,
     }
     if gamma is not None:
         values["gamma"] = gamma
@@ -79,6 +88,15 @@ def _write_long_split_contract(
         "ask1_price": [10.1 + float(index * index) for index in range(row_count)],
         "alpha": alpha,
         "beta": beta,
+        "trading_minute_progress": [0.0] * row_count,
+        "morning_session": [1.0] * row_count,
+        "afternoon_session": [0.0] * row_count,
+        "night_session": [0.0] * row_count,
+        "is_opening_30m": [1.0] * row_count,
+        "is_closing_30m": [0.0] * row_count,
+        "contract_month_sin": [0.5] * row_count,
+        "contract_month_cos": [0.5] * row_count,
+        "contract_life_remaining_ratio": [0.8] * row_count,
     }
     if gamma is not None:
         values["gamma"] = gamma

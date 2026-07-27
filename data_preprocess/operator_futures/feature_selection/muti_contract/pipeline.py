@@ -247,9 +247,18 @@ def run_feature_selection(
     windows_list: list[int] | None = None,
     composite_drop_ratio: float = 0.1,
     feature_blacklist: list[str] | None = None,
+    mandatory_state_features: list[str] | None = None,
 ) -> FeatureSelectionResult:
     if stage not in {"train", "valid"}:
         raise ValueError("stage must be 'train' or 'valid'")
+
+    mandatory_features = list(mandatory_state_features or [])
+    if feature_blacklist and mandatory_features:
+        conflict = sorted(set(feature_blacklist).intersection(mandatory_features))
+        if conflict:
+            raise ValueError(
+                f"feature blacklist contains mandatory state feature column(s): {conflict}"
+            )
 
     windows_list = list(DEFAULT_WINDOWS_LIST if windows_list is None else windows_list)
     root_path = Path(root_path)
@@ -287,7 +296,8 @@ def run_feature_selection(
             contract=contract,
             feature_universe=feature_universe,
         )
-        metrics = calculate_metric_frame(frame, feature_universe, windows_list=windows_list)
+        candidate_universe = [f for f in feature_universe if f not in mandatory_features]
+        metrics = calculate_metric_frame(frame, candidate_universe, windows_list=windows_list)
         metric_path = per_contract_dir / f"{contract}_metrics.csv"
         metrics.write_csv(metric_path)
         metric_frames.append(metrics)
@@ -320,10 +330,11 @@ def run_feature_selection(
         manifest.write_json(manifest_path)
         return FeatureSelectionResult(output_dir=output_dir, manifest=manifest)
 
+    candidate_universe = [f for f in feature_universe if f not in mandatory_features]
     selected_features, filter_results = _ordered_filter_features(
         frames,
         aggregate,
-        feature_universe,
+        candidate_universe,
         min_abs_ic=min_abs_ic,
         max_metric_std=max_metric_std,
         max_correlation=max_correlation,
@@ -341,6 +352,9 @@ def run_feature_selection(
             **filter_results,
             "Feature Blacklist Dropped": blacklisted_features,
         }
+    normal_selected = [f for f in selected_features if f not in mandatory_features]
+    selected_features = normal_selected + mandatory_features
+
     selected_file = output_dir / "state_features.npy"
     np.save(selected_file, np.array(selected_features))
     filtered_outputs = _write_filtered_outputs(
@@ -363,6 +377,7 @@ def run_feature_selection(
         feature_blacklist=(
             list(feature_blacklist) if feature_blacklist is not None else None
         ),
+        mandatory_state_features=mandatory_features if mandatory_features else None,
         aggregate_metrics_path=str(aggregate_path),
         filter_results=filter_results,
         contracts=per_contract,
@@ -396,6 +411,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--composite_drop_ratio", type=float, default=0.1)
     parser.add_argument("--feature_blacklist", nargs="*", default=None)
     parser.add_argument(
+        "--mandatory_state_features",
+        "--mandatory_features",
+        dest="mandatory_state_features",
+        nargs="*",
+        default=None,
+    )
+    parser.add_argument(
         "--windows_list",
         "--windows",
         dest="windows_list",
@@ -422,4 +444,5 @@ def main(argv=None):
         windows_list=args.windows_list,
         composite_drop_ratio=args.composite_drop_ratio,
         feature_blacklist=args.feature_blacklist,
+        mandatory_state_features=args.mandatory_state_features,
     )

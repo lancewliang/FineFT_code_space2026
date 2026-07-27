@@ -717,6 +717,8 @@ def test_iter_summary_trading_days_accepts_summary_model(tmp_path):
                     "start_trading_day": "20260105",
                     "end_trading_day": "20260105",
                     "trading_day_count": 1,
+                    "last_trading_day": "20260105",
+                    "total_trading_day_count": 1,
                     "selected_months": ["2026-01"],
                     "trading_days": [
                         {
@@ -758,6 +760,8 @@ def test_downscale_continuous_terminates_process_pool_on_worker_error(
                     "start_trading_day": "20260105",
                     "end_trading_day": "20260106",
                     "trading_day_count": 2,
+                    "last_trading_day": "20260105",
+                    "total_trading_day_count": 1,
                     "selected_months": ["2026-01"],
                     "trading_days": [
                         {
