@@ -91,6 +91,7 @@ def test_cross_section_features_return_polars_with_timestamp():
             "twap": [102.0, 103.0],
             "awap": [101.0, 102.0],
             "vwap": [102.5, 103.5],
+            "open_interest": [1000.0, 1005.0],
         }
     )
     snapshot = pl.DataFrame(

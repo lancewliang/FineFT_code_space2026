@@ -81,7 +81,6 @@ def find_ohlc_groups(features):
 
     # Initialize a dictionary to hold the matched groups
     groups = {}
-    matched_features = set()
 
     # Iterate over the features to match and group them
     for feature in features:
@@ -95,8 +94,22 @@ def find_ohlc_groups(features):
             if key not in groups:
                 groups[key] = []
             groups[key].append(feature)
-            matched_features.add(feature)
-    grouped_features = {k: v for k, v in groups.items()}
+
+    feature_set = set(features)
+    grouped_features = {}
+    matched_features = set()
+    for k, v in groups.items():
+        prefix, suffix = k
+        required = {
+            f"{prefix}open{suffix}",
+            f"{prefix}high{suffix}",
+            f"{prefix}low{suffix}",
+            f"{prefix}close{suffix}",
+        }
+        if required.issubset(feature_set):
+            grouped_features[k] = v
+            matched_features.update(v)
+
     unmatched_features = [
         feature for feature in features if feature not in matched_features
     ]
