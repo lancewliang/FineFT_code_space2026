@@ -1310,3 +1310,61 @@
 - **AND** 系统 SHALL NOT 修改 `downscale_quote_features()` 的时间窗口输出语义
 - **AND** 系统 SHALL NOT 修改 `downscale_quote_ofi_features()` 的 OFI 输出语义
 
+
+### Requirement: 商品期货 BASE_TIME_FEATURE 时间编码特征
+系统 SHALL 生成 9 个非绝对 BASE_TIME_FEATURE 时间编码特征，强制作为 State Feature 保留并跳过 Robust Scaling。
+
+#### Scenario: 9 个 BASE_TIME_FEATURE 列名与语义
+- **WHEN** 生成商品期货 `BASE_TIME_FEATURE`
+- **THEN** 输出包含 9 个列：`trading_minute_progress`、`morning_session`、`afternoon_session`、`night_session`、`is_opening_30m`、`is_closing_30m`、`contract_month_sin`、`contract_month_cos` 和 `contract_life_remaining_ratio`
+- **AND** `trading_minute_progress` 为当前 timestamp 在所属 Trading Session 内的归一化进度
+- **AND** `morning_session` / `afternoon_session` / `night_session` 为互斥 one-hot 标记
+- **AND** `is_opening_30m` / `is_closing_30m` 为 session 独立首尾半小时标记
+- **AND** `contract_month_sin` / `contract_month_cos` 为合约交割月份的 sin/cos 周期编码
+- **AND** `contract_life_remaining_ratio` 为合约剩余生命周期比例
+
+#### Scenario: Daily Merge join BASE_TIME_FEATURE
+- **WHEN** 运行 daily merge
+- **THEN** 按 `timestamp` 将 `BASE_TIME_FEATURE` join 到 `FUTURE_FEATURE`
+- **AND** timestamp 不一致时 fail-fast
+
+#### Scenario: Feature Selection 强制保留 BASE_TIME_FEATURE
+- **WHEN** 运行 Feature Selection
+- **THEN** 传入 `--mandatory_state_features` 保护 `BASE_TIME_FEATURE_COLUMNS` 9 个特征列
+- **AND** 这些特征不参与 Hard Filter、Stability Filter、Composite Score、Correlation Filter 或 Blacklist 过滤，强制保留在 `state_features.npy` 中
+
+#### Scenario: Scale Save 跳过 BASE_TIME_FEATURE 缩放
+- **WHEN** 运行 Scale Save
+- **THEN** 传入 `--passthrough_features` 包含 `BASE_TIME_FEATURE_COLUMNS` 9 个特征列
+- **AND** 这些特征列直接保存原始编码值，不参与 robust scaler 的 fit、transform 或 clip
+
+### Requirement: 商品期货风险与流动性 State Feature 滚动特征
+系统 SHALL 从 5min 基础行情数据计算 6 个风险状态特征与 4 个流动性状态特征，按窗口配置输出带窗口后缀的 State Feature 列。
+
+#### Scenario: 6 个风险状态特征列与公式
+- **WHEN** 从 5min 行情数据 (`open`, `high`, `low`, `close`) 计算风险状态特征
+- **THEN** 对每个配置窗口输出带 `{window}` 后缀的 6 个特征列：
+- **AND** `atr_pct_{window}`: 真实波幅相对收盘价比例均值 (`mean(TR, N) / close * 100`)
+- **AND** `historical_volatility_{window}`: 历史收益率标准差日化 (`std(r, N) * sqrt(bars_per_day)`)，`bars_per_day` 由品种 Trading Session 分钟数与 target_freq 推导
+- **AND** `rolling_volatility_{window}`: 指数加权近期收益率波动率 (`ewm_std(r, N)`)
+- **AND** `parkinson_volatility_{window}`: Parkinson 波动率 (`sqrt(mean(ln(high/low)^2, N) / (4*ln(2)))`)
+- **AND** `garman_klass_volatility_{window}`: Garman-Klass 波动率 (`sqrt(max(mean(0.5*ln(high/low)^2 - (2*ln(2)-1)*ln(close/open)^2, N), 0))`)
+- **AND** `realized_volatility_{window}`: 已实现波动率 (`sqrt(sum(r^2, N))`)
+
+#### Scenario: 4 个流动性状态特征列与公式
+- **WHEN** 从 5min 行情数据 (`volume`, `tradeval`, `open_interest`) 计算流动性状态特征
+- **THEN** 对每个配置窗口输出带 `{window}` 后缀的 4 个特征列：
+- **AND** `relative_volume_{window}`: 当前成交量相对窗口均量倍数 (`volume / mean(volume, N)`)
+- **AND** `relative_amount_{window}`: 当前成交额相对窗口均额倍数 (`tradeval / mean(tradeval, N)`)
+- **AND** `relative_open_interest_{window}`: 当前持仓量相对窗口均持仓量倍数 (`open_interest / mean(open_interest, N)`)
+- **AND** `open_interest_change_ratio_{window}`: 持仓量相对 N 根 bar 前变化率 (`(open_interest_t - open_interest_{t-N}) / open_interest_{t-N}`)，分母 <= 0 时输出 `0.0`
+
+#### Scenario: 下采样输出持仓量 open_interest
+- **WHEN** `downscale.py` 从秒级快照生成 5min `BASE_FEATURE`
+- **THEN** 输出 `open_interest` 列，其值为窗口内最后一条秒级快照的 `OpenInterest`
+- **AND** 源数据缺少 `OpenInterest` 时 fail-fast
+
+#### Scenario: 候选特征参与 Feature Selection 与 Scale Save
+- **WHEN** 风险与流动性状态特征生成完成
+- **THEN** 这些特征作为普通 candidate state feature 进入 Feature Selection 筛选
+- **AND** 最终入选列进入 Scale Save 执行 train-only robust scaling 与 clip

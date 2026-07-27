@@ -1,21 +1,21 @@
 # FineFT
 
-FineFT 是面向期货交易的高效且具有风险感知能力的集成强化学习研究代码库，实现论文"FineFT: Efficient and Risk-Aware Ensemble Reinforcement Learning for Futures Trading"的三阶段管线。
+FineFT is the futures-trading research context for the three-stage risk-aware ensemble reinforcement learning pipeline described by "FineFT: Efficient and Risk-Aware Ensemble Reinforcement Learning for Futures Trading".
 
 ## Language
 
-### 数据与预处理
+### Data And Preprocessing
 
 **主力合约 (Main Contract)**:
 按自然月成交量最高的前 2 个合约加上高成交量天数入选合约的并集，用于拼接连续主力数据。
 _Avoid_: 主力连续、连续合约
 
 **主力合约日文件 (Main Contract Daily File)**:
-按 `TradingDay` 拆分的主力合约 CSV 文件，路径格式为 `CONTINUOUS_RAW/{symbol}/{YYYY-MM-DD}.csv`，由 `stitch_main_contract.py` 生成。
+按 `TradingDay` 拆分的主力合约 CSV 文件，路径格式为 `CONTINUOUS_RAW/{symbol}/{YYYY-MM-DD}.csv`。
 _Avoid_: 连续主力文件、日度连续数据
 
 **主力合约 Summary (Main Contract Summary)**:
-描述日期范围内入选合约集合、交易日窗口、源文件路径、每个合约最后交易日和完整交易日数量的 JSON 文件，由 `stitch_main_contract.py` 生成。
+描述日期范围内入选合约集合、交易日窗口、源文件路径、每个合约最后交易日和完整交易日数量的 JSON 文件。
 _Avoid_: summary JSON、主力合约 JSON
 
 **交易日 (TradingDay)**:
@@ -59,10 +59,10 @@ _Avoid_: 成交方向规则、tick 方向
 _Avoid_: 快速失败、报错中断
 
 **NaN 校验 (NaN Validation)**:
-Scale Save 前后对 state feature 进行的 NaN 检查，发现 NaN 时立即报错并输出含 NaN 的特征名和行号，防止下游训练静默失败。
+Scale Save 前后对 State Feature 进行的 NaN 检查，发现 NaN 时立即报错并输出含 NaN 的特征名和行号，防止下游训练静默失败。
 _Avoid_: NaN 检查、空值校验
 
-### 特征工程
+### Feature Engineering
 
 **截面特征 (Cross-section Feature)**:
 从单条快照或单 bar 数据直接计算的 KLINE、QUOTE 和 SNAPSHOT 特征。
@@ -117,27 +117,27 @@ _Avoid_: 奖励列、执行列
 _Avoid_: 状态特征、观测特征
 
 **Feature Selection**:
-通过 IC、RankIC、CatBoost Importance、Permutation Importance、Sharpe 等指标评估和筛选 state feature 的流水线。
+通过 IC、RankIC、CatBoost Importance、Permutation Importance、Sharpe 等指标评估和筛选 State Feature 的流水线。
 _Avoid_: 特征筛选、因子选择
 
 **Feature Selection Manifest**:
-Feature Selection 输出的 JSON 清单，记录候选特征来源、IC 结果路径、过滤配置、mandatory state feature 和最终特征列表，使用 `FeatureSelectionManifest` dataclass 表达。
+Feature Selection 输出的 JSON 清单，记录候选特征来源、IC 结果路径、过滤配置、mandatory state feature 和最终特征列表。
 _Avoid_: 特征选择清单、选择描述
 
 **Feature Union**:
-将多个合约的 candidate state feature 去重合并为品种级统一特征列表的过程。
+将多个合约的 candidate State Feature 去重合并为品种级统一特征列表的过程。
 _Avoid_: 特征合集、特征合并
 
 **Feature Union Manifest**:
-Feature Union 输出的 JSON 清单，记录品种、合约列表、各合约特征数、state feature 列表和输出路径，使用 `FeatureUnionManifest` dataclass 表达。
+Feature Union 输出的 JSON 清单，记录品种、合约列表、各合约特征数、State Feature 列表和输出路径。
 _Avoid_: 特征联合清单、联合描述
 
 **Scale Save**:
-使用 train-only robust scaler 对 state feature 进行标准化并裁剪到 `[-20, 20]`，输出下游可消费的 feather 和 csv 文件。
+使用 train-only robust scaler 对 State Feature 进行标准化并裁剪到 `[-20, 20]`，输出下游可消费的 feather 和 csv 文件。
 _Avoid_: 缩放保存、标准化输出
 
 **Scale Manifest**:
-Scale Save 输出的 JSON 清单，记录 scaler 版本、拟合范围（`fit_scope="train_all_contracts"`）、passthrough state feature、特征统计和裁剪配置，使用 `ScaleManifest` dataclass 表达。
+Scale Save 输出的 JSON 清单，记录 scaler 版本、拟合范围（`fit_scope="train_all_contracts"`）、passthrough state feature、特征统计和裁剪配置。
 _Avoid_: 缩放清单、scaler 描述
 
 **OFI (Order Flow Imbalance)**:
@@ -161,17 +161,17 @@ _Avoid_: 不平衡度、买卖失衡
 _Avoid_: 单侧盘口、一边空
 
 **涨跌停价 (Limit Price)**:
-LowerLimitPrice 和 UpperLimitPrice，属于 reward/execution 列，不进入 state candidate。
+LowerLimitPrice 和 UpperLimitPrice，属于 Reward/Execution 列，不进入 state candidate。
 _Avoid_: 涨跌停、价格限制
 
-### 数据集与切分
+### Dataset And Splitting
 
 **Dataset Split**:
 按时间边界将数据分为 train/valid/test 集合的过程，输出 `dataset_split_manifest.json`。
 _Avoid_: 数据切分、数据分割
 
 **Dataset Manifest**:
-描述 FineFT 数据集的合约级输入输出、行数、state feature 路径和切片计划的 JSON 文件。
+描述 FineFT 数据集的合约级输入输出、行数、State Feature 路径和切片计划的 JSON 文件。
 _Avoid_: 数据集清单、数据集描述
 
 **Slice Manifest**:
@@ -190,7 +190,7 @@ _Avoid_: 训练切片、训练分块
 对 valid 阶段数据逐合约执行市场动态标签切片，输出 `valid/<contract>/label_*/df_*.feather`。
 _Avoid_: 验证切片、验证分块
 
-### 强化学习管线
+### Reinforcement Learning Pipeline
 
 **Stage I (低层训练)**:
 训练价值基低层 agent 集成，使用选择性更新（ensemble TD error 驱动）和预训练 warmup。
@@ -228,10 +228,10 @@ _Avoid_: 潜力模型、候选模型
 记录低层 agent 最终选择的 label、epoch、bin_index 和分数的 JSON 文件。
 _Avoid_: 选择清单、选择描述
 
-### VAE 与路由
+### VAE And Routing
 
 **VAE 跨合约训练 (VAE Cross-contract Training)**:
-从多合约训练数据合并生成统一 VAE 训练集的过程，通过 `merge_vae_train.py` 物化 label 训练数据，校验特征维度一致性，输出 `LabelTrainingManifest`。
+从多合约训练数据合并生成统一 VAE 训练集的过程，通过物化 label 训练数据校验特征维度一致性。
 _Avoid_: 跨合约 VAE、多合约 VAE
 
 **VAE Training Manifest**:
@@ -250,7 +250,7 @@ _Avoid_: 路由摘要
 通过 VAE 重构损失识别超出训练分布的市场状态，触发保守策略。
 _Avoid_: 异常检测、分布外检测
 
-### 评估与诊断
+### Evaluation And Diagnostics
 
 **Aggregate CSV**:
 低层测试后按 label-action-bin 聚合的验证结果 CSV，包含跨合约的 reward/turnover 统计。
@@ -265,7 +265,7 @@ _Avoid_: 明细 CSV、交易明细
 _Avoid_: 执行指标、交易指标
 
 **Trading Process Feature (交易过程特征)**:
-Agent 侧动作执行后的实时交易状态输入，由归一化 signed position exposure 和当前持仓的收益率/最大回撤率组成。
+Agent 侧动作执行后的实时交易状态输入，由归一化 signed position exposure、当前持仓的收益率/最大回撤率和当前持仓时长组成。
 _Avoid_: 交易特征、过程特征、3 个比率特征
 
 **Previous Action**:
@@ -273,63 +273,27 @@ _Avoid_: 交易特征、过程特征、3 个比率特征
 _Avoid_: 上一条交易命令、完整交易状态
 
 **当前持仓 (Current Holding)**:
-从 position 由 0 变为非 0 或持仓方向改变时开始，并在平仓到 0 或持仓方向再次改变时结束的一笔交易；同方向加仓或减仓不结束当前持仓。
+从 position 由 0 变为非 0 或持仓方向改变时开始，并在平仓到 0 或持仓方向再次改变时结束的一段方向性风险暴露；同方向加仓或减仓不结束当前持仓。
 _Avoid_: 未平仓交易、连续非零仓位
+
+**当前持仓时长 (Current Holding Duration)**:
+当前持仓已持续的 env step 数；空仓为 0，开仓后的第一个可观测状态为 1，同方向持仓、加仓或减仓每经过一个 env step 继续累加，平仓归 0，反手后新方向从 1 开始。
+_Avoid_: 全局 episode 时间、自然时间持仓时长、订单批次年龄
+
+**current_holding_duration_norm**:
+`trading_info` 中表示当前持仓时长的归一化字段，取值为 `min(current_holding_duration / holding_duration_norm_steps, 1.0)`。
+_Avoid_: current_holding_duration、holding_time、holding_length
+
+**持仓时长归一化窗口 (Holding Duration Normalization Window)**:
+将当前持仓时长传递给模型前使用的 env step 尺度参数；归一化值为 `min(current_holding_duration / window, 1.0)`，默认窗口为 180 个 env step。
+_Avoid_: 固定 180 分钟、交易日内进度、未截断持仓时长
 
 **Experiment Name**:
 Stage I 串行训练的实验名参数，用于隔离模型输出和日志目录。
 _Avoid_: 实验名、实验标识
 
-### 交易动作
+### Trading Actions
 
 **Reverse Position (反手)**:
-在一步内先平掉当前仓位再反向开仓的动作；持多时先平多后开空，持空时先平空后开多；采用 best-effort 语义，平仓一定成功，反向开仓可能因保证金不足或深度不足而失败（position 归零或截断到 position_list 中最大可行值）；通过 `allow_reverse_position` 开关控制，默认关闭。
+在一步内先平掉当前仓位再反向开仓的动作；持多时先平多后开空，持空时先平空后开多；采用 best-effort 语义，平仓一定成功，反向开仓可能因保证金不足或深度不足而失败。
 _Avoid_: 翻仓、仓位翻转、flip position
-
-## Relationships
-
-- 一个 **主力合约 Summary** 包含多个 **主力合约**，每个合约有 **交易日** 窗口和 **事件时间戳**
-- **主力合约日文件** 是 **主力合约** 按 **交易日** 拆分的输出，供 **下采样** 消费
-- **下采样** 使用 **右闭右标窗口** 从秒级快照生成目标频率 bar
-- **截面特征** + **时间特征** → **Feature Selection** → **Feature Selection Manifest** → **State Feature**
-- **Feature Union** 合并多合约 **State Feature** 为品种级列表，输出 **Feature Union Manifest**
-- **State Feature** → **Scale Save** → **Scale Manifest**，前后执行 **NaN 校验**
-- **Dataset Split** → **Dataset Manifest** → **Train Slice** + **Valid 动态切片**
-- **Stage I** 训练低层 agent → **Stage II** 筛选 agent 并训练 VAE → **Stage III** 路由
-- **Full-df Warmup** 使用 **Qtable 预计算** 生成 **DP Expert Action Path**
-- **VAE 跨合约训练** 合并多合约数据 → **VAE Training Manifest** → **Label Summary** → **Routing Summary**
-- **Aggregate CSV** 和 **Detail CSV** 使用 **Execution Metrics**
-- **单边盘口** 和 **涨跌停价** 属于 **Reward/Execution 列**，不进入 **State Feature**
-- **Trading Process Feature** 与 **State Feature** 互补，前者描述 agent 当前持仓暴露和风险收益状态，后者描述市场状态。
-- **Trading Process Feature** 中的 single_holding_return_rate 和 single_holding_max_drawdown 属于 **当前持仓**，平仓或持仓方向改变都会结束当前这一笔交易。
-- **Trading Process Feature** 表示动作执行后的可观测状态，空仓、正常平仓和爆仓后的风险收益字段均为 0。
-- **Previous Action** 与 **Trading Process Feature** 互补：前者是当前 position/leverage 的 action-space 编码，后者保留归一化 signed exposure 和当前持仓风险收益。
-
-## Example dialogue
-
-> **Dev:** "商品期货的 mark_price 用什么计算？"
-> **Domain expert:** "商品期货用 **参考价**，优先取 LastPrice，回退到 midprice。不使用真实的 mark price 或 index price。"
-
-> **Dev:** "为什么 valid 阶段有的合约没有 feather 文件？"
-> **Domain expert:** "那是 **Skipped Contract**，在 valid 集合没有命中交易日。Dataset Manifest 会记录跳过原因，Scale Save 不要求为缺失的 valid 文件生成输出。"
-
-> **Dev:** "OFI 和 microstructure 特征有什么区别？"
-> **Domain expert:** "**OFI** 从五档快照计算订单流不平衡，按固定行数窗口聚合。**Microstructure 特征** 从一档快照派生 microprice pressure、spread 变化和 queue pressure，也是独立固定行窗口。两者互不包含，也不改变现有时间窗口 quote 下采样输出。"
-
-> **Dev:** "VAE 训练为什么要跨合约合并数据？"
-> **Domain expert:** "商品期货单个合约的训练数据量可能不足，**VAE 跨合约训练** 将同一品种多个合约的训练数据合并为统一训练集，校验特征维度一致性后物化。输出 **VAE Training Manifest** 记录每个合约的样本数和缺失情况，确保可追溯。"
-
-> **Dev:** "position exposure 能和 return_rate 一起叫 3 个比率特征吗？"
-> **Domain expert:** "不能。position exposure 是由原始 position 归一化得到的 signed exposure，只有 single_holding_return_rate 和 single_holding_max_drawdown 是当前持仓的比率型风险收益特征；三者合称 **Trading Process Feature**。"
-
-> **Dev:** "加仓后 single_holding_return_rate 要重新开始算吗？"
-> **Domain expert:** "不会。同方向加仓或减仓仍然延续同一笔 **当前持仓**；只有平仓或持仓方向改变才会结束当前持仓。"
-
-## Flagged ambiguities
-
-- "主力合约" 在旧代码中可能指"月度成交量最高的合约"或"连续主力拼接后的数据"——已统一为"按月度 top 2 + 高成交量天数入选的合约集合"。
-- "IC" 在 feature selection 中可能指 Pearson IC 或 Rank IC——已明确 IC 为 Pearson correlation，RankIC 为 rank correlation。
-- "pretrain" 可能指 sample-level pretrain 或 full-df warmup——已明确 full-df warmup 是训练前的独立阶段，pretrain_epoch 默认为 0。
-- "3 个比率特征" 会误把 position exposure 当作收益/风险比率——已统一为 **Trading Process Feature**：1 个归一化 signed position exposure + 2 个当前持仓比率型风险收益特征。
-- "这笔交易" 的边界不清——已统一为 **当前持仓**，同方向变仓不结束，平仓或持仓方向改变时结束。
-- "`previous_action`" 容易被误读为上一条交易命令——已明确为当前 position/leverage 的 action-space 编码。
