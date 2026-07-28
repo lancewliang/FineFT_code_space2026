@@ -16,9 +16,9 @@ export PYTHONPATH="${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
 python -u FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py \
     --base_path dataset/10min \
     --dataset_name fu --experiment_name "${EXPERIMENT_NAME}" \
-    --initial_wallet_balance 10000 --batch_size 1024 --update_times=30 \
+    --initial_wallet_balance 10000 --batch_size 2048 --update_times=30 \
     --max_holding_number 1 --short_estimated_rate 0 --long_estimated_rate 0 \
-    --position_choices 3 --transcation_cost 0.0002 --n_step 12 --gamma 0.99 \
+    --position_choices 3 --transcation_cost 0.0003 --n_step 12 --gamma 0.99 \
     --order_book_depth 5 --early_stop 2 \
     --pretrain_epoch 100 --lr_init 0.0005 --epsilon_min 0.05 \
     --ada_min 2.0 --ada_step 8000000 \

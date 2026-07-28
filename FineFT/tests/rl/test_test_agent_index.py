@@ -404,3 +404,14 @@ def test_weighted_trader_handles_nested_contract_label_directories(
     label_2_records = [row for row in result if row["label"] == "label_2"]
     assert label_2_records[0]["contract"] == ["fu2507"]
     assert label_2_records[0]["df_path"] == ["fu2507/label_2/df_0.feather"]
+
+
+
+def test_parser_allow_reverse_position_default_and_flag():
+    from RL.DiHFT.low_level import test_agent_index as tai
+
+    args_default = tai.parser.parse_args([])
+    assert args_default.allow_reverse_position is False
+
+    args_flag = tai.parser.parse_args(["--allow_reverse_position"])
+    assert args_flag.allow_reverse_position is True

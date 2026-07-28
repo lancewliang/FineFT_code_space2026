@@ -5,14 +5,14 @@ function run_ddqn_context {
     local epoch_end=$4
     local base_path=$5
     local experiment_name=$6
-    local ensemble_number=${ENSEMBLE_NUMBER:-5}
+    local ensemble_number=${ENSEMBLE_NUMBER:-7}
     ROOTPATH=${ROOTPATH:-$(pwd)}
     cd "$ROOTPATH"
     # 检查并创建日志目录
     log_dir="log/DiHFT/${dataset_name}/low_level/test/${experiment_name}"
     mkdir -p "${log_dir}"
     export PYTHONPATH="${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
-    local max_parallel=4
+    local max_parallel=2
     # 保存PID的数组
     pids=()
 
@@ -24,7 +24,8 @@ function run_ddqn_context {
             --base_path "${base_path}" \
             --dataset_name "${dataset_name}" --experiment_name "${experiment_name}" \
             --max_holding_number "${max_holding_number}" --initial_wallet_balance 10000 --order_book_depth 5 \
-            --epoch_num "${epoch}" --position_choices 3 --N "${ensemble_number}" --transcation_cost 0.0004 --short_estimated_rate 0 --long_estimated_rate 0 \
+            --epoch_num "${epoch}" --position_choices 5 --N "${ensemble_number}" --transcation_cost 0.0004 --short_estimated_rate 0 --long_estimated_rate 0 \
+            --allow_reverse_position \
             >"${log_dir}/epoch_${epoch}.log" 2>&1 &
         pids+=($!) # 将每个后台进程的PID添加到数组中
 
@@ -93,11 +94,11 @@ function run_ddqn_average {
 #run_ddqn_context fu 1 30 100 dataset/5min 5min_nstep6_costw5
 
 DATASET_NAME=${DATASET_NAME:-fu}
-MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-1}
-EPOCH_START=${EPOCH_START:-1}
-EPOCH_END=${EPOCH_END:-60}
-BASE_PATH=${BASE_PATH:-dataset/10min}
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-10min_nstep6_costw5}
+MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-2}
+EPOCH_START=${EPOCH_START:-11}
+EPOCH_END=${EPOCH_END:-100}
+BASE_PATH=${BASE_PATH:-dataset/30min}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-30min_multi}
 
 run_ddqn_context "${DATASET_NAME}" "${MAX_HOLDING_NUMBER}" "${EPOCH_START}" "${EPOCH_END}" "${BASE_PATH}" "${EXPERIMENT_NAME}"
 

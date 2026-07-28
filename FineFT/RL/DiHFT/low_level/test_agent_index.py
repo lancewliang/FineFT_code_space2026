@@ -178,6 +178,11 @@ parser.add_argument(
     action="store_true",
     help="write per-step trading detail CSV for the tested epoch",
 )
+parser.add_argument(
+    "--allow_reverse_position",
+    action="store_true",
+    help="allow direct position reversal from long to short or vice versa",
+)
 
 def build_serial_model_path(result_path, dataset_name, experiment_name):
     return os.path.join(
@@ -440,6 +445,7 @@ class weighted_trader:
         self.long_estimated_rate = args.long_estimated_rate
         self.short_estimated_rate = args.short_estimated_rate
         self.transcation_cost = args.transcation_cost
+        self.allow_reverse_position = getattr(args, "allow_reverse_position", False)
         self.early_stop = args.early_stop
         self.initial_wallet_balance = args.initial_wallet_balance
         self.initial_margin = args.initial_margin
@@ -580,6 +586,7 @@ class weighted_trader:
                             early_stop=0,
                             # initial_personal_state
                             initial_state=self.initial_state,
+                            allow_reverse_position=getattr(self, "allow_reverse_position", False),
                         )
                         s, info = test_env.reset()
                         done = False
