@@ -277,7 +277,7 @@ def maybe_write_routing_summary_after_analysis(args):
         path.stem[len("test_") :]
         for path in sorted(test_dir.glob("test_*.npy"), key=lambda item: item.name)
     ]
-    result_root = os.path.join(args.base_model_path, "vae_results", args.dataset_name)
+    result_root = os.path.join(args.base_model_path, "vae_results", args.dataset_name, args.experiment_name)
     for label in labels:
         for contract in contracts:
             logpx_path = os.path.join(result_root, label, f"ood_logpx_{contract}.npy")

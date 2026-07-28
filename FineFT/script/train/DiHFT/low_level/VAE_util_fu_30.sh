@@ -6,9 +6,9 @@ ROOTPATH=${ROOTPATH:-$(pwd)}
 cd "$ROOTPATH"
 
 DATASET_NAME=${DATASET_NAME:-fu}
-DATA_BASE_PATH=${DATA_BASE_PATH:-dataset/10min}
+DATA_BASE_PATH=${DATA_BASE_PATH:-dataset/30min}
 LABEL_COUNT=${LABEL_COUNT:-5}
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-default}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-30min}
 MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS:-2}
 
 if ! [[ "${MAX_PARALLEL_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
@@ -52,6 +52,7 @@ for label_index in $(seq 0 $((LABEL_COUNT - 1))); do
         --dataset_name "${DATASET_NAME}" \
         --data_base_path "${DATA_BASE_PATH}" \
         --label_index "${label_index}" \
+        --experiment_name "${EXPERIMENT_NAME}" \
         --train \
         >"${log_dir}/train_label_${label_index}.log" 2>&1 &
     pids+=("$!")

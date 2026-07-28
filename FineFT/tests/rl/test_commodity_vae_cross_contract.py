@@ -464,7 +464,7 @@ def test_fu_vae_shell_limits_parallel_training_jobs(tmp_path):
         / "train"
         / "DiHFT"
         / "low_level"
-        / "VAE_util_fu.sh"
+        / "VAE_util_fu_30.sh"
     )
     assert "--routing-summary" not in script_path.read_text(encoding="utf-8")
     bin_dir = tmp_path / "bin"
@@ -550,7 +550,7 @@ def test_fu_vae_shell_rejects_invalid_parallel_job_limit(tmp_path):
         / "train"
         / "DiHFT"
         / "low_level"
-        / "VAE_util_fu.sh"
+        / "VAE_util_fu_30.sh"
     )
     env = os.environ.copy()
     env["ROOTPATH"] = str(FINEFT_ROOT.parent)
@@ -577,7 +577,7 @@ def test_fu_vae_shell_returns_failure_when_any_training_job_fails(tmp_path):
         / "train"
         / "DiHFT"
         / "low_level"
-        / "VAE_util_fu.sh"
+        / "VAE_util_fu_30.sh"
     )
     bin_dir = tmp_path / "bin"
     conda_base = tmp_path / "conda"

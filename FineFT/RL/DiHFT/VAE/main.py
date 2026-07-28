@@ -156,7 +156,12 @@ parser.add_argument(
     default=0.2,
     help="interval of z2 for plot-reproduce-result (default: 0.2)",
 )
-
+parser.add_argument(
+    "--experiment_name",
+    type=str,
+    default="default",
+    help="experiment name used to namespace serial training outputs",
+)
 def discover_test_sources(data_base_path, dataset_name):
     root = vae_data_dir(data_base_path, dataset_name)
     test_dir = root / "test"
@@ -184,6 +189,7 @@ class Piplineruner:
             args.base_model_path,
             "vae_results",
             self.args.dataset_name,
+            self.args.experiment_name,
             label_name,
         )
         self.args.single_label_save_path = self.single_label_save_path
