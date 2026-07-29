@@ -20,6 +20,12 @@ parser_all.add_argument(
     help="training data chunk",
 )
 parser_all.add_argument(
+    "--experiment_name",
+    type=str,
+    default="default",
+    help="experiment name",
+)
+parser_all.add_argument(
     "--max_holding_number",
     type=float,
     default=8,
@@ -63,6 +69,11 @@ parser_all.add_argument(
     default=0.5,
     help="the transcation cost of not holding the same action as before",
 )
+parser_all.add_argument(
+    "--allow_reverse_position",
+    action="store_true",
+    help="allow reverse position in single step",
+)
 
 
 def seed_torch(seed):
@@ -82,6 +93,12 @@ def tune(args_1, args_2):
     seed_torch(12345)
     args_1.dataset_name = args_2.dataset_name
     args_1.max_holding_number = args_2.max_holding_number
+    args_1.experiment_name = getattr(
+        args_2, "experiment_name", "default"
+    ) or getattr(args_1, "experiment_name", "default")
+    args_1.allow_reverse_position = getattr(
+        args_2, "allow_reverse_position", False
+    ) or getattr(args_1, "allow_reverse_position", False)
     print("change parameters:", args_1, args_2)
 
     def objective(trail):
@@ -111,8 +128,11 @@ def tune(args_1, args_2):
     print("BEST TRAIL: ", study.best_trial.params)
     df = study.trials_dataframe()
     optunal_path = os.path.join(
-        "result/DiHFT/high_level/", args_1.dataset_name, "vae_risk_aware_routing_optuna"
-    )
+            "result/DiHFT/high_level/",
+            args_1.dataset_name,
+            args_1.experiment_name,
+            "vae_risk_aware_routing_optuna",
+        )
     if not os.path.exists(optunal_path):
         os.makedirs(optunal_path)
     df.to_csv(os.path.join(optunal_path, "optuna_results.csv"))

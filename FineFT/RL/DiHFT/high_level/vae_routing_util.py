@@ -48,6 +48,12 @@ parser.add_argument(
     help="training data chunk",
 )
 parser.add_argument(
+    "--experiment_name",
+    type=str,
+    default="default",
+    help="experiment name",
+)
+parser.add_argument(
     "--max_holding_number",
     type=float,
     default=8,
@@ -120,6 +126,11 @@ parser.add_argument(
     type=float,
     default=5,
     help="initial leverage",
+)
+parser.add_argument(
+    "--allow_reverse_position",
+    action="store_true",
+    help="allow reverse position in single step",
 )
 # low level network setting
 parser.add_argument(
@@ -237,11 +248,14 @@ class vae_risk_aware_routing:
         self.gamma = args.gamma
         self.rule_base_threshold = args.rule_base_threshold
         self.window_length = args.window_length
+        self.experiment_name = getattr(args, "experiment_name", "default")
         self.model_path = os.path.join(
-            args.result_path,
-            args.dataset_name,
-            "vae_risk_aware_routing",
-        )
+                args.result_path,
+                args.dataset_name,
+                self.experiment_name,
+                "vae_risk_aware_routing",
+            )
+  
 
         self.test_path = os.path.join(
             self.model_path,
@@ -255,6 +269,7 @@ class vae_risk_aware_routing:
         # trading environment setting
         self.base_path = args.base_path
         self.dataset_name = args.dataset_name
+        self.allow_reverse_position = getattr(args, "allow_reverse_position", False)
         self.test_data_path = os.path.join(
             self.base_path, self.dataset_name, "valid.feather"
         )
@@ -322,14 +337,14 @@ class vae_risk_aware_routing:
             ensemble_number=self.N,
         ).to(self.device)
         self.low_level_path = args.low_level_path
+        low_level_model_path = os.path.join(
+            self.low_level_path,
+            self.dataset_name,
+            self.experiment_name,
+            "model.pth",
+        )
         self.low_level_network.load_state_dict(
-            torch.load(
-                os.path.join(
-                    self.low_level_path,
-                    self.dataset_name,
-                    "model.pth",
-                )
-            )
+            torch.load(low_level_model_path)
         )
         self.low_level_network.to(self.device)
         self.low_level_network.eval()
@@ -339,7 +354,11 @@ class vae_risk_aware_routing:
         # label vae
         # VAE network path
         self.label_number = args.label_number
-        self.vae_path = os.path.join(args.vae_path, self.dataset_name)
+        vae_path_exp = os.path.join(args.vae_path, self.dataset_name, self.experiment_name)
+        if os.path.exists(vae_path_exp):
+            self.vae_path = vae_path_exp
+        else:
+            self.vae_path = os.path.join(args.vae_path, self.dataset_name)
         label_list = ["label_{}".format(i) for i in range(args.label_number)]
         self.vae_model_path_list = [
             os.path.join(self.vae_path, label, "model_latest.pth")
@@ -483,6 +502,7 @@ class vae_risk_aware_routing:
             early_stop=self.early_stop,
             # initial_personal_state
             initial_state=self.initial_state,
+            allow_reverse_position=self.allow_reverse_position,
         )
         s, info = env.reset()
         episode_reward_sum = 0
