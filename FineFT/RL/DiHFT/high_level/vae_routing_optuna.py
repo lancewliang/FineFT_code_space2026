@@ -141,7 +141,7 @@ def tune(args_1, args_2):
 if __name__ == "__main__":
     from RL.DiHFT.high_level.vae_routing_util import parser
 
-    args_1 = parser.parse_args()
-    args_2 = parser_all.parse_args()
+    args_1, _ = parser.parse_known_args()
+    args_2, _ = parser_all.parse_known_args()
     tune(args_1, args_2)
     print("Done!")
