@@ -287,6 +287,10 @@ def test_write_contract_logpx_outputs_includes_enhanced_summary_metrics(tmp_path
 
     assert isinstance(summary, LabelSummary)
     summary_file = json.loads((save_path / "summary.json").read_text())
+    np.testing.assert_array_equal(
+        np.load(save_path / "id_logpx.npy"),
+        np.array([-10.0, -8.0, -6.0, -4.0]),
+    )
     assert summary_file == summary.to_dict()
     assert summary.train_baseline is not None
     assert summary.train_baseline.source_file.endswith("label_0.npy")
@@ -418,7 +422,7 @@ def test_main_writes_routing_summary_after_analysis_when_all_labels_ready(tmp_pa
     vae_dir = _vae_dir(tmp_path)
     _save(vae_dir / "test" / "test_fu2508.npy", [[1.0, 2.0]])
     _save(vae_dir / "test" / "test_fu2509.npy", [[3.0, 4.0]])
-    result_root = tmp_path / "result" / "DiHFT" / "vae_results" / "fu"
+    result_root = tmp_path / "result" / "DiHFT" / "vae_results" / "fu" / "10min"
     for label, values in {
         "label_0": {
             "fu2508": [-1.0],
@@ -439,6 +443,8 @@ def test_main_writes_routing_summary_after_analysis_when_all_labels_ready(tmp_pa
             "fu",
             "--data_base_path",
             str(_dataset_root(tmp_path)),
+            "--experiment_name",
+            "10min",
             "--base_model_path",
             str(tmp_path / "result" / "DiHFT"),
             "--total_label_number",

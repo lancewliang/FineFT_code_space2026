@@ -113,6 +113,7 @@ def write_contract_logpx_outputs(
     train_summary = None
     if train_baseline is not None:
         train_logpx = np.asarray(train_baseline.logpx, dtype=float).reshape(-1)
+        np.save(os.path.join(save_path, "id_logpx.npy"), train_logpx)
         train_summary = ContractLogpxSummary(
             source_file=train_baseline.source_file,
             summary=LogpxSummary(

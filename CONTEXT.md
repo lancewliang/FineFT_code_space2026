@@ -190,6 +190,10 @@ _Avoid_: 训练切片、训练分块
 对 valid 阶段数据逐合约执行市场动态标签切片，输出 `valid/<contract>/label_*/df_*.feather`。
 _Avoid_: 验证切片、验证分块
 
+**合约级 Valid Feature (Contract-level Valid Feature)**:
+valid 阶段按合约保存的完整特征文件，路径格式为 `valid/<contract>.feather`，用于合约级回测或路由评估。
+_Avoid_: valid 特征、验证集 feature（不明确时）
+
 ### Reinforcement Learning Pipeline
 
 **Stage I (低层训练)**:
