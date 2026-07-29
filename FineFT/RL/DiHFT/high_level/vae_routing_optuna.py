@@ -32,6 +32,12 @@ parser_all.add_argument(
     help="the transcation cost of not holding the same action as before",
 )
 parser_all.add_argument(
+    "--order_book_depth",
+    type=int,
+    default=25,
+    help="number of bid/ask price levels available in the order book",
+)
+parser_all.add_argument(
     "--window_length_max",
     type=int,
     default=150,
@@ -93,6 +99,7 @@ def tune(args_1, args_2):
     seed_torch(12345)
     args_1.dataset_name = args_2.dataset_name
     args_1.max_holding_number = args_2.max_holding_number
+    args_1.order_book_depth = args_2.order_book_depth
     args_1.experiment_name = getattr(
         args_2, "experiment_name", "default"
     ) or getattr(args_1, "experiment_name", "default")

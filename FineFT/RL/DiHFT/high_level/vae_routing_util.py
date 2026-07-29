@@ -128,6 +128,12 @@ parser.add_argument(
     help="initial leverage",
 )
 parser.add_argument(
+    "--order_book_depth",
+    type=int,
+    default=25,
+    help="number of bid/ask price levels available in the order book",
+)
+parser.add_argument(
     "--allow_reverse_position",
     action="store_true",
     help="allow reverse position in single step",
@@ -270,6 +276,7 @@ class vae_risk_aware_routing:
         self.base_path = args.base_path
         self.dataset_name = args.dataset_name
         self.allow_reverse_position = getattr(args, "allow_reverse_position", False)
+        self.valid_data_path = os.path.join(self.base_path, self.dataset_name, "valid")
         self.test_data_path = os.path.join(
             self.base_path, self.dataset_name, "valid.feather"
         )
@@ -307,6 +314,7 @@ class vae_risk_aware_routing:
         self.initial_unrealized_pnL = args.initial_unrealized_pnL
         self.initial_position = args.initial_position
         self.initial_leverage = args.initial_leverage
+        self.order_book_depth = args.order_book_depth
         self.initial_state = (
             self.initial_wallet_balance,
             self.initial_margin,
@@ -386,6 +394,23 @@ class vae_risk_aware_routing:
         ]
         self.action = self.zero_position_action
         self.macro_action_history = []
+
+    def reset_routing_state(self):
+        self.quantiles_list = [
+            deque(maxlen=self.window_length) for i in range(self.label_number)
+        ]
+        self.action = self.zero_position_action
+        self.macro_action_history = []
+
+    def valid_contract_files(self):
+        if not os.path.isdir(self.valid_data_path):
+            return []
+        contract_files = []
+        for filename in sorted(os.listdir(self.valid_data_path)):
+            path = os.path.join(self.valid_data_path, filename)
+            if os.path.isfile(path) and filename.endswith(".feather"):
+                contract_files.append((os.path.splitext(filename)[0], path))
+        return contract_files
 
     def find_quantile(self, value, array):
         sorted_array = np.sort(array)
@@ -484,8 +509,8 @@ class vae_risk_aware_routing:
 
         return action
 
-    def test(self):
-        self.df = pd.read_feather(self.test_data_path)
+    def run_single_valid_df(self, df, save_path):
+        self.df = df
         env = initiate_base_env(
             df=self.df,
             feature_list=self.tech_indicator_list,
@@ -502,6 +527,7 @@ class vae_risk_aware_routing:
             early_stop=self.early_stop,
             # initial_personal_state
             initial_state=self.initial_state,
+            order_book_depth=self.order_book_depth,
             allow_reverse_position=self.allow_reverse_position,
         )
         s, info = env.reset()
@@ -523,37 +549,39 @@ class vae_risk_aware_routing:
             "return rate": total_asset_history[-1] / self.initial_wallet_balance
         }
 
-        np.save(os.path.join(self.test_path, "reward_history.npy"), reward_history)
+        if not os.path.exists(save_path):
+            os.makedirs(save_path, exist_ok=True)
+        np.save(os.path.join(save_path, "reward_history.npy"), reward_history)
         np.save(
-            os.path.join(self.test_path, "total_asset_history.npy"), total_asset_history
+            os.path.join(save_path, "total_asset_history.npy"), total_asset_history
         )
         np.save(
-            os.path.join(self.test_path, "micro_action_history.npy"),
+            os.path.join(save_path, "micro_action_history.npy"),
             micro_action_history,
         )
-        np.save(os.path.join(self.test_path, "trading_info.npy"), trading_info)
+        np.save(os.path.join(save_path, "trading_info.npy"), trading_info)
         np.save(
-            os.path.join(self.test_path, "initial_margin_history.npy"),
+            os.path.join(save_path, "initial_margin_history.npy"),
             env.initial_margin_history,
         )
         np.save(
-            os.path.join(self.test_path, "wallet_balance_history.npy"),
+            os.path.join(save_path, "wallet_balance_history.npy"),
             env.wallet_balance_history,
         )
         np.save(
-            os.path.join(self.test_path, "unrealized_pnl_history.npy"),
+            os.path.join(save_path, "unrealized_pnl_history.npy"),
             env.unrealized_pnl_history,
         )
         np.save(
-            os.path.join(self.test_path, "maintain_marigine_history.npy"),
+            os.path.join(save_path, "maintain_marigine_history.npy"),
             env.maintain_marigine_history,
         )
         np.save(
-            os.path.join(self.test_path, "new_position_required_money_history.npy"),
+            os.path.join(save_path, "new_position_required_money_history.npy"),
             env.new_position_required_money_history,
         )
         np.save(
-            os.path.join(self.test_path, "macro_action.npy"),
+            os.path.join(save_path, "macro_action.npy"),
             self.macro_action_history,
         )
         require_money = calculate_required_money(
@@ -565,6 +593,54 @@ class vae_risk_aware_routing:
         )
         reward_sum = np.sum(reward_history)
         self.return_rate = reward_sum / (require_money + 1e-12)
+        return {
+            "rows": len(self.df),
+            "reward_sum": float(reward_sum),
+            "require_money": float(require_money),
+            "return_rate": float(self.return_rate),
+        }
+
+    def test(self):
+        contract_files = self.valid_contract_files()
+        if not contract_files:
+            self.reset_routing_state()
+            result = self.run_single_valid_df(
+                pd.read_feather(self.test_data_path), self.test_path
+            )
+            return result["return_rate"]
+
+        contract_results = []
+        for contract, path in contract_files:
+            self.reset_routing_state()
+            result = self.run_single_valid_df(
+                pd.read_feather(path),
+                os.path.join(self.test_path, "contracts", contract),
+            )
+            result["contract"] = contract
+            result["source_file"] = path
+            contract_results.append(result)
+
+        result_df = pd.DataFrame(contract_results)
+        result_df = result_df[
+            [
+                "contract",
+                "source_file",
+                "rows",
+                "reward_sum",
+                "require_money",
+                "return_rate",
+            ]
+        ]
+        result_df.to_csv(
+            os.path.join(self.test_path, "contract_results.csv"), index=False
+        )
+        self.return_rate = float(result_df["return_rate"].mean())
+        trading_info = {
+            "return_rate": self.return_rate,
+            "aggregation": "equal_weighted_contract_mean",
+            "contract_count": len(contract_results),
+        }
+        np.save(os.path.join(self.test_path, "trading_info.npy"), trading_info)
         return self.return_rate
 
     def initial_rollout(self, env: Base_Env, s, info):
