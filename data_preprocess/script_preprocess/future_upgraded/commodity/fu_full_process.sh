@@ -323,6 +323,11 @@ run_commodity_cross_month_feature_process() {
     current_date=$(date -I -d "$start_date")
     local process_count=0
     while [ "$current_date" != "$end_date" ]; do
+        if ! commodity_downscale_outputs_exist "$root_path" "$symbol" "$target_freq" "$current_date" "$contract"; then
+            echo "Skipping commodity cross-month feature date with missing downscale outputs: symbol=${symbol} contract=${contract} date=${current_date}"
+            current_date=$(date -I -d "$current_date + 1 day")
+            continue
+        fi
         local log_dir="log_futures/cross_month_feature/${target_freq}/${symbol}/${contract}"
         mkdir -p "$log_dir"
         PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" nohup python -u -m operator_futures.commodity.cross_month_feature \

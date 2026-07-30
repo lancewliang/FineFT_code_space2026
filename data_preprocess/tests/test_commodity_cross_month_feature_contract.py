@@ -169,18 +169,18 @@ def test_resolve_previous_main_sub_role_avoids_same_day_role_leakage():
     assert resolved.sub_contract == "fu2602"
 
 
-def test_resolve_previous_main_sub_role_fails_without_prior_roles():
-    with pytest.raises(ValueError, match="previous"):
-        resolve_previous_main_sub_role(
-            main_sub_roles={
-                "20260105": {
-                    "fu2601": "main",
-                    "fu2602": "sub",
-                }
-            },
-            trading_day="20260105",
-            current_contract="fu2601",
-        )
+def test_resolve_previous_main_sub_role_returns_none_without_prior_roles():
+    res = resolve_previous_main_sub_role(
+        main_sub_roles={
+            "20260105": {
+                "fu2601": "main",
+                "fu2602": "sub",
+            }
+        },
+        trading_day="20260105",
+        current_contract="fu2601",
+    )
+    assert res is None
 
 
 def test_generate_delivery_month_sequence_features_sorts_by_delivery_month():
@@ -393,3 +393,63 @@ def test_write_cross_month_feature_for_day_uses_previous_roles_and_writes_file(t
     assert np.isclose(out["cm_current_main_log_price_ratio"][0], np.log(130.0 / 100.0))
     assert np.isclose(out["cm_current_sub_log_price_ratio"][0], np.log(130.0 / 110.0))
     assert np.isclose(out["cm_m1_m2_log_price_ratio"][0], np.log(100.0 / 110.0))
+
+
+def test_write_cross_month_feature_for_day_fallback_when_no_prior_roles(tmp_path):
+    data_root = tmp_path / "PREPROCESS_DATASET/commodity-futures"
+    summary_path = data_root / "CONTINUOUS_RAW/fu/main_contract_summary.json"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(
+        json.dumps(
+            {
+                "symbol": "fu",
+                "commodity_name": "燃料油",
+                "start_date": "2026-01-05",
+                "end_date": "2026-01-07",
+                "selection_rule": "test",
+                "main_sub_roles": {
+                    "20260105": {
+                        "fu2601": "main",
+                        "fu2605": "sub",
+                    },
+                },
+                "contracts": [
+                    {
+                        "contract": "fu2601",
+                        "last_trading_day": "20260120",
+                        "total_trading_day_count": 20,
+                        "selected_months": ["2026-01"],
+                        "trading_day_count": 1,
+                        "trading_days": [
+                            {
+                                "trading_day": "20260105",
+                                "date": "2026-01-05",
+                                "source_file": "fu2601.csv",
+                                "daily_volume": 100.0,
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _write_base_feature(data_root, "fu", "fu2601", "5min", "2026-01-05", 100.0, 10.0, 100.0)
+
+    output_path = write_cross_month_feature_for_day(
+        root_path=tmp_path,
+        summary_path=summary_path,
+        symbol="fu",
+        contract="fu2601",
+        target_freq="5min",
+        date="2026-01-05",
+    )
+
+    out = pl.read_ipc(output_path)
+    assert out.columns == ["timestamp"] + CROSS_MONTH_FEATURE_COLUMNS
+    assert out["cm_contract_role_main"].to_list() == [0.0, 0.0]
+    assert out["cm_contract_role_sub"].to_list() == [0.0, 0.0]
+    assert out["cm_contract_role_other"].to_list() == [0.0, 0.0]
+    assert out["cm_current_main_log_price_ratio"].to_list() == [0.0, 0.0]
+    assert out["cm_current_sub_log_price_ratio"].to_list() == [0.0, 0.0]

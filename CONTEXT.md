@@ -96,6 +96,22 @@ _Avoid_: 剩余天数、自然日倒计时
 基于历史窗口滚动计算的衍生特征，如移动平均、波动率等。
 _Avoid_: Base_Time_feature、时序特征
 
+**混频状态特征 (Mixed-frequency State Feature)**:
+在目标频率 bar 上注入日级和周级市场状态的 State Feature，包含上一完整周期状态和当前周期截至当前 bar 可见的 period-to-date 状态。
+_Avoid_: 周线因子、日周拼接特征
+
+**上一周期状态特征 (Previous-period State Feature)**:
+仅使用上一完整交易日或上一完整交易周计算的日级或周级状态特征，用于给当前 5min bar 提供已完成周期背景。
+_Avoid_: 昨日特征、上周特征（不明确时）
+
+**Period-to-date 状态特征 (Period-to-date State Feature)**:
+在当前交易日或当前交易周内，从周期开始截至当前目标频率 bar 的可见数据计算的状态特征。
+_Avoid_: 当前日特征、当前周特征（不明确时）
+
+**混频可见性约束 (Mixed-frequency Visibility Rule)**:
+混频状态特征在任一目标频率 bar 上只能使用该 bar 事件时间戳之前或当时已可见的数据，不能使用未来 bar、未完成日终统计或未完成周终统计。
+_Avoid_: forward-fill 周特征、未来可见特征
+
 **风险状态特征 (Risk State Feature)**:
 基于 OHLC 和收益率历史窗口计算的波动率类 State Feature，如 ATR%、Historical Volatility、Rolling Volatility、Parkinson Volatility、Garman-Klass Volatility 和 Realized Volatility。
 _Avoid_: 交易过程特征、账户风险特征

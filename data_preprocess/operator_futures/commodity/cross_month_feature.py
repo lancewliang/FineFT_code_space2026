@@ -84,12 +84,10 @@ def resolve_previous_main_sub_role(
     main_sub_roles: dict[str, dict[str, str]],
     trading_day: str,
     current_contract: str,
-) -> MainSubRoleResolution:
+) -> MainSubRoleResolution | None:
     prior_days = sorted(day for day in main_sub_roles if str(day) < str(trading_day))
     if not prior_days:
-        raise ValueError(
-            f"missing previous main/sub roles before trading_day {trading_day}"
-        )
+        return None
 
     role_trading_day = prior_days[-1]
     roles = main_sub_roles[role_trading_day]
@@ -216,6 +214,16 @@ def generate_delivery_month_sequence_features(
     return pl.DataFrame(rows).select(["timestamp"] + CROSS_MONTH_FEATURE_COLUMNS)
 
 
+def generate_empty_cross_month_features(current_bars: pl.DataFrame) -> pl.DataFrame:
+    _validate_bar_columns("current_bars", current_bars)
+    rows = []
+    for current_row in current_bars.iter_rows(named=True):
+        row = {feature: 0.0 for feature in CROSS_MONTH_FEATURE_COLUMNS}
+        row["timestamp"] = current_row["timestamp"]
+        rows.append(row)
+    return pl.DataFrame(rows).select(["timestamp"] + CROSS_MONTH_FEATURE_COLUMNS)
+
+
 def write_cross_month_feature_for_day(
     *,
     root_path: str | Path,
@@ -244,40 +252,49 @@ def write_cross_month_feature_for_day(
         target_freq=target_freq,
         date=date,
     )
-    main_bars = _read_base_feature(
-        data_root=data_root,
-        symbol=symbol,
-        contract=resolution.main_contract,
-        target_freq=target_freq,
-        date=date,
-    )
-    sub_bars = _read_base_feature(
-        data_root=data_root,
-        symbol=symbol,
-        contract=resolution.sub_contract,
-        target_freq=target_freq,
-        date=date,
-    )
-    main_sub_features = generate_main_sub_cross_month_features(
-        current_contract=contract,
-        current_bars=current_bars,
-        main_contract=resolution.main_contract,
-        main_bars=main_bars,
-        sub_contract=resolution.sub_contract,
-        sub_bars=sub_bars,
-        current_role=resolution.current_role,
-    )
+    if resolution is None:
+        main_sub_features = generate_empty_cross_month_features(current_bars)
+    else:
+        main_bars = _read_base_feature(
+            data_root=data_root,
+            symbol=symbol,
+            contract=resolution.main_contract,
+            target_freq=target_freq,
+            date=date,
+            required=False,
+        )
+        sub_bars = _read_base_feature(
+            data_root=data_root,
+            symbol=symbol,
+            contract=resolution.sub_contract,
+            target_freq=target_freq,
+            date=date,
+            required=False,
+        )
+        main_sub_features = generate_main_sub_cross_month_features(
+            current_contract=contract,
+            current_bars=current_bars,
+            main_contract=resolution.main_contract,
+            main_bars=main_bars,
+            sub_contract=resolution.sub_contract,
+            sub_bars=sub_bars,
+            current_role=resolution.current_role,
+        )
 
     contract_bars = _read_base_features_for_date(
         data_root=data_root,
         symbol=symbol,
         target_freq=target_freq,
         date=date,
+        required=False,
     )
-    delivery_features = generate_delivery_month_sequence_features(
-        current_bars=current_bars,
-        contract_bars=contract_bars,
-    )
+    if len(contract_bars) < 3:
+        delivery_features = generate_empty_cross_month_features(current_bars)
+    else:
+        delivery_features = generate_delivery_month_sequence_features(
+            current_bars=current_bars,
+            contract_bars=contract_bars,
+        )
     output = _merge_feature_frames(main_sub_features, delivery_features)
     validate_cross_month_feature_columns(output.columns)
 
@@ -354,9 +371,19 @@ def _read_base_feature(
     contract: str,
     target_freq: str,
     date: str,
+    required: bool = True,
 ) -> pl.DataFrame:
     path = data_root / "BASE_FEATURE" / symbol / contract / target_freq / f"{date}.feather"
     if not path.exists():
+        if not required:
+            return pl.DataFrame(
+                schema={
+                    "timestamp": pl.Int64,
+                    "close": pl.Float64,
+                    "volume": pl.Float64,
+                    "open_interest": pl.Float64,
+                }
+            )
         raise ValueError(f"missing required BASE_FEATURE file: {path}")
     frame = pl.read_ipc(path)
     _validate_bar_columns(str(path), frame)
@@ -369,15 +396,18 @@ def _read_base_features_for_date(
     symbol: str,
     target_freq: str,
     date: str,
+    required: bool = True,
 ) -> dict[str, pl.DataFrame]:
     root = data_root / "BASE_FEATURE" / symbol
     if not root.exists():
+        if not required:
+            return {}
         raise ValueError(f"missing required BASE_FEATURE symbol directory: {root}")
     frames = {}
     for path in sorted(root.glob(f"*/{target_freq}/{date}.feather")):
         contract = path.parent.parent.name
         frames[contract] = pl.read_ipc(path)
-    if len(frames) < 3:
+    if required and len(frames) < 3:
         raise ValueError(
             f"Delivery Month Sequence Pairing requires at least 3 BASE_FEATURE files for {symbol} {date}"
         )
