@@ -23,6 +23,23 @@ from operator_futures.feature_selection.manifests import (
 )
 
 
+
+def _parse_windows_list(value: list[int | str] | str | None) -> list[int] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = [value]
+    result: list[int] = []
+    for item in value:
+        if isinstance(item, int):
+            result.append(item)
+        elif isinstance(item, str):
+            for part in item.split(","):
+                part = part.strip()
+                if part:
+                    result.append(int(part))
+    return result if result else None
+
 NON_STATE_COLUMNS = {"timestamp", "trading_day", "TradingDay", "symbol", "contract"}
 
 
@@ -421,7 +438,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--windows_list",
         "--windows",
         dest="windows_list",
-        type=int,
         nargs="*",
         default=None,
     )
@@ -441,7 +457,7 @@ def main(argv=None):
         min_abs_ic=args.min_abs_ic,
         max_metric_std=args.max_metric_std,
         max_correlation=args.max_correlation,
-        windows_list=args.windows_list,
+        windows_list=_parse_windows_list(args.windows_list),
         composite_drop_ratio=args.composite_drop_ratio,
         feature_blacklist=args.feature_blacklist,
         mandatory_state_features=args.mandatory_state_features,

@@ -22,7 +22,7 @@ if not logger.handlers:
 
 def build_train_log_path(dataset_name, experiment_name):
     return os.path.join(
-        "log_futures",
+        "log/DiHFT",
         dataset_name,
         "low_level",
         "train",

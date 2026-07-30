@@ -328,7 +328,8 @@ run_commodity_time_feature() {
         --root_path "$root_path" \
         --data_path "PREPROCESS_DATASET/commodity-futures/MERGE_CONCAT/CONCAT_FEATURE/" \
         --save_path "PREPROCESS_DATASET/commodity-futures/TIME_FEATURE/" \
-        --orderbook_depth 5
+        --orderbook_depth 5 \
+        --windows "2,6,12,16,24,48,96,192"
 }
 
 run_commodity_merge_and_clean() {
@@ -391,7 +392,7 @@ run_commodity_feature_selection() {
         --root_path "${root_path}" \
         --split_path "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST" \
         --save_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION" \
-        --symbol "${symbol}" --windows_list 1,2,6,12,24,48,96 \
+        --symbol "${symbol}" --windows_list 1 2 6 12 24 48 96 \
         --target_freq "${target_freq}" \
         --stage "${stage}" \
         --orderbook_depth 5 \

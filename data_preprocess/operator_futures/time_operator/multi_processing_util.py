@@ -459,6 +459,15 @@ def _process_ohlcv_single_window_polars(df: pl.DataFrame, window: int) -> pl.Dat
     previous_returns = close / close.shift(1)
     previous_volume = (volume / volume.shift(1) + 1).log()
     shift = (previous_returns - 1).abs() * volume
+    high_w = pl.col("high").rolling_max(window)
+    low_w = pl.col("low").rolling_min(window)
+    pivot_pp = (high_w + low_w + close) / 3.0
+    pivot_r1 = 2.0 * pivot_pp - low_w
+    pivot_s1 = 2.0 * pivot_pp - high_w
+    pivot_r2 = pivot_pp + (high_w - low_w)
+    pivot_s2 = pivot_pp - (high_w - low_w)
+    bollinger_upper = pl.col("__close_mean") + 2.0 * pl.col("__close_std_raw")
+    bollinger_lower = pl.col("__close_mean") - 2.0 * pl.col("__close_std_raw")
     high_arg = _rolling_arg("high", window, f"imax_{window}", np.argmax)
     low_arg = _rolling_arg("low", window, f"imin_{window}", np.argmin)
 
@@ -468,6 +477,14 @@ def _process_ohlcv_single_window_polars(df: pl.DataFrame, window: int) -> pl.Dat
         (close_shift / (close + min_value)).alias(f"roc_{window}"),
         (pl.col("__close_mean") / (close + min_value)).alias(f"ma_{window}"),
         (pl.col("__close_std_raw") / (close + min_value)).alias(f"std_{window}"),
+        (4.0 * pl.col("__close_std_raw") / (pl.col("__close_mean") + min_value)).alias(f"bollinger_bandwidth_{window}"),
+        (bollinger_upper / (close + min_value)).alias(f"bollinger_upper_{window}"),
+        (bollinger_lower / (close + min_value)).alias(f"bollinger_lower_{window}"),
+        (pivot_pp / (close + min_value)).alias(f"pivot_pp_{window}"),
+        (pivot_r1 / (close + min_value)).alias(f"pivot_r1_{window}"),
+        (pivot_s1 / (close + min_value)).alias(f"pivot_s1_{window}"),
+        (pivot_r2 / (close + min_value)).alias(f"pivot_r2_{window}"),
+        (pivot_s2 / (close + min_value)).alias(f"pivot_s2_{window}"),
         ((close_shift - close) / (window * (close + min_value))).alias(f"beta_{window}"),
         (close.rolling_max(window) / (close + min_value)).alias(f"max_{window}"),
         (close.rolling_min(window) / (close + min_value)).alias(f"min_{window}"),
@@ -530,6 +547,15 @@ def _process_ohlc_single_window_polars(df: pl.DataFrame, window: int) -> pl.Data
     close_q80 = close.rolling_quantile(0.8, interpolation="linear", window_size=window)
     close_q20 = close.rolling_quantile(0.2, interpolation="linear", window_size=window)
     close_rank = _rolling_rank_pct("close", window, f"rank_{window}")
+    high_w = pl.col("high").rolling_max(window)
+    low_w = pl.col("low").rolling_min(window)
+    pivot_pp = (high_w + low_w + close) / 3.0
+    pivot_r1 = 2.0 * pivot_pp - low_w
+    pivot_s1 = 2.0 * pivot_pp - high_w
+    pivot_r2 = pivot_pp + (high_w - low_w)
+    pivot_s2 = pivot_pp - (high_w - low_w)
+    bollinger_upper = pl.col("__close_mean") + 2.0 * pl.col("__close_std_raw")
+    bollinger_lower = pl.col("__close_mean") - 2.0 * pl.col("__close_std_raw")
     high_rank = pl.col("high").rolling_map(
         lambda values: float(np.argmax(np.asarray(values))) / window,
         window_size=window,
@@ -546,6 +572,14 @@ def _process_ohlc_single_window_polars(df: pl.DataFrame, window: int) -> pl.Data
         (close_rolling / close).alias(f"ma_{window}"),
         (close_rolling / close_std).alias(f"ma_{window}_std_norm"),
         (pl.col("__close_std_raw") / close).alias(f"std_{window}"),
+        (4.0 * pl.col("__close_std_raw") / (pl.col("__close_mean") + min_value)).alias(f"bollinger_bandwidth_{window}"),
+        (bollinger_upper / (close + min_value)).alias(f"bollinger_upper_{window}"),
+        (bollinger_lower / (close + min_value)).alias(f"bollinger_lower_{window}"),
+        (pivot_pp / (close + min_value)).alias(f"pivot_pp_{window}"),
+        (pivot_r1 / (close + min_value)).alias(f"pivot_r1_{window}"),
+        (pivot_s1 / (close + min_value)).alias(f"pivot_s1_{window}"),
+        (pivot_r2 / (close + min_value)).alias(f"pivot_r2_{window}"),
+        (pivot_s2 / (close + min_value)).alias(f"pivot_s2_{window}"),
         ((close_shift - close) / (window * close)).alias(f"beta_{window}"),
         ((close_shift - close) / (window * close_std)).alias(f"beta_{window}_std_norm"),
         (close_max / close).alias(f"max_{window}"),

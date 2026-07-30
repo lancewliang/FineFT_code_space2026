@@ -21,6 +21,8 @@ from operator_futures.commodity.downscale import (
     downscale_quote_features,
     downscale_quote_microstructure_features,
     downscale_quote_ofi_features,
+    downscale_multi_window_quote_ofi_features,
+    downscale_multi_window_quote_microstructure_features,
     validate_best_quotes,
 )
 
@@ -1530,3 +1532,19 @@ def test_intermediate_empty_quote_window_in_same_session_warns(caplog):
         downscale_quote_features(second, "5min")
 
     assert any("2023-01-03 09:05:00" in record.message for record in caplog.records)
+
+
+def test_downscale_multi_window_quote_ofi_features():
+    frame = _five_depth_quote_frame([{} for _ in range(50)])
+    result = downscale_multi_window_quote_ofi_features(frame, window_rows_list=[6, 12])
+    assert "timestamp" in result.columns
+    assert "ofi_norm_6" in result.columns
+    assert "ofi_norm_12" in result.columns
+
+
+def test_downscale_multi_window_quote_microstructure_features():
+    frame = _five_depth_quote_frame([{} for _ in range(50)])
+    result = downscale_multi_window_quote_microstructure_features(frame, window_rows_list=[6, 12])
+    assert "timestamp" in result.columns
+    assert "mean_microprice_pressure_6" in result.columns
+    assert "mean_microprice_pressure_12" in result.columns

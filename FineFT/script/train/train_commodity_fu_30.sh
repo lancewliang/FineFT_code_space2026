@@ -7,7 +7,7 @@ cd "$ROOTPATH"
 
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-30min}
 
-mkdir -p "log_futures/fu/low_level/train/30min/${EXPERIMENT_NAME}"
+mkdir -p "log/DiHFT/fu/low_level/train/30min/${EXPERIMENT_NAME}"
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate finetf
@@ -23,4 +23,4 @@ python -u FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py \
     --pretrain_epoch 100 --lr_init 0.0005 --epsilon_min 0.05 \
     --ada_min 2.0 --ada_step 8000000 \
     --allow_reverse_position \
-    >"log_futures/fu/low_level/train/30min/${EXPERIMENT_NAME}/advantage-30min.log"
+    >"log/DiHFT/fu/low_level/train/30min/${EXPERIMENT_NAME}/advantage-30min.log"

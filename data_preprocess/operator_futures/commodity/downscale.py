@@ -1342,3 +1342,48 @@ def downscale_quote_features(
                 first,
             )
     return result.filter(pl.col("nquote") > 0)
+
+
+def downscale_multi_window_quote_ofi_features(
+    second_df: pl.DataFrame,
+    window_rows_list: tuple[int, ...] | list[int] = (6, 12, 24, 48),
+    depth: int = 5,
+) -> pl.DataFrame:
+    if not window_rows_list:
+        raise ValueError("window_rows_list must not be empty")
+    result_df: pl.DataFrame | None = None
+    for window in window_rows_list:
+        ofi_df = downscale_quote_ofi_features(
+            second_df, window_rows=window, depth=depth
+        )
+        rename_dict = {
+            col: f"{col}_{window}" for col in ofi_df.columns if col != "timestamp"
+        }
+        ofi_df = ofi_df.rename(rename_dict)
+        if result_df is None:
+            result_df = ofi_df
+        else:
+            result_df = result_df.join(ofi_df, on="timestamp", how="left")
+    return result_df if result_df is not None else pl.DataFrame()
+
+
+def downscale_multi_window_quote_microstructure_features(
+    second_df: pl.DataFrame,
+    window_rows_list: tuple[int, ...] | list[int] = (6, 12, 24, 48),
+) -> pl.DataFrame:
+    if not window_rows_list:
+        raise ValueError("window_rows_list must not be empty")
+    result_df: pl.DataFrame | None = None
+    for window in window_rows_list:
+        micro_df = downscale_quote_microstructure_features(
+            second_df, window_rows=window
+        )
+        rename_dict = {
+            col: f"{col}_{window}" for col in micro_df.columns if col != "timestamp"
+        }
+        micro_df = micro_df.rename(rename_dict)
+        if result_df is None:
+            result_df = micro_df
+        else:
+            result_df = result_df.join(micro_df, on="timestamp", how="left")
+    return result_df if result_df is not None else pl.DataFrame()
