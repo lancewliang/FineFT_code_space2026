@@ -314,7 +314,7 @@ class vae_risk_aware_routing:
         self.initial_unrealized_pnL = args.initial_unrealized_pnL
         self.initial_position = args.initial_position
         self.initial_leverage = args.initial_leverage
-        self.order_book_depth = args.order_book_depth
+        self.order_book_depth = getattr(args, "order_book_depth", 25)
         self.initial_state = (
             self.initial_wallet_balance,
             self.initial_margin,
@@ -527,7 +527,7 @@ class vae_risk_aware_routing:
             early_stop=self.early_stop,
             # initial_personal_state
             initial_state=self.initial_state,
-            order_book_depth=self.order_book_depth,
+            order_book_depth=getattr(self, "order_book_depth", 25),
             allow_reverse_position=self.allow_reverse_position,
         )
         s, info = env.reset()
@@ -634,10 +634,19 @@ class vae_risk_aware_routing:
         result_df.to_csv(
             os.path.join(self.test_path, "contract_results.csv"), index=False
         )
-        self.return_rate = float(result_df["return_rate"].mean())
+        total_reward_sum = float(result_df["reward_sum"].sum())
+        initial_wallet = getattr(self, "initial_wallet_balance", 10000.0)
+        total_initial_capital = initial_wallet * len(contract_results)
+        portfolio_return_rate = total_reward_sum / (total_initial_capital + 1e-12)
+        win_rate = float((result_df["return_rate"] > 0).mean())
+        self.return_rate = portfolio_return_rate * win_rate
         trading_info = {
             "return_rate": self.return_rate,
-            "aggregation": "equal_weighted_contract_mean",
+            "portfolio_return_rate": portfolio_return_rate,
+            "win_rate": win_rate,
+            "equal_weighted_mean_return": float(result_df["return_rate"].mean()),
+            "total_reward_sum": total_reward_sum,
+            "aggregation": "option2_portfolio_return_times_win_rate",
             "contract_count": len(contract_results),
         }
         np.save(os.path.join(self.test_path, "trading_info.npy"), trading_info)

@@ -391,7 +391,7 @@ run_commodity_feature_selection() {
         --root_path "${root_path}" \
         --split_path "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST" \
         --save_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION" \
-        --symbol "${symbol}" \
+        --symbol "${symbol}" --windows_list 1,2,6,12,24,48,96 \
         --target_freq "${target_freq}" \
         --stage "${stage}" \
         --orderbook_depth 5 \

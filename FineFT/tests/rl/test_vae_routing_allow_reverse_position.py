@@ -185,7 +185,7 @@ def test_vae_routing_test_uses_contract_level_valid_features(tmp_path, monkeypat
 
     return_rate = routing.test()
 
-    assert return_rate == pytest.approx(0.25)
+    assert return_rate == pytest.approx(0.04)
     assert len(created_envs) == 2
     result = pd.read_csv(tmp_path / "result" / "contract_results.csv")
     assert result["contract"].tolist() == ["fu2508", "fu2509"]

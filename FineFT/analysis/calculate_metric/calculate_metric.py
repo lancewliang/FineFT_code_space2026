@@ -64,6 +64,8 @@ def calculate_required_money(
         == len(unrealized_pnl_history)
         == len(wallet_balance_history)
     )
+    if len(initial_margin_history) < 2:
+        return float(wallet_balance_history[0]) if len(wallet_balance_history) > 0 else 0.0
     margine_balance_history = wallet_balance_history + unrealized_pnl_history
     avaible_balance_history = margine_balance_history - initial_margin_history
     aboudant_in_open_new_position = min(
