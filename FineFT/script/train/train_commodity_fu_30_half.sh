@@ -21,6 +21,6 @@ python -u FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py \
     --position_choices 5 --transcation_cost 0.0004 --n_step 12 --gamma 0.99 \
     --order_book_depth 5 --early_stop 2 \
     --pretrain_epoch 100 --lr_init 0.0005 --epsilon_min 0.05 \
-    --ada_min 2.0 --ada_step 8000000 \
+    --ada_min 1.0 --ada_step 8000000 \
     --allow_reverse_position \
     >"log_futures/fu/low_level/train/30min/${EXPERIMENT_NAME}/advantage-30min.log"
