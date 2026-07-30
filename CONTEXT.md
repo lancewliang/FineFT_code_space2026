@@ -164,6 +164,22 @@ _Avoid_: 单侧盘口、一边空
 LowerLimitPrice 和 UpperLimitPrice，属于 Reward/Execution 列，不进入 state candidate。
 _Avoid_: 涨跌停、价格限制
 
+**跨月合约结构特征 (Cross-Month Term Structure Feature)**:
+基于多个合约（如主力合约与次主力合约，或到期月份序列 $M_1, M_2, M_3$）在同一时间 Bar 下的相对变动特征。它表达商品期货跨交割月期限结构，而不是单一合约自身的价格行为。
+_Avoid_: 跨期特征、跨合约衍生指标
+
+**主力/次主力动态配对 (Main-Sub Dynamic Pairing)**:
+按当前交易日或交易月的流动性排名确定主力合约（`main`）与次主力合约（`sub`）身份的配对规则。
+_Avoid_: 静态主力配对、固定合约配对
+
+**到期月份序列配对 (Delivery Month Sequence Pairing)**:
+按合约真实交割月份由近到远排序确定近月（$M_1$）、次近月（$M_2$）与远月（$M_3$）的配对规则。
+_Avoid_: 挂牌顺序配对、自然月配对
+
+**无绝对价格约束 (No Absolute Price Rule)**:
+跨月合约结构特征不得表达绝对价格水平或原始价格差。包含价格的跨月表达必须是无量纲、相对化或平稳化的形式。
+_Avoid_: 绝对价差、原始价格差
+
 ### Dataset And Splitting
 
 **Dataset Split**:

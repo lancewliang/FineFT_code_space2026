@@ -9,6 +9,7 @@ import sys
 import time
 
 sys.path.append(".")
+from operator_futures.commodity.cross_month_feature import resolve_cross_month_feature_input
 from operator_futures.util import match_strings_in_range, symbol_contract_path_parts
 from memory_profiler import profile
 
@@ -61,6 +62,12 @@ parser.add_argument(
     help="the date of start",
     choices=["10s", "1min", "5min","10min", "30min", "1H", "1D"],
 )
+parser.add_argument(
+    "--require_cross_month_feature",
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help="fail when the daily CROSS_MONTH_FEATURE input is missing",
+)
 
 
 def build_daily_feature_frames(
@@ -71,6 +78,7 @@ def build_daily_feature_frames(
     quotes_feature: pl.DataFrame,
     kline_feature: pl.DataFrame,
     base_time_feature: pl.DataFrame | None = None,
+    cross_month_feature: pl.DataFrame | None = None,
     contract: str | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     der_without_symbol = der.drop("symbol") if "symbol" in der.columns else der
@@ -86,6 +94,17 @@ def build_daily_feature_frames(
     )
     if base_time_feature is not None:
         future_feature = future_feature.join(base_time_feature, on="timestamp", how="left")
+    if cross_month_feature is not None:
+        cross_month_columns = [
+            column for column in cross_month_feature.columns if column != "timestamp"
+        ]
+        future_feature = future_feature.join(
+            cross_month_feature,
+            on="timestamp",
+            how="left",
+        ).with_columns(
+            pl.col(cross_month_columns).fill_null(0.0)
+        )
     return reward_feature, future_feature
 
 
@@ -180,6 +199,22 @@ def main(args):
             raise ValueError(
                 f"BASE_TIME_FEATURE timestamp set does not match BASE_FEATURE for date {args.date}: {base_time_feature_path}"
             )
+    cross_month_feature_path = os.path.join(
+        args.data_path,
+        "CROSS_MONTH_FEATURE",
+        *symbol_parts,
+        args.target_freq,
+        args.date + ".feather",
+    )
+    resolved_cross_month_feature_path = resolve_cross_month_feature_input(
+        cross_month_feature_path,
+        required=bool(getattr(args, "require_cross_month_feature", False)),
+    )
+    cross_month_feature = (
+        pl.read_ipc(resolved_cross_month_feature_path)
+        if resolved_cross_month_feature_path is not None
+        else None
+    )
     logger.info(
         "Loaded daily merge inputs: snapshot_rows=%d der_rows=%d base_rows=%d snapshot_feature_rows=%d quotes_feature_rows=%d kline_feature_rows=%d",
         snapshot.height,
@@ -199,6 +234,7 @@ def main(args):
         quotes_feature,
         kline_feature,
         base_time_feature=base_time_feature,
+        cross_month_feature=cross_month_feature,
         contract=args.contract,
     )
 

@@ -66,6 +66,7 @@
 - **WHEN** 用户运行 `stitch_main_contract.py` 并设置 `--output_dir PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu --start_date 2026-01-01 --end_date 2026-04-01 --symbol fu`
 - **THEN** 系统 SHALL 写出 `PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu/main_contract_summary.json`
 - **AND** summary SHALL 包含 `symbol`、`commodity_name`、`start_date`、`end_date`、`selection_rule` 和 `contracts`
+- **AND** summary SHALL 记录每个交易日或排名周期下各合约的主力身份：`main`、`sub` 或 `other`
 - **AND** 系统 MUST NOT 写出 `PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu/{YYYY-MM-DD}.csv` 连续主力日文件
 - **AND** 系统 MUST NOT 生成 `fu_2026-01-01_2026-04-01.csv` 或其他日期范围大 CSV
 
@@ -76,6 +77,8 @@
 - **AND** `end_trading_day` SHALL 等于该合约裁剪后 `trading_days` 中最大 `TradingDay`
 - **AND** `trading_day_count` SHALL 等于 `len(trading_days)`
 - **AND** 每个 `trading_days` 条目 SHALL 包含 `trading_day`、ISO `date`、`source_file` 和 `daily_volume`
+- **AND** 每个 `trading_days` 条目 SHALL 包含该合约在当前交易日或排名周期的 `main_sub_role`
+- **AND** `main_sub_role` SHALL 只能是 `main`、`sub` 或 `other`
 - **AND** `daily_volume` SHALL 等于该合约该 `TradingDay` 源文件的 `Volume.max - Volume.min`
 
 #### Scenario: 合约交易日窗口裁剪
@@ -1368,3 +1371,77 @@
 - **WHEN** 风险与流动性状态特征生成完成
 - **THEN** 这些特征作为普通 candidate state feature 进入 Feature Selection 筛选
 - **AND** 最终入选列进入 Scale Save 执行 train-only robust scaling 与 clip
+
+### Requirement: 商品期货跨月合约结构 State Feature
+系统 SHALL 生成跨月合约结构特征，覆盖主力/次主力动态配对与到期月份序列配对，并将其作为强制保留但参与缩放的 State Feature。
+
+#### Scenario: 双重配对模式
+- **WHEN** 生成跨月合约结构特征
+- **THEN** 系统 SHALL 支持主力/次主力动态配对
+- **AND** 主力合约 summary SHALL 为每个已完成交易日的每个合约记录事后动态身份：`main`、`sub` 或 `other`
+- **AND** 生成交易日 T 的 CROSS_MONTH_FEATURE 时，主力合约 `main` 与次主力合约 `sub` SHALL 来自 T 之前最近一个可用交易日的 summary 动态身份
+- **AND** 系统 SHALL NOT 使用交易日 T 当天完整成交量或持仓量计算出的事后动态身份生成 T 日特征
+- **AND** 当交易日 T 不存在前一可用交易日动态身份时，系统 SHALL fail-fast 或使用明确记录的无未来信息 fallback
+- **AND** CROSS_MONTH_FEATURE SHALL 输出当前合约角色 one-hot 特征，使下游数据能判断当前合约是主力合约、次主力合约，还是二者都不是
+- **AND** 当当前合约身份为 `other` 时，系统 SHALL 计算当前合约分别相对主力合约与次主力合约的价格关系
+- **AND** 综合排名规则 SHALL 是确定性的，并在成交量或持仓量并列时使用稳定排序
+- **AND** 系统 SHALL 支持到期月份序列配对
+- **AND** 到期月份序列配对 SHALL 按合约真实交割月份由近到远确定 `M_1`、`M_2` 和 `M_3`
+- **AND** 系统 SHALL NOT 使用挂牌顺序或合约名自然排序替代真实交割月份排序
+
+#### Scenario: No Absolute Price Rule
+- **WHEN** 生成包含价格的跨月合约结构特征
+- **THEN** 系统 SHALL NOT 输出原始价格水平列
+- **AND** 系统 SHALL NOT 输出原始价格差列
+- **AND** 系统 SHALL 仅输出无量纲、相对化或平稳化的价格表达
+- **AND** 允许的价格表达 SHALL 包含对数收益差 `ln(P_1 / P_2)`
+- **AND** 允许的价格表达 SHALL 包含相对百分比价差 `(P_1 - P_2) / P_1`
+- **AND** 允许的价格表达 SHALL 包含蝶式结构相对比率 `(2 * P_M2 - P_M1 - P_M3) / P_M2`
+- **AND** 允许的价格表达 SHALL 包含滚动窗口价差 Z-Score
+- **AND** 成交量和持仓量跨月表达 SHALL 使用占比或相对比率，例如 `OI_2 / (OI_1 + OI_2)`
+
+#### Scenario: 固定宽度 CROSS_MONTH_FEATURE 列契约
+- **WHEN** 为任一当前合约生成跨月合约结构特征
+- **THEN** 无论当前合约身份为 `main`、`sub` 或 `other`，系统 SHALL 输出相同数量、相同顺序的 CROSS_MONTH_FEATURE 列
+- **AND** 输出 SHALL 包含角色 one-hot：`cm_contract_role_main`、`cm_contract_role_sub`、`cm_contract_role_other`
+- **AND** 输出 SHALL 包含当前合约相对主力合约的 4 个特征：`cm_current_main_log_price_ratio`、`cm_current_main_relative_price_spread`、`cm_current_main_volume_share_current`、`cm_current_main_open_interest_share_current`
+- **AND** 输出 SHALL 包含当前合约相对次主力合约的 4 个特征：`cm_current_sub_log_price_ratio`、`cm_current_sub_relative_price_spread`、`cm_current_sub_volume_share_current`、`cm_current_sub_open_interest_share_current`
+- **AND** 输出 SHALL 包含市场主力/次主力结构的 4 个特征：`cm_main_sub_log_price_ratio`、`cm_main_sub_relative_price_spread`、`cm_main_sub_volume_share_sub`、`cm_main_sub_open_interest_share_sub`
+- **AND** 输出 SHALL 包含到期月份序列结构的 7 个特征：`cm_m1_m2_log_price_ratio`、`cm_m2_m3_log_price_ratio`、`cm_m1_m2_relative_price_spread`、`cm_m2_m3_relative_price_spread`、`cm_m1_m2_m3_butterfly_ratio`、`cm_m1_m2_open_interest_share_m2`、`cm_m2_m3_open_interest_share_m3`
+- **AND** 当当前合约与参照合约相同时，对应价格关系 SHALL 使用中性值 `0.0`
+- **AND** 当当前合约与参照合约相同时，对应成交量或持仓量 share SHALL 使用同一分母公式计算；若分母小于等于 `0` 则输出 `0.0`
+
+#### Scenario: 右闭右标窗口聚合与当前合约时间轴对齐
+- **WHEN** 从多个合约生成目标频次跨月合约结构特征
+- **THEN** 系统 SHALL 先对各合约独立执行右闭右标窗口聚合
+- **AND** 系统 SHALL 以当前输出合约的时间轴作为基准执行 Left Join 对齐
+- **AND** 次主力或远月合约在对齐后产生的无流动性窗口缺口 SHALL 填充为 `0.0`
+- **AND** 系统 SHALL NOT 将缺失的整日跨月特征文件或缺失的必要输入文件当作流动性缺口
+- **AND** 缺失整日跨月特征文件、缺失必要输入或无法解析交割月份时系统 SHALL fail-fast
+
+#### Scenario: CROSS_MONTH_FEATURE 存储布局
+- **WHEN** 跨月合约结构特征生成完成
+- **THEN** 系统 SHALL 将结果独立写入 `PREPROCESS_DATASET/commodity-futures/CROSS_MONTH_FEATURE/{symbol}/{contract}/{target_freq}/{YYYY-MM-DD}.feather`
+- **AND** 输出 SHALL 包含 `timestamp` 与跨月合约结构特征列
+- **AND** 输出 SHALL NOT 包含 Reward/Execution 列
+- **AND** 输出 SHALL NOT 包含原始价格水平列或原始价格差列
+
+#### Scenario: Daily Merge join CROSS_MONTH_FEATURE
+- **WHEN** 运行 daily merge
+- **THEN** 系统 SHALL 按 `timestamp` 将 `CROSS_MONTH_FEATURE` join 到 `FUTURE_FEATURE`
+- **AND** join 后的跨月合约结构特征 SHALL 属于 State Feature
+- **AND** required 模式下缺失 `CROSS_MONTH_FEATURE` 文件 SHALL fail-fast
+- **AND** 对齐后跨月合约结构特征中的 null 值 SHALL 填充为 `0.0`
+
+#### Scenario: Feature Selection 强制保留 CROSS_MONTH_FEATURE
+- **WHEN** 运行 Feature Selection
+- **THEN** 系统 SHALL 将跨月合约结构特征列作为 `mandatory_state_features` 传入
+- **AND** 这些特征 SHALL 不参与 Hard Filter、Stability Filter、Composite Score、Correlation Filter 或 Blacklist 过滤
+- **AND** 这些特征 SHALL 强制保留在 `state_features.npy` 中
+- **AND** 当 Feature Blacklist 包含任一跨月合约结构特征列时系统 SHALL fail-fast
+
+#### Scenario: Scale Save 对 CROSS_MONTH_FEATURE 执行 Rolling Robust Scaling
+- **WHEN** 运行 Scale Save
+- **THEN** 跨月合约结构特征 SHALL 与其他连续 State Feature 一起参与 Rolling Robust Scaling 的 fit、transform 和 clip
+- **AND** 跨月合约结构特征 SHALL NOT 被加入 `passthrough_features`
+- **AND** Scale Manifest SHALL 将跨月合约结构特征记录为 scaled feature，而不是 passthrough state feature

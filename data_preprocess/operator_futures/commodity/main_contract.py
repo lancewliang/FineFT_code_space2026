@@ -126,6 +126,7 @@ class MainContractSummary:
     start_date: str
     end_date: str
     contracts: List[MainContractSummaryContract]
+    main_sub_roles: Dict[str, Dict[str, str]] = field(default_factory=dict)
     selection_rule: str = MAIN_CONTRACT_SELECTION_RULE
 
     @classmethod
@@ -150,10 +151,17 @@ class MainContractSummary:
             contracts=[
                 MainContractSummaryContract.from_dict(item) for item in contracts
             ],
+            main_sub_roles={
+                str(trading_day): {
+                    str(contract): str(role)
+                    for contract, role in roles.items()
+                }
+                for trading_day, roles in payload.get("main_sub_roles", {}).items()
+            },
         )
 
     def to_dict(self) -> dict:
-        return {
+        payload = {
             "symbol": self.symbol,
             "commodity_name": self.commodity_name,
             "start_date": self.start_date,
@@ -161,6 +169,9 @@ class MainContractSummary:
             "selection_rule": self.selection_rule,
             "contracts": [item.to_dict() for item in self.contracts],
         }
+        if self.main_sub_roles:
+            payload["main_sub_roles"] = self.main_sub_roles
+        return payload
 
 
 @dataclass(frozen=True)
@@ -183,6 +194,7 @@ class MainContractBuildState:
         default_factory=dict
     )
     selected_months_by_contract: Dict[str, Set[str]] = field(default_factory=dict)
+    main_sub_roles: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
     def record_contract_day(
         self,
@@ -230,6 +242,27 @@ class MainContractBuildState:
                         month
                     )
 
+    def record_main_sub_roles(
+        self,
+        trading_day: str,
+        daily_volumes: Dict[str, float],
+        daily_open_interests: Dict[str, float],
+    ) -> None:
+        ranked_contracts = sorted(
+            daily_volumes,
+            key=lambda contract: (
+                -daily_volumes[contract],
+                -daily_open_interests.get(contract, 0.0),
+                contract,
+            ),
+        )
+        roles = {contract: "other" for contract in ranked_contracts}
+        if ranked_contracts:
+            roles[ranked_contracts[0]] = "main"
+        if len(ranked_contracts) > 1:
+            roles[ranked_contracts[1]] = "sub"
+        self.main_sub_roles[trading_day] = roles
+
 
 def load_main_contract_summary(path: Path) -> MainContractSummary:
     try:
@@ -273,6 +306,20 @@ def calculate_contract_volume(df: pl.DataFrame) -> float:
     if len(volume) == 0:
         return 0.0
     return float(volume.max() - volume.min())
+
+
+def calculate_contract_open_interest(df: pl.DataFrame) -> float:
+    if "OpenInterest" not in df.columns or df.height == 0:
+        return 0.0
+
+    open_interest = df.select(
+        pl.col("OpenInterest")
+        .cast(pl.Float64, strict=False)
+        .alias("OpenInterest")
+    )["OpenInterest"].drop_nulls()
+    if len(open_interest) == 0:
+        return 0.0
+    return float(open_interest[-1])
 
 
 def _parse_date(value: str):
@@ -482,8 +529,21 @@ def build_main_contract_summary_model_for_date_range(
 
         eligible = _eligible_contracts(frames, symbol)
         month = _format_trading_day_file_date(day_sources.trading_day)[:7]
+        daily_volumes = {
+            contract: calculate_contract_volume(frame)
+            for contract, frame in eligible.items()
+        }
+        daily_open_interests = {
+            contract: calculate_contract_open_interest(frame)
+            for contract, frame in eligible.items()
+        }
+        build_state.record_main_sub_roles(
+            day_sources.trading_day,
+            daily_volumes,
+            daily_open_interests,
+        )
         for contract, frame in eligible.items():
-            daily_volume = calculate_contract_volume(frame)
+            daily_volume = daily_volumes[contract]
             build_state.add_monthly_volume(month, contract, daily_volume)
             if (
                 high_volume_threshold is not None
@@ -526,6 +586,7 @@ def build_main_contract_summary_model_for_date_range(
         start_date=start_date,
         end_date=end_date,
         contracts=contracts,
+        main_sub_roles=build_state.main_sub_roles,
     )
 
 

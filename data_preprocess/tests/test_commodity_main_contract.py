@@ -23,7 +23,15 @@ from operator_futures.commodity.main_contract import (
 )
 
 
-def _frame(contract: str, trading_day: str, action_day: str, volumes):
+def _frame(
+    contract: str,
+    trading_day: str,
+    action_day: str,
+    volumes,
+    open_interests=None,
+):
+    if open_interests is None:
+        open_interests = [100 + idx for idx, _ in enumerate(volumes)]
     rows = []
     for idx, volume in enumerate(volumes):
         rows.append(
@@ -34,6 +42,7 @@ def _frame(contract: str, trading_day: str, action_day: str, volumes):
                 "UpdateTime": f"21:00:0{idx}.500",
                 "LastPrice": 2600 + idx,
                 "Volume": volume,
+                "OpenInterest": open_interests[idx],
                 "Turnover": volume * (2600 + idx),
                 "BidPrice1": 2599,
                 "BidVolume1": 1,
@@ -53,10 +62,11 @@ def _write_contract_file(
     contract: str,
     action_day: str,
     volumes,
+    open_interests=None,
 ) -> Path:
     path = root / commodity_name / year / month / trading_day / f"{contract}.csv"
     path.parent.mkdir(parents=True, exist_ok=True)
-    _frame(contract, trading_day, action_day, volumes).write_csv(path)
+    _frame(contract, trading_day, action_day, volumes, open_interests).write_csv(path)
     return path
 
 
@@ -345,6 +355,108 @@ def test_build_main_contract_summary_selects_monthly_top_two_contracts(tmp_path)
     assert contracts["fu2603"].start_trading_day == "20260201"
     assert contracts["fu2603"].end_trading_day == "20260201"
     assert contracts["fu2603"].trading_day_count == 1
+
+
+def test_build_main_contract_summary_records_daily_main_sub_other_roles(tmp_path):
+    raw_root = tmp_path / "data" / "原始下载"
+    for day in range(1, 12):
+        trading_day = f"202601{day:02d}"
+        _write_contract_file(
+            raw_root,
+            "燃料油",
+            "2026",
+            "01",
+            trading_day,
+            "fu2601",
+            trading_day,
+            [0, 300 + day],
+        )
+        _write_contract_file(
+            raw_root,
+            "燃料油",
+            "2026",
+            "01",
+            trading_day,
+            "fu2602",
+            trading_day,
+            [0, 200 + day],
+        )
+        _write_contract_file(
+            raw_root,
+            "燃料油",
+            "2026",
+            "01",
+            trading_day,
+            "fu2603",
+            trading_day,
+            [0, 100 + day],
+        )
+
+    summary = build_main_contract_summary_for_date_range(
+        raw_root, "燃料油", "2026-01-01", "2026-02-01", "fu"
+    )
+
+    assert summary.main_sub_roles["20260101"] == {
+        "fu2601": "main",
+        "fu2602": "sub",
+        "fu2603": "other",
+    }
+    assert summary.to_dict()["main_sub_roles"]["20260101"] == {
+        "fu2601": "main",
+        "fu2602": "sub",
+        "fu2603": "other",
+    }
+
+
+def test_build_main_contract_summary_uses_open_interest_to_break_daily_volume_ties(
+    tmp_path,
+):
+    raw_root = tmp_path / "data" / "原始下载"
+    for day in range(1, 12):
+        trading_day = f"202601{day:02d}"
+        _write_contract_file(
+            raw_root,
+            "燃料油",
+            "2026",
+            "01",
+            trading_day,
+            "fu2601",
+            trading_day,
+            [0, 100],
+            [100, 100],
+        )
+        _write_contract_file(
+            raw_root,
+            "燃料油",
+            "2026",
+            "01",
+            trading_day,
+            "fu2602",
+            trading_day,
+            [0, 100],
+            [200, 200],
+        )
+        _write_contract_file(
+            raw_root,
+            "燃料油",
+            "2026",
+            "01",
+            trading_day,
+            "fu2603",
+            trading_day,
+            [0, 90],
+            [300, 300],
+        )
+
+    summary = build_main_contract_summary_for_date_range(
+        raw_root, "燃料油", "2026-01-01", "2026-02-01", "fu"
+    )
+
+    assert summary.main_sub_roles["20260101"] == {
+        "fu2602": "main",
+        "fu2601": "sub",
+        "fu2603": "other",
+    }
 
 
 def test_build_main_contract_summary_selects_contract_with_ten_high_volume_days(tmp_path):

@@ -1394,6 +1394,48 @@ def test_commodity_full_process_shell_passes_feature_blacklist():
     assert '"bid${level}_size"' not in text
 
 
+def test_commodity_full_process_shell_preserves_cross_month_features():
+    script = (
+        REPO_ROOT
+        / "data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
+    )
+    text = script.read_text(encoding="utf-8")
+
+    assert "CROSS_MONTH_FEATURE_COLUMNS=(" in text
+    assert "cm_contract_role_main" in text
+    assert "cm_current_main_log_price_ratio" in text
+    assert "cm_current_sub_log_price_ratio" in text
+    assert "cm_main_sub_log_price_ratio" in text
+    assert "cm_m1_m2_m3_butterfly_ratio" in text
+    assert (
+        '--mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" "${CROSS_MONTH_FEATURE_COLUMNS[@]}"'
+        in text
+    )
+
+
+def test_commodity_full_process_shell_runs_cross_month_before_merge():
+    script = (
+        REPO_ROOT
+        / "data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
+    )
+    text = script.read_text(encoding="utf-8")
+
+    assert "run_commodity_cross_month_feature_process()" in text
+    assert "operator_futures.commodity.cross_month_feature" in text
+    assert '"cross_month_feature"' in text
+    assert text.index('"cross_section"') < text.index('"cross_month_feature"')
+    assert text.index('"cross_month_feature"') < text.index('"merge"')
+    full_process = text[text.index("run_commodity_full_process()") :]
+    assert full_process.count('done < <(run_commodity_summary_contracts "$summary_path")') >= 2
+    first_contract_loop_end = full_process.index(
+        'done < <(run_commodity_summary_contracts "$summary_path")'
+    )
+    first_contract_loop = full_process[:first_contract_loop_end]
+    assert '"cross_section"' in first_contract_loop
+    assert '"cross_month_feature"' not in first_contract_loop
+    assert '"merge"' not in first_contract_loop
+
+
 def test_validate_features_checks_feature_union_outputs():
     script = (
         REPO_ROOT

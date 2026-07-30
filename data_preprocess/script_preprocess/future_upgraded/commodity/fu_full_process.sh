@@ -216,6 +216,31 @@ BASE_TIME_FEATURE_COLUMNS=(
     contract_life_remaining_ratio
 )
 
+CROSS_MONTH_FEATURE_COLUMNS=(
+    cm_contract_role_main
+    cm_contract_role_sub
+    cm_contract_role_other
+    cm_current_main_log_price_ratio
+    cm_current_main_relative_price_spread
+    cm_current_main_volume_share_current
+    cm_current_main_open_interest_share_current
+    cm_current_sub_log_price_ratio
+    cm_current_sub_relative_price_spread
+    cm_current_sub_volume_share_current
+    cm_current_sub_open_interest_share_current
+    cm_main_sub_log_price_ratio
+    cm_main_sub_relative_price_spread
+    cm_main_sub_volume_share_sub
+    cm_main_sub_open_interest_share_sub
+    cm_m1_m2_log_price_ratio
+    cm_m2_m3_log_price_ratio
+    cm_m1_m2_relative_price_spread
+    cm_m2_m3_relative_price_spread
+    cm_m1_m2_m3_butterfly_ratio
+    cm_m1_m2_open_interest_share_m2
+    cm_m2_m3_open_interest_share_m3
+)
+
 run_commodity_scale_save() {
     local target_freq=$1
     local start_date=$2
@@ -272,6 +297,43 @@ run_commodity_merge_process() {
             --root_path "$root_path" \
             --data_path "PREPROCESS_DATASET/commodity-futures/" \
             --save_path "PREPROCESS_DATASET/commodity-futures/MERGE_CONCAT" \
+            >"$log_dir/$current_date.log" 2>&1 &
+        local pid=$!
+        let process_count=process_count+1
+        if [ "$process_count" -eq "$max_processes" ]; then
+            wait "$pid" || return $?
+            process_count=0
+        fi
+        current_date=$(date -I -d "$current_date + 1 day")
+    done
+    wait || return $?
+}
+
+run_commodity_cross_month_feature_process() {
+    local start_date=$1
+    local end_date=$2
+    local max_processes=$3
+    local target_freq=$4
+    local symbol=$5
+    local root_path=$6
+    local summary_path=$7
+    local contract=$8
+
+    local current_date
+    current_date=$(date -I -d "$start_date")
+    local process_count=0
+    while [ "$current_date" != "$end_date" ]; do
+        local log_dir="log_futures/cross_month_feature/${target_freq}/${symbol}/${contract}"
+        mkdir -p "$log_dir"
+        PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" nohup python -u -m operator_futures.commodity.cross_month_feature \
+            --symbol "$symbol" \
+            --contract "$contract" \
+            --target_freq "$target_freq" \
+            --date "$current_date" \
+            --root_path "$root_path" \
+            --summary_path "$summary_path" \
+            --data_path "PREPROCESS_DATASET/commodity-futures" \
+            --save_path "PREPROCESS_DATASET/commodity-futures/CROSS_MONTH_FEATURE" \
             >"$log_dir/$current_date.log" 2>&1 &
         local pid=$!
         let process_count=process_count+1
@@ -396,7 +458,7 @@ run_commodity_feature_selection() {
         --target_freq "${target_freq}" \
         --stage "${stage}" \
         --orderbook_depth 5 \
-        --mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" \
+        --mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" "${CROSS_MONTH_FEATURE_COLUMNS[@]}" \
         "${feature_blacklist_args[@]}"
 }
 
@@ -438,6 +500,14 @@ run_commodity_full_process() {
             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
             "cross_section" \
             run_commodity_cross_section_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
+    done < <(run_commodity_summary_contracts "$summary_path")
+
+    while IFS= read -r contract; do
+        [ -n "$contract" ] || continue
+        run_commodity_logged_step \
+            "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+            "cross_month_feature" \
+            run_commodity_cross_month_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$summary_path" "$contract"
         run_commodity_logged_step \
             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
             "merge" \
