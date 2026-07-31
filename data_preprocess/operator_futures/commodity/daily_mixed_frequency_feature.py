@@ -1,5 +1,6 @@
 from pathlib import Path
 import argparse
+from collections.abc import Iterable
 import math
 
 import polars as pl
@@ -7,7 +8,6 @@ import polars as pl
 from .daily_base_feature import (
     DAILY_BASE_FEATURE_COLUMNS,
     parse_trading_day,
-    read_base_feature,
 )
 
 
@@ -235,26 +235,17 @@ def _rows_from_daily_base(daily_base: pl.DataFrame) -> dict[str, dict[str, objec
 
 
 def generate_daily_mixed_frequency_features_from_base(
-    *, target_bars: pl.DataFrame, daily_base: pl.DataFrame
+    *, daily_base: pl.DataFrame
 ) -> pl.DataFrame:
-    if "timestamp" not in target_bars.columns or "trading_day" not in target_bars.columns:
-        raise ValueError("target_bars must contain timestamp and trading_day columns")
-
-    ordered = target_bars.sort(["trading_day", "timestamp"]).with_columns(
-        pl.col("trading_day")
-        .map_elements(
-            lambda value: parse_trading_day(value).strftime("%Y-%m-%d"),
-            return_dtype=pl.Utf8,
-        )
-        .alias("trading_day")
-    )
     daily_rows = _rows_from_daily_base(daily_base)
     daily_keys = sorted(daily_rows)
+    output_days = (
+        daily_keys
+    )
 
     rows: list[dict[str, float | object]] = []
-    for row in ordered.select("timestamp", "trading_day").iter_rows(named=True):
-        trading_day = str(row["trading_day"])
-        feature_row: dict[str, float | object] = {"timestamp": row["timestamp"]}
+    for trading_day in output_days:
+        feature_row: dict[str, float | object] = {"trading_day": trading_day}
         for window in DAY_ROLLING_WINDOWS:
             window_rows = previous_window_rows(
                 rows=daily_rows,
@@ -271,12 +262,16 @@ def generate_daily_mixed_frequency_features_from_base(
                 feature_row.update(daily_rolling_state_features(prefix, window_rows))
         rows.append(feature_row)
 
-    result = pl.DataFrame(rows).select(["timestamp", *PREV_DAY_FEATURE_COLUMNS])
+    result = pl.DataFrame(rows).select(["trading_day", *PREV_DAY_FEATURE_COLUMNS])
     validate_daily_mixed_frequency_output(result)
     return result
 
 
 def validate_daily_mixed_frequency_output(df: pl.DataFrame) -> None:
+    if "trading_day" not in df.columns:
+        raise ValueError(
+            "Missing daily Mixed-frequency State Feature column: trading_day"
+        )
     illegal_columns = [
         column for column in _ABSOLUTE_LEVEL_FEATURE_COLUMNS if column in df.columns
     ]
@@ -294,7 +289,7 @@ def validate_daily_mixed_frequency_output(df: pl.DataFrame) -> None:
             row = df.filter(invalid).row(0, named=True)
             raise ValueError(
                 f"Invalid daily Mixed-frequency State Feature output {column!r}: "
-                f"value={row.get(column)!r} timestamp={row.get('timestamp')!r}"
+                f"value={row.get(column)!r} trading_day={row.get('trading_day')!r}"
             )
 
 
@@ -304,13 +299,12 @@ def _resolve_base_path(path: Path) -> Path:
     return path
 
 
-def write_daily_mixed_frequency_feature_for_day(
+def write_daily_mixed_frequency_feature_for_range(
     *,
     root_path: str | Path,
     symbol: str,
     contract: str,
     target_freq: str,
-    date: str,
     start_date: str,
     end_date: str,
     data_path: str = "PREPROCESS_DATASET/commodity-futures",
@@ -329,21 +323,12 @@ def write_daily_mixed_frequency_feature_for_day(
         / f"{range_name}.feather"
     )
     daily_base = pl.read_ipc(_resolve_base_path(daily_base_path))
-    current = read_base_feature(
-        root / data_path / "BASE_FEATURE" / symbol / contract / target_freq / f"{date}.feather",
-        date,
-    )
     output = generate_daily_mixed_frequency_features_from_base(
-        target_bars=current.select("timestamp", "trading_day"),
         daily_base=daily_base,
     )
-    if output.get_column("timestamp").to_list() != current.get_column("timestamp").to_list():
-        raise ValueError(
-            f"DAILY_MIXED_FREQUENCY_FEATURE timestamp set does not match BASE_FEATURE for date {date}"
-        )
     out_dir = root / save_path / symbol / contract / target_freq / "DAILY"
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{date}.feather"
+    out_path = out_dir / f"{range_name}.feather"
     output.write_ipc(out_path)
     return out_path
 
@@ -354,7 +339,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--symbol", "--symbols", dest="symbol", required=True)
     parser.add_argument("--contract", required=True)
     parser.add_argument("--target_freq", required=True)
-    parser.add_argument("--date", required=True)
     parser.add_argument("--start_date", required=True)
     parser.add_argument("--end_date", required=True)
     parser.add_argument(
@@ -374,12 +358,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(args=None) -> Path:
     parsed = build_parser().parse_args(args)
-    return write_daily_mixed_frequency_feature_for_day(
+    return write_daily_mixed_frequency_feature_for_range(
         root_path=parsed.root_path,
         symbol=parsed.symbol,
         contract=parsed.contract,
         target_freq=parsed.target_freq,
-        date=parsed.date,
         start_date=parsed.start_date,
         end_date=parsed.end_date,
         data_path=parsed.data_path,

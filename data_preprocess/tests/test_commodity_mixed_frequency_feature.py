@@ -16,7 +16,7 @@ from operator_futures.commodity.daily_base_feature import (
 from operator_futures.commodity.daily_mixed_frequency_feature import (
     PREV_DAY_FEATURE_COLUMNS,
     generate_daily_mixed_frequency_features_from_base,
-    write_daily_mixed_frequency_feature_for_day,
+    write_daily_mixed_frequency_feature_for_range,
 )
 from operator_futures.commodity.weekly_base_feature import (
     generate_weekly_base_features,
@@ -25,7 +25,7 @@ from operator_futures.commodity.weekly_base_feature import (
 from operator_futures.commodity.weekly_mixed_frequency_feature import (
     PREV_WEEK_FEATURE_COLUMNS,
     generate_weekly_mixed_frequency_features_from_base,
-    write_weekly_mixed_frequency_feature_for_day,
+    write_weekly_mixed_frequency_feature_for_range,
 )
 
 
@@ -63,18 +63,21 @@ def test_generate_mixed_frequency_features_uses_previous_trading_day():
     )
 
     daily_feature = generate_daily_mixed_frequency_features_from_base(
-        target_bars=frame.select("timestamp", "trading_day"),
         daily_base=generate_daily_base_features(frame),
     )
     weekly_feature = generate_weekly_mixed_frequency_features_from_base(
-        target_bars=frame.select("timestamp", "trading_day"),
         weekly_base=generate_weekly_base_features(frame),
     )
     result = combine_daily_weekly_mixed_frequency_features(
+        target_bars=frame.select("timestamp", "trading_day"),
         daily_feature=daily_feature,
         weekly_feature=weekly_feature,
     )
 
+    assert daily_feature.columns == ["trading_day", *PREV_DAY_FEATURE_COLUMNS]
+    assert daily_feature["trading_day"].to_list() == ["2026-01-05", "2026-01-06"]
+    assert weekly_feature.columns == ["calendar_week", *PREV_WEEK_FEATURE_COLUMNS]
+    assert weekly_feature["calendar_week"].to_list() == ["2026-W02"]
     assert result.columns == ["timestamp", *MIXED_FREQUENCY_FEATURE_COLUMNS]
     first_day_rows = result.head(2)
     assert first_day_rows.select(MIXED_FREQUENCY_FEATURE_COLUMNS).to_numpy().sum() == 0.0
@@ -116,14 +119,13 @@ def test_generate_mixed_frequency_features_uses_previous_calendar_week():
 
     frame = pl.concat([previous_week, current_week])
     daily_feature = generate_daily_mixed_frequency_features_from_base(
-        target_bars=frame.select("timestamp", "trading_day"),
         daily_base=generate_daily_base_features(frame),
     )
     weekly_feature = generate_weekly_mixed_frequency_features_from_base(
-        target_bars=frame.select("timestamp", "trading_day"),
         weekly_base=generate_weekly_base_features(frame),
     )
     result = combine_daily_weekly_mixed_frequency_features(
+        target_bars=frame.select("timestamp", "trading_day"),
         daily_feature=daily_feature,
         weekly_feature=weekly_feature,
     )
@@ -158,7 +160,6 @@ def test_generate_mixed_frequency_features_uses_daily_rolling_windows():
     )
 
     result = generate_daily_mixed_frequency_features_from_base(
-        target_bars=frame.select("timestamp", "trading_day"),
         daily_base=generate_daily_base_features(frame),
     )
 
@@ -166,9 +167,9 @@ def test_generate_mixed_frequency_features_uses_daily_rolling_windows():
     assert "prev_2_day_range_pct" not in result.columns
     assert "prev_30_day_trade_imbalance" in result.columns
     assert "prev_2_day_volume" not in result.columns
-    assert result.row(2, named=True)["prev_2_day_trade_imbalance"] == 0.0
+    assert result.row(1, named=True)["prev_2_day_trade_imbalance"] == 0.0
 
-    row = result.row(4, named=True)
+    row = result.row(2, named=True)
     assert np.isclose(row["prev_2_day_trade_up_ratio"], 0.5)
     assert np.isclose(row["prev_2_day_trade_down_ratio"], 0.4)
     assert np.isclose(row["prev_2_day_trade_imbalance"], 0.1)
@@ -188,7 +189,6 @@ def test_generate_mixed_frequency_features_uses_weekly_rolling_windows():
     )
 
     result = generate_weekly_mixed_frequency_features_from_base(
-        target_bars=frame.select("timestamp", "trading_day"),
         weekly_base=generate_weekly_base_features(frame),
     )
 
@@ -196,9 +196,9 @@ def test_generate_mixed_frequency_features_uses_weekly_rolling_windows():
     assert "prev_2_week_range_pct" not in result.columns
     assert "prev_6_week_trade_imbalance" in result.columns
     assert "prev_2_week_volume" not in result.columns
-    assert result.row(4, named=True)["prev_2_week_trade_imbalance"] == 0.0
+    assert result.row(1, named=True)["prev_2_week_trade_imbalance"] == 0.0
 
-    row = result.row(8, named=True)
+    row = result.row(2, named=True)
     assert np.isclose(row["prev_2_week_trade_up_ratio"], 0.5)
     assert np.isclose(row["prev_2_week_trade_down_ratio"], 0.4)
     assert np.isclose(row["prev_2_week_trade_imbalance"], 0.1)
@@ -233,27 +233,30 @@ def test_mixed_frequency_features_rejects_missing_base_columns():
     target_bars = pl.DataFrame({"timestamp": [1], "trading_day": ["2026-01-05"]})
     with pytest.raises(ValueError, match="daily Mixed-frequency Base Data"):
         generate_daily_mixed_frequency_features_from_base(
-            target_bars=target_bars,
             daily_base=pl.DataFrame({"trading_day": ["2026-01-04"]}),
+            trading_days=target_bars["trading_day"].to_list(),
         )
 
 
 def test_mixed_frequency_features_reject_absolute_level_columns():
     daily_feature = pl.DataFrame(
         {
-            "timestamp": [1],
+            "trading_day": ["2026-01-05"],
             **{column: [0.0] for column in PREV_DAY_FEATURE_COLUMNS},
             "prev_day_volume": [30.0],
         }
     )
     weekly_feature = pl.DataFrame(
         {
-            "timestamp": [1],
+            "calendar_week": ["2026-W02"],
             **{column: [0.0] for column in PREV_WEEK_FEATURE_COLUMNS},
         }
     )
     with pytest.raises(ValueError, match="No Absolute Level Rule"):
         combine_daily_weekly_mixed_frequency_features(
+            target_bars=pl.DataFrame(
+                {"timestamp": [1], "trading_day": ["2026-01-05"]}
+            ),
             daily_feature=daily_feature,
             weekly_feature=weekly_feature,
         )
@@ -296,26 +299,32 @@ def test_write_mixed_frequency_feature_for_day_uses_base_feature_history(tmp_pat
     assert pl.read_ipc(daily_path).height == 2
     assert pl.read_ipc(weekly_path).height == 1
 
-    daily_feature_path = write_daily_mixed_frequency_feature_for_day(
+    daily_feature_path = write_daily_mixed_frequency_feature_for_range(
         root_path=tmp_path,
         symbol="fu",
         contract="fu2601",
         target_freq="5min",
-        date="2026-01-06",
         start_date="2026-01-05",
         end_date="2026-01-07",
     )
-    weekly_feature_path = write_weekly_mixed_frequency_feature_for_day(
+    weekly_feature_path = write_weekly_mixed_frequency_feature_for_range(
         root_path=tmp_path,
         symbol="fu",
         contract="fu2601",
         target_freq="5min",
-        date="2026-01-06",
         start_date="2026-01-05",
         end_date="2026-01-07",
     )
-    assert "prev_day_volume" not in pl.read_ipc(daily_feature_path).columns
-    assert pl.read_ipc(weekly_feature_path)["prev_week_return"].to_list() == [0.0, 0.0]
+    daily_feature = pl.read_ipc(daily_feature_path)
+    weekly_feature = pl.read_ipc(weekly_feature_path)
+    assert daily_feature_path.name == "2026-01-05-2026-01-07.feather"
+    assert daily_feature.height == 2
+    assert daily_feature["trading_day"].to_list() == ["2026-01-05", "2026-01-06"]
+    assert "prev_day_volume" not in daily_feature.columns
+    assert weekly_feature.height == 1
+    assert weekly_feature_path.name == "2026-01-05-2026-01-07.feather"
+    assert weekly_feature["calendar_week"].to_list() == ["2026-W02"]
+    assert weekly_feature["prev_week_return"].to_list() == [0.0]
 
     out_path = write_mixed_frequency_feature_for_day(
         root_path=tmp_path,
@@ -323,6 +332,8 @@ def test_write_mixed_frequency_feature_for_day_uses_base_feature_history(tmp_pat
         contract="fu2601",
         target_freq="5min",
         date="2026-01-06",
+        start_date="2026-01-05",
+        end_date="2026-01-07",
     )
 
     output = pl.read_ipc(out_path)
@@ -338,6 +349,8 @@ def test_write_mixed_frequency_feature_for_day_skips_missing_base_feature(tmp_pa
             contract="fu2601",
             target_freq="5min",
             date="2026-01-01",
+            start_date="2026-01-01",
+            end_date="2026-01-02",
         )
 
     assert out_path is None
@@ -379,3 +392,14 @@ def test_commodity_mixed_frequency_cli_entrypoints_respond_to_help(module_name):
     )
     assert result.returncode == 0
     assert "usage:" in result.stdout
+    if module_name in {
+        "operator_futures.commodity.daily_mixed_frequency_feature",
+        "operator_futures.commodity.weekly_mixed_frequency_feature",
+    }:
+        assert "--date" not in result.stdout
+        assert "--start_date" in result.stdout
+        assert "--end_date" in result.stdout
+    if module_name == "operator_futures.commodity.mixed_frequency_feature":
+        assert "--date" in result.stdout
+        assert "--start_date" in result.stdout
+        assert "--end_date" in result.stdout

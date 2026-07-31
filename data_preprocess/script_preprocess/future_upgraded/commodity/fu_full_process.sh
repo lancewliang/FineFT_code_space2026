@@ -432,87 +432,47 @@ run_commodity_weekly_base_feature_process() {
 run_commodity_daily_mixed_frequency_feature_process() {
     local start_date=$1
     local end_date=$2
-    local max_processes=$3
     local target_freq=$4
     local symbol=$5
     local root_path=$6
     local contract=$7
 
-    local current_date
-    current_date=$(date -I -d "$start_date")
-    local process_count=0
-    while [ "$current_date" != "$end_date" ]; do
-        if ! commodity_downscale_outputs_exist "$root_path" "$symbol" "$target_freq" "$current_date" "$contract"; then
-            echo "Skipping commodity daily mixed-frequency feature date with missing downscale outputs: symbol=${symbol} contract=${contract} date=${current_date}"
-            current_date=$(date -I -d "$current_date + 1 day")
-            continue
-        fi
-        local log_dir="log_futures/daily_mixed_frequency_feature/${target_freq}/${symbol}/${contract}"
-        mkdir -p "$log_dir"
-        PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" nohup python -u -m operator_futures.commodity.daily_mixed_frequency_feature \
-            --symbol "$symbol" \
-            --contract "$contract" \
-            --target_freq "$target_freq" \
-            --date "$current_date" \
-            --start_date "$start_date" \
-            --end_date "$end_date" \
-            --root_path "$root_path" \
-            --data_path "PREPROCESS_DATASET/commodity-futures" \
-            --base_path "PREPROCESS_DATASET/commodity-futures/MIXED_FREQUENCY_BASE" \
-            --save_path "PREPROCESS_DATASET/commodity-futures/MIXED_FREQUENCY_FEATURE" \
-            >"$log_dir/$current_date.log" 2>&1 &
-        local pid=$!
-        let process_count=process_count+1
-        if [ "$process_count" -eq "$max_processes" ]; then
-            wait "$pid" || return $?
-            process_count=0
-        fi
-        current_date=$(date -I -d "$current_date + 1 day")
-    done
-    wait || return $?
+    local log_dir="log_futures/daily_mixed_frequency_feature/${target_freq}/${symbol}/${contract}"
+    mkdir -p "$log_dir"
+    PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" python -u -m operator_futures.commodity.daily_mixed_frequency_feature \
+        --symbol "$symbol" \
+        --contract "$contract" \
+        --target_freq "$target_freq" \
+        --start_date "$start_date" \
+        --end_date "$end_date" \
+        --root_path "$root_path" \
+        --data_path "PREPROCESS_DATASET/commodity-futures" \
+        --base_path "PREPROCESS_DATASET/commodity-futures/MIXED_FREQUENCY_BASE" \
+        --save_path "PREPROCESS_DATASET/commodity-futures/MIXED_FREQUENCY_FEATURE" \
+        >"$log_dir/${start_date}-${end_date}.log" 2>&1
 }
 
 run_commodity_weekly_mixed_frequency_feature_process() {
     local start_date=$1
     local end_date=$2
-    local max_processes=$3
     local target_freq=$4
     local symbol=$5
     local root_path=$6
     local contract=$7
 
-    local current_date
-    current_date=$(date -I -d "$start_date")
-    local process_count=0
-    while [ "$current_date" != "$end_date" ]; do
-        if ! commodity_downscale_outputs_exist "$root_path" "$symbol" "$target_freq" "$current_date" "$contract"; then
-            echo "Skipping commodity weekly mixed-frequency feature date with missing downscale outputs: symbol=${symbol} contract=${contract} date=${current_date}"
-            current_date=$(date -I -d "$current_date + 1 day")
-            continue
-        fi
-        local log_dir="log_futures/weekly_mixed_frequency_feature/${target_freq}/${symbol}/${contract}"
-        mkdir -p "$log_dir"
-        PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" nohup python -u -m operator_futures.commodity.weekly_mixed_frequency_feature \
-            --symbol "$symbol" \
-            --contract "$contract" \
-            --target_freq "$target_freq" \
-            --date "$current_date" \
-            --start_date "$start_date" \
-            --end_date "$end_date" \
-            --root_path "$root_path" \
-            --data_path "PREPROCESS_DATASET/commodity-futures" \
-            --base_path "PREPROCESS_DATASET/commodity-futures/MIXED_FREQUENCY_BASE" \
-            --save_path "PREPROCESS_DATASET/commodity-futures/MIXED_FREQUENCY_FEATURE" \
-            >"$log_dir/$current_date.log" 2>&1 &
-        local pid=$!
-        let process_count=process_count+1
-        if [ "$process_count" -eq "$max_processes" ]; then
-            wait "$pid" || return $?
-            process_count=0
-        fi
-        current_date=$(date -I -d "$current_date + 1 day")
-    done
-    wait || return $?
+    local log_dir="log_futures/weekly_mixed_frequency_feature/${target_freq}/${symbol}/${contract}"
+    mkdir -p "$log_dir"
+    PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" python -u -m operator_futures.commodity.weekly_mixed_frequency_feature \
+        --symbol "$symbol" \
+        --contract "$contract" \
+        --target_freq "$target_freq" \
+        --start_date "$start_date" \
+        --end_date "$end_date" \
+        --root_path "$root_path" \
+        --data_path "PREPROCESS_DATASET/commodity-futures" \
+        --base_path "PREPROCESS_DATASET/commodity-futures/MIXED_FREQUENCY_BASE" \
+        --save_path "PREPROCESS_DATASET/commodity-futures/MIXED_FREQUENCY_FEATURE" \
+        >"$log_dir/${start_date}-${end_date}.log" 2>&1
 }
 
 run_commodity_mixed_frequency_feature_process() {
@@ -535,6 +495,8 @@ run_commodity_mixed_frequency_feature_process() {
             --contract "$contract" \
             --target_freq "$target_freq" \
             --date "$current_date" \
+            --start_date "$start_date" \
+            --end_date "$end_date" \
             --root_path "$root_path" \
             --feature_path "PREPROCESS_DATASET/commodity-futures/MIXED_FREQUENCY_FEATURE" \
             --save_path "PREPROCESS_DATASET/commodity-futures/MIXED_FREQUENCY_FEATURE" \
@@ -687,24 +649,24 @@ run_commodity_full_process() {
 
     local log_dir="${LOG_DIR:-${root_path}/log_futures/ticker_result/commodity}"
 
-    run_commodity_logged_step \
-        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-        "stitch_main_contract" \
-        run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$start_date" "$end_date" "$symbol"
+    # run_commodity_logged_step \
+    #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+    #     "stitch_main_contract" \
+    #     run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$start_date" "$end_date" "$symbol"
     local summary_path="${root_path}/PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/${symbol}/main_contract_summary.json"
-    run_commodity_logged_step \
-        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-        "downscale_continuous_by_trading_day" \
-        run_commodity_downscale_continuous_by_trading_day "$root_path" "$summary_path" "$target_freq" "$symbol"
+    # run_commodity_logged_step \
+    #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+    #     "downscale_continuous_by_trading_day" \
+    #     run_commodity_downscale_continuous_by_trading_day "$root_path" "$summary_path" "$target_freq" "$symbol"
 
     local contract
-    while IFS= read -r contract; do
-        [ -n "$contract" ] || continue
-        run_commodity_logged_step \
-            "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-            "cross_section" \
-            run_commodity_cross_section_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
-    done < <(run_commodity_summary_contracts "$summary_path")
+    # while IFS= read -r contract; do
+    #     [ -n "$contract" ] || continue
+    #     run_commodity_logged_step \
+    #         "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #         "cross_section" \
+    #         run_commodity_cross_section_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
+    # done < <(run_commodity_summary_contracts "$summary_path")
 
     while IFS= read -r contract; do
         [ -n "$contract" ] || continue

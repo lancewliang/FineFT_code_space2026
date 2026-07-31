@@ -1,9 +1,9 @@
 from pathlib import Path
 import argparse
+from collections.abc import Iterable
 
 import polars as pl
 
-from .daily_base_feature import read_base_feature
 from .daily_mixed_frequency_feature import (
     aggregate_period_rows,
     daily_rolling_state_features,
@@ -97,19 +97,17 @@ def _rows_from_weekly_base(weekly_base: pl.DataFrame) -> dict[str, dict[str, obj
 
 
 def generate_weekly_mixed_frequency_features_from_base(
-    *, target_bars: pl.DataFrame, weekly_base: pl.DataFrame
+    *, weekly_base: pl.DataFrame
 ) -> pl.DataFrame:
-    if "timestamp" not in target_bars.columns or "trading_day" not in target_bars.columns:
-        raise ValueError("target_bars must contain timestamp and trading_day columns")
-
-    ordered = target_bars.sort(["trading_day", "timestamp"])
     weekly_rows = _rows_from_weekly_base(weekly_base)
     weekly_keys = sorted(weekly_rows)
+    output_weeks = (
+        weekly_keys        
+    )
 
     rows: list[dict[str, float | object]] = []
-    for row in ordered.select("timestamp", "trading_day").iter_rows(named=True):
-        week_key = calendar_week_text(row["trading_day"])
-        feature_row: dict[str, float | object] = {"timestamp": row["timestamp"]}
+    for week_key in output_weeks:
+        feature_row: dict[str, float | object] = {"calendar_week": week_key}
         for window in WEEK_ROLLING_WINDOWS:
             window_rows = previous_window_rows(
                 rows=weekly_rows,
@@ -129,12 +127,16 @@ def generate_weekly_mixed_frequency_features_from_base(
             feature_row.update(weekly_features)
         rows.append(feature_row)
 
-    result = pl.DataFrame(rows).select(["timestamp", *PREV_WEEK_FEATURE_COLUMNS])
+    result = pl.DataFrame(rows).select(["calendar_week", *PREV_WEEK_FEATURE_COLUMNS])
     validate_weekly_mixed_frequency_output(result)
     return result
 
 
 def validate_weekly_mixed_frequency_output(df: pl.DataFrame) -> None:
+    if "calendar_week" not in df.columns:
+        raise ValueError(
+            "Missing weekly Mixed-frequency State Feature column: calendar_week"
+        )
     illegal_columns = [
         column for column in _ABSOLUTE_LEVEL_FEATURE_COLUMNS if column in df.columns
     ]
@@ -152,7 +154,7 @@ def validate_weekly_mixed_frequency_output(df: pl.DataFrame) -> None:
             row = df.filter(invalid).row(0, named=True)
             raise ValueError(
                 f"Invalid weekly Mixed-frequency State Feature output {column!r}: "
-                f"value={row.get(column)!r} timestamp={row.get('timestamp')!r}"
+                f"value={row.get(column)!r} calendar_week={row.get('calendar_week')!r}"
             )
 
 
@@ -162,13 +164,12 @@ def _resolve_base_path(path: Path) -> Path:
     return path
 
 
-def write_weekly_mixed_frequency_feature_for_day(
+def write_weekly_mixed_frequency_feature_for_range(
     *,
     root_path: str | Path,
     symbol: str,
     contract: str,
     target_freq: str,
-    date: str,
     start_date: str,
     end_date: str,
     data_path: str = "PREPROCESS_DATASET/commodity-futures",
@@ -187,21 +188,12 @@ def write_weekly_mixed_frequency_feature_for_day(
         / f"{range_name}.feather"
     )
     weekly_base = pl.read_ipc(_resolve_base_path(weekly_base_path))
-    current = read_base_feature(
-        root / data_path / "BASE_FEATURE" / symbol / contract / target_freq / f"{date}.feather",
-        date,
-    )
     output = generate_weekly_mixed_frequency_features_from_base(
-        target_bars=current.select("timestamp", "trading_day"),
         weekly_base=weekly_base,
     )
-    if output.get_column("timestamp").to_list() != current.get_column("timestamp").to_list():
-        raise ValueError(
-            f"WEEKLY_MIXED_FREQUENCY_FEATURE timestamp set does not match BASE_FEATURE for date {date}"
-        )
     out_dir = root / save_path / symbol / contract / target_freq / "WEEKLY"
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{date}.feather"
+    out_path = out_dir / f"{range_name}.feather"
     output.write_ipc(out_path)
     return out_path
 
@@ -212,7 +204,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--symbol", "--symbols", dest="symbol", required=True)
     parser.add_argument("--contract", required=True)
     parser.add_argument("--target_freq", required=True)
-    parser.add_argument("--date", required=True)
     parser.add_argument("--start_date", required=True)
     parser.add_argument("--end_date", required=True)
     parser.add_argument(
@@ -232,12 +223,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(args=None) -> Path:
     parsed = build_parser().parse_args(args)
-    return write_weekly_mixed_frequency_feature_for_day(
+    return write_weekly_mixed_frequency_feature_for_range(
         root_path=parsed.root_path,
         symbol=parsed.symbol,
         contract=parsed.contract,
         target_freq=parsed.target_freq,
-        date=parsed.date,
         start_date=parsed.start_date,
         end_date=parsed.end_date,
         data_path=parsed.data_path,
