@@ -328,3 +328,54 @@ def test_write_mixed_frequency_feature_for_day_uses_base_feature_history(tmp_pat
     output = pl.read_ipc(out_path)
     assert "prev_day_volume" not in output.columns
     assert output["prev_week_return"].to_list() == [0.0, 0.0]
+
+
+def test_write_mixed_frequency_feature_for_day_skips_missing_base_feature(tmp_path):
+    with pytest.warns(UserWarning, match="missing BASE_FEATURE"):
+        out_path = write_mixed_frequency_feature_for_day(
+            root_path=tmp_path,
+            symbol="fu",
+            contract="fu2601",
+            target_freq="5min",
+            date="2026-01-01",
+        )
+
+    assert out_path is None
+    assert not (
+        tmp_path
+        / "PREPROCESS_DATASET"
+        / "commodity-futures"
+        / "MIXED_FREQUENCY_FEATURE"
+        / "fu"
+        / "fu2601"
+        / "5min"
+        / "2026-01-01.feather"
+    ).exists()
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "operator_futures.commodity.daily_base_feature",
+        "operator_futures.commodity.weekly_base_feature",
+        "operator_futures.commodity.daily_mixed_frequency_feature",
+        "operator_futures.commodity.weekly_mixed_frequency_feature",
+        "operator_futures.commodity.mixed_frequency_feature",
+    ],
+)
+def test_commodity_mixed_frequency_cli_entrypoints_respond_to_help(module_name):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        [sys.executable, "-m", module_name, "--help"],
+        cwd=repo_root,
+        env={**os.environ, "PYTHONPATH": str(repo_root / "data_preprocess")},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "usage:" in result.stdout

@@ -358,3 +358,7 @@ def main(args=None) -> Path:
         data_path=parsed.data_path,
         save_path=parsed.save_path,
     )
+
+
+if __name__ == "__main__":
+    main()

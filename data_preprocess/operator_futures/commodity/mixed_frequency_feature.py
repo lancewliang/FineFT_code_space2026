@@ -1,5 +1,6 @@
 from pathlib import Path
 import argparse
+import warnings
 
 import polars as pl
 
@@ -73,10 +74,29 @@ def write_mixed_frequency_feature_for_day(
     contract: str,
     target_freq: str,
     date: str,
+    data_path: str = "PREPROCESS_DATASET/commodity-futures",
     feature_path: str = "PREPROCESS_DATASET/commodity-futures/MIXED_FREQUENCY_FEATURE",
     save_path: str = "PREPROCESS_DATASET/commodity-futures/MIXED_FREQUENCY_FEATURE",
-) -> Path:
+) -> Path | None:
     root = Path(root_path)
+    base_feature_path = (
+        root
+        / data_path
+        / "BASE_FEATURE"
+        / symbol
+        / contract
+        / target_freq
+        / f"{date}.feather"
+    )
+    if not base_feature_path.exists():
+        warnings.warn(
+            "Skipping commodity mixed-frequency feature date with missing "
+            f"BASE_FEATURE: symbol={symbol} contract={contract} "
+            f"target_freq={target_freq} date={date} path={base_feature_path}",
+            stacklevel=2,
+        )
+        return None
+
     feature_root = root / feature_path / symbol / contract / target_freq
     daily_path = feature_root / "DAILY" / f"{date}.feather"
     weekly_path = feature_root / "WEEKLY" / f"{date}.feather"
@@ -105,6 +125,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target_freq", required=True)
     parser.add_argument("--date", required=True)
     parser.add_argument(
+        "--data_path",
+        default="PREPROCESS_DATASET/commodity-futures",
+    )
+    parser.add_argument(
         "--feature_path",
         default="PREPROCESS_DATASET/commodity-futures/MIXED_FREQUENCY_FEATURE",
     )
@@ -115,7 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(args=None) -> Path:
+def main(args=None) -> Path | None:
     parsed = build_parser().parse_args(args)
     return write_mixed_frequency_feature_for_day(
         root_path=parsed.root_path,
@@ -123,6 +147,11 @@ def main(args=None) -> Path:
         contract=parsed.contract,
         target_freq=parsed.target_freq,
         date=parsed.date,
+        data_path=parsed.data_path,
         feature_path=parsed.feature_path,
         save_path=parsed.save_path,
     )
+
+
+if __name__ == "__main__":
+    main()

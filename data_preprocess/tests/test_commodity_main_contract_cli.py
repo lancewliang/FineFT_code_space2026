@@ -903,7 +903,13 @@ summary.write_text(
 PY
     echo "stitch stdout"
 }
-run_commodity_downscale_continuous_by_trading_day() { echo "downscale stderr" >&2; }
+    run_commodity_downscale_continuous_by_trading_day() { echo "downscale stderr" >&2; }
+    run_commodity_daily_base_feature_process() { echo "daily base feature stdout"; }
+    run_commodity_weekly_base_feature_process() { echo "weekly base feature stdout"; }
+    run_commodity_cross_month_feature_process() { echo "cross month feature stdout"; }
+    run_commodity_daily_mixed_frequency_feature_process() { echo "daily mixed frequency feature stdout"; }
+    run_commodity_weekly_mixed_frequency_feature_process() { echo "weekly mixed frequency feature stdout"; }
+    run_commodity_mixed_frequency_feature_process() { echo "mixed frequency feature stdout"; }
 run_commodity_cross_section_process() {
     local target_freq=$4
     local symbol=$5
