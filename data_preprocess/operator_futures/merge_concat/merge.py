@@ -10,6 +10,9 @@ import time
 
 sys.path.append(".")
 from operator_futures.commodity.cross_month_feature import resolve_cross_month_feature_input
+from operator_futures.commodity.mixed_frequency_feature import (
+    MIXED_FREQUENCY_FEATURE_COLUMNS,
+)
 from operator_futures.util import match_strings_in_range, symbol_contract_path_parts
 from memory_profiler import profile
 
@@ -68,6 +71,12 @@ parser.add_argument(
     default=True,
     help="fail when the daily CROSS_MONTH_FEATURE input is missing",
 )
+parser.add_argument(
+    "--require_mixed_frequency_feature",
+    action=argparse.BooleanOptionalAction,
+    default=False,
+    help="fail when the daily MIXED_FREQUENCY_FEATURE input is missing",
+)
 
 
 def build_daily_feature_frames(
@@ -79,6 +88,7 @@ def build_daily_feature_frames(
     kline_feature: pl.DataFrame,
     base_time_feature: pl.DataFrame | None = None,
     cross_month_feature: pl.DataFrame | None = None,
+    mixed_frequency_feature: pl.DataFrame | None = None,
     contract: str | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     der_without_symbol = der.drop("symbol") if "symbol" in der.columns else der
@@ -104,6 +114,21 @@ def build_daily_feature_frames(
             how="left",
         ).with_columns(
             pl.col(cross_month_columns).fill_null(0.0)
+        )
+    if mixed_frequency_feature is not None:
+        missing = [
+            column
+            for column in MIXED_FREQUENCY_FEATURE_COLUMNS
+            if column not in mixed_frequency_feature.columns
+        ]
+        if missing:
+            raise ValueError(f"MIXED_FREQUENCY_FEATURE missing columns: {missing}")
+        future_feature = future_feature.join(
+            mixed_frequency_feature.select(
+                ["timestamp", *MIXED_FREQUENCY_FEATURE_COLUMNS]
+            ),
+            on="timestamp",
+            how="left",
         )
     return reward_feature, future_feature
 
@@ -215,6 +240,26 @@ def main(args):
         if resolved_cross_month_feature_path is not None
         else None
     )
+    mixed_frequency_feature_path = os.path.join(
+        args.data_path,
+        "MIXED_FREQUENCY_FEATURE",
+        *symbol_parts,
+        args.target_freq,
+        args.date + ".feather",
+    )
+    if os.path.exists(mixed_frequency_feature_path):
+        mixed_frequency_feature = pl.read_ipc(mixed_frequency_feature_path)
+    elif bool(getattr(args, "require_mixed_frequency_feature", False)):
+        raise ValueError(
+            f"missing required MIXED_FREQUENCY_FEATURE file: {mixed_frequency_feature_path}"
+        )
+    else:
+        mixed_frequency_feature = None
+    if mixed_frequency_feature is not None:
+        if base_feature["timestamp"].to_list() != mixed_frequency_feature["timestamp"].to_list():
+            raise ValueError(
+                f"MIXED_FREQUENCY_FEATURE timestamp set does not match BASE_FEATURE for date {args.date}: {mixed_frequency_feature_path}"
+            )
     logger.info(
         "Loaded daily merge inputs: snapshot_rows=%d der_rows=%d base_rows=%d snapshot_feature_rows=%d quotes_feature_rows=%d kline_feature_rows=%d",
         snapshot.height,
@@ -235,6 +280,7 @@ def main(args):
         kline_feature,
         base_time_feature=base_time_feature,
         cross_month_feature=cross_month_feature,
+        mixed_frequency_feature=mixed_frequency_feature,
         contract=args.contract,
     )
 

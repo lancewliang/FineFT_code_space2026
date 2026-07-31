@@ -97,19 +97,23 @@ _Avoid_: 剩余天数、自然日倒计时
 _Avoid_: Base_Time_feature、时序特征
 
 **混频状态特征 (Mixed-frequency State Feature)**:
-在目标频率 bar 上注入日级和周级市场状态的 State Feature，包含上一完整周期状态和当前周期截至当前 bar 可见的 period-to-date 状态。
-_Avoid_: 周线因子、日周拼接特征
+在目标频率 bar 上注入日级和周级市场状态的 State Feature；第一版日级仅使用上一 `TradingDay`，周级仅使用上一完整自然周。
+_Avoid_: 周线因子、日周拼接特征、当前日完整特征、当前周完整特征
+
+**混频基础数据 (Mixed-frequency Base Data)**:
+用于生成混频状态特征的低频 OHLCV 基础产物；日基础数据每个 `TradingDay` 一行，周基础数据每个自然周一行。
+_Avoid_: 按 bar 展开的日周基础特征、临时低频聚合
+
+**自然周状态特征 (Calendar-week State Feature)**:
+按 `TradingDay` 所属自然周聚合得到的周级混频状态特征，当前自然周内的日内 bar 只能使用上一完整自然周。
+_Avoid_: 五交易日滚动周特征、当前周完整特征
 
 **上一周期状态特征 (Previous-period State Feature)**:
 仅使用上一完整交易日或上一完整交易周计算的日级或周级状态特征，用于给当前 5min bar 提供已完成周期背景。
 _Avoid_: 昨日特征、上周特征（不明确时）
 
-**Period-to-date 状态特征 (Period-to-date State Feature)**:
-在当前交易日或当前交易周内，从周期开始截至当前目标频率 bar 的可见数据计算的状态特征。
-_Avoid_: 当前日特征、当前周特征（不明确时）
-
 **混频可见性约束 (Mixed-frequency Visibility Rule)**:
-混频状态特征在任一目标频率 bar 上只能使用该 bar 事件时间戳之前或当时已可见的数据，不能使用未来 bar、未完成日终统计或未完成周终统计。
+混频状态特征在任一目标频率 bar 上只能使用上一完整日或上一完整周统计，不能使用当前未完成日、当前未完成周或未来 bar 的统计。
 _Avoid_: forward-fill 周特征、未来可见特征
 
 **风险状态特征 (Risk State Feature)**:

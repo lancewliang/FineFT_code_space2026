@@ -1436,6 +1436,43 @@ def test_commodity_full_process_shell_runs_cross_month_before_merge():
     assert '"merge"' not in first_contract_loop
 
 
+def test_commodity_full_process_shell_runs_mixed_frequency_before_merge():
+    script = (
+        REPO_ROOT
+        / "data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
+    )
+    text = script.read_text(encoding="utf-8")
+
+    assert "MIXED_FREQUENCY_FEATURE_COLUMNS=(" in text
+    assert "prev_day_return" in text
+    assert "prev_week_return" in text
+    assert "run_commodity_daily_base_feature_process()" in text
+    assert "run_commodity_weekly_base_feature_process()" in text
+    assert "run_commodity_daily_mixed_frequency_feature_process()" in text
+    assert "run_commodity_weekly_mixed_frequency_feature_process()" in text
+    assert "run_commodity_mixed_frequency_feature_process()" in text
+    assert "operator_futures.commodity.daily_base_feature" in text
+    assert "operator_futures.commodity.weekly_base_feature" in text
+    assert "operator_futures.commodity.daily_mixed_frequency_feature" in text
+    assert "operator_futures.commodity.weekly_mixed_frequency_feature" in text
+    assert "operator_futures.commodity.mixed_frequency_feature" in text
+    assert "MIXED_FREQUENCY_BASE" in text
+    assert "MIXED_FREQUENCY_FEATURE" in text
+    assert '"daily_base_feature"' in text
+    assert '"weekly_base_feature"' in text
+    assert "--require_mixed_frequency_feature" in text
+    assert '"daily_mixed_frequency_feature"' in text
+    assert '"weekly_mixed_frequency_feature"' in text
+    assert '"mixed_frequency_feature"' in text
+    assert text.index('"daily_base_feature"') < text.index('"weekly_base_feature"')
+    assert text.index('"weekly_base_feature"') < text.index('"cross_month_feature"')
+    assert text.index('"weekly_base_feature"') < text.index('"daily_mixed_frequency_feature"')
+    assert text.index('"daily_mixed_frequency_feature"') < text.index('"weekly_mixed_frequency_feature"')
+    assert text.index('"weekly_mixed_frequency_feature"') < text.index('"mixed_frequency_feature"')
+    assert text.index('"cross_month_feature"') < text.index('"mixed_frequency_feature"')
+    assert text.index('"mixed_frequency_feature"') < text.index('"merge"')
+
+
 def test_validate_features_checks_feature_union_outputs():
     script = (
         REPO_ROOT
