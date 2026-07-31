@@ -25,6 +25,12 @@ WEEKLY_BASE_FEATURE_COLUMNS: list[str] = [
     "tradeval",
     "open_interest_first",
     "open_interest_last",
+    "vwap",
+    "twap",
+    "ntrade_estimated",
+    "ntrade_up_estimated",
+    "ntrade_down_estimated",
+    "ntrade_flat_estimated",
 ]
 
 
@@ -54,6 +60,12 @@ def _stats_to_weekly_row(
         "tradeval": stats.tradeval,
         "open_interest_first": stats.open_interest_first,
         "open_interest_last": stats.open_interest_last,
+        "vwap": stats.vwap,
+        "twap": stats.twap,
+        "ntrade_estimated": stats.ntrade_estimated,
+        "ntrade_up_estimated": stats.ntrade_up_estimated,
+        "ntrade_down_estimated": stats.ntrade_down_estimated,
+        "ntrade_flat_estimated": stats.ntrade_flat_estimated,
     }
 
 

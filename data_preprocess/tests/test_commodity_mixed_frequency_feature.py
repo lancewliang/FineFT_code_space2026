@@ -14,6 +14,7 @@ from operator_futures.commodity.daily_base_feature import (
     write_daily_base_feature_for_range,
 )
 from operator_futures.commodity.daily_mixed_frequency_feature import (
+    PREV_DAY_FEATURE_COLUMNS,
     generate_daily_mixed_frequency_features_from_base,
     write_daily_mixed_frequency_feature_for_day,
 )
@@ -22,6 +23,7 @@ from operator_futures.commodity.weekly_base_feature import (
     write_weekly_base_feature_for_range,
 )
 from operator_futures.commodity.weekly_mixed_frequency_feature import (
+    PREV_WEEK_FEATURE_COLUMNS,
     generate_weekly_mixed_frequency_features_from_base,
     write_weekly_mixed_frequency_feature_for_day,
 )
@@ -42,6 +44,12 @@ def _bars_for_day(trading_day: str, first_ts: datetime, open_base: float) -> pl.
             "volume": [10.0, 20.0],
             "tradeval": [1000.0, 2200.0],
             "open_interest": [100.0, 110.0],
+            "vwap": [open_base + 1.0, open_base + 4.0],
+            "twap": [open_base + 0.5, open_base + 4.5],
+            "ntrade_estimated": [4.0, 6.0],
+            "ntrade_up_estimated": [3.0, 2.0],
+            "ntrade_down_estimated": [1.0, 3.0],
+            "ntrade_flat_estimated": [0.0, 1.0],
         }
     )
 
@@ -77,10 +85,19 @@ def test_generate_mixed_frequency_features_uses_previous_trading_day():
     assert np.isclose(row["prev_day_body_pct"], 0.05)
     assert np.isclose(row["prev_day_upper_shadow_pct"], 0.05)
     assert np.isclose(row["prev_day_lower_shadow_pct"], 0.05)
-    assert row["prev_day_volume"] == 30.0
-    assert row["prev_day_tradeval"] == 3200.0
+    assert np.isclose(row["prev_day_close_position"], 10.0 / 15.0)
+    assert np.isclose(row["prev_day_body_to_range"], 5.0 / 15.0)
+    assert np.isclose(row["prev_day_upper_shadow_to_range"], 5.0 / 15.0)
+    assert np.isclose(row["prev_day_lower_shadow_to_range"], 5.0 / 15.0)
+    assert np.isclose(row["prev_day_vwap_deviation_pct"], 2.0 / 103.0)
+    assert np.isclose(row["prev_day_twap_deviation_pct"], 2.5 / 102.5)
+    assert np.isclose(row["prev_day_trade_up_ratio"], 0.5)
+    assert np.isclose(row["prev_day_trade_down_ratio"], 0.4)
+    assert np.isclose(row["prev_day_trade_imbalance"], 0.1)
     assert np.isclose(row["prev_day_open_interest_change"], 0.1)
     assert np.isclose(row["prev_day_turnover_rate"], 30.0 / 110.0)
+    assert "prev_day_volume" not in result.columns
+    assert "prev_day_tradeval" not in result.columns
 
 
 def test_generate_mixed_frequency_features_uses_previous_calendar_week():
@@ -116,10 +133,77 @@ def test_generate_mixed_frequency_features_uses_previous_calendar_week():
     for row in (monday, wednesday):
         assert np.isclose(row["prev_week_return"], 25.0 / 100.0)
         assert np.isclose(row["prev_week_range_pct"], 35.0 / 125.0)
-        assert row["prev_week_volume"] == 60.0
-        assert row["prev_week_tradeval"] == 6400.0
+        assert np.isclose(row["prev_week_close_position"], 30.0 / 35.0)
+        assert np.isclose(row["prev_week_body_to_range"], 25.0 / 35.0)
+        assert np.isclose(row["prev_week_upper_shadow_to_range"], 5.0 / 35.0)
+        assert np.isclose(row["prev_week_lower_shadow_to_range"], 5.0 / 35.0)
+        assert np.isclose(row["prev_week_vwap_deviation_pct"], 12.0 / 113.0)
+        assert np.isclose(row["prev_week_twap_deviation_pct"], 12.5 / 112.5)
+        assert np.isclose(row["prev_week_trade_up_ratio"], 0.5)
+        assert np.isclose(row["prev_week_trade_down_ratio"], 0.4)
+        assert np.isclose(row["prev_week_trade_imbalance"], 0.1)
         assert np.isclose(row["prev_week_open_interest_change"], 0.1)
         assert np.isclose(row["prev_week_turnover_rate"], 60.0 / 110.0)
+    assert "prev_week_volume" not in result.columns
+    assert "prev_week_tradeval" not in result.columns
+
+
+def test_generate_mixed_frequency_features_uses_daily_rolling_windows():
+    frame = pl.concat(
+        [
+            _bars_for_day("2026-01-05", datetime(2026, 1, 5, 9), 100.0),
+            _bars_for_day("2026-01-06", datetime(2026, 1, 6, 9), 200.0),
+            _bars_for_day("2026-01-07", datetime(2026, 1, 7, 9), 300.0),
+        ]
+    )
+
+    result = generate_daily_mixed_frequency_features_from_base(
+        target_bars=frame.select("timestamp", "trading_day"),
+        daily_base=generate_daily_base_features(frame),
+    )
+
+    assert "prev_2_day_return" not in result.columns
+    assert "prev_2_day_range_pct" not in result.columns
+    assert "prev_30_day_trade_imbalance" in result.columns
+    assert "prev_2_day_volume" not in result.columns
+    assert result.row(2, named=True)["prev_2_day_trade_imbalance"] == 0.0
+
+    row = result.row(4, named=True)
+    assert np.isclose(row["prev_2_day_trade_up_ratio"], 0.5)
+    assert np.isclose(row["prev_2_day_trade_down_ratio"], 0.4)
+    assert np.isclose(row["prev_2_day_trade_imbalance"], 0.1)
+    assert np.isclose(row["prev_2_day_open_interest_change"], 0.1)
+    assert np.isclose(row["prev_2_day_turnover_rate"], 60.0 / 110.0)
+
+
+def test_generate_mixed_frequency_features_uses_weekly_rolling_windows():
+    frame = pl.concat(
+        [
+            _bars_for_day("2026-01-05", datetime(2026, 1, 5, 9), 100.0),
+            _bars_for_day("2026-01-06", datetime(2026, 1, 6, 9), 120.0),
+            _bars_for_day("2026-01-12", datetime(2026, 1, 12, 9), 200.0),
+            _bars_for_day("2026-01-14", datetime(2026, 1, 14, 9), 300.0),
+            _bars_for_day("2026-01-19", datetime(2026, 1, 19, 9), 400.0),
+        ]
+    )
+
+    result = generate_weekly_mixed_frequency_features_from_base(
+        target_bars=frame.select("timestamp", "trading_day"),
+        weekly_base=generate_weekly_base_features(frame),
+    )
+
+    assert "prev_2_week_return" not in result.columns
+    assert "prev_2_week_range_pct" not in result.columns
+    assert "prev_6_week_trade_imbalance" in result.columns
+    assert "prev_2_week_volume" not in result.columns
+    assert result.row(4, named=True)["prev_2_week_trade_imbalance"] == 0.0
+
+    row = result.row(8, named=True)
+    assert np.isclose(row["prev_2_week_trade_up_ratio"], 0.5)
+    assert np.isclose(row["prev_2_week_trade_down_ratio"], 0.4)
+    assert np.isclose(row["prev_2_week_trade_imbalance"], 0.1)
+    assert np.isclose(row["prev_2_week_open_interest_change"], 0.1)
+    assert np.isclose(row["prev_2_week_turnover_rate"], 120.0 / 110.0)
 
 
 def test_daily_and_weekly_base_outputs_one_row_per_day_and_week():
@@ -151,6 +235,27 @@ def test_mixed_frequency_features_rejects_missing_base_columns():
         generate_daily_mixed_frequency_features_from_base(
             target_bars=target_bars,
             daily_base=pl.DataFrame({"trading_day": ["2026-01-04"]}),
+        )
+
+
+def test_mixed_frequency_features_reject_absolute_level_columns():
+    daily_feature = pl.DataFrame(
+        {
+            "timestamp": [1],
+            **{column: [0.0] for column in PREV_DAY_FEATURE_COLUMNS},
+            "prev_day_volume": [30.0],
+        }
+    )
+    weekly_feature = pl.DataFrame(
+        {
+            "timestamp": [1],
+            **{column: [0.0] for column in PREV_WEEK_FEATURE_COLUMNS},
+        }
+    )
+    with pytest.raises(ValueError, match="No Absolute Level Rule"):
+        combine_daily_weekly_mixed_frequency_features(
+            daily_feature=daily_feature,
+            weekly_feature=weekly_feature,
         )
 
 
@@ -209,7 +314,7 @@ def test_write_mixed_frequency_feature_for_day_uses_base_feature_history(tmp_pat
         start_date="2026-01-05",
         end_date="2026-01-07",
     )
-    assert pl.read_ipc(daily_feature_path)["prev_day_volume"].to_list() == [30.0, 30.0]
+    assert "prev_day_volume" not in pl.read_ipc(daily_feature_path).columns
     assert pl.read_ipc(weekly_feature_path)["prev_week_return"].to_list() == [0.0, 0.0]
 
     out_path = write_mixed_frequency_feature_for_day(
@@ -221,5 +326,5 @@ def test_write_mixed_frequency_feature_for_day_uses_base_feature_history(tmp_pat
     )
 
     output = pl.read_ipc(out_path)
-    assert output["prev_day_volume"].to_list() == [30.0, 30.0]
+    assert "prev_day_volume" not in output.columns
     assert output["prev_week_return"].to_list() == [0.0, 0.0]

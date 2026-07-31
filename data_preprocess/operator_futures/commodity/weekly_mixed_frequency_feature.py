@@ -4,19 +4,84 @@ import argparse
 import polars as pl
 
 from .daily_base_feature import read_base_feature
-from .daily_mixed_frequency_feature import period_features, previous_key
+from .daily_mixed_frequency_feature import (
+    aggregate_period_rows,
+    daily_rolling_state_features,
+    period_features,
+    previous_window_rows,
+)
 from .weekly_base_feature import WEEKLY_BASE_FEATURE_COLUMNS, calendar_week_text
 
 
+WEEK_ROLLING_WINDOWS: tuple[int, ...] = (1, 2, 4, 6)
+
+_WEEKLY_STATE_FEATURE_SUFFIXES: tuple[str, ...] = (
+    "return",
+    "range_pct",
+    "body_pct",
+    "close_position",
+    "body_to_range",
+    "upper_shadow_to_range",
+    "lower_shadow_to_range",
+    "vwap_deviation_pct",
+    "twap_deviation_pct",
+    "trade_up_ratio",
+    "trade_down_ratio",
+    "trade_imbalance",
+    "open_interest_change",
+    "turnover_rate",
+)
+
+_WEEKLY_ROLLING_STATE_FEATURE_SUFFIXES: tuple[str, ...] = (
+    "trade_up_ratio",
+    "trade_down_ratio",
+    "trade_imbalance",
+    "open_interest_change",
+    "turnover_rate",
+)
+
+
+def _week_prefix(window: int) -> str:
+    return "prev_week" if window == 1 else f"prev_{window}_week"
+
+
 PREV_WEEK_FEATURE_COLUMNS: list[str] = [
-    "prev_week_return",
-    "prev_week_range_pct",
-    "prev_week_body_pct",
-    "prev_week_volume",
-    "prev_week_tradeval",
-    "prev_week_open_interest_change",
-    "prev_week_turnover_rate",
+    f"prev_week_{suffix}" for suffix in _WEEKLY_STATE_FEATURE_SUFFIXES
 ]
+PREV_WEEK_FEATURE_COLUMNS.extend(
+    f"{_week_prefix(window)}_{suffix}"
+    for window in WEEK_ROLLING_WINDOWS
+    if window != 1
+    for suffix in _WEEKLY_ROLLING_STATE_FEATURE_SUFFIXES
+)
+
+_WEEKLY_PRICE_ROLLING_FEATURE_COLUMNS: tuple[str, ...] = tuple(
+    f"{_week_prefix(window)}_{suffix}"
+    for window in WEEK_ROLLING_WINDOWS
+    if window != 1
+    for suffix in (
+        "return",
+        "range_pct",
+        "body_pct",
+        "close_position",
+        "body_to_range",
+        "upper_shadow_to_range",
+        "lower_shadow_to_range",
+        "vwap_deviation_pct",
+        "twap_deviation_pct",
+    )
+)
+
+_WEEKLY_ABSOLUTE_LEVEL_FEATURE_COLUMNS: tuple[str, ...] = tuple(
+    f"{_week_prefix(window)}_{suffix}"
+    for window in WEEK_ROLLING_WINDOWS
+    for suffix in ("volume", "tradeval")
+)
+
+_ABSOLUTE_LEVEL_FEATURE_COLUMNS: tuple[str, ...] = (
+    *_WEEKLY_ABSOLUTE_LEVEL_FEATURE_COLUMNS,
+    *_WEEKLY_PRICE_ROLLING_FEATURE_COLUMNS,
+)
 
 
 def _rows_from_weekly_base(weekly_base: pl.DataFrame) -> dict[str, dict[str, object]]:
@@ -44,14 +109,24 @@ def generate_weekly_mixed_frequency_features_from_base(
     rows: list[dict[str, float | object]] = []
     for row in ordered.select("timestamp", "trading_day").iter_rows(named=True):
         week_key = calendar_week_text(row["trading_day"])
-        prev_week_key = previous_key(weekly_keys, week_key)
-        weekly_features = period_features(
-            "prev_week", weekly_rows.get(prev_week_key)
-        )
-        weekly_features.pop("prev_week_upper_shadow_pct")
-        weekly_features.pop("prev_week_lower_shadow_pct")
         feature_row: dict[str, float | object] = {"timestamp": row["timestamp"]}
-        feature_row.update(weekly_features)
+        for window in WEEK_ROLLING_WINDOWS:
+            window_rows = previous_window_rows(
+                rows=weekly_rows,
+                keys=weekly_keys,
+                current=week_key,
+                window=window,
+            )
+            prefix = _week_prefix(window)
+            if window == 1:
+                weekly_features = period_features(
+                    prefix, aggregate_period_rows(window_rows)
+                )
+                weekly_features.pop(f"{prefix}_upper_shadow_pct")
+                weekly_features.pop(f"{prefix}_lower_shadow_pct")
+            else:
+                weekly_features = daily_rolling_state_features(prefix, window_rows)
+            feature_row.update(weekly_features)
         rows.append(feature_row)
 
     result = pl.DataFrame(rows).select(["timestamp", *PREV_WEEK_FEATURE_COLUMNS])
@@ -60,6 +135,14 @@ def generate_weekly_mixed_frequency_features_from_base(
 
 
 def validate_weekly_mixed_frequency_output(df: pl.DataFrame) -> None:
+    illegal_columns = [
+        column for column in _ABSOLUTE_LEVEL_FEATURE_COLUMNS if column in df.columns
+    ]
+    if illegal_columns:
+        raise ValueError(
+            "Weekly Mixed-frequency State Feature violates No Absolute Level Rule: "
+            f"{illegal_columns}"
+        )
     for column in PREV_WEEK_FEATURE_COLUMNS:
         if column not in df.columns:
             raise ValueError(f"Missing weekly Mixed-frequency State Feature column: {column}")

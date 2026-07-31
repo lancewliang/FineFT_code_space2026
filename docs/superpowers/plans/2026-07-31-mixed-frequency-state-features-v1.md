@@ -33,11 +33,11 @@ The generated features should be joined onto target-frequency bars as candidate 
 7. As a futures research user, I want the first version to exclude weekly sliding-window features, so that the initial weekly join rule is unambiguous.
 8. As a futures research user, I want previous-day return and range features, so that the model can observe the prior completed day direction and volatility.
 9. As a futures research user, I want previous-day candlestick shape features, so that the model can observe whether the previous TradingDay closed strong or weak.
-10. As a futures research user, I want previous-day volume and tradeval features, so that the model can observe recent market activity.
+10. As a futures research user, I want previous-day VWAP/TWAP deviation and trade-direction ratio features, so that the model can observe recent market activity without absolute levels.
 11. As a futures research user, I want previous-day OpenInterest change features, so that the model can observe position-building or position-reduction pressure.
 12. As a futures research user, I want previous-day turnover-rate style features, so that volume can be interpreted relative to OpenInterest.
 13. As a futures research user, I want previous-week return and range features, so that the model can observe slow directional and volatility context.
-14. As a futures research user, I want previous-week volume and tradeval features, so that the model can observe weekly participation.
+14. As a futures research user, I want previous-week VWAP/TWAP deviation and trade-direction ratio features, so that the model can observe weekly participation without absolute levels.
 15. As a futures research user, I want previous-week OpenInterest change features, so that the model can observe weekly positioning changes.
 16. As a futures research user, I want missing previous-period features to be handled deterministically, so that early sample rows do not silently create NaN State Feature values.
 17. As a futures research user, I want invalid input columns to fail fast, so that malformed source data does not silently contaminate training.
@@ -60,16 +60,30 @@ The generated features should be joined onto target-frequency bars as candidate 
   - `prev_day_body_pct`
   - `prev_day_upper_shadow_pct`
   - `prev_day_lower_shadow_pct`
-  - `prev_day_volume`
-  - `prev_day_tradeval`
+  - `prev_day_close_position`
+  - `prev_day_body_to_range`
+  - `prev_day_upper_shadow_to_range`
+  - `prev_day_lower_shadow_to_range`
+  - `prev_day_vwap_deviation_pct`
+  - `prev_day_twap_deviation_pct`
+  - `prev_day_trade_up_ratio`
+  - `prev_day_trade_down_ratio`
+  - `prev_day_trade_imbalance`
   - `prev_day_open_interest_change`
   - `prev_day_turnover_rate`
 - v1 weekly features:
   - `prev_week_return`
   - `prev_week_range_pct`
   - `prev_week_body_pct`
-  - `prev_week_volume`
-  - `prev_week_tradeval`
+  - `prev_week_close_position`
+  - `prev_week_body_to_range`
+  - `prev_week_upper_shadow_to_range`
+  - `prev_week_lower_shadow_to_range`
+  - `prev_week_vwap_deviation_pct`
+  - `prev_week_twap_deviation_pct`
+  - `prev_week_trade_up_ratio`
+  - `prev_week_trade_down_ratio`
+  - `prev_week_trade_imbalance`
   - `prev_week_open_interest_change`
   - `prev_week_turnover_rate`
 - Daily aggregation is based on TradingDay, not Event Timestamp calendar date.

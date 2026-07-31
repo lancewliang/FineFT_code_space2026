@@ -247,15 +247,29 @@ MIXED_FREQUENCY_FEATURE_COLUMNS=(
     prev_day_body_pct
     prev_day_upper_shadow_pct
     prev_day_lower_shadow_pct
-    prev_day_volume
-    prev_day_tradeval
+    prev_day_close_position
+    prev_day_body_to_range
+    prev_day_upper_shadow_to_range
+    prev_day_lower_shadow_to_range
+    prev_day_vwap_deviation_pct
+    prev_day_twap_deviation_pct
+    prev_day_trade_up_ratio
+    prev_day_trade_down_ratio
+    prev_day_trade_imbalance
     prev_day_open_interest_change
     prev_day_turnover_rate
     prev_week_return
     prev_week_range_pct
     prev_week_body_pct
-    prev_week_volume
-    prev_week_tradeval
+    prev_week_close_position
+    prev_week_body_to_range
+    prev_week_upper_shadow_to_range
+    prev_week_lower_shadow_to_range
+    prev_week_vwap_deviation_pct
+    prev_week_twap_deviation_pct
+    prev_week_trade_up_ratio
+    prev_week_trade_down_ratio
+    prev_week_trade_imbalance
     prev_week_open_interest_change
     prev_week_turnover_rate
 )

@@ -3,8 +3,14 @@ import argparse
 
 import polars as pl
 
-from .daily_mixed_frequency_feature import PREV_DAY_FEATURE_COLUMNS
-from .weekly_mixed_frequency_feature import PREV_WEEK_FEATURE_COLUMNS
+from .daily_mixed_frequency_feature import (
+    PREV_DAY_FEATURE_COLUMNS,
+    validate_daily_mixed_frequency_output,
+)
+from .weekly_mixed_frequency_feature import (
+    PREV_WEEK_FEATURE_COLUMNS,
+    validate_weekly_mixed_frequency_output,
+)
 
 
 MIXED_FREQUENCY_FEATURE_COLUMNS: list[str] = (
@@ -23,6 +29,8 @@ def combine_daily_weekly_mixed_frequency_features(
     daily_feature: pl.DataFrame,
     weekly_feature: pl.DataFrame,
 ) -> pl.DataFrame:
+    validate_daily_mixed_frequency_output(daily_feature)
+    validate_weekly_mixed_frequency_output(weekly_feature)
     missing_daily = [
         column for column in PREV_DAY_FEATURE_COLUMNS if column not in daily_feature.columns
     ]

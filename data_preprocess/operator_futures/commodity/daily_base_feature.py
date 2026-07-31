@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 import argparse
+import math
 
 import polars as pl
 
@@ -15,6 +16,12 @@ REQUIRED_BAR_COLUMNS: tuple[str, ...] = (
     "volume",
     "tradeval",
     "open_interest",
+    "vwap",
+    "twap",
+    "ntrade_estimated",
+    "ntrade_up_estimated",
+    "ntrade_down_estimated",
+    "ntrade_flat_estimated",
 )
 
 DAILY_BASE_FEATURE_COLUMNS: list[str] = [
@@ -27,6 +34,12 @@ DAILY_BASE_FEATURE_COLUMNS: list[str] = [
     "tradeval",
     "open_interest_first",
     "open_interest_last",
+    "vwap",
+    "twap",
+    "ntrade_estimated",
+    "ntrade_up_estimated",
+    "ntrade_down_estimated",
+    "ntrade_flat_estimated",
 ]
 
 
@@ -41,6 +54,12 @@ class PeriodStats:
     tradeval: float
     open_interest_first: float
     open_interest_last: float
+    vwap: float
+    twap: float
+    ntrade_estimated: float
+    ntrade_up_estimated: float
+    ntrade_down_estimated: float
+    ntrade_flat_estimated: float
 
 
 def parse_trading_day(value: object) -> date:
@@ -65,11 +84,28 @@ def validate_bar_input(df: pl.DataFrame) -> None:
     if "trading_day" not in df.columns:
         raise ValueError("Missing required column for Mixed-frequency Base Data: trading_day")
 
-    for column in ("open", "high", "low", "close", "volume", "tradeval", "open_interest"):
+    numeric_columns = (
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "tradeval",
+        "open_interest",
+        "vwap",
+        "twap",
+        "ntrade_estimated",
+        "ntrade_up_estimated",
+        "ntrade_down_estimated",
+        "ntrade_flat_estimated",
+    )
+    for column in numeric_columns:
         series = df.get_column(column).cast(pl.Float64, strict=False)
         invalid = series.is_null() | series.is_nan() | series.is_infinite()
-        if column in {"open", "high", "low", "close"}:
+        if column in {"open", "high", "low", "close", "vwap", "twap"}:
             invalid = invalid | (series <= 0.0)
+        if column.startswith("ntrade_"):
+            invalid = invalid | (series < 0.0)
         if invalid.any():
             row = df.filter(invalid).row(0, named=True)
             raise ValueError(
@@ -78,18 +114,42 @@ def validate_bar_input(df: pl.DataFrame) -> None:
             )
 
 
+def _weighted_average(values: pl.Series, weights: pl.Series, fallback: float) -> float:
+    weighted_sum = float((values.cast(pl.Float64) * weights.cast(pl.Float64)).sum())
+    total_weight = float(weights.cast(pl.Float64).sum())
+    if total_weight <= 0.0:
+        return fallback
+    value = weighted_sum / total_weight
+    return float(value) if math.isfinite(value) else fallback
+
+
 def stats_for_frame(frame: pl.DataFrame, period_key: object) -> PeriodStats:
     sorted_frame = frame.sort("timestamp")
+    close = float(sorted_frame.get_column("close")[-1])
     return PeriodStats(
         period_key=period_key,
         open=float(sorted_frame.get_column("open")[0]),
         high=float(sorted_frame.get_column("high").max()),
         low=float(sorted_frame.get_column("low").min()),
-        close=float(sorted_frame.get_column("close")[-1]),
+        close=close,
         volume=float(sorted_frame.get_column("volume").sum()),
         tradeval=float(sorted_frame.get_column("tradeval").sum()),
         open_interest_first=float(sorted_frame.get_column("open_interest")[0]),
         open_interest_last=float(sorted_frame.get_column("open_interest")[-1]),
+        vwap=_weighted_average(
+            sorted_frame.get_column("vwap"),
+            sorted_frame.get_column("volume"),
+            close,
+        ),
+        twap=float(sorted_frame.get_column("twap").mean()),
+        ntrade_estimated=float(sorted_frame.get_column("ntrade_estimated").sum()),
+        ntrade_up_estimated=float(sorted_frame.get_column("ntrade_up_estimated").sum()),
+        ntrade_down_estimated=float(
+            sorted_frame.get_column("ntrade_down_estimated").sum()
+        ),
+        ntrade_flat_estimated=float(
+            sorted_frame.get_column("ntrade_flat_estimated").sum()
+        ),
     )
 
 
@@ -104,6 +164,12 @@ def period_stats_from_base_row(row: dict[str, object], *, key_column: str) -> Pe
         tradeval=float(row["tradeval"]),
         open_interest_first=float(row["open_interest_first"]),
         open_interest_last=float(row["open_interest_last"]),
+        vwap=float(row["vwap"]),
+        twap=float(row["twap"]),
+        ntrade_estimated=float(row["ntrade_estimated"]),
+        ntrade_up_estimated=float(row["ntrade_up_estimated"]),
+        ntrade_down_estimated=float(row["ntrade_down_estimated"]),
+        ntrade_flat_estimated=float(row["ntrade_flat_estimated"]),
     )
 
 
@@ -190,6 +256,12 @@ def _stats_to_daily_row(stats: PeriodStats) -> dict[str, object]:
         "tradeval": stats.tradeval,
         "open_interest_first": stats.open_interest_first,
         "open_interest_last": stats.open_interest_last,
+        "vwap": stats.vwap,
+        "twap": stats.twap,
+        "ntrade_estimated": stats.ntrade_estimated,
+        "ntrade_up_estimated": stats.ntrade_up_estimated,
+        "ntrade_down_estimated": stats.ntrade_down_estimated,
+        "ntrade_flat_estimated": stats.ntrade_flat_estimated,
     }
 
 
