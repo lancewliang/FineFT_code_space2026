@@ -63,7 +63,13 @@ def _load_contract_frames(input_dir: Path) -> dict[str, pl.DataFrame]:
         raise FileNotFoundError(
             f"split input directory contains no contract feather files: {input_dir}"
         )
-    return {path.stem: pl.read_ipc(path) for path in paths}
+    frames = {}
+    for path in paths:
+        df = pl.read_ipc(path)
+        if "timestamp" in df.columns:
+            df = df.sort("timestamp")
+        frames[path.stem] = df
+    return frames
 
 
 def _state_features(df: pl.DataFrame, *, orderbook_depth: int) -> list[str]:

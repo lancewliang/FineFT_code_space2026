@@ -631,3 +631,34 @@ def test_stability_filter_rejects_unstable_feature_with_low_rank_ic_ir():
 
     assert "unstable_feature" not in filter_results["Stability Filter"]
     assert "stable_feature" in filter_results["Stability Filter"]
+
+
+def test_calculate_future_return_sorts_unsorted_timestamps():
+    from operator_futures.feature_selection.muti_contract.metrics import calculate_future_return
+    frame = pl.DataFrame(
+        {
+            "timestamp": ["2026-01-01 09:10:00", "2026-01-01 09:00:00", "2026-01-01 09:05:00"],
+            "mark_price": [13.0, 10.0, 11.0],
+        }
+    )
+    # Sorted order: 09:00 (10.0), 09:05 (11.0), 09:10 (13.0)
+    # Future return (window=1): at 09:00 -> (11-10)/10 = 0.1, at 09:05 -> (13-11)/11 = 2/11
+    returns = calculate_future_return(frame, window=1)
+    assert len(returns) == 2
+    assert returns[0] == pytest.approx(0.1)
+    assert returns[1] == pytest.approx(2.0 / 11.0)
+
+
+def test_catboost_importance_uses_temporal_split_when_sample_size_large(fake_catboost):
+    from operator_futures.feature_selection.muti_contract.metrics import calculate_metric_frame
+    rows = 15
+    frame = pl.DataFrame(
+        {
+            "mark_price": [float(i) for i in range(rows)],
+            "alpha": [float(i) for i in range(rows)],
+            "beta": [float(rows - i) for i in range(rows)],
+        }
+    )
+    result = calculate_metric_frame(frame, ["alpha", "beta"], windows_list=[1])
+    assert fake_catboost["fit"]["eval_set"] is not None
+    assert fake_catboost["fit"]["eval_set"].x.shape[0] < fake_catboost["fit"]["train_pool"].x.shape[0] + fake_catboost["fit"]["eval_set"].x.shape[0]

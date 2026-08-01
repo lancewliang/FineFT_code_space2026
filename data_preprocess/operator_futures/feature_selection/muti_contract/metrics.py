@@ -48,6 +48,8 @@ def calculate_rank_ic(column, target) -> float:
 
 
 def calculate_future_return(df: pl.DataFrame, window: int = 1) -> np.ndarray:
+    if "timestamp" in df.columns:
+        df = df.sort("timestamp")
     diff = pl.col("mark_price").shift(-window) - pl.col("mark_price")
     denom = pl.when(pl.col("mark_price").abs() > 1e-8).then(pl.col("mark_price")).otherwise(None)
     target = df.select((diff / denom).alias("target"))["target"]
@@ -97,8 +99,16 @@ def _catboost_importance(
     model_df = df.slice(0, future_return.size)
     x = model_df.select(features).to_numpy()
     y = np.asarray(future_return, dtype=float)
-    train_pool = Pool(x, y)
-    test_pool = Pool(x, y)
+    n_samples = len(x)
+    if n_samples >= 10:
+        split_idx = int(n_samples * 0.8)
+        train_pool = Pool(x[:split_idx], y[:split_idx])
+        eval_pool = Pool(x[split_idx:], y[split_idx:])
+        fit_pool = train_pool
+    else:
+        train_pool = Pool(x, y)
+        eval_pool = Pool(x, y)
+        fit_pool = train_pool
     try:
         model = CatBoostRegressor(
             iterations=1000,
@@ -108,7 +118,7 @@ def _catboost_importance(
             task_type="GPU",
             random_seed=42,
         )
-        model.fit(train_pool, eval_set=test_pool, verbose=100)
+        model.fit(train_pool, eval_set=eval_pool, verbose=100)
     except Exception:
         model = CatBoostRegressor(
             iterations=1000,
@@ -118,8 +128,8 @@ def _catboost_importance(
             task_type="CPU",
             random_seed=42,
         )
-        model.fit(train_pool, eval_set=test_pool, verbose=100)
-    values = model.get_feature_importance(train_pool)
+        model.fit(train_pool, eval_set=eval_pool, verbose=100)
+    values = model.get_feature_importance(fit_pool)
     return {feature: float(value) for feature, value in zip(features, values)}
 
 
