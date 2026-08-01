@@ -48,9 +48,9 @@ def calculate_rank_ic(column, target) -> float:
 
 
 def calculate_future_return(df: pl.DataFrame, window: int = 1) -> np.ndarray:
-    target = df.select(
-        (pl.col("mark_price").shift(-window) - pl.col("mark_price")).alias("target")
-    )["target"]
+    diff = pl.col("mark_price").shift(-window) - pl.col("mark_price")
+    denom = pl.when(pl.col("mark_price").abs() > 1e-8).then(pl.col("mark_price")).otherwise(None)
+    target = df.select((diff / denom).alias("target"))["target"]
     return target.slice(0, max(target.len() - window, 0)).to_numpy()
 
 
@@ -73,13 +73,14 @@ def calculate_sharpe(feature_values, future_return) -> float:
     return float(pseudo_returns.mean() / std)
 
 
-def _permutation_importance(feature_values, future_return) -> float:
+def _permutation_importance(feature_values, future_return, seed: int = 42) -> float:
     baseline = abs(calculate_ic(feature_values, future_return))
     if np.isnan(baseline):
         baseline = 0.0
     shuffled = np.asarray(feature_values, dtype=float).copy()
     if shuffled.size:
-        shuffled = np.roll(shuffled, 1)
+        rng = np.random.default_rng(seed)
+        shuffled = rng.permutation(shuffled)
     shuffled_score = abs(calculate_ic(shuffled, future_return))
     if np.isnan(shuffled_score):
         shuffled_score = 0.0
@@ -98,15 +99,26 @@ def _catboost_importance(
     y = np.asarray(future_return, dtype=float)
     train_pool = Pool(x, y)
     test_pool = Pool(x, y)
-    model = CatBoostRegressor(
-        iterations=1000,
-        learning_rate=0.1,
-        depth=6,
-        loss_function="MAE",
-        task_type="GPU",
-        random_seed=42,
-    )
-    model.fit(train_pool, eval_set=test_pool, verbose=100)
+    try:
+        model = CatBoostRegressor(
+            iterations=1000,
+            learning_rate=0.1,
+            depth=6,
+            loss_function="MAE",
+            task_type="GPU",
+            random_seed=42,
+        )
+        model.fit(train_pool, eval_set=test_pool, verbose=100)
+    except Exception:
+        model = CatBoostRegressor(
+            iterations=1000,
+            learning_rate=0.1,
+            depth=6,
+            loss_function="MAE",
+            task_type="CPU",
+            random_seed=42,
+        )
+        model.fit(train_pool, eval_set=test_pool, verbose=100)
     values = model.get_feature_importance(train_pool)
     return {feature: float(value) for feature, value in zip(features, values)}
 

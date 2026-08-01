@@ -13,8 +13,11 @@
 1. **`commodity/downscale.py` & `downscale_single_day.py`**: 负责五档快照及秒级 Trade/Quote 数据降采样，派生基础 OHLCV、VWAP/TWAP、多档盘口压力、五档 OFI 行窗口特征及微观结构队列压力特征。
 2. **`cross_section/base_feature_util.py` & `create_feature.py`**: 负责截面 K 线几何特征（`klen`, `kmid`, `kup`, `ksft` 等）、归一化 Quote 比率及 Orderbook 深度特征。
 3. **`commodity/base_time_feature.py`**: 派生 session 内时间进度、Session One-hot 编码、交割月份三角函数编码及合约剩余生命周期比例。
-4. **`time_operator/multi_processing_util.py` & `time_operator_util.py`**: 派生动量、波动率、分位数、相关性等滚动时间序列特征，以及滚动风险特征 (ATR, HV, PV, GKV, RV) 和流动性特征 (RelVol, RelAmt, RelOI, OI_Change)。
-5. **FineFT RL Trading Process**: 在强化学习环境中生成实时交易状态特征（`position_exposure`, `single_holding_return_rate`, `single_holding_max_drawdown`, `current_holding_duration_norm`）。
+4. **`commodity/daily_base_feature.py` & `weekly_base_feature.py`**: 将日线与周线 OHLCV、成交额、持仓量等基础周期数据整理为混频特征输入。
+5. **`commodity/daily_mixed_frequency_feature.py`, `weekly_mixed_frequency_feature.py` & `mixed_frequency_feature.py`**: 派生日/周级历史状态特征，并按 `trading_day` 与 `calendar_week` 合并回分钟级样本。
+6. **`commodity/cross_month_feature.py`**: 派生主力/次主力跨月价差、相对价差、成交量占比、持仓占比、跨月曲线形态及主力切换状态特征。
+7. **`time_operator/multi_processing_util.py` & `time_operator_util.py`**: 派生动量、波动率、分位数、相关性等滚动时间序列特征，以及滚动风险特征 (ATR, HV, PV, GKV, RV) 和流动性特征 (RelVol, RelAmt, RelOI, OI_Change)。
+8. **FineFT RL Trading Process**: 在强化学习环境中生成实时交易状态特征（`position_exposure`, `single_holding_return_rate`, `single_holding_max_drawdown`, `current_holding_duration_norm`）。
 
 ---
 
@@ -156,9 +159,96 @@
 
 ---
 
-### 3.7 滚动风险与流动性状态特征 (Rolling Risk & Liquidity Features)
+### 3.7 日/周混频历史状态特征 (Mixed-Frequency Daily & Weekly Features)
 
-基于 5min 行情数据和窗口大小 $w \in \{12, 24, 48, 96, 288\}$ 滚动计算：
+当前实现将日线与周线历史状态特征拼接到分钟级商品期货样本中。输出列以 `timestamp` 加 `MIXED_FREQUENCY_FEATURE_COLUMNS` 为准，日线特征按 `trading_day` 对齐，周线特征按 `calendar_week` 对齐。
+
+#### 日线特征窗口
+- `DAY_ROLLING_WINDOWS = (1, 2, 5, 10, 15, 30)`。
+- `prev_day_*` 输出完整的上一交易日 K 线形态、成交结构与持仓变化特征。
+- `prev_{N}_day_*`（`N != 1`）仅输出多日窗口成交结构与持仓变化特征，避免输出多日绝对价格/成交量水平。
+
+#### 日线输出列
+- `prev_day_return`: 上一交易日收益率。
+- `prev_day_range_pct`: 上一交易日振幅比例。
+- `prev_day_body_pct`: 上一交易日实体比例。
+- `prev_day_upper_shadow_pct` / `prev_day_lower_shadow_pct`: 上/下影线比例。
+- `prev_day_close_position`: 收盘价在 High-Low 区间内的位置。
+- `prev_day_body_to_range`: 实体占总振幅比例。
+- `prev_day_upper_shadow_to_range` / `prev_day_lower_shadow_to_range`: 上/下影线占总振幅比例。
+- `prev_day_vwap_deviation_pct` / `prev_day_twap_deviation_pct`: 收盘价相对 VWAP/TWAP 的偏离比例。
+- `prev_day_trade_up_ratio` / `prev_day_trade_down_ratio` / `prev_day_trade_imbalance`: 上涨/下跌成交占比及不平衡度。
+- `prev_day_open_interest_change`: 持仓量变化率。
+- `prev_day_turnover_rate`: 成交量相对持仓量的换手率。
+- `prev_{N}_day_trade_up_ratio`, `prev_{N}_day_trade_down_ratio`, `prev_{N}_day_trade_imbalance`, `prev_{N}_day_open_interest_change`, `prev_{N}_day_turnover_rate`: 多日窗口聚合成交结构与持仓状态。
+
+#### 周线特征窗口
+- `WEEK_ROLLING_WINDOWS = (1, 2, 4, 6)`。
+- `prev_week_*` 输出完整的上一自然交易周 K 线形态、成交结构与持仓变化特征。
+- `prev_{N}_week_*`（`N != 1`）仅输出多周窗口成交结构与持仓变化特征，避免输出多周绝对价格/成交量水平。
+
+#### 周线输出列
+- `prev_week_return`: 上一周收益率。
+- `prev_week_range_pct`: 上一周振幅比例。
+- `prev_week_body_pct`: 上一周实体比例。
+- `prev_week_close_position`: 周收盘价在 High-Low 区间内的位置。
+- `prev_week_body_to_range`: 周实体占总振幅比例。
+- `prev_week_upper_shadow_to_range` / `prev_week_lower_shadow_to_range`: 周上/下影线占总振幅比例。
+- `prev_week_vwap_deviation_pct` / `prev_week_twap_deviation_pct`: 周收盘价相对 VWAP/TWAP 的偏离比例。
+- `prev_week_trade_up_ratio` / `prev_week_trade_down_ratio` / `prev_week_trade_imbalance`: 周上涨/下跌成交占比及不平衡度。
+- `prev_week_open_interest_change`: 周持仓量变化率。
+- `prev_week_turnover_rate`: 周成交量相对持仓量的换手率。
+- `prev_{N}_week_trade_up_ratio`, `prev_{N}_week_trade_down_ratio`, `prev_{N}_week_trade_imbalance`, `prev_{N}_week_open_interest_change`, `prev_{N}_week_turnover_rate`: 多周窗口聚合成交结构与持仓状态。
+
+#### 数学公式
+- **周期收益率**:
+  $$\text{return} = \frac{\text{Close} - \text{Open}}{\text{Open}}$$
+- **周期振幅比例**:
+  $$\text{range\_pct} = \frac{\text{High} - \text{Low}}{\text{Close}}$$
+- **收盘位置**:
+  $$\text{close\_position} = \frac{\text{Close} - \text{Low}}{\text{High} - \text{Low} + \epsilon}$$
+- **成交不平衡度**:
+  $$\text{trade\_imbalance} = \frac{\text{trade\_up} - \text{trade\_down}}{\text{trade\_up} + \text{trade\_down} + \epsilon}$$
+- **换手率**:
+  $$\text{turnover\_rate} = \frac{\text{Volume}}{\text{OpenInterest} + \epsilon}$$
+- **上/下影线比例**:
+  $$\text{upper\_shadow\_pct} = \frac{\text{High} - \max(\text{Open}, \text{Close})}{\text{Open}}$$
+  $$\text{lower\_shadow\_pct} = \frac{\min(\text{Open}, \text{Close}) - \text{Low}}{\text{Open}}$$
+
+---
+
+### 3.8 跨月合约状态特征 (Cross-Month Contract State Features)
+
+当前实现输出 `CROSS_MONTH_FEATURE_COLUMNS` 中的 22 个 `cm_*` 特征，分为角色标记、当前合约对主力/次主力的关系特征，以及主力/次主力和三合约序列的跨月结构特征。
+
+#### 特征列表与含义
+- `cm_contract_role_main` / `cm_contract_role_sub` / `cm_contract_role_other`: 当前合约在主力/次主力/其他中的角色标记。
+- `cm_current_main_log_price_ratio` / `cm_current_sub_log_price_ratio`: 当前合约与主力/次主力的对数价比。
+- `cm_current_main_relative_price_spread` / `cm_current_sub_relative_price_spread`: 当前合约与主力/次主力的相对价差。
+- `cm_current_main_volume_share_current` / `cm_current_sub_volume_share_current`: 当前合约相对主力/次主力的成交量份额。
+- `cm_current_main_open_interest_share_current` / `cm_current_sub_open_interest_share_current`: 当前合约相对主力/次主力的持仓份额。
+- `cm_main_sub_log_price_ratio`: 主力与次主力对数价比。
+- `cm_main_sub_relative_price_spread`: 主力与次主力相对价差。
+- `cm_main_sub_volume_share_sub`: 主力与次主力成交量份额中的次主力占比。
+- `cm_main_sub_open_interest_share_sub`: 主力与次主力持仓份额中的次主力占比。
+- `cm_m1_m2_log_price_ratio` / `cm_m2_m3_log_price_ratio`: 相邻月度合约对数价比。
+- `cm_m1_m2_relative_price_spread` / `cm_m2_m3_relative_price_spread`: 相邻月度合约相对价差。
+- `cm_m1_m2_m3_butterfly_ratio`: 三腿蝶式结构比例。
+- `cm_m1_m2_open_interest_share_m2` / `cm_m2_m3_open_interest_share_m3`: 相邻远月合约的持仓份额。
+
+#### 数学公式
+- **相对跨月价差**:
+  $$\text{spread\_pct\_main\_next} = \frac{\text{LastPrice}_{main} - \text{LastPrice}_{next}}{\text{LastPrice}_{main} + \epsilon}$$
+- **成交量份额**:
+  $$\text{main\_volume\_share} = \frac{\text{Volume}_{main}}{\text{Volume}_{main} + \text{Volume}_{next} + \epsilon}$$
+- **换月压力**:
+  $$\text{main\_contract\_switch\_pressure} = \frac{\text{Volume}_{next} + \text{OpenInterest}_{next}}{\text{Volume}_{main} + \text{OpenInterest}_{main} + \epsilon}$$
+
+---
+
+### 3.9 滚动风险与流动性状态特征 (Rolling Risk & Liquidity Features)
+
+基于 5min 行情数据和配置窗口 `windows` 滚动计算。当前实现由调用方传入窗口集合，测试覆盖 `w = 12`；历史配置中常用窗口为 $w \in \{12, 24, 48, 96, 288\}$。
 
 #### 风险特征 (Risk State Features)
 1. `atr_pct_{w}`: 真实波幅 (ATR) 相对 Close 的百分比。
@@ -183,9 +273,9 @@
 
 ---
 
-### 3.8 滚动时间算子特征 (Time-Operator Rolling OHLCV Features)
+### 3.10 滚动时间算子特征 (Time-Operator Rolling OHLCV Features)
 
-窗口 $w \in \{5, 10, 20, 60\}$ 算子：
+当前 `expected_columns.py` 注册的商品期货滚动时间特征窗口为 $w \in \{2, 6, 12, 16, 24, 48\}$。实现按列族模板生成价格、OHLCV、分位数、排名、相关性和正负收益拆分等特征：
 - `roc_w`: 变动率指标 ($\frac{\text{Close}_{t-w}}{\text{Close}_t}$)。
 - `ma_w` / `std_w`: 均值与标准差相对 Close 比例。
 - `beta_w`: 线性回归斜率估算。
@@ -199,7 +289,7 @@
 
 ---
 
-### 3.9 FineFT RL 交易过程状态特征 (Trading Process Features)
+### 3.11 FineFT RL 交易过程状态特征 (Trading Process Features)
 
 作为强化学习环境 `reset()` 与 `step()` 中 `info["trading_info"]` 返回给 Q 网络的 4 维连续输入：
 
@@ -219,4 +309,3 @@
 2. **Turnover 校验**: 若 $\Delta \text{Volume} > 0$ 但 $\Delta \text{Turnover} \le 0$ 或缺失，立即报错。
 3. **OpenInterest 校验**: 若 `OpenInterest` 包含 Null、NaN 或 Inf，下采样过程立即终止。
 4. **有限值校验**: 所有输出特征在写入 Feather/NPY 前必须清理 Null/NaN/Inf，保证模型输入 100% 有限。
-

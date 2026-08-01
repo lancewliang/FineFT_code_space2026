@@ -93,6 +93,7 @@ def _ordered_filter_features(
     min_abs_ic: float,
     max_metric_std: float,
     max_correlation: float,
+    min_rank_ic_ir: float = 0.0,
     composite_drop_ratio: float = 0.1,
 ) -> tuple[list[str], dict[str, list[str]]]:
     if composite_drop_ratio < 0 or composite_drop_ratio >= 1:
@@ -105,9 +106,16 @@ def _ordered_filter_features(
     if not hard:
         raise ValueError("feature selection produced an empty list after Hard Filter")
 
+    stability_cond = pl.col("IC_Std") <= max_metric_std
+    if "RankIC_Std" in selected.columns:
+        stability_cond = stability_cond & (pl.col("RankIC_Std") <= max_metric_std)
+    if min_rank_ic_ir > 0.0 and "RankIC_Std" in selected.columns:
+        rank_ic_ir = pl.col("RankIC_Mean").abs() / (pl.col("RankIC_Std") + 1e-6)
+        stability_cond = stability_cond & (rank_ic_ir >= min_rank_ic_ir)
+
     stability = (
         selected.filter(pl.col("feature").is_in(hard))
-        .filter(pl.col("IC_Std") <= max_metric_std)
+        .filter(stability_cond)
         ["feature"]
         .to_list()
     )
@@ -117,14 +125,16 @@ def _ordered_filter_features(
         )
 
     scored_input = selected.filter(pl.col("feature").is_in(stability))
-    secondary_score = (
+    height = float(max(scored_input.height, 1))
+    secondary_raw = (
         pl.col("Permutation Importance_Mean").fill_null(0.0)
         + pl.col("Sharpe_Mean").abs().fill_null(0.0)
     )
     if "SHAP Importance_Mean" in scored_input.columns:
-        secondary_score = secondary_score + pl.col("SHAP Importance_Mean").fill_null(
-            0.0
-        )
+        secondary_raw = secondary_raw + pl.col("SHAP Importance_Mean").fill_null(0.0)
+    
+    # Normalize secondary components to percentile rank [0, 1] to prevent magnitude distortion
+    secondary_score = (secondary_raw.rank() / height) + (pl.col("CatBoost Importance_Mean").fill_null(0.0).rank() / height)
 
     scored = (
         scored_input.with_columns(
@@ -143,7 +153,6 @@ def _ordered_filter_features(
             (
                 pl.col("Composite RankIC Score")
                 + pl.col("Composite Secondary Score")
-                + pl.col("Composite Importance Score")
             ).alias("Composite Score")
         )
         .sort(
@@ -261,6 +270,7 @@ def run_feature_selection(
     min_abs_ic: float = 0.01,
     max_metric_std: float = 1.0,
     max_correlation: float = 0.7,
+    min_rank_ic_ir: float = 0.0,
     windows_list: list[int] | None = None,
     composite_drop_ratio: float = 0.1,
     feature_blacklist: list[str] | None = None,
@@ -355,6 +365,7 @@ def run_feature_selection(
         min_abs_ic=min_abs_ic,
         max_metric_std=max_metric_std,
         max_correlation=max_correlation,
+        min_rank_ic_ir=min_rank_ic_ir,
         composite_drop_ratio=composite_drop_ratio,
     )
     selected_features, blacklisted_features = _apply_feature_blacklist(
@@ -425,6 +436,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min_abs_ic", type=float, default=0.01)
     parser.add_argument("--max_metric_std", type=float, default=1.0)
     parser.add_argument("--max_correlation", type=float, default=0.7)
+    parser.add_argument("--min_rank_ic_ir", type=float, default=0.0)
     parser.add_argument("--composite_drop_ratio", type=float, default=0.1)
     parser.add_argument("--feature_blacklist", nargs="*", default=None)
     parser.add_argument(
@@ -457,6 +469,7 @@ def main(argv=None):
         min_abs_ic=args.min_abs_ic,
         max_metric_std=args.max_metric_std,
         max_correlation=args.max_correlation,
+        min_rank_ic_ir=args.min_rank_ic_ir,
         windows_list=_parse_windows_list(args.windows_list),
         composite_drop_ratio=args.composite_drop_ratio,
         feature_blacklist=args.feature_blacklist,

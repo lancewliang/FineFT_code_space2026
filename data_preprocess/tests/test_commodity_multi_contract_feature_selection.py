@@ -594,3 +594,40 @@ def test_valid_stage_fails_when_train_feature_column_is_missing(tmp_path):
             stage="valid",
             orderbook_depth=5,
         )
+
+
+def test_stability_filter_rejects_unstable_feature_with_low_rank_ic_ir():
+    features = ["stable_feature", "unstable_feature"]
+    aggregate = pl.DataFrame(
+        {
+            "feature": features,
+            "IC_Mean": [0.05, 0.05],
+            "IC_Std": [0.01, 0.20],
+            "RankIC_Mean": [0.05, 0.05],
+            "RankIC_Std": [0.02, 0.20],  # IR for stable = 2.5, for unstable = 0.25
+            "Sharpe_Mean": [1.0, 1.0],
+            "Permutation Importance_Mean": [0.1, 0.1],
+            "CatBoost Importance_Mean": [0.1, 0.1],
+        }
+    )
+    frames = {
+        "fu2601": pl.DataFrame(
+            {
+                "stable_feature": [1.0, 2.0, 3.0],
+                "unstable_feature": [1.0, 3.0, 2.0],
+            }
+        )
+    }
+
+    selected, filter_results = _ordered_filter_features(
+        frames,
+        aggregate,
+        features,
+        min_abs_ic=0.01,
+        max_metric_std=1.0,
+        max_correlation=1.0,
+        min_rank_ic_ir=1.0,
+    )
+
+    assert "unstable_feature" not in filter_results["Stability Filter"]
+    assert "stable_feature" in filter_results["Stability Filter"]

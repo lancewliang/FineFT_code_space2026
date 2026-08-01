@@ -24,6 +24,13 @@ def select_feature(features=None, df=None, corre_df: pl.DataFrame = None, thesho
         all_feature_names = [column for column in corre_df.columns if column != "feature"]
         if not all_feature_names:
             return []
+        
+        # Priority order: if features list is provided, order by features list; otherwise matrix columns order
+        if features is not None:
+            feature_priority = [f for f in features if f in all_feature_names]
+        else:
+            feature_priority = all_feature_names
+
         row_feature_names = corre_df["feature"].to_list()
         row_index_by_feature = {
             feature: index for index, feature in enumerate(row_feature_names)
@@ -33,15 +40,15 @@ def select_feature(features=None, df=None, corre_df: pl.DataFrame = None, thesho
         }
         matrix = corre_df.select(all_feature_names).to_numpy()
         selected_feature_names = []
-        remaining_features = all_feature_names
-        for feature in all_feature_names:
+        remaining_features = list(feature_priority)
+        for feature in feature_priority:
             if feature in remaining_features:
                 selected_feature_names.append(feature)
                 remaining_features.remove(feature)
                 row_index = row_index_by_feature.get(feature)
                 if row_index is None:
                     continue
-                for remain_f in remaining_features:
+                for remain_f in list(remaining_features):
                     col_index = col_index_by_feature[remain_f]
                     value = matrix[row_index, col_index]
                     if np.abs(float(value)) > theshold:
@@ -51,4 +58,4 @@ def select_feature(features=None, df=None, corre_df: pl.DataFrame = None, thesho
         raise ValueError("features and df are required if corre_df is not provided")
     features = list(features)
     corre_df = df.select(features).corr().with_columns(pl.Series("feature", features))
-    return select_feature(corre_df=corre_df, theshold=theshold)
+    return select_feature(features=features, corre_df=corre_df, theshold=theshold)
