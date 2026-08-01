@@ -6,7 +6,7 @@ data/
 .opencode
 **.pyc
 log_futures/
-PREPROCESS_DATASET/
+PREPROCESS_DATASE*/
 dataset/
 result/
 log
