@@ -40,6 +40,8 @@ def test_cross_month_feature_contract_exposes_stable_columns_and_pairing_modes()
         "cm_m1_m2_m3_butterfly_ratio",
         "cm_m1_m2_open_interest_share_m2",
         "cm_m2_m3_open_interest_share_m3",
+        "cm_main_sub_log_price_spread_velocity_10m",
+        "cm_open_interest_shift_speed_10m",
     ]
     assert validate_cross_month_feature_columns(CROSS_MONTH_FEATURE_COLUMNS) == list(
         CROSS_MONTH_FEATURE_COLUMNS

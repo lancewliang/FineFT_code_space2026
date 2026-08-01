@@ -717,6 +717,28 @@ def _build_time_feature_columns() -> list[str]:
     return columns
 
 
+
+
+ENHANCED_FEATURE_COLUMNS = [
+    "ofi_5m_norm",
+    "level5_ofi_weighted_norm",
+    "relative_bid_ask_spread",
+    "spread_widening_zscore_48",
+    "ask_depth_depletion_5m",
+    "bid_depth_depletion_5m",
+    "depth_replenishment_ratio_20m",
+    "trade_direction_net_ratio_5m",
+    "trade_direction_persistence_20m",
+    "price_velocity_10m",
+    "price_acceleration_10m_norm",
+    "garman_klass_vol_quantile_192",
+    "parkinson_vol_zscore_192",
+    "price_oi_vol_interaction_10m",
+    "oi_change_rate_norm_10m",
+    "cm_main_sub_log_price_spread_velocity_10m",
+    "cm_open_interest_shift_speed_10m",
+]
+
 TIME_FEATURE_COLUMNS = _build_time_feature_columns()
 
 EXPECTED_COLUMNS_BY_DOC = {
@@ -726,6 +748,7 @@ EXPECTED_COLUMNS_BY_DOC = {
     "snapshot_feature": SNAPSHOT_FEATURE_COLUMNS,
     "reward_environment": REWARD_ENVIRONMENT_COLUMNS,
     "time_feature": TIME_FEATURE_COLUMNS,
+    "enhanced_feature": ENHANCED_FEATURE_COLUMNS,
 }
 
 EXPECTED_COLUMNS_BY_STAGE = {
@@ -734,6 +757,7 @@ EXPECTED_COLUMNS_BY_STAGE = {
     "cross_section:snapshot": SNAPSHOT_FEATURE_COLUMNS,
     "merge_concat": BASE_FEATURE_COLUMNS,
     "time_feature": TIME_FEATURE_COLUMNS,
+    "enhanced_feature": ENHANCED_FEATURE_COLUMNS,
     "merge_clean": BASE_FEATURE_COLUMNS,
     "ic_correlation": [],
     "scale_save": [],

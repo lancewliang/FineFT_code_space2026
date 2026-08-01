@@ -39,6 +39,8 @@ CROSS_MONTH_FEATURE_COLUMNS: list[str] = [
     "cm_m1_m2_m3_butterfly_ratio",
     "cm_m1_m2_open_interest_share_m2",
     "cm_m2_m3_open_interest_share_m3",
+    "cm_main_sub_log_price_spread_velocity_10m",
+    "cm_open_interest_shift_speed_10m",
 ]
 
 _ALLOWED_PRICE_PATTERNS: tuple[str, ...] = (
@@ -46,6 +48,7 @@ _ALLOWED_PRICE_PATTERNS: tuple[str, ...] = (
     "relative_price_spread",
     "butterfly_ratio",
     "spread_zscore",
+    "spread_velocity",
 )
 
 
@@ -296,6 +299,10 @@ def write_cross_month_feature_for_day(
             contract_bars=contract_bars,
         )
     output = _merge_feature_frames(main_sub_features, delivery_features)
+    output = output.with_columns(
+        pl.col("cm_main_sub_log_price_ratio").diff(10).fill_null(0.0).alias("cm_main_sub_log_price_spread_velocity_10m"),
+        pl.col("cm_main_sub_open_interest_share_sub").diff(10).fill_null(0.0).alias("cm_open_interest_shift_speed_10m"),
+    )
     validate_cross_month_feature_columns(output.columns)
 
     output_path = (

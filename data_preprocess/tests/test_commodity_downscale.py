@@ -1548,3 +1548,28 @@ def test_downscale_multi_window_quote_microstructure_features():
     assert "timestamp" in result.columns
     assert "mean_microprice_pressure_6" in result.columns
     assert "mean_microprice_pressure_12" in result.columns
+
+
+def test_level5_ofi_weighted_norm_and_relative_spread():
+    rows = [{}, {"BidPrice1": 101.0, "BidVolume1": 20.0}]
+    df = _five_depth_quote_frame(rows)
+    ofi_df = downscale_quote_ofi_features(df, window_rows=2, depth=5)
+    assert "level5_ofi_weighted_norm" in ofi_df.columns
+    assert "ofi_5m_norm" in ofi_df.columns
+    assert ofi_df["level5_ofi_weighted_norm"].null_count() == 0
+
+    micro_df = downscale_quote_microstructure_features(df, window_rows=2)
+    assert "relative_bid_ask_spread" in micro_df.columns
+    assert micro_df["relative_bid_ask_spread"].null_count() == 0
+
+
+def test_depth_depletion_and_replenishment_features():
+    rows = [{}, {"AskVolume1": 5.0, "BidVolume1": 5.0}]
+    df = _five_depth_quote_frame(rows)
+    micro_df = downscale_quote_microstructure_features(df, window_rows=2)
+    assert "ask_depth_depletion_5m" in micro_df.columns
+    assert "bid_depth_depletion_5m" in micro_df.columns
+    assert "depth_replenishment_ratio_20m" in micro_df.columns
+    assert micro_df["ask_depth_depletion_5m"].null_count() == 0
+    assert micro_df["bid_depth_depletion_5m"].null_count() == 0
+    assert micro_df["depth_replenishment_ratio_20m"].null_count() == 0

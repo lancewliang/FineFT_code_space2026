@@ -74,10 +74,15 @@ def _load_contract_frames(input_dir: Path) -> dict[str, pl.DataFrame]:
 
 def _state_features(df: pl.DataFrame, *, orderbook_depth: int) -> list[str]:
     reward = set(get_reward_execution_columns(orderbook_depth))
+    schema = df.schema
     return [
         column
         for column in df.columns
-        if column not in reward and column not in NON_STATE_COLUMNS
+        if column not in reward
+        and column not in NON_STATE_COLUMNS
+        and not column.endswith("timestamp")
+        and not column.endswith("_right")
+        and (schema[column].is_numeric() or schema[column] == pl.Boolean)
     ]
 
 

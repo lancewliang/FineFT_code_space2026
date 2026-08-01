@@ -158,6 +158,39 @@ _Avoid_: 缩放保存、标准化输出
 
 **Scale Manifest**:
 Scale Save 输出的 JSON 清单，记录 scaler 版本、拟合范围（`fit_scope="train_all_contracts"`）、passthrough state feature、特征统计和裁剪配置。
+
+**订单流不平衡 (Order Flow Imbalance, OFI)**:
+基于 Level-1 至 Level-5 买卖双边挂单价格与挂单量变动计算的净订单流注入指标，通过盘口总深度或成交量进行归一化。
+_Avoid_: 买卖挂单差、OFI 指标
+
+**盘口耗竭与恢复 (Depth Depletion and Replenishment)**:
+描述买卖盘口深度被大单冲击后的瞬间衰减比例 (Depletion) 及随时间恢复至历史均值的相对速率 (Replenishment)。
+_Avoid_: 深度消耗、挂单恢复
+
+**价差扩大状态 (Spread Widening Dynamics)**:
+基于买卖一价差相对中间价的比率及其滚动历史 Z-Score 衡量的市场流动性冲击与做市退场特征。
+_Avoid_: 点差扩大、Spread 异常
+
+**成交方向持续性 (Trade Directional Persistence)**:
+基于主动买卖成交量净额比率与方向连续性衰减平滑衡量的单边买卖盘力量推升连贯性。
+_Avoid_: 主买主卖比、成交持续性
+
+**趋势加速度 (Trend Acceleration)**:
+价格一阶变化速度（如 EMA 斜率/差分）的二阶导数，除以历史波动率进行标准化，用于捕捉趋势见顶、见底或加速突破。
+_Avoid_: 价格加速度、MACD 导数
+
+**波动率 Regime (Volatility Regime Indicator)**:
+描述无偏波动率（如 Garman-Klass、Parkinson）在滚动历史窗口内的连续分位数百分比分值。
+_Avoid_: 波动率状态、波动率区间
+
+**成交量持仓量 Regime (Volume Open Interest Regime)**:
+结合价格变动、成交量与持仓量增减方向的连续三元交互特征，用于区分主力增仓建仓与平仓止损驱动。
+_Avoid_: 量价持仓状态、量持仓 Regime
+
+**跨月价差动态变化 (Cross-Month Spread Dynamics)**:
+主力与次主力合约 Log 价差变化率及跨月持仓份额转移速率的动态特征。
+_Avoid_: 跨月价差变动、套利价差加速度
+
 _Avoid_: 缩放清单、scaler 描述
 
 **OFI (Order Flow Imbalance)**:

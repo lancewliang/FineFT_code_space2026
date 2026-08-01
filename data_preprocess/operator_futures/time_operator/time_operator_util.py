@@ -334,3 +334,89 @@ if __name__ == "__main__":
     elapsed_time = end_time - start_time
     print(f"程序运行时间: {elapsed_time} 秒")
     p_df_ohlc.to_feather("outlook/demo_df/p_df_ohlc.feather")
+
+
+def process_enhanced_state_features(df: pl.DataFrame) -> pl.DataFrame:
+    if not isinstance(df, pl.DataFrame):
+        raise ValueError("df must be a polars DataFrame")
+    
+    frame = df.sort("timestamp")
+    exprs = []
+
+    # Ticket 03: Trade Direction & Spread Z-Score
+    up = pl.col("ntrade_up_estimated") if "ntrade_up_estimated" in frame.columns else pl.lit(0.0)
+    down = pl.col("ntrade_down_estimated") if "ntrade_down_estimated" in frame.columns else pl.lit(0.0)
+    net_ratio = (up - down) / (up + down + 1e-8)
+    exprs.append(net_ratio.clip(-1.0, 1.0).alias("trade_direction_net_ratio_5m"))
+    exprs.append(net_ratio.ewm_mean(span=20).fill_null(0.0).alias("trade_direction_persistence_20m"))
+
+    if "relative_bid_ask_spread" in frame.columns:
+        spread = pl.col("relative_bid_ask_spread")
+        spread_mean = spread.rolling_mean(48)
+        spread_std = spread.rolling_std(48).fill_null(0.0)
+        zscore = pl.when(spread_std > 1e-8).then((spread - spread_mean) / spread_std).otherwise(0.0)
+        exprs.append(zscore.fill_null(0.0).fill_nan(0.0).alias("spread_widening_zscore_48"))
+    elif "relative_spread" in frame.columns:
+        spread = pl.col("relative_spread")
+        spread_mean = spread.rolling_mean(48)
+        spread_std = spread.rolling_std(48).fill_null(0.0)
+        zscore = pl.when(spread_std > 1e-8).then((spread - spread_mean) / spread_std).otherwise(0.0)
+        exprs.append(zscore.fill_null(0.0).fill_nan(0.0).alias("spread_widening_zscore_48"))
+
+    # Ticket 04: Trend Acceleration & Volatility Regime
+    if "close" in frame.columns:
+        close = pl.col("close")
+        v10_raw = close.ewm_mean(span=10) - close.ewm_mean(span=20)
+        v10 = v10_raw / close
+        close_std10 = (close / close.shift(1) - 1).rolling_std(10).fill_null(0.0)
+        acc10 = pl.when(close_std10 > 1e-8).then((v10 - v10.shift(1)) / close_std10).otherwise(0.0)
+        exprs.append(v10.fill_null(0.0).alias("price_velocity_10m"))
+        exprs.append(acc10.fill_null(0.0).fill_nan(0.0).alias("price_acceleration_10m_norm"))
+
+    if "garman_klass_volatility" in frame.columns:
+        gk_vol = pl.col("garman_klass_volatility")
+        q192 = gk_vol.rolling_quantile(0.5, window_size=192).fill_null(0.0)
+        exprs.append(q192.alias("garman_klass_vol_quantile_192"))
+    elif "garman_klass_volatility_12" in frame.columns:
+        gk_vol = pl.col("garman_klass_volatility_12")
+        q192 = gk_vol.rolling_quantile(0.5, window_size=192).fill_null(0.0)
+        exprs.append(q192.alias("garman_klass_vol_quantile_192"))
+
+    if "parkinson_volatility" in frame.columns:
+        pv_vol = pl.col("parkinson_volatility")
+        pv_mean = pv_vol.rolling_mean(192)
+        pv_std = pv_vol.rolling_std(192).fill_null(0.0)
+        pv_z = pl.when(pv_std > 1e-8).then((pv_vol - pv_mean) / pv_std).otherwise(0.0)
+        exprs.append(pv_z.fill_null(0.0).fill_nan(0.0).alias("parkinson_vol_zscore_192"))
+    elif "parkinson_volatility_12" in frame.columns:
+        pv_vol = pl.col("parkinson_volatility_12")
+        pv_mean = pv_vol.rolling_mean(192)
+        pv_std = pv_vol.rolling_std(192).fill_null(0.0)
+        pv_z = pl.when(pv_std > 1e-8).then((pv_vol - pv_mean) / pv_std).otherwise(0.0)
+        exprs.append(pv_z.fill_null(0.0).fill_nan(0.0).alias("parkinson_vol_zscore_192"))
+
+    # Ticket 05: Volume / OI Regime & Cross-Month Dynamics
+    if "close" in frame.columns and "open_interest" in frame.columns and "volume" in frame.columns:
+        p_diff = frame["close"].diff(2).sign().fill_null(0.0)
+        oi_diff = frame["open_interest"].diff(2).sign().fill_null(0.0)
+        vol_mean = pl.col("volume").rolling_mean(10).fill_null(0.0)
+        rel_vol = pl.when(vol_mean > 1e-8).then(pl.col("volume") / vol_mean).otherwise(0.0)
+        interaction = (p_diff * oi_diff * rel_vol).fill_null(0.0).fill_nan(0.0)
+        exprs.append(interaction.alias("price_oi_vol_interaction_10m"))
+
+        oi_prev10 = pl.col("open_interest").shift(10)
+        oi_chg = pl.when(oi_prev10 > 1e-8).then((pl.col("open_interest") - oi_prev10) / oi_prev10).otherwise(0.0)
+        exprs.append(oi_chg.fill_null(0.0).fill_nan(0.0).alias("oi_change_rate_norm_10m"))
+
+    if "cm_main_sub_log_price_ratio" in frame.columns:
+        cm_v = pl.col("cm_main_sub_log_price_ratio").diff(10).fill_null(0.0)
+        exprs.append(cm_v.alias("cm_main_sub_log_price_spread_velocity_10m"))
+
+    if "cm_main_sub_open_interest_share_sub" in frame.columns:
+        cm_shift = pl.col("cm_main_sub_open_interest_share_sub").diff(10).fill_null(0.0)
+        exprs.append(cm_shift.alias("cm_open_interest_shift_speed_10m"))
+
+    if not exprs:
+        return frame
+    
+    return frame.with_columns(exprs)

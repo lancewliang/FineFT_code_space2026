@@ -20,6 +20,7 @@ from operator_futures.time_operator.multi_processing_util import (
     get_risk_and_liquidity_state_features,
     _inner_join_on_timestamp,
 )
+from operator_futures.time_operator.time_operator_util import process_enhanced_state_features
 
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,9 @@ def main(args):
     #         trading_day=args.start_date + "-" + args.end_date,
     #     )
     time_feature_list_all.append(df_time)
+    enhanced_df = process_enhanced_state_features(original_df)
+    if enhanced_df.width > 1:
+        time_feature_list_all.append(enhanced_df)
     if "open_interest" in original_df.columns:
         risk_liq_df = get_risk_and_liquidity_state_features(
             original_df,

@@ -97,7 +97,7 @@ def _catboost_importance(
     from catboost import CatBoostRegressor, Pool
 
     model_df = df.slice(0, future_return.size)
-    x = model_df.select(features).to_numpy()
+    x = model_df.select([pl.col(f).cast(pl.Float64, strict=False).fill_null(0.0).fill_nan(0.0) for f in features]).to_numpy()
     y = np.asarray(future_return, dtype=float)
     n_samples = len(x)
     if n_samples >= 10:
@@ -150,7 +150,7 @@ def calculate_metric_frame(
         catboost_values = _catboost_importance(df, features, future_return)
         metric_df = df.slice(0, future_return.size)
         for feature in features:
-            values = metric_df[feature].to_numpy()
+            values = metric_df[feature].cast(pl.Float64, strict=False).to_numpy()
             rows.append(
                 {
                     "feature": feature,

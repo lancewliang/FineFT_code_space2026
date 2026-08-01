@@ -561,3 +561,43 @@ def test_risk_and_liquidity_features_rejects_non_positive_prices():
     frame = pl.DataFrame(rows)
     with pytest.raises(ValueError, match="Invalid price"):
         get_risk_and_liquidity_state_features(frame, windows=[12], symbol="fu", target_freq="5min")
+
+
+from operator_futures.time_operator.time_operator_util import process_enhanced_state_features
+
+def test_process_enhanced_state_features():
+    rows = []
+    for i in range(50):
+        rows.append({
+            "timestamp": i,
+            "close": 100.0 + i * 0.1,
+            "volume": 100.0 + (i % 5) * 10,
+            "open_interest": 1000.0 + i * 5,
+            "ntrade_up_estimated": 10 + i,
+            "ntrade_down_estimated": 5 + (i % 3),
+            "relative_bid_ask_spread": 0.001 + (i % 2) * 0.0005,
+            "garman_klass_volatility_12": 0.01 + (i % 4) * 0.002,
+            "parkinson_volatility_12": 0.01 + (i % 3) * 0.001,
+            "cm_main_sub_log_price_ratio": 0.02 + i * 0.001,
+            "cm_main_sub_open_interest_share_sub": 0.3 + i * 0.002,
+        })
+    df = pl.DataFrame(rows)
+    res = process_enhanced_state_features(df)
+    
+    expected_cols = [
+        "trade_direction_net_ratio_5m",
+        "trade_direction_persistence_20m",
+        "spread_widening_zscore_48",
+        "price_velocity_10m",
+        "price_acceleration_10m_norm",
+        "garman_klass_vol_quantile_192",
+        "parkinson_vol_zscore_192",
+        "price_oi_vol_interaction_10m",
+        "oi_change_rate_norm_10m",
+        "cm_main_sub_log_price_spread_velocity_10m",
+        "cm_open_interest_shift_speed_10m",
+    ]
+    for col in expected_cols:
+        assert col in res.columns
+        assert res[col].null_count() == 0
+        assert not res[col].is_nan().any()

@@ -772,7 +772,7 @@ def _validate_positive_integer_window_rows(window_rows: int) -> int:
 
 
 def _quote_microstructure_required_columns() -> list[str]:
-    return [
+    cols = [
         "timestamp",
         "BidPrice1",
         "AskPrice1",
@@ -784,6 +784,12 @@ def _quote_microstructure_required_columns() -> list[str]:
         "LowerLimitPrice",
         "UpperLimitPrice",
     ]
+    for level in range(1, 6):
+        for side in ("BidVolume", "AskVolume"):
+            col = f"{side}{level}"
+            if col not in cols:
+                cols.append(col)
+    return cols
 
 
 def _validate_quote_microstructure_input(
@@ -1037,6 +1043,13 @@ def downscale_quote_ofi_features(
             ]
         ).alias("_ofi_ask_volume"),
     ).with_columns(
+        pl.sum_horizontal(
+            [
+                (pl.col(f"ofi_bid{level}") + pl.col(f"ofi_ask{level}")) / float(level)
+                for level in range(1, depth + 1)
+            ]
+        ).alias("_level5_ofi_weighted"),
+    ).with_columns(
         pl.sum_horizontal([pl.col(column) for column in bid_columns]).alias("ofi_bid"),
         pl.sum_horizontal([pl.col(column) for column in ask_columns]).alias("ofi_ask"),
     )
@@ -1060,6 +1073,7 @@ def downscale_quote_ofi_features(
             pl.col("ofi").sum().alias("ofi"),
             pl.col("_ofi_bid_volume").sum().alias("_ofi_bid_volume"),
             pl.col("_ofi_ask_volume").sum().alias("_ofi_ask_volume"),
+            pl.col("_level5_ofi_weighted").sum().alias("_level5_ofi_weighted"),
             pl.col("_ofi_total_volume").sum().alias("_ofi_total_volume"),
         )
         .sort("_ofi_window")
@@ -1083,6 +1097,8 @@ def downscale_quote_ofi_features(
         "ofi_bid_norm",
         "ofi_ask_norm",
         "ofi_norm",
+        _safe_divide(pl.col("ofi"), pl.col("_ofi_total_volume")).alias("ofi_5m_norm"),
+        _safe_divide(pl.col("_level5_ofi_weighted"), pl.col("_ofi_total_volume")).alias("level5_ofi_weighted_norm"),
     )
 
 
@@ -1097,6 +1113,12 @@ def downscale_quote_microstructure_features(
         pl.col("AskPrice1").cast(pl.Float64, strict=False).alias("ask_price"),
         pl.col("BidVolume1").cast(pl.Float64, strict=False).alias("bid_size"),
         pl.col("AskVolume1").cast(pl.Float64, strict=False).alias("ask_size"),
+        pl.sum_horizontal([pl.col(f"AskVolume{k}").cast(pl.Float64, strict=False).fill_null(0.0) for k in range(1, 6)]).alias("ask_depth_5"),
+        pl.sum_horizontal([pl.col(f"BidVolume{k}").cast(pl.Float64, strict=False).fill_null(0.0) for k in range(1, 6)]).alias("bid_depth_5"),
+    ).with_columns(
+        (pl.col("ask_depth_5") + pl.col("bid_depth_5")).alias("total_depth_5"),
+        _safe_divide((pl.col("ask_depth_5").shift(1) - pl.col("ask_depth_5")).clip(lower_bound=0.0), pl.col("ask_depth_5").shift(1)).alias("_ask_depletion"),
+        _safe_divide((pl.col("bid_depth_5").shift(1) - pl.col("bid_depth_5")).clip(lower_bound=0.0), pl.col("bid_depth_5").shift(1)).alias("_bid_depletion"),
     )
     quote = quote.with_columns(
         (pl.col("ask_price") - pl.col("bid_price")).alias("spread"),
@@ -1179,6 +1201,7 @@ def downscale_quote_microstructure_features(
                 "mean_microprice_pressure"
             ),
             pl.col("relative_spread").mean().alias("mean_relative_spread"),
+            pl.col("relative_spread").mean().alias("relative_bid_ask_spread"),
             pl.col("_spread_widen").sum().alias("spread_widen_count"),
             pl.col("_spread_narrow").sum().alias("spread_narrow_count"),
             pl.col("_spread_flat").sum().alias("spread_flat_count"),
@@ -1194,6 +1217,9 @@ def downscale_quote_microstructure_features(
             pl.col("_limit_down_single_sided").sum().alias(
                 "_limit_down_single_sided_count"
             ),
+            pl.col("_ask_depletion").mean().alias("ask_depth_depletion_5m"),
+            pl.col("_bid_depletion").mean().alias("bid_depth_depletion_5m"),
+            _safe_divide(pl.col("total_depth_5").last(), pl.col("total_depth_5").mean()).alias("depth_replenishment_ratio_20m"),
         )
         .sort("_microstructure_window")
     )
@@ -1238,6 +1264,10 @@ def downscale_quote_microstructure_features(
         "nquote",
         "mean_microprice_pressure",
         "mean_relative_spread",
+        "relative_bid_ask_spread",
+        "ask_depth_depletion_5m",
+        "bid_depth_depletion_5m",
+        "depth_replenishment_ratio_20m",
         "spread_widen_count",
         "spread_narrow_count",
         "spread_flat_count",
