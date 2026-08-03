@@ -190,7 +190,7 @@ class picker:
     def conclude_single_parameter(self, parameter_path):
         single_parameter_result = []
         single_parameter_best_result = []
-        for i in range(11,self.epoch_num):
+        for i in range(45,self.epoch_num):
             epoch_path = os.path.join(parameter_path, "epoch_{}".format(i + 1))
             best_result, result = self.analysis_single_epoch(epoch_path)
             single_parameter_result.extend(result)

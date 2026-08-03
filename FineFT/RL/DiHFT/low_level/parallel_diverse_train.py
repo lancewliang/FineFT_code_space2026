@@ -320,6 +320,28 @@ def write_round_transitions_to_buffer(buffer_diverse, round_results):
         buffer_diverse.add(*transition)
 
 
+def count_update_windows_crossed(
+    previous_step_counter,
+    current_step_counter,
+    rollout_steps,
+    warmup_steps,
+):
+    if rollout_steps <= 0:
+        raise ValueError("rollout_steps must be positive")
+    if current_step_counter <= previous_step_counter:
+        return 0
+    if current_step_counter <= warmup_steps:
+        return 0
+
+    previous_effective_step = max(previous_step_counter, warmup_steps)
+    if previous_effective_step <= 0:
+        previous_window = -1
+    else:
+        previous_window = (previous_effective_step - 1) // rollout_steps
+    current_window = (current_step_counter - 1) // rollout_steps
+    return max(0, current_window - previous_window)
+
+
 def run_fixed_diverse_updates(trainer, buffer_diverse, update_times, round_counter):
     last_losses = None
     for _ in range(update_times):
@@ -669,16 +691,24 @@ def run_parallel_rollout_task(
             metrics for result in round_results for metrics in result.rollout_metrics
         )
         round_steps = sum(result.worker_steps for result in round_results)
+        previous_step_counter = step_counter_diverse
         step_counter_diverse += round_steps
         update_count = 0
-        if step_counter_diverse > (trainer.batch_size * trainer.update_times + trainer.n_step):
+        warmup_steps = trainer.batch_size * trainer.update_times + trainer.n_step
+        update_windows = count_update_windows_crossed(
+            previous_step_counter=previous_step_counter,
+            current_step_counter=step_counter_diverse,
+            rollout_steps=trainer.rollout_steps,
+            warmup_steps=warmup_steps,
+        )
+        if update_windows:
+            update_count = trainer.update_times * update_windows
             run_fixed_diverse_updates(
                 trainer,
                 buffer_diverse,
-                trainer.update_times,
+                update_count,
                 round_counter,
             )
-            update_count = trainer.update_times
         round_summary = summarize_parallel_round(
             round_counter=round_counter,
             epoch_index=epoch_index,

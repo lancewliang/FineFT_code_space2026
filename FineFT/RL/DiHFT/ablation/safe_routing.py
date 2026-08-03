@@ -466,7 +466,7 @@ class vae_risk_aware_routing:
         s, info = env.reset()
         episode_reward_sum = 0
         env, s, r, done, info = self.initial_rollout(env, s, info)
-        while True:
+        while not done:
             action = self.get_action(info, s)
             s_, r, done, info = env.step(action)
             self.get_quantiles(s_)
@@ -523,6 +523,8 @@ class vae_risk_aware_routing:
         return self.return_rate
 
     def initial_rollout(self, env: Base_Env, s, info):
+        done = False
+        r = 0
         for i in range(self.window_length):
             action = rule_based_close(
                 info,
@@ -532,6 +534,8 @@ class vae_risk_aware_routing:
             )
             s, r, done, info = env.step(action)
             self.get_quantiles(s)
+            if done:
+                break
         return env, s, r, done, info
 
 

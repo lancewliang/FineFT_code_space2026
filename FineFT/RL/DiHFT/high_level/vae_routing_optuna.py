@@ -1,3 +1,4 @@
+import copy
 import sys
 
 sys.path.append(".")
@@ -109,21 +110,22 @@ def tune(args_1, args_2):
     print("change parameters:", args_1, args_2)
 
     def objective(trail):
-        gpu_id = trail.number % torch.cuda.device_count()
-        args_1.gpu_index = gpu_id
+        trial_args = copy.deepcopy(args_1)
+        gpu_id = trail.number % max(torch.cuda.device_count(), 1)
+        trial_args.gpu_index = gpu_id
         print("gpu_id:", gpu_id)
-        args_1.window_length = trail.suggest_int(
+        trial_args.window_length = trail.suggest_int(
             "window_length", args_2.window_length_min, args_2.window_length_max
         )
-        args_1.gamma = trail.suggest_float(
+        trial_args.gamma = trail.suggest_float(
             "gamma", args_2.gamma_min, args_2.gamma_max, log=True
         )
-        args_1.rule_base_threshold = trail.suggest_float(
+        trial_args.rule_base_threshold = trail.suggest_float(
             "rule_base_threshold",
             args_2.rule_base_threshold_min,
             args_2.rule_base_threshold_max,
         )
-        vae_routing = vae_risk_aware_routing(args_1)
+        vae_routing = vae_risk_aware_routing(trial_args)
         return_rate = vae_routing.test()
         return return_rate
 

@@ -226,6 +226,45 @@ def test_make_cpu_state_dict_detaches_and_moves_to_cpu():
     assert all(tensor.device.type == "cpu" for tensor in state_dict.values())
 
 
+def test_count_update_windows_crossed_preserves_serial_update_density():
+    import pytest
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+
+    warmup_steps = 128 * 20 + 1
+
+    assert pdt.count_update_windows_crossed(
+        previous_step_counter=0,
+        current_step_counter=warmup_steps,
+        rollout_steps=1024,
+        warmup_steps=warmup_steps,
+    ) == 0
+    assert pdt.count_update_windows_crossed(
+        previous_step_counter=0,
+        current_step_counter=4096,
+        rollout_steps=1024,
+        warmup_steps=warmup_steps,
+    ) == 1
+    assert pdt.count_update_windows_crossed(
+        previous_step_counter=4096,
+        current_step_counter=8192,
+        rollout_steps=1024,
+        warmup_steps=warmup_steps,
+    ) == 4
+    assert pdt.count_update_windows_crossed(
+        previous_step_counter=3073,
+        current_step_counter=4096,
+        rollout_steps=1024,
+        warmup_steps=warmup_steps,
+    ) == 0
+    with pytest.raises(ValueError, match="rollout_steps must be positive"):
+        pdt.count_update_windows_crossed(
+            previous_step_counter=0,
+            current_step_counter=1,
+            rollout_steps=0,
+            warmup_steps=0,
+        )
+
+
 def test_run_fixed_update_times_uses_constant_update_count(monkeypatch):
     from RL.DiHFT.low_level import parallel_diverse_train as pdt
 
@@ -511,3 +550,30 @@ def test_parallel_training_pretrain_update_uses_four_field_trading_info():
 
     assert len(losses) == 3
     assert trainer.update_counter == 1
+
+
+def test_configure_logger_captures_parallel_pretrain_logs(tmp_path, monkeypatch):
+    import os
+    import logging
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+
+    monkeypatch.chdir(tmp_path)
+
+    abs_path = pwap.configure_logger("fu", "exp_test")
+    test_logger = logging.getLogger("RL.DiHFT.low_level.parallel_weight_advantage_pretrain")
+    test_msg = "exhaustive warmup train epoch | epoch=1/1 | total_loss=0.000123 | KL_loss=0.000010 | td_loss=0.000113 | update_count=10"
+    test_logger.info(test_msg)
+
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers:
+        handler.flush()
+
+    with open(abs_path, "r", encoding="utf-8") as f:
+        log_content = f.read()
+
+    assert test_msg in log_content
+
+    for handler in list(root_logger.handlers):
+        if isinstance(handler, logging.FileHandler) and handler.baseFilename == abs_path:
+            handler.close()
+            root_logger.removeHandler(handler)

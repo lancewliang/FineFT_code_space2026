@@ -186,7 +186,7 @@
 
 ### `FineFT/script/train/DiHFT/low_level/VAE_util_fu_30.sh`
 
-- **作用**：按 `label_0 ~ label_4` 批量训练 30min VAE 模型。
+- **作用**：按 `label_0 ~ label_4` 批量训练 30min VAE 模型，分析测试合约在各 Label 下的 Out-of-Distribution (OOD) 概率密度分布，并生成跨 Label 的路由对比摘要。
 - **依赖输入物**（由步骤 2 & 步骤 5 产出）：
   - **VAE 向量数据集**（由步骤 2 产出）：`dataset/30min/fu/VAE_data/<contract>/label_*.npy` 及 `dataset/30min/fu/VAE_data/test/test_*.npy`
   - **Label 标注分布**（由步骤 2 & 步骤 5 确定）：`dataset/30min/fu/valid/` 下各个 label 的样本切片
@@ -198,22 +198,27 @@
   - `EXPERIMENT_NAME=30min`
   - `MAX_PARALLEL_JOBS=2`
 - **关键产出物**：
-  - **VAE 评估 JSON / CSV 分析文件**：
-    - `log/DiHFT/fu/VAE/30min/summary.json`（各 Label 环境的分布重构及 OOD 对数似然评估摘要 JSON）
-    - `log/DiHFT/fu/VAE/30min/ood_logpx_<contract>.csv`（单合约 Out-of-Distribution 概率密度拟合分析 CSV）
-    - `log/DiHFT/fu/VAE/30min/ood_logpx_all.csv`（全合约 OOD 对数似然分布评估指标汇总 CSV）
-  - **训练日志与模型权重**：
-    - `log/DiHFT/fu/VAE/30min/train_label_0.log` ~ `train_label_4.log` 及 VAE 编解码器模型文件
+  - **`result/` VAE 编解码器模型权重与分布评估分析文件**：
+    - **分 Label 模型与诊断数据 (`result/DiHFT/vae_results/fu/30min/label_0/` ~ `label_4/`)**：
+      - `model_latest.pth` / `model_epoch_*.pth`（各 Label 环境专属 VAE 编解码器 PyTorch 模型权重）
+      - `id_logpx.npy`（In-Distribution 训练集样本基准 logpx 似然概率向量）
+      - `ood_logpx_<contract>.npy` / `ood_logpx_<contract>.csv`（单合约 Out-of-Distribution 概率密度与对数似然估算）
+      - `ood_logpx_all.npy` / `ood_logpx_all.csv`（全合约 OOD 似然分布向量与评估指标明细汇总）
+      - `summary.json`（当前 Label VAE 的分布重构指标、分位数 `q01`~`q99` 及 OOD 接受度百分比评估摘要 JSON）
+    - **跨 Label 路由对比摘要文件**：
+      - `result/DiHFT/vae_results/fu/30min/routing_summary.json`（跨全套 VAE Label 模型的多环境 Winner 胜出分布、Margin 边际差异与样本对齐分析 JSON）
+  - **`log/` 训练与分析日志**：
+    - `log/DiHFT/fu/VAE/30min/train_label_0.log` ~ `train_label_4.log`（各 Label 环境并行训练及测试合约 OOD 分析日志）
 - **位置**：按 README 的 Stage II 流程放在筛选之后。
 
 ## 7. 高层 VAE 路由 Optuna 优化与分析
 
 ### `FineFT/script/test/DiHFT/high_level/vae_optuna_fu_30.sh`
 
-- **作用**：基于已训练好的 30min 低层 agent 和 VAE 模型，使用 Optuna 进行高层策略路由超参数搜索。
+- **作用**：基于已训练好的 30min 低层 agent 和 VAE 模型，使用 Optuna 进行高层策略路由超参数搜索（如 `window_length`, `gamma`, `rule_base_threshold`），并输出策略回测诊断与多维时序数据。
 - **依赖输入物**（前置各步骤联合依赖）：
   - **筛选出的最优低层 Agent 模型**（由步骤 3 & 步骤 5 产出）：`result/DiHFT/low_level/fu/30min/weights_advantage_pretrain/epoch_{best_epoch}/trained_model.pkl`
-  - **已训练好的 VAE 路由模型**（由步骤 6 产出）：`log/DiHFT/fu/VAE/30min/` 下的各类 VAE 模型点
+  - **已训练好的 VAE 路由模型与分布数据**（由步骤 6 产出）：`result/DiHFT/vae_results/fu/30min/label_*/` 下的 VAE 模型点与 `routing_summary.json`
   - **验证集切片与特征**（由步骤 2 产出）：`dataset/30min/fu/valid/` 及其 `processed/valid_processed_*.feather`
   - **全局特征与参数字典**（由步骤 2 产出）：`dataset/30min/fu/state_features.npy` 与 `maintenance_margin_ratio_dict.npy`
   - **Optuna 路由 Python 脚本**：`FineFT/RL/DiHFT/high_level/vae_routing_optuna.py`
@@ -223,10 +228,17 @@
   - `EXPERIMENT_NAME=30min`
   - `MAX_HOLDING_NUMBER=1`
 - **关键产出物**：
-  - **Optuna 寻优明细 CSV 与评估文件**：
-    - `log/DiHFT/fu/high_level/optuna/30min/optuna_results.csv`（Optuna 所有 Trial 参数组合、收益率、夏普比率、最大回撤等参数空间与回测明细表）
-    - `log/DiHFT/fu/high_level/optuna/30min/best_result.csv` / `result.csv`（最佳超参数组合与综合路由策略绩效评估 CSV）
-  - **寻优日志**：`log/DiHFT/fu/high_level/optuna/30min/optuna.log`
+  - **`result/` Optuna 寻优明细与路由策略回测诊断文件**：
+    - **Optuna 寻优结果目录 (`result/DiHFT/high_level/fu/30min/vae_risk_aware_routing_optuna/`)**：
+      - `optuna_results.csv`（Optuna 所有 Trial 参数组合、收益率、夏普比率、最大回撤等参数空间与回测明细表）
+    - **路由策略回测诊断目录 (`result/DiHFT/high_level/fu/30min/vae_risk_aware_routing/gamma_{gamma}_window_{window}_threshold_{threshold}/`)**：
+      - `contract_results.csv`（分合约的回测绩效明细，包含 `rows`, `reward_sum`, `require_money`, `return_rate`）
+      - `trading_info.npy`（综合组合收益率、胜率、等权平均收益率等高层策略路由绩效指标字典）
+      - **分合约回测细节向量 (`contracts/<contract>/`)**：
+        - `reward_history.npy`（每步收益历史）、`total_asset_history.npy`（总资产变化历史）、`wallet_balance_history.npy`（钱包余额历史）、`initial_margin_history.npy`（初始保证金历史）、`unrealized_pnl_history.npy`（未实现盈亏历史）、`maintain_marigine_history.npy`（维持保证金历史）、`new_position_required_money_history.npy`（新开仓所需资金历史）
+        - `micro_action_history.npy`（低层 Agent 微观动作历史）与 `macro_action.npy`（高层 VAE 路由宏观选择 Label 历史）
+  - **`log/` 寻优控制台日志**：
+    - `log/DiHFT/fu/high_level/optuna/30min/optuna.log`（Optuna 搜索过程、GPU 调度及各个 Trial 运行状态日志）
 - **位置**：完成高层 VAE 路由与超参寻优。
 
 ## 总结：全流程依赖输入与产出对照表
@@ -238,5 +250,5 @@
 | **3. 低层 Agent 训练** | `train_commodity_fu_30.sh` | 步骤 2 产出的 `dataset/30min/fu/train/`, `state_features.npy`, `margin_dict.npy` | `result/DiHFT/low_level/fu/30min/weights_advantage_pretrain/`<br>(`epoch_1/`~`epoch_100/trained_model.pkl`, `log/`, `qtable_diagnostics/`) |
 | **4. 低层 Agent 测试** | `test_util_fu_30.sh` | 步骤 3 产出的 `trained_model.pkl` + 步骤 2 产出的 `valid/` 数据 | `result/DiHFT/low_level/fu/30min/weights_advantage_pretrain/epoch_{epoch}/`<br>(`analysis_result.csv`, `trading_action_detail_*.csv`, `analysis_result.npy`) |
 | **5. 低层 Agent 筛选** | `low_level_fu_30.sh` | 步骤 4 产出的 `analysis_result.csv` + 步骤 2 产出的 `valid/` 数据 | `log/analysis/pick_agent/DiHFT/fu/`<br>(`fu.json`, `fu.csv`, `result.csv`, `best_result.csv`) |
-| **6. VAE 训练与评估** | `VAE_util_fu_30.sh` | 步骤 2 产出的 `VAE_data/<contract>/label_*.npy` + 步骤 5 的 Label 划分 | `log/DiHFT/fu/VAE/30min/`<br>(`summary.json`, `ood_logpx_<contract>.csv`, `ood_logpx_all.csv`, VAE 模型点) |
-| **7. 高层 Optuna 寻优** | `vae_optuna_fu_30.sh` | 步骤 3/5 筛选的 Agent 模型 + 步骤 6 的 VAE 模型 + 步骤 2 的 `valid/` 数据 | `log/DiHFT/fu/high_level/optuna/30min/`<br>(`optuna_results.csv`, `best_result.csv`, `optuna.log`) |
+| **6. VAE 训练与评估** | `VAE_util_fu_30.sh` | 步骤 2 产出的 `VAE_data/<contract>/label_*.npy` + 步骤 5 的 Label 划分 | `result/DiHFT/vae_results/fu/30min/`<br>(`label_*/model_latest.pth`, `summary.json`, `ood_logpx_*.csv`, `routing_summary.json`) |
+| **7. 高层 Optuna 寻优** | `vae_optuna_fu_30.sh` | 步骤 3/5 筛选的 Agent 模型 + 步骤 6 的 VAE 模型 + 步骤 2 的 `valid/` 数据 | `result/DiHFT/high_level/fu/30min/`<br>(`vae_risk_aware_routing_optuna/optuna_results.csv`, `vae_risk_aware_routing/.../contract_results.csv`, `trading_info.npy`, `macro_action.npy`) |

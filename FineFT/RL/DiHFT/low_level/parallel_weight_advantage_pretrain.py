@@ -80,16 +80,17 @@ def configure_logger(dataset_name, experiment_name):
     log_path = os.path.join(log_dir, "advantage.log")
     abs_log_path = os.path.abspath(log_path)
 
-    logger.setLevel(logging.INFO)
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-    for handler in logger.handlers:
+    for handler in root_logger.handlers:
         if isinstance(handler, logging.FileHandler) and handler.baseFilename == abs_log_path:
             return abs_log_path
 
     file_handler = logging.FileHandler(abs_log_path)
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
+    root_logger.addHandler(file_handler)
     return abs_log_path
 
 
