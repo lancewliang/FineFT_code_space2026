@@ -1573,3 +1573,30 @@ def test_depth_depletion_and_replenishment_features():
     assert micro_df["ask_depth_depletion_5m"].null_count() == 0
     assert micro_df["bid_depth_depletion_5m"].null_count() == 0
     assert micro_df["depth_replenishment_ratio_20m"].null_count() == 0
+
+
+def test_downscale_quote_microstructure_features_computes_five_depth_limit_ratios():
+    frame = _five_depth_quote_frame(
+        [
+            {
+                "BidPrice1": 100.0,
+                "AskPrice1": 105.0,
+                "AskPrice2": 105.0,
+                "AskPrice3": 105.0,
+                "LastPrice": 105.0,
+                "HighPrice": 105.0,
+                "UpperLimitPrice": 105.0,
+                "LowerLimitPrice": 95.0,
+            }
+        ]
+    )
+
+    result = downscale_quote_microstructure_features(frame, window_rows=12)
+    row = result.row(0, named=True)
+
+    assert "limit_up_ask_depth_ratio_5" in row
+    assert "limit_down_bid_depth_ratio_5" in row
+    assert "limit_depth_imbalance_ratio_5" in row
+    assert row["limit_up_ask_depth_ratio_5"] == pytest.approx(1.0)
+    assert row["limit_down_bid_depth_ratio_5"] == pytest.approx(0.2)
+    assert row["limit_depth_imbalance_ratio_5"] == pytest.approx(0.8)

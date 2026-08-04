@@ -241,6 +241,18 @@ CROSS_MONTH_FEATURE_COLUMNS=(
     cm_m2_m3_open_interest_share_m3
 )
 
+PRICE_LIMIT_RATIO_FEATURE_COLUMNS=(
+    limit_up_single_sided_ratio
+    limit_down_single_sided_ratio
+    limit_up_ask_depth_ratio_5
+    limit_down_bid_depth_ratio_5
+    limit_depth_imbalance_ratio_5
+    prev_day_limit_up_single_sided_ratio
+    prev_day_limit_down_single_sided_ratio
+    prev_2_day_limit_up_single_sided_ratio
+    prev_2_day_limit_down_single_sided_ratio
+)
+
 MIXED_FREQUENCY_FEATURE_COLUMNS=(
     prev_day_return
     prev_day_range_pct
@@ -624,7 +636,7 @@ run_commodity_feature_selection() {
         --target_freq "${target_freq}" \
         --stage "${stage}" \
         --orderbook_depth 5 \
-        --mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" "${CROSS_MONTH_FEATURE_COLUMNS[@]}" \
+        --mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" "${CROSS_MONTH_FEATURE_COLUMNS[@]}" "${PRICE_LIMIT_RATIO_FEATURE_COLUMNS[@]}" \
         "${feature_blacklist_args[@]}"
 }
 
@@ -649,15 +661,15 @@ run_commodity_full_process() {
 
     local log_dir="${LOG_DIR:-${root_path}/log_futures/ticker_result/commodity}"
 
-    # run_commodity_logged_step \
-    #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-    #     "stitch_main_contract" \
-    #     run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$start_date" "$end_date" "$symbol"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "stitch_main_contract" \
+        run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$start_date" "$end_date" "$symbol"
     local summary_path="${root_path}/PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/${symbol}/main_contract_summary.json"
-    # run_commodity_logged_step \
-    #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-    #     "downscale_continuous_by_trading_day" \
-    #     run_commodity_downscale_continuous_by_trading_day "$root_path" "$summary_path" "$target_freq" "$symbol"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "downscale_continuous_by_trading_day" \
+        run_commodity_downscale_continuous_by_trading_day "$root_path" "$summary_path" "$target_freq" "$symbol"
 
     local contract
     while IFS= read -r contract; do

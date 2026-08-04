@@ -230,11 +230,9 @@ def test_daily_and_weekly_base_outputs_one_row_per_day_and_week():
 
 
 def test_mixed_frequency_features_rejects_missing_base_columns():
-    target_bars = pl.DataFrame({"timestamp": [1], "trading_day": ["2026-01-05"]})
     with pytest.raises(ValueError, match="daily Mixed-frequency Base Data"):
         generate_daily_mixed_frequency_features_from_base(
             daily_base=pl.DataFrame({"trading_day": ["2026-01-04"]}),
-            trading_days=target_bars["trading_day"].to_list(),
         )
 
 

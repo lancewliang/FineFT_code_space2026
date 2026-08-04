@@ -1413,8 +1413,11 @@ def test_commodity_full_process_shell_preserves_cross_month_features():
     assert "cm_current_sub_log_price_ratio" in text
     assert "cm_main_sub_log_price_ratio" in text
     assert "cm_m1_m2_m3_butterfly_ratio" in text
+    assert "PRICE_LIMIT_RATIO_FEATURE_COLUMNS=(" in text
+    assert "limit_up_single_sided_ratio" in text
+    assert "limit_down_single_sided_ratio" in text
     assert (
-        '--mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" "${CROSS_MONTH_FEATURE_COLUMNS[@]}"'
+        '--mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" "${CROSS_MONTH_FEATURE_COLUMNS[@]}" "${PRICE_LIMIT_RATIO_FEATURE_COLUMNS[@]}"'
         in text
     )
 

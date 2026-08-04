@@ -20,8 +20,9 @@ Reachable only when you type them (Claude Code: `disable-model-invocation: true`
 
 Model- or user-reachable (rich trigger phrasing so the model can reach for them).
 
+- **[feature-engineering-data-scientist](./feature-engineering-data-scientist/SKILL.md)** — Senior Data Scientist agent persona and workflow for feature engineering analysis, code exploration (MCP tools), statistical diagnostics, and report generation.
+- **[commodity-futures-feature-analysis](./commodity-futures-feature-analysis/SKILL.md)** — Commodity futures feature engineering analysis and evaluation skill for inspecting feature selection outputs, auditing protected features, and diagnosing signal issues against python code and specs.
 - **[prototype](./prototype/SKILL.md)** — Build a throwaway prototype to answer a design question: a runnable terminal app for state/logic, or several toggleable UI variations.
-
 - **[diagnosing-bugs](./diagnosing-bugs/SKILL.md)** — Disciplined diagnosis loop for hard bugs and performance regressions: reproduce → minimise → hypothesise → instrument → fix → regression-test.
 - **[research](./research/SKILL.md)** — Investigate a question against high-trust primary sources and capture the findings as a cited Markdown file in the repo, run as a background agent.
 - **[tdd](./tdd/SKILL.md)** — Test-driven development with a red-green-refactor loop. Builds features or fixes bugs one vertical slice at a time.

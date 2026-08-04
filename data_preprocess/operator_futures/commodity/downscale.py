@@ -598,6 +598,20 @@ def downscale_base_features(
         .fill_null(0.0)
         .alias("tradeval"),
     )
+    if "UpperLimitPrice" in second_df.columns and "LowerLimitPrice" in second_df.columns:
+        frame = frame.with_columns(
+            _limit_single_sided_expr("up").cast(pl.Float64).fill_null(0.0).alias("_limit_up_single_sided"),
+            _limit_single_sided_expr("down").cast(pl.Float64).fill_null(0.0).alias("_limit_down_single_sided"),
+            (pl.sum_horizontal([_ask_level_limit_up_expr(k) for k in range(1, 6)]) / 5.0).alias("_ask_limit_up_ratio_5"),
+            (pl.sum_horizontal([_bid_level_limit_down_expr(k) for k in range(1, 6)]) / 5.0).alias("_bid_limit_down_ratio_5"),
+        )
+    else:
+        frame = frame.with_columns(
+            pl.lit(0.0).alias("_limit_up_single_sided"),
+            pl.lit(0.0).alias("_limit_down_single_sided"),
+            pl.lit(0.0).alias("_ask_limit_up_ratio_5"),
+            pl.lit(0.0).alias("_bid_limit_down_ratio_5"),
+        )
     grouped = _resample(
         frame,
         target_freq,
@@ -623,6 +637,10 @@ def downscale_base_features(
             (pl.col("direction_estimated") == "flat")
             .sum()
             .alias("ntrade_flat_estimated"),
+            pl.col("_limit_up_single_sided").mean().alias("limit_up_single_sided_ratio"),
+            pl.col("_limit_down_single_sided").mean().alias("limit_down_single_sided_ratio"),
+            pl.col("_ask_limit_up_ratio_5").mean().alias("limit_up_ask_depth_ratio_5"),
+            pl.col("_bid_limit_down_ratio_5").mean().alias("limit_down_bid_depth_ratio_5"),
         ],
     ).drop_nulls("open")
     return grouped.with_columns(
@@ -631,6 +649,7 @@ def downscale_base_features(
         .otherwise(pl.col("close"))
         .alias("vwap"),
         pl.col("awap").alias("twap"),
+        (pl.col("limit_up_ask_depth_ratio_5") - pl.col("limit_down_bid_depth_ratio_5")).alias("limit_depth_imbalance_ratio_5"),
     ).select(
         "timestamp",
         "open",
@@ -647,6 +666,11 @@ def downscale_base_features(
         "ntrade_up_estimated",
         "ntrade_down_estimated",
         "ntrade_flat_estimated",
+        "limit_up_single_sided_ratio",
+        "limit_down_single_sided_ratio",
+        "limit_up_ask_depth_ratio_5",
+        "limit_down_bid_depth_ratio_5",
+        "limit_depth_imbalance_ratio_5",
     )
 
 
@@ -774,10 +798,6 @@ def _validate_positive_integer_window_rows(window_rows: int) -> int:
 def _quote_microstructure_required_columns() -> list[str]:
     cols = [
         "timestamp",
-        "BidPrice1",
-        "AskPrice1",
-        "BidVolume1",
-        "AskVolume1",
         "LastPrice",
         "LowPrice",
         "HighPrice",
@@ -785,7 +805,7 @@ def _quote_microstructure_required_columns() -> list[str]:
         "UpperLimitPrice",
     ]
     for level in range(1, 6):
-        for side in ("BidVolume", "AskVolume"):
+        for side in ("BidPrice", "AskPrice", "BidVolume", "AskVolume"):
             col = f"{side}{level}"
             if col not in cols:
                 cols.append(col)
@@ -880,25 +900,63 @@ def _quote_side_empty_expr(price_column: str, size_column: str) -> pl.Expr:
 def _limit_single_sided_expr(side: str) -> pl.Expr:
     if side == "up":
         return (
-            _quote_side_empty_expr("ask_price", "ask_size")
+            _quote_side_empty_expr("AskPrice1", "AskVolume1")
             & (
                 (pl.col("LastPrice") == pl.col("UpperLimitPrice"))
                 | (pl.col("HighPrice") == pl.col("UpperLimitPrice"))
             )
-            & (pl.col("bid_price") > 0)
-            & (pl.col("bid_size") > 0)
+            & (pl.col("BidPrice1") > 0)
+            & (pl.col("BidVolume1") > 0)
         ).fill_null(False)
     if side == "down":
         return (
-            _quote_side_empty_expr("bid_price", "bid_size")
+            _quote_side_empty_expr("BidPrice1", "BidVolume1")
             & (
                 (pl.col("LastPrice") == pl.col("LowerLimitPrice"))
                 | (pl.col("LowPrice") == pl.col("LowerLimitPrice"))
             )
-            & (pl.col("ask_price") > 0)
-            & (pl.col("ask_size") > 0)
+            & (pl.col("AskPrice1") > 0)
+            & (pl.col("AskVolume1") > 0)
         ).fill_null(False)
     raise ValueError(f"Unsupported single-sided side: {side}")
+
+
+def _ask_level_limit_up_expr(level: int) -> pl.Expr:
+    price = pl.col(f"AskPrice{level}").cast(pl.Float64, strict=False)
+    volume = pl.col(f"AskVolume{level}").cast(pl.Float64, strict=False).fill_null(0.0)
+    upper = pl.col("UpperLimitPrice").cast(pl.Float64, strict=False)
+    last = pl.col("LastPrice").cast(pl.Float64, strict=False)
+    high = pl.col("HighPrice").cast(pl.Float64, strict=False)
+    return (
+        upper.is_not_null()
+        & (
+            price.is_null()
+            | (price <= 0)
+            | (volume == 0)
+            | (price >= upper)
+            | (last == upper)
+            | (high == upper)
+        )
+    ).cast(pl.Float64).fill_null(0.0)
+
+
+def _bid_level_limit_down_expr(level: int) -> pl.Expr:
+    price = pl.col(f"BidPrice{level}").cast(pl.Float64, strict=False)
+    volume = pl.col(f"BidVolume{level}").cast(pl.Float64, strict=False).fill_null(0.0)
+    lower = pl.col("LowerLimitPrice").cast(pl.Float64, strict=False)
+    last = pl.col("LastPrice").cast(pl.Float64, strict=False)
+    low = pl.col("LowPrice").cast(pl.Float64, strict=False)
+    return (
+        lower.is_not_null()
+        & (
+            price.is_null()
+            | (price <= 0)
+            | (volume == 0)
+            | (price <= lower)
+            | (last == lower)
+            | (low == lower)
+        )
+    ).cast(pl.Float64).fill_null(0.0)
 
 
 def _quote_depth_volume_columns(depth: int = 5) -> list[str]:
@@ -1190,6 +1248,8 @@ def downscale_quote_microstructure_features(
         _quote_side_empty_expr("ask_price", "ask_size").alias("_ask_side_empty"),
         _limit_single_sided_expr("up").alias("_limit_up_single_sided"),
         _limit_single_sided_expr("down").alias("_limit_down_single_sided"),
+        (pl.sum_horizontal([_ask_level_limit_up_expr(k) for k in range(1, 6)]) / 5.0).alias("_ask_limit_up_ratio_5"),
+        (pl.sum_horizontal([_bid_level_limit_down_expr(k) for k in range(1, 6)]) / 5.0).alias("_bid_limit_down_ratio_5"),
     )
 
     grouped = (
@@ -1217,6 +1277,8 @@ def downscale_quote_microstructure_features(
             pl.col("_limit_down_single_sided").sum().alias(
                 "_limit_down_single_sided_count"
             ),
+            pl.col("_ask_limit_up_ratio_5").mean().alias("limit_up_ask_depth_ratio_5"),
+            pl.col("_bid_limit_down_ratio_5").mean().alias("limit_down_bid_depth_ratio_5"),
             pl.col("_ask_depletion").mean().alias("ask_depth_depletion_5m"),
             pl.col("_bid_depletion").mean().alias("bid_depth_depletion_5m"),
             _safe_divide(pl.col("total_depth_5").last(), pl.col("total_depth_5").mean()).alias("depth_replenishment_ratio_20m"),
@@ -1258,6 +1320,7 @@ def downscale_quote_microstructure_features(
             pl.col("_limit_down_single_sided_count"),
             pl.col("nquote").cast(pl.Float64, strict=False),
         ).alias("limit_down_single_sided_ratio"),
+        (pl.col("limit_up_ask_depth_ratio_5") - pl.col("limit_down_bid_depth_ratio_5")).alias("limit_depth_imbalance_ratio_5"),
     )
     return grouped.select(
         "timestamp",
@@ -1281,6 +1344,9 @@ def downscale_quote_microstructure_features(
         "ask_side_empty_ratio",
         "limit_up_single_sided_ratio",
         "limit_down_single_sided_ratio",
+        "limit_up_ask_depth_ratio_5",
+        "limit_down_bid_depth_ratio_5",
+        "limit_depth_imbalance_ratio_5",
     )
 
 

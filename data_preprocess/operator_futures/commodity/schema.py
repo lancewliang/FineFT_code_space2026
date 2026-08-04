@@ -12,6 +12,23 @@ PRICE_LIMIT_COLUMNS = [
     "LowerLimitPrice",
     "UpperLimitPrice",
 ]
+DAILY_LIMIT_RATIO_FEATURE_COLUMNS = [
+    f"{prefix}_{suffix}"
+    for prefix in ("prev_day", "prev_2_day", "prev_5_day", "prev_10_day", "prev_15_day", "prev_30_day")
+    for suffix in (
+        "limit_up_single_sided_ratio",
+        "limit_down_single_sided_ratio",
+    )
+]
+
+PRICE_LIMIT_RATIO_FEATURE_COLUMNS = [
+    "limit_up_single_sided_ratio",
+    "limit_down_single_sided_ratio",
+    "limit_up_ask_depth_ratio_5",
+    "limit_down_bid_depth_ratio_5",
+    "limit_depth_imbalance_ratio_5",
+    *DAILY_LIMIT_RATIO_FEATURE_COLUMNS,
+]
 
 
 def resample_kwargs() -> Dict[str, str]:

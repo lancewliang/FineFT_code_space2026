@@ -24,6 +24,11 @@ REQUIRED_BAR_COLUMNS: tuple[str, ...] = (
     "ntrade_flat_estimated",
 )
 
+LIMIT_RATIO_BAR_COLUMNS: tuple[str, ...] = (
+    "limit_up_single_sided_ratio",
+    "limit_down_single_sided_ratio",
+)
+
 DAILY_BASE_FEATURE_COLUMNS: list[str] = [
     "trading_day",
     "open",
@@ -40,6 +45,7 @@ DAILY_BASE_FEATURE_COLUMNS: list[str] = [
     "ntrade_up_estimated",
     "ntrade_down_estimated",
     "ntrade_flat_estimated",
+    *LIMIT_RATIO_BAR_COLUMNS,
 ]
 
 
@@ -60,6 +66,8 @@ class PeriodStats:
     ntrade_up_estimated: float
     ntrade_down_estimated: float
     ntrade_flat_estimated: float
+    limit_up_single_sided_ratio: float = 0.0
+    limit_down_single_sided_ratio: float = 0.0
 
 
 def parse_trading_day(value: object) -> date:
@@ -150,6 +158,8 @@ def stats_for_frame(frame: pl.DataFrame, period_key: object) -> PeriodStats:
         ntrade_flat_estimated=float(
             sorted_frame.get_column("ntrade_flat_estimated").sum()
         ),
+        limit_up_single_sided_ratio=float(sorted_frame.get_column("limit_up_single_sided_ratio")[-1]) if "limit_up_single_sided_ratio" in sorted_frame.columns else 0.0,
+        limit_down_single_sided_ratio=float(sorted_frame.get_column("limit_down_single_sided_ratio")[-1]) if "limit_down_single_sided_ratio" in sorted_frame.columns else 0.0,
     )
 
 
@@ -170,6 +180,8 @@ def period_stats_from_base_row(row: dict[str, object], *, key_column: str) -> Pe
         ntrade_up_estimated=float(row["ntrade_up_estimated"]),
         ntrade_down_estimated=float(row["ntrade_down_estimated"]),
         ntrade_flat_estimated=float(row["ntrade_flat_estimated"]),
+        limit_up_single_sided_ratio=float(row.get("limit_up_single_sided_ratio", 0.0)),
+        limit_down_single_sided_ratio=float(row.get("limit_down_single_sided_ratio", 0.0)),
     )
 
 
@@ -262,6 +274,8 @@ def _stats_to_daily_row(stats: PeriodStats) -> dict[str, object]:
         "ntrade_up_estimated": stats.ntrade_up_estimated,
         "ntrade_down_estimated": stats.ntrade_down_estimated,
         "ntrade_flat_estimated": stats.ntrade_flat_estimated,
+        "limit_up_single_sided_ratio": stats.limit_up_single_sided_ratio,
+        "limit_down_single_sided_ratio": stats.limit_down_single_sided_ratio,
     }
 
 

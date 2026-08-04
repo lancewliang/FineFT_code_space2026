@@ -32,6 +32,8 @@ _FEATURE_SUFFIXES: tuple[str, ...] = (
     "tradeval",
     "open_interest_change",
     "turnover_rate",
+    "limit_up_single_sided_ratio",
+    "limit_down_single_sided_ratio",
 )
 
 _DAILY_STATE_FEATURE_SUFFIXES: tuple[str, ...] = tuple(
@@ -44,6 +46,8 @@ _DAILY_ROLLING_STATE_FEATURE_SUFFIXES: tuple[str, ...] = (
     "trade_imbalance",
     "open_interest_change",
     "turnover_rate",
+    "limit_up_single_sided_ratio",
+    "limit_down_single_sided_ratio",
 )
 
 
@@ -115,12 +119,17 @@ def daily_rolling_state_features(
     ntrade = sum(float(row["ntrade_estimated"]) for row in window_rows)
     ntrade_up = sum(float(row["ntrade_up_estimated"]) for row in window_rows)
     ntrade_down = sum(float(row["ntrade_down_estimated"]) for row in window_rows)
+    n_win = len(window_rows)
+    limit_up = sum(float(row.get("limit_up_single_sided_ratio", 0.0)) for row in window_rows) / n_win
+    limit_down = sum(float(row.get("limit_down_single_sided_ratio", 0.0)) for row in window_rows) / n_win
     values = {
         f"{prefix}_trade_up_ratio": _safe_ratio(ntrade_up, ntrade),
         f"{prefix}_trade_down_ratio": _safe_ratio(ntrade_down, ntrade),
         f"{prefix}_trade_imbalance": _safe_ratio(ntrade_up - ntrade_down, ntrade),
         f"{prefix}_open_interest_change": _safe_ratio(oi_last - oi_first, oi_first),
         f"{prefix}_turnover_rate": _safe_ratio(volume, oi_last),
+        f"{prefix}_limit_up_single_sided_ratio": limit_up,
+        f"{prefix}_limit_down_single_sided_ratio": limit_down,
     }
     return {
         key: float(value) if math.isfinite(float(value)) else 0.0
@@ -167,6 +176,8 @@ def period_features(prefix: str, row: dict[str, object] | None) -> dict[str, flo
         f"{prefix}_tradeval": tradeval,
         f"{prefix}_open_interest_change": _safe_ratio(oi_last - oi_first, oi_first),
         f"{prefix}_turnover_rate": _safe_ratio(volume, oi_last),
+        f"{prefix}_limit_up_single_sided_ratio": float(row.get("limit_up_single_sided_ratio", 0.0)),
+        f"{prefix}_limit_down_single_sided_ratio": float(row.get("limit_down_single_sided_ratio", 0.0)),
     }
     return {
         key: float(value) if math.isfinite(float(value)) else 0.0
