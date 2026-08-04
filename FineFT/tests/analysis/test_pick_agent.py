@@ -200,3 +200,54 @@ def test_pick_best_agent_fails_when_label_has_only_nan_rewards(tmp_path):
         _picker(tmp_path).pick_best_agent_regarding_dynamics_bin_index_path(
             pd.DataFrame(rows)
         )
+
+from analysis.pick_agent.DiHFT_high_level_heurstic import Picker as DiHFT_Picker
+
+def test_dihft_picker_multi_contract_analysis(tmp_path):
+    # Setup mock epoch structure with two contracts
+    epoch_dir = tmp_path / "result" / "DiHFT" / "high_level" / "fu" / "30min_multi" / "vae_risk_aware_routing" / "param_1"
+    c1_dir = epoch_dir / "contracts" / "fu2409"
+    c2_dir = epoch_dir / "contracts" / "fu2411"
+    c1_dir.mkdir(parents=True)
+    c2_dir.mkdir(parents=True)
+
+    for cdir, r_val in [(c1_dir, 10.0), (c2_dir, 20.0)]:
+        np.save(cdir / "initial_margin_history.npy", np.array([100.0, 100.0]))
+        np.save(cdir / "maintain_marigine_history.npy", np.array([50.0, 50.0]))
+        np.save(cdir / "new_position_required_money_history.npy", np.array([0.0, 0.0]))
+        np.save(cdir / "micro_action_history.npy", np.array([1, 1]))
+        np.save(cdir / "reward_history.npy", np.array([r_val, r_val]))
+        np.save(cdir / "total_asset_history.npy", np.array([1000.0, 1020.0]))
+        np.save(cdir / "unrealized_pnl_history.npy", np.array([0.0, 0.0]))
+        np.save(cdir / "wallet_balance_history.npy", np.array([1000.0, 1020.0]))
+
+    args = Namespace(
+        dataset_name="fu",
+        experiment_name="30min_multi",
+        save_path=str(tmp_path / "analysis_result"),
+        early_stop=0,
+    )
+    picker = DiHFT_Picker(args)
+    res = picker.analysis_single_epoch(str(epoch_dir))
+    assert res["num_contracts"] == 2
+    assert res["tr"] > 0
+
+
+def test_dihft_picker_find_valid_contract_files_uses_base_path(tmp_path):
+    custom_base = tmp_path / "custom_base"
+    valid_dir = custom_base / "fu" / "valid"
+    valid_dir.mkdir(parents=True)
+    feather_file = valid_dir / "c1.feather"
+    feather_file.write_text("dummy")
+
+    args = Namespace(
+        base_path=str(custom_base),
+        dataset_name="fu",
+        experiment_name="30min_multi",
+        save_path=str(tmp_path / "analysis_result"),
+        early_stop=0,
+    )
+    picker = DiHFT_Picker(args)
+    files = picker._find_valid_contract_files()
+    assert len(files) == 1
+    assert files[0] == ("c1", str(feather_file))

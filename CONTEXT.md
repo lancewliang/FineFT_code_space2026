@@ -365,6 +365,10 @@ _Avoid_: 固定 180 分钟、交易日内进度、未截断持仓时长
 Stage I 串行训练的实验名参数，用于隔离模型输出和日志目录。
 _Avoid_: 实验名、实验标识
 
+**Valid Multi-Contract Trial Selection (验证集多合约 Trial 遴选)**:
+在高层路由或启发式策略分析中，对验证集中多个活跃合约 (`dataset/{freq}/{symbol}/valid/*.feather`) 的测试结果按等权重均值 (Per-contract Mean Indicator) 与组合整体收益率 (Portfolio Return) 进行跨合约综合计算，遴选最优 Trial，画图与诊断统一使用验证集多合约数据并按合约单独出图。
+_Avoid_: 单合约遴选、test 集合遴选
+
 ### Trading Actions
 
 **Reverse Position (反手)**:
