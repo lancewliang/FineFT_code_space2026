@@ -127,7 +127,6 @@ def find_nquotes_groups(features):
     groups_1 = {}
     groups_2 = {}
     groups_3 = {}
-    matched_features = set()
 
     # Iterate over the features to match and group them
     for feature in features:
@@ -141,13 +140,22 @@ def find_nquotes_groups(features):
             if key not in groups_1:
                 groups_1[key] = []
             groups_1[key].append(feature)
-            matched_features.add(feature)
     grouped_features_1 = {k: v for k, v in groups_1.items()}
     for grouped_feature in grouped_features_1:
+        prefix = (
+            grouped_feature[0][:-1]
+            if grouped_feature[0].endswith("_")
+            else grouped_feature[0]
+        )
+        suffix = grouped_feature[1]
         for name in features:
-            if (name not in grouped_feature) and (name == grouped_feature[0][:-1]):
+            if (name not in grouped_features_1[grouped_feature]) and (name == (prefix + suffix)):
                 grouped_features_1[grouped_feature].insert(0, name)
-                matched_features.add(name)
+    keys_to_delete = [
+        key for key, value in grouped_features_1.items() if len(value) != 3
+    ]
+    for key in keys_to_delete:
+        del grouped_features_1[key]
 
     for feature in features:
         match = pattern_2.match(feature)
@@ -160,7 +168,6 @@ def find_nquotes_groups(features):
             if key not in groups_2:
                 groups_2[key] = []
             groups_2[key].append(feature)
-            matched_features.add(feature)
     grouped_features_2 = {k: v for k, v in groups_2.items()}
     for grouped_feature in grouped_features_2:
         prefix = (
@@ -170,11 +177,10 @@ def find_nquotes_groups(features):
         )
         suffix = grouped_feature[1]
         for name in features:
-            if (name not in grouped_feature) and (name == (prefix + suffix)):
+            if (name not in grouped_features_2[grouped_feature]) and (name == (prefix + suffix)):
                 grouped_features_2[grouped_feature].insert(0, name)
-                matched_features.add(name)
     keys_to_delete = [
-        key for key, value in grouped_features_2.items() if len(value) == 1
+        key for key, value in grouped_features_2.items() if len(value) not in [3, 4]
     ]
     # 删除这些键
     for key in keys_to_delete:
@@ -191,7 +197,6 @@ def find_nquotes_groups(features):
             if key not in groups_3:
                 groups_3[key] = []
             groups_3[key].append(feature)
-            matched_features.add(feature)
     grouped_features_3 = {k: v for k, v in groups_3.items()}
     for grouped_feature in grouped_features_3:
         prefix = (
@@ -201,15 +206,19 @@ def find_nquotes_groups(features):
         )
         suffix = grouped_feature[1]
         for name in features:
-            if (name not in grouped_feature) and (name == (prefix + suffix)):
+            if (name not in grouped_features_3[grouped_feature]) and (name == (prefix + suffix)):
                 grouped_features_3[grouped_feature].insert(0, name)
-                matched_features.add(name)
     keys_to_delete = [
-        key for key, value in grouped_features_3.items() if len(value) == 1
+        key for key, value in grouped_features_3.items() if len(value) not in [2, 3]
     ]
     # 删除这些键
     for key in keys_to_delete:
         del grouped_features_3[key]
+
+    matched_features = set()
+    for g in (grouped_features_1, grouped_features_2, grouped_features_3):
+        for feature_list in g.values():
+            matched_features.update(feature_list)
 
     unmatched_features = [
         feature for feature in features if feature not in matched_features

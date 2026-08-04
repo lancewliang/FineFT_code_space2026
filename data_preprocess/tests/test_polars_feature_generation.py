@@ -155,3 +155,27 @@ def test_time_operator_ohlc_preserves_rank_and_index_features():
     assert out["imax_2"].to_list() != [0.0, 0.0, 0.0]
     assert out["imin_2"].to_list() != [0.0, 0.0, 0.0]
     assert out["imxd_2"].to_list() != [0.0, 0.0, 0.0]
+
+
+def test_process_quotes_n_feature_handles_commodity_limit_ratio_columns():
+    from operator_futures.cross_section.base_feature_util import process_quotes_n_feature, find_nquotes_groups
+    df = pl.DataFrame(
+        {
+            "timestamp": [1, 2],
+            "open": [10.0, 11.0],
+            "high": [12.0, 13.0],
+            "low": [9.0, 10.0],
+            "close": [11.0, 12.0],
+            "ntrade_estimated": [10, 20],
+            "ntrade_up_estimated": [5, 10],
+            "ntrade_down_estimated": [3, 8],
+            "ntrade_flat_estimated": [2, 2],
+            "limit_up_single_sided_ratio": [0.1, 0.2],
+            "limit_down_single_sided_ratio": [0.05, 0.08],
+        }
+    )
+    g1, g2, g3, unmatched = find_nquotes_groups(df.columns)
+    assert ('limit_', '_single_sided_ratio') not in g2
+    res = process_quotes_n_feature(df)
+    assert isinstance(res, pl.DataFrame)
+    assert res.height == 2
