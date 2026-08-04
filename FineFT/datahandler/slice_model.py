@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = str(Path(__file__).resolve().parents[3])
 sys.path.append(ROOT)
 import pandas as pd
+import numpy as np
 import argparse
 from pathlib import Path
 import warnings
@@ -105,6 +106,42 @@ parser.add_argument(
     default=864,
     help='The strength of the low-pass Butterworth filter, the bigger the lower cutoff frequency, "1" have the cutoff frequency of min_length_limit period',
 )
+parser.add_argument(
+    "--filter_limit",
+    type=lambda x: (str(x).lower() in ["true", "1", "yes"]),
+    default=True,
+    help="Filter out limit up/down rows before dynamic modeling and slicing",
+)
+parser.add_argument(
+    "--filter_near_limit",
+    type=lambda x: (str(x).lower() in ["true", "1", "yes"]),
+    default=True,
+    help="Filter out near limit up/down rows before dynamic modeling and slicing",
+)
+parser.add_argument(
+    "--near_limit_threshold",
+    type=float,
+    default=0.003,
+    help="Relative price distance threshold to upper/lower limit for near-limit detection",
+)
+parser.add_argument(
+    "--limit_col_upper",
+    type=str,
+    default="UpperLimitPrice",
+    help="Column name for upper limit price",
+)
+parser.add_argument(
+    "--save_limit_labels",
+    type=lambda x: (str(x).lower() in ["true", "1", "yes"]),
+    default=True,
+    help="Save limit up and limit down rows into dedicated numeric labels (label_N for limit up, label_N+1 for limit down) instead of filtering them out",
+)
+parser.add_argument(
+    "--limit_col_lower",
+    type=str,
+    default="LowerLimitPrice",
+    help="Column name for lower limit price",
+)
 
 
 class Linear_Market_Dynamics_Model(object):
@@ -123,6 +160,12 @@ class Linear_Market_Dynamics_Model(object):
         self.merging_metric = args.merging_metric
         self.merging_threshold = args.merging_threshold
         self.merging_dynamic_constraint = args.merging_dynamic_constraint
+        self.filter_limit = getattr(args, "filter_limit", True)
+        self.filter_near_limit = getattr(args, "filter_near_limit", True)
+        self.near_limit_threshold = getattr(args, "near_limit_threshold", 0.003)
+        self.limit_col_upper = getattr(args, "limit_col_upper", "UpperLimitPrice")
+        self.limit_col_lower = getattr(args, "limit_col_lower", "LowerLimitPrice")
+        self.save_limit_labels = getattr(args, "save_limit_labels", True)
 
     def file_extension_selector(self, read):
         if self.data_path.endswith(".csv"):
@@ -142,6 +185,77 @@ class Linear_Market_Dynamics_Model(object):
         # get file name and extension from process_datafile_path
         file_name, file_extension = os.path.splitext(process_datafile_path)
 
+    def detect_limit_states(self, data):
+        price = (
+            data[self.key_indicator]
+            if self.key_indicator in data.columns
+            else data.get("bid1_price", None)
+        )
+        if price is None:
+            price = data.iloc[:, 0]
+
+        is_limit_up = pd.Series(False, index=data.index)
+        is_limit_down = pd.Series(False, index=data.index)
+        is_near_limit_up = pd.Series(False, index=data.index)
+        is_near_limit_down = pd.Series(False, index=data.index)
+
+        has_upper = self.limit_col_upper in data.columns
+        has_lower = self.limit_col_lower in data.columns
+        ask1 = data.get("ask1_price", None)
+        bid1 = data.get("bid1_price", None)
+
+        if has_upper:
+            upper = data[self.limit_col_upper]
+            valid_upper = upper.notna() & (upper > 0) & np.isfinite(upper)
+            exact_up = valid_upper & (price >= upper)
+            if ask1 is not None:
+                single_ask_up = (ask1 <= 0) | (ask1 >= upper) | ask1.isna()
+                if bid1 is not None:
+                    exact_up |= (
+                        valid_upper & single_ask_up & (bid1.notna() & (bid1 > 0))
+                    )
+                else:
+                    exact_up |= valid_upper & single_ask_up
+            if "limit_up_single_sided_ratio" in data.columns:
+                exact_up |= valid_upper & (data["limit_up_single_sided_ratio"] > 0)
+            is_limit_up = exact_up
+            if self.near_limit_threshold > 0:
+                is_near_limit_up = valid_upper & (
+                    price >= upper * (1.0 - self.near_limit_threshold)
+                )
+        else:
+            if ask1 is not None and bid1 is not None:
+                is_limit_up = ((ask1 <= 0) | ask1.isna()) & (bid1 > 0)
+            if "limit_up_single_sided_ratio" in data.columns:
+                is_limit_up |= data["limit_up_single_sided_ratio"] > 0
+
+        if has_lower:
+            lower = data[self.limit_col_lower]
+            valid_lower = lower.notna() & (lower > 0) & np.isfinite(lower)
+            exact_down = valid_lower & (price <= lower)
+            if bid1 is not None:
+                single_bid_down = (bid1 <= 0) | (bid1 <= lower) | bid1.isna()
+                if ask1 is not None:
+                    exact_down |= (
+                        valid_lower & single_bid_down & (ask1.notna() & (ask1 > 0))
+                    )
+                else:
+                    exact_down |= valid_lower & single_bid_down
+            if "limit_down_single_sided_ratio" in data.columns:
+                exact_down |= valid_lower & (data["limit_down_single_sided_ratio"] > 0)
+            is_limit_down = exact_down
+            if self.near_limit_threshold > 0:
+                is_near_limit_down = valid_lower & (
+                    price <= lower * (1.0 + self.near_limit_threshold)
+                )
+        else:
+            if ask1 is not None and bid1 is not None:
+                is_limit_down = ((bid1 <= 0) | bid1.isna()) & (ask1 > 0)
+            if "limit_down_single_sided_ratio" in data.columns:
+                is_limit_down |= data["limit_down_single_sided_ratio"] > 0
+
+        return is_limit_up, is_limit_down, is_near_limit_up, is_near_limit_down
+
     def prepare_raw_data(self, raw_data):
         print(f"loaded columns: {list(raw_data.columns)}")
         required_columns = ["bid1_price"]
@@ -159,6 +273,13 @@ class Linear_Market_Dynamics_Model(object):
         raw_data[self.key_indicator] = raw_data["bid1_price"]
         if self.timestamp == "index":
             raw_data[self.timestamp] = raw_data.index
+
+        is_up, is_down, is_near_up, is_near_down = self.detect_limit_states(raw_data)
+        raw_data["is_limit_up"] = is_up
+        raw_data["is_limit_down"] = is_down
+        raw_data["is_near_limit_up"] = is_near_up
+        raw_data["is_near_limit_down"] = is_near_down
+
         return raw_data
 
     def _contract_name(self):
@@ -235,6 +356,25 @@ class Linear_Market_Dynamics_Model(object):
         output_path = self.data_path
         raw_data = pd.read_feather(self.data_path)
         raw_data = self.prepare_raw_data(raw_data)
+
+        limit_up_mask = raw_data["is_limit_up"] | raw_data["is_near_limit_up"]
+        limit_down_mask = raw_data["is_limit_down"] | raw_data["is_near_limit_down"]
+        limit_mask = limit_up_mask | limit_down_mask
+
+        if not self.save_limit_labels:
+            filter_mask = pd.Series(False, index=raw_data.index)
+            if self.filter_limit:
+                filter_mask |= raw_data["is_limit_up"] | raw_data["is_limit_down"]
+            if self.filter_near_limit:
+                filter_mask |= raw_data["is_near_limit_up"] | raw_data["is_near_limit_down"]
+
+            if filter_mask.any():
+                filtered_count = int(filter_mask.sum())
+                print(
+                    f"filtering {filtered_count} limit/near-limit rows for contract {contract_name}"
+                )
+                raw_data = raw_data[~filter_mask].reset_index(drop=True)
+
         processed_dir = ticker_name_path / "processed"
         processed_dir.mkdir(parents=True, exist_ok=True)
         process_data_path = processed_dir / f"valid_processed_{contract_name}.feather"
@@ -307,14 +447,26 @@ class Linear_Market_Dynamics_Model(object):
         # elif extension == "feather":
         #     merged_data.to_feather(process_datafile_path)
         print("labeling done")
+        if self.save_limit_labels:
+            limit_down_label = 0
+            limit_up_label = self.dynamic_number + 1
+            merged_data["label"] = merged_data["label"] + 1
+            if limit_down_mask.any():
+                merged_data.loc[limit_down_mask, "label"] = limit_down_label
+            if limit_up_mask.any():
+                merged_data.loc[limit_up_mask, "label"] = limit_up_label
+            total_label_count = self.dynamic_number + 2
+        else:
+            total_label_count = self.dynamic_number
+
         if output_root.exists():
             shutil.rmtree(output_root)
         output_root.mkdir(parents=True, exist_ok=True)
-        for i in range(self.dynamic_number):
+        for i in range(total_label_count):
             (output_root / "label_{}".format(i)).mkdir(parents=True, exist_ok=True)
         previous_label = int(merged_data.label.iloc[0])
         previous_start = 0
-        label_counter = [0] * self.dynamic_number
+        label_counter = [0] * total_label_count
         contract_labels = {}
 
         def write_segment(label, start, end):
