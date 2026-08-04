@@ -32,6 +32,7 @@ sys.path.append(".")
 from env.env_class.futures_util import (
     change_of_wallet,
     calculate_avaiable_action,
+    compute_limit_reward,
     judge_liquidation,
     calculate_maintenance_margin,
     map_action_to_position_leverage,
@@ -85,6 +86,17 @@ class Base_Env(gym.Env):
         sell_fee_rate=None,
         allow_reverse_position=False,
         holding_duration_norm_steps=180,
+        is_limit_up_array=None,
+        is_limit_down_array=None,
+        limit_up_ask_depth_ratio_5_array=None,
+        limit_down_bid_depth_ratio_5_array=None,
+        upper_limit_prices_array=None,
+        lower_limit_prices_array=None,
+        enable_limit_reward=False,
+        limit_hold_bonus=1.0,
+        limit_stay_bonus=0.5,
+        limit_reverse_penalty=1.5,
+        near_limit_threshold=0.003,
     ):
         # trading setting
         self.max_holding_number = max_holding_number
@@ -101,6 +113,28 @@ class Base_Env(gym.Env):
             raise ValueError(f"holding_duration_norm_steps must be positive, got {holding_duration_norm_steps}")
         self.holding_duration_norm_steps = float(holding_duration_norm_steps)
         self.current_holding_duration = 0
+        self.is_limit_up_array = is_limit_up_array
+        self.is_limit_down_array = is_limit_down_array
+        self.limit_up_ask_depth_ratio_5_array = limit_up_ask_depth_ratio_5_array
+        self.limit_down_bid_depth_ratio_5_array = limit_down_bid_depth_ratio_5_array
+        self.upper_limit_prices_array = upper_limit_prices_array
+        self.lower_limit_prices_array = lower_limit_prices_array
+        self.enable_limit_reward = enable_limit_reward
+        self.limit_hold_bonus = float(limit_hold_bonus)
+        self.limit_stay_bonus = float(limit_stay_bonus)
+        self.limit_reverse_penalty = float(limit_reverse_penalty)
+        self.near_limit_threshold = float(near_limit_threshold)
+        self.is_limit_up_array = is_limit_up_array
+        self.is_limit_down_array = is_limit_down_array
+        self.limit_up_ask_depth_ratio_5_array = limit_up_ask_depth_ratio_5_array
+        self.limit_down_bid_depth_ratio_5_array = limit_down_bid_depth_ratio_5_array
+        self.upper_limit_prices_array = upper_limit_prices_array
+        self.lower_limit_prices_array = lower_limit_prices_array
+        self.enable_limit_reward = enable_limit_reward
+        self.limit_hold_bonus = float(limit_hold_bonus)
+        self.limit_stay_bonus = float(limit_stay_bonus)
+        self.limit_reverse_penalty = float(limit_reverse_penalty)
+        self.near_limit_threshold = float(near_limit_threshold)
         # RL setting
         self.single_side_action_num = int((position_choices - 1) / 2)
         self.action_space = spaces.Discrete(
@@ -176,6 +210,7 @@ class Base_Env(gym.Env):
         else:
             self.current_holding_duration = 1
 
+
     def _zero_trading_info(self):
         return np.zeros(len(TRADING_INFO_KEYS), dtype=np.float32)
 
@@ -195,6 +230,41 @@ class Base_Env(gym.Env):
                 duration_norm,
             ],
             dtype=np.float32,
+        )
+
+    def _compute_step_limit_reward(self, old_position):
+        """Limit-aware reward shaping for the action just taken in step().
+
+        Evaluated at the action-time index (self.day - 1), i.e. the market
+        state that justified the action. Returns 0.0 when shaping is disabled
+        or no limit state is active.
+        """
+        if not self.enable_limit_reward:
+            return 0.0
+        t = self.day - 1
+        if t < 0:
+            return 0.0
+
+        def _at(arr):
+            if arr is None or t >= len(arr):
+                return None
+            return arr[t]
+
+        return compute_limit_reward(
+            old_position=old_position,
+            new_position=self.position,
+            is_limit_up=_at(self.is_limit_up_array),
+            is_limit_down=_at(self.is_limit_down_array),
+            limit_up_ask_depth_ratio_5=_at(self.limit_up_ask_depth_ratio_5_array),
+            limit_down_bid_depth_ratio_5=_at(self.limit_down_bid_depth_ratio_5_array),
+            upper_limit_price=_at(self.upper_limit_prices_array),
+            lower_limit_price=_at(self.lower_limit_prices_array),
+            markprice=self.markprice_array[t],
+            enable_limit_reward=self.enable_limit_reward,
+            limit_hold_bonus=self.limit_hold_bonus,
+            limit_stay_bonus=self.limit_stay_bonus,
+            limit_reverse_penalty=self.limit_reverse_penalty,
+            near_limit_threshold=self.near_limit_threshold,
         )
 
     def _reset_execution_metrics(self):
@@ -493,6 +563,7 @@ class Base_Env(gym.Env):
                     "single_holding_return_rate": self.single_holding_return_rate,
                     "single_holding_max_drawdown": self.single_holding_max_drawdown,
                     "trading_info": self._zero_trading_info(),
+                    "limit_reward": 0.0,
                     "previous_action": self.env_map_position_leverage_to_action(
                         self.position, self.leverage
                     ),
@@ -621,6 +692,7 @@ class Base_Env(gym.Env):
                         "single_holding_return_rate": self.single_holding_return_rate,
                         "single_holding_max_drawdown": self.single_holding_max_drawdown,
                         "trading_info": self._zero_trading_info(),
+                    "limit_reward": 0.0,
                         "previous_action": self.env_map_position_leverage_to_action(
                             self.position, self.leverage
                         ),
@@ -677,6 +749,9 @@ class Base_Env(gym.Env):
                 reward = (
                     self.wallet_balance + self.unrealized_pnl - previous_margine_balance
                 )
+                limit_reward = self._compute_step_limit_reward(old_position)
+                reward += limit_reward
+
                 require_money = calculate_required_money(
                     np.array(self.initial_margin_history),
                     np.array(self.maintain_marigine_history),
@@ -746,6 +821,7 @@ class Base_Env(gym.Env):
                         "single_holding_return_rate": self.single_holding_return_rate,
                         "single_holding_max_drawdown": self.single_holding_max_drawdown,
                         "trading_info": trading_info,
+                        "limit_reward": limit_reward,
                         **self._execution_metric_info(),
                     },
                 )

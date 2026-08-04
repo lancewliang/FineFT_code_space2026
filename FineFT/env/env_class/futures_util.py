@@ -41,6 +41,102 @@ class WalletChangeResult:
         return len(self.legacy_tuple())
 
 
+def compute_limit_reward(
+    old_position: float,
+    new_position: float,
+    is_limit_up: bool,
+    is_limit_down: bool,
+    limit_up_ask_depth_ratio_5,
+    limit_down_bid_depth_ratio_5,
+    upper_limit_price,
+    lower_limit_price,
+    markprice,
+    enable_limit_reward: bool,
+    limit_hold_bonus: float = 1.0,
+    limit_stay_bonus: float = 0.5,
+    limit_reverse_penalty: float = 1.5,
+    near_limit_threshold: float = 0.003,
+) -> float:
+    """Reward shaping for limit up/down (or near-limit) market states.
+
+    Limit up encourages long positions; limit down encourages short positions.
+    Same-direction open/add is rewarded, reversing to the opposite side is
+    penalized. The magnitude scales with how one-sided the orderbook is
+    (depth ratio) or with proximity to the limit price (near-limit).
+    Returns 0.0 when limit shaping is disabled or no limit state is active.
+    """
+    if not enable_limit_reward:
+        return 0.0
+
+    def _intensity(is_exact, depth_ratio, limit_price, from_above: bool) -> float:
+        intensity = 0.0
+        if is_exact:
+            intensity = 1.0
+        if depth_ratio is not None and float(depth_ratio) > 0:
+            intensity = max(intensity, float(depth_ratio))
+        # near-limit: scale by relative distance to the limit price
+        if (
+            limit_price is not None
+            and near_limit_threshold > 0
+            and markprice is not None
+        ):
+            mp = float(markprice)
+            lp = float(limit_price)
+            if from_above:  # upper limit
+                if mp >= lp:
+                    near = 1.0
+                elif mp >= lp * (1.0 - near_limit_threshold):
+                    near = 1.0 - (lp - mp) / lp / near_limit_threshold
+                else:
+                    near = 0.0
+            else:  # lower limit
+                if mp <= lp:
+                    near = 1.0
+                elif mp <= lp * (1.0 + near_limit_threshold):
+                    near = 1.0 - (mp - lp) / lp / near_limit_threshold
+                else:
+                    near = 0.0
+            intensity = max(intensity, float(near))
+        return intensity
+
+    up_intensity = _intensity(
+        is_limit_up, limit_up_ask_depth_ratio_5, upper_limit_price, True
+    )
+    down_intensity = _intensity(
+        is_limit_down, limit_down_bid_depth_ratio_5, lower_limit_price, False
+    )
+    if up_intensity <= 0.0 and down_intensity <= 0.0:
+        return 0.0
+
+    if up_intensity > 0.0:
+        sign = 1.0  # limit up encourages long
+        intensity = up_intensity
+    else:
+        sign = -1.0  # limit down encourages short
+        intensity = down_intensity
+
+    new_s = new_position * sign
+    old_s = old_position * sign
+    if new_s > 0:
+        # new position in the encouraged direction
+        if new_s >= old_s:
+            base = limit_hold_bonus  # hold or add
+        else:
+            base = -limit_stay_bonus  # reduce same-direction position
+        if new_position == old_position:
+            base += limit_stay_bonus  # not moving -> extra stay bonus
+    elif new_s < 0:
+        # new position in the opposite direction
+        base = -limit_reverse_penalty
+    else:
+        # new position flat
+        if old_s > 0:
+            base = -limit_stay_bonus  # closed an encouraged-direction position
+        else:
+            base = 0.0
+    return base * intensity
+
+
 def change_of_wallet(
     markprice,
     ask_prices,
@@ -1244,6 +1340,18 @@ def create_optimal_q_table(
     max_punishment=1e10,
     gamma=1,
     allow_reverse_position=False,
+    # optional limit up/down reward shaping (all default to off/None)
+    is_limit_up_array=None,
+    is_limit_down_array=None,
+    limit_up_ask_depth_ratio_5_array=None,
+    limit_down_bid_depth_ratio_5_array=None,
+    upper_limit_prices_array=None,
+    lower_limit_prices_array=None,
+    enable_limit_reward=False,
+    limit_hold_bonus=1.0,
+    limit_stay_bonus=0.5,
+    limit_reverse_penalty=1.5,
+    near_limit_threshold=0.003,
 ):
     assert (
         len(ask_prices_array)
@@ -1256,6 +1364,9 @@ def create_optimal_q_table(
         == len(funding_timestamp_array)
     )
     total_length = len(ask_prices_array)
+
+    def _limit_value(arr, idx):
+        return None if arr is None else arr[idx]
 
     num_action = (position_choices - 1) * len(leverage_choice) + 1
 
@@ -1377,6 +1488,39 @@ def create_optimal_q_table(
                             current_wallet_balance + current_unrealized_pnL
                         )
                         reward = current_margine_balance - previous_margine_balance
+                        if enable_limit_reward:
+                            # transition current_position -> future_position,
+                            # evaluated against the limit state at the action time
+                            reward += compute_limit_reward(
+                                old_position=current_position,
+                                new_position=future_position,
+                                is_limit_up=_limit_value(
+                                    is_limit_up_array, current_timestamp_index
+                                ),
+                                is_limit_down=_limit_value(
+                                    is_limit_down_array, current_timestamp_index
+                                ),
+                                limit_up_ask_depth_ratio_5=_limit_value(
+                                    limit_up_ask_depth_ratio_5_array,
+                                    current_timestamp_index,
+                                ),
+                                limit_down_bid_depth_ratio_5=_limit_value(
+                                    limit_down_bid_depth_ratio_5_array,
+                                    current_timestamp_index,
+                                ),
+                                upper_limit_price=_limit_value(
+                                    upper_limit_prices_array, current_timestamp_index
+                                ),
+                                lower_limit_price=_limit_value(
+                                    lower_limit_prices_array, current_timestamp_index
+                                ),
+                                markprice=current_markprice,
+                                enable_limit_reward=enable_limit_reward,
+                                limit_hold_bonus=limit_hold_bonus,
+                                limit_stay_bonus=limit_stay_bonus,
+                                limit_reverse_penalty=limit_reverse_penalty,
+                                near_limit_threshold=near_limit_threshold,
+                            )
                         q_table[
                             current_timestamp_index, current_action, future_action
                         ] = reward + gamma * np.max(
@@ -1401,6 +1545,13 @@ def create_optimal_q_table_from_df(
     gamma=1,
     order_book_depth=25,
     allow_reverse_position=False,
+    # optional limit up/down reward shaping (arrays auto-extracted from df when
+    # the columns are present; shaping only applies if enable_limit_reward=True)
+    enable_limit_reward=False,
+    limit_hold_bonus=1.0,
+    limit_stay_bonus=0.5,
+    limit_reverse_penalty=1.5,
+    near_limit_threshold=0.003,
 ):
     bid_prices_names = ["bid{}_price".format(i) for i in range(1, order_book_depth + 1)]
     ask_prices_names = ["ask{}_price".format(i) for i in range(1, order_book_depth + 1)]
@@ -1415,6 +1566,20 @@ def create_optimal_q_table_from_df(
     bid_prices_array = df[bid_prices_names].values
     ask_qtys_array = df[ask_sizes_names].values
     bid_qtys_array = df[bid_sizes_names].values
+
+    def _col(name):
+        return df[name].values if name in df.columns else None
+
+    is_limit_up_array = (
+        (df["limit_up_single_sided_ratio"].values > 0)
+        if "limit_up_single_sided_ratio" in df.columns
+        else None
+    )
+    is_limit_down_array = (
+        (df["limit_down_single_sided_ratio"].values > 0)
+        if "limit_down_single_sided_ratio" in df.columns
+        else None
+    )
     return create_optimal_q_table(
         ask_prices_array,
         bid_prices_array,
@@ -1435,6 +1600,17 @@ def create_optimal_q_table_from_df(
         max_punishment,
         gamma,
         allow_reverse_position,
+        is_limit_up_array,
+        is_limit_down_array,
+        _col("limit_up_ask_depth_ratio_5"),
+        _col("limit_down_bid_depth_ratio_5"),
+        _col("UpperLimitPrice"),
+        _col("LowerLimitPrice"),
+        enable_limit_reward,
+        limit_hold_bonus,
+        limit_stay_bonus,
+        limit_reverse_penalty,
+        near_limit_threshold,
     )
 
 

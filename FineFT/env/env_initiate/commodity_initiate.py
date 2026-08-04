@@ -39,6 +39,11 @@ def initiate_commodity_env(
     buy_fee_rate=0.0001,
     sell_fee_rate=0.0003,
     depth=5,
+    enable_limit_reward=False,
+    limit_hold_bonus=1.0,
+    limit_stay_bonus=0.5,
+    limit_reverse_penalty=1.5,
+    near_limit_threshold=0.003,
 ):
     bid_prices_names, ask_prices_names, bid_sizes_names, ask_sizes_names = (
         _depth_columns(depth)
@@ -64,6 +69,25 @@ def initiate_commodity_env(
     bid_qtys_array = df[bid_sizes_names].values
     state_array = df[feature_list].values
 
+    if enable_limit_reward:
+        missing_limit_cols = [c for c in [
+            "limit_up_single_sided_ratio",
+            "limit_down_single_sided_ratio",
+            "limit_up_ask_depth_ratio_5",
+            "limit_down_bid_depth_ratio_5",
+            "UpperLimitPrice",
+            "LowerLimitPrice",
+        ] if c not in df.columns]
+        if missing_limit_cols:
+            raise ValueError(f"enable_limit_reward=True 但 DataFrame 缺少必须的涨跌停列: {missing_limit_cols}")
+
+    is_limit_up_array = (df["limit_up_single_sided_ratio"].values > 0) if "limit_up_single_sided_ratio" in df.columns else None
+    is_limit_down_array = (df["limit_down_single_sided_ratio"].values > 0) if "limit_down_single_sided_ratio" in df.columns else None
+    limit_up_ask_depth_ratio_5_array = df["limit_up_ask_depth_ratio_5"].values if "limit_up_ask_depth_ratio_5" in df.columns else None
+    limit_down_bid_depth_ratio_5_array = df["limit_down_bid_depth_ratio_5"].values if "limit_down_bid_depth_ratio_5" in df.columns else None
+    upper_limit_prices_array = df["UpperLimitPrice"].values if "UpperLimitPrice" in df.columns else None
+    lower_limit_prices_array = df["LowerLimitPrice"].values if "LowerLimitPrice" in df.columns else None
+
     return Commodity_Env(
         state_array,
         ask_prices_array,
@@ -83,4 +107,15 @@ def initiate_commodity_env(
         initial_state=initial_state,
         buy_fee_rate=buy_fee_rate,
         sell_fee_rate=sell_fee_rate,
+        is_limit_up_array=is_limit_up_array,
+        is_limit_down_array=is_limit_down_array,
+        limit_up_ask_depth_ratio_5_array=limit_up_ask_depth_ratio_5_array,
+        limit_down_bid_depth_ratio_5_array=limit_down_bid_depth_ratio_5_array,
+        upper_limit_prices_array=upper_limit_prices_array,
+        lower_limit_prices_array=lower_limit_prices_array,
+        enable_limit_reward=enable_limit_reward,
+        limit_hold_bonus=limit_hold_bonus,
+        limit_stay_bonus=limit_stay_bonus,
+        limit_reverse_penalty=limit_reverse_penalty,
+        near_limit_threshold=near_limit_threshold,
     )
