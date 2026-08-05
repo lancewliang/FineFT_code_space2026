@@ -193,10 +193,84 @@ def build_serial_model_path(result_path, dataset_name, experiment_name):
     )
 
 
-AGGREGATE_JSON_COLUMNS = ["contract", "df_path", "reward_sum", "df_length", "turnover"]
+
+def _detect_step_limit_states(test_df, step_index):
+    if step_index >= len(test_df):
+        idx = len(test_df) - 1
+    else:
+        idx = step_index
+
+    is_limit_up = False
+    is_limit_down = False
+
+    if "limit_up_single_sided_ratio" in test_df.columns:
+        if test_df["limit_up_single_sided_ratio"].iloc[idx] > 0:
+            is_limit_up = True
+    if "limit_down_single_sided_ratio" in test_df.columns:
+        if test_df["limit_down_single_sided_ratio"].iloc[idx] > 0:
+            is_limit_down = True
+
+    if "is_limit_up" in test_df.columns and bool(test_df["is_limit_up"].iloc[idx]):
+        is_limit_up = True
+    if "is_limit_down" in test_df.columns and bool(test_df["is_limit_down"].iloc[idx]):
+        is_limit_down = True
+
+    if "UpperLimitPrice" in test_df.columns:
+        upper_price = test_df["UpperLimitPrice"].iloc[idx]
+        if pd.notna(upper_price) and upper_price > 0:
+            p = test_df["mark_price"].iloc[idx] if "mark_price" in test_df.columns else test_df["close"].iloc[idx]
+            if p >= upper_price:
+                is_limit_up = True
+
+    if "LowerLimitPrice" in test_df.columns:
+        lower_price = test_df["LowerLimitPrice"].iloc[idx]
+        if pd.notna(lower_price) and lower_price > 0:
+            p = test_df["mark_price"].iloc[idx] if "mark_price" in test_df.columns else test_df["close"].iloc[idx]
+            if p <= lower_price:
+                is_limit_down = True
+
+    return is_limit_up, is_limit_down
+
+AGGREGATE_JSON_COLUMNS = [
+    "contract",
+    "df_path",
+    "reward_sum",
+    "df_length",
+    "turnover",
+    "mean_position",
+    "mean_abs_position",
+    "long_step_ratio",
+    "short_step_ratio",
+    "flat_step_ratio",
+    "long_reward_sum",
+    "short_reward_sum",
+    "flat_reward_sum",
+    "net_position_exposure",
+    "limit_up_step_ratio",
+    "limit_down_step_ratio",
+    "limit_up_long_reward_sum",
+    "limit_down_short_reward_sum",
+    "limit_up_reverse_short_ratio",
+    "limit_down_reverse_long_ratio",
+]
 LABEL_DIR_PATTERN = re.compile(r"^label_\d+$")
 
 CSV_HEADER_LABELS = {
+    "mean_position": "平均仓位",
+    "mean_abs_position": "平均绝对仓位",
+    "long_step_ratio": "多头步数占比",
+    "short_step_ratio": "空头步数占比",
+    "flat_step_ratio": "空仓步数占比",
+    "long_reward_sum": "多头奖励总和",
+    "short_reward_sum": "空头奖励总和",
+    "flat_reward_sum": "空仓奖励总和",
+    "net_position_exposure": "净仓位敞口",
+    "limit_up_step_ratio": "涨停步数占比",
+    "limit_down_step_ratio": "跌停步数占比",
+    "limit_up_long_reward_sum": "涨停多头奖励总和",
+    "limit_down_short_reward_sum": "跌停空头奖励总和",
+    "limit_up_reverse_short_ratio": "涨停反向空头占比",
+    "limit_down_reverse_long_ratio": "跌停反向多头占比",
     "label": "标签",
     "initial_action": "初始动作",
     "bin_index": "分箱索引",
@@ -547,6 +621,21 @@ class weighted_trader:
                     single_label_initial_action_bin_index_turnover_result = []
                     single_label_initial_action_bin_index_contract_result = []
                     single_label_initial_action_bin_index_df_path_result = []
+                    single_label_initial_action_bin_index_mean_position_result = []
+                    single_label_initial_action_bin_index_mean_abs_position_result = []
+                    single_label_initial_action_bin_index_long_step_ratio_result = []
+                    single_label_initial_action_bin_index_short_step_ratio_result = []
+                    single_label_initial_action_bin_index_flat_step_ratio_result = []
+                    single_label_initial_action_bin_index_long_reward_sum_result = []
+                    single_label_initial_action_bin_index_short_reward_sum_result = []
+                    single_label_initial_action_bin_index_flat_reward_sum_result = []
+                    single_label_initial_action_bin_index_net_position_exposure_result = []
+                    single_label_initial_action_bin_index_limit_up_step_ratio_result = []
+                    single_label_initial_action_bin_index_limit_down_step_ratio_result = []
+                    single_label_initial_action_bin_index_limit_up_long_reward_sum_result = []
+                    single_label_initial_action_bin_index_limit_down_short_reward_sum_result = []
+                    single_label_initial_action_bin_index_limit_up_reverse_short_ratio_result = []
+                    single_label_initial_action_bin_index_limit_down_reverse_long_ratio_result = []
                     for entry in label_entries:
                         contract = entry["contract"]
                         df_path = entry["df_path"]
@@ -588,6 +677,9 @@ class weighted_trader:
                             initial_state=self.initial_state,
                             allow_reverse_position=getattr(self, "allow_reverse_position", False),
                         )
+                        position_after_list = []
+                        limit_up_list = []
+                        limit_down_list = []
                         s, info = test_env.reset()
                         done = False
                         reward_sum = 0
@@ -653,6 +745,10 @@ class weighted_trader:
                                 )
                             action_list.append(a)
                             reward_list.append(r)
+                            position_after_list.append(position_after)
+                            is_limit_up, is_limit_down = _detect_step_limit_states(self.test_df, timestep)
+                            limit_up_list.append(is_limit_up)
+                            limit_down_list.append(is_limit_down)
                             s = s_
                             reward_sum += r
                             previous_action = a
@@ -738,6 +834,80 @@ class weighted_trader:
                         single_label_initial_action_bin_index_df_path_result.append(
                             df_path
                         )
+
+                        total_steps = len(position_after_list)
+                        if total_steps > 0:
+                            pos_arr = np.array(position_after_list, dtype=float)
+                            rew_arr = np.array(reward_list, dtype=float)
+                            up_arr = np.array(limit_up_list, dtype=bool)
+                            down_arr = np.array(limit_down_list, dtype=bool)
+
+                            mean_pos = float(np.mean(pos_arr))
+                            mean_abs_pos = float(np.mean(np.abs(pos_arr)))
+                            long_mask = pos_arr > 0
+                            short_mask = pos_arr < 0
+                            flat_mask = pos_arr == 0
+
+                            long_step_ratio = float(np.mean(long_mask))
+                            short_step_ratio = float(np.mean(short_mask))
+                            flat_step_ratio = float(np.mean(flat_mask))
+
+                            long_reward_sum = float(np.sum(rew_arr[long_mask]))
+                            short_reward_sum = float(np.sum(rew_arr[short_mask]))
+                            flat_reward_sum = float(np.sum(rew_arr[flat_mask]))
+
+                            max_hold = float(getattr(self, "max_holding_number", 1.0))
+                            if max_hold <= 0:
+                                max_hold = 1.0
+                            net_position_exposure = float(mean_pos / max_hold)
+
+                            limit_up_step_ratio = float(np.mean(up_arr))
+                            limit_down_step_ratio = float(np.mean(down_arr))
+
+                            limit_up_long_reward_sum = float(np.sum(rew_arr[up_arr & long_mask]))
+                            limit_down_short_reward_sum = float(np.sum(rew_arr[down_arr & short_mask]))
+
+                            up_count = np.sum(up_arr)
+                            down_count = np.sum(down_arr)
+
+                            limit_up_reverse_short_ratio = (
+                                float(np.sum(up_arr & short_mask) / up_count) if up_count > 0 else 0.0
+                            )
+                            limit_down_reverse_long_ratio = (
+                                float(np.sum(down_arr & long_mask) / down_count) if down_count > 0 else 0.0
+                            )
+                        else:
+                            mean_pos = 0.0
+                            mean_abs_pos = 0.0
+                            long_step_ratio = 0.0
+                            short_step_ratio = 0.0
+                            flat_step_ratio = 0.0
+                            long_reward_sum = 0.0
+                            short_reward_sum = 0.0
+                            flat_reward_sum = 0.0
+                            net_position_exposure = 0.0
+                            limit_up_step_ratio = 0.0
+                            limit_down_step_ratio = 0.0
+                            limit_up_long_reward_sum = 0.0
+                            limit_down_short_reward_sum = 0.0
+                            limit_up_reverse_short_ratio = 0.0
+                            limit_down_reverse_long_ratio = 0.0
+
+                        single_label_initial_action_bin_index_mean_position_result.append(mean_pos)
+                        single_label_initial_action_bin_index_mean_abs_position_result.append(mean_abs_pos)
+                        single_label_initial_action_bin_index_long_step_ratio_result.append(long_step_ratio)
+                        single_label_initial_action_bin_index_short_step_ratio_result.append(short_step_ratio)
+                        single_label_initial_action_bin_index_flat_step_ratio_result.append(flat_step_ratio)
+                        single_label_initial_action_bin_index_long_reward_sum_result.append(long_reward_sum)
+                        single_label_initial_action_bin_index_short_reward_sum_result.append(short_reward_sum)
+                        single_label_initial_action_bin_index_flat_reward_sum_result.append(flat_reward_sum)
+                        single_label_initial_action_bin_index_net_position_exposure_result.append(net_position_exposure)
+                        single_label_initial_action_bin_index_limit_up_step_ratio_result.append(limit_up_step_ratio)
+                        single_label_initial_action_bin_index_limit_down_step_ratio_result.append(limit_down_step_ratio)
+                        single_label_initial_action_bin_index_limit_up_long_reward_sum_result.append(limit_up_long_reward_sum)
+                        single_label_initial_action_bin_index_limit_down_short_reward_sum_result.append(limit_down_short_reward_sum)
+                        single_label_initial_action_bin_index_limit_up_reverse_short_ratio_result.append(limit_up_reverse_short_ratio)
+                        single_label_initial_action_bin_index_limit_down_reverse_long_ratio_result.append(limit_down_reverse_long_ratio)
                     _overall_result = {
                             "label": label,
                             "initial_action": initial_action,
@@ -747,6 +917,21 @@ class weighted_trader:
                             "reward_sum": single_label_initial_action_bin_index_reward_sum_result,
                             "df_length": single_label_initial_action_bin_index_df_length_result,
                             "turnover": single_label_initial_action_bin_index_turnover_result,
+                            "mean_position": single_label_initial_action_bin_index_mean_position_result,
+                            "mean_abs_position": single_label_initial_action_bin_index_mean_abs_position_result,
+                            "long_step_ratio": single_label_initial_action_bin_index_long_step_ratio_result,
+                            "short_step_ratio": single_label_initial_action_bin_index_short_step_ratio_result,
+                            "flat_step_ratio": single_label_initial_action_bin_index_flat_step_ratio_result,
+                            "long_reward_sum": single_label_initial_action_bin_index_long_reward_sum_result,
+                            "short_reward_sum": single_label_initial_action_bin_index_short_reward_sum_result,
+                            "flat_reward_sum": single_label_initial_action_bin_index_flat_reward_sum_result,
+                            "net_position_exposure": single_label_initial_action_bin_index_net_position_exposure_result,
+                            "limit_up_step_ratio": single_label_initial_action_bin_index_limit_up_step_ratio_result,
+                            "limit_down_step_ratio": single_label_initial_action_bin_index_limit_down_step_ratio_result,
+                            "limit_up_long_reward_sum": single_label_initial_action_bin_index_limit_up_long_reward_sum_result,
+                            "limit_down_short_reward_sum": single_label_initial_action_bin_index_limit_down_short_reward_sum_result,
+                            "limit_up_reverse_short_ratio": single_label_initial_action_bin_index_limit_up_reverse_short_ratio_result,
+                            "limit_down_reverse_long_ratio": single_label_initial_action_bin_index_limit_down_reverse_long_ratio_result,
                     }    
                     print(_overall_result)
                     overall_result.append(

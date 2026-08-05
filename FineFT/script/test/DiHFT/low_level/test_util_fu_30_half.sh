@@ -12,7 +12,7 @@ function run_ddqn_context {
     log_dir="log/DiHFT/${dataset_name}/low_level/test/${experiment_name}"
     mkdir -p "${log_dir}"
     export PYTHONPATH="${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
-    local max_parallel=2
+    local max_parallel=4
     # 保存PID的数组
     pids=()
 

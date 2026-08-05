@@ -304,8 +304,8 @@ class Base_Env(gym.Env):
         )
 
     def reset(self):
-        self.terminal = False
         self.day = 0
+        self.terminal = self.day >= len(self.state_array) - self.early_stop - 1
         (
             self.wallet_balance,
             self.initial_margin,
@@ -573,6 +573,76 @@ class Base_Env(gym.Env):
         else:
 
             # 来到下一个timestmap
+            if self.terminal or self.day >= len(self.state_array) - self.early_stop - 1:
+                self.terminal = True
+                avaiable_position_choices, avaiable_leverage_choices = (
+                    [0],
+                    [self.leverage_choices[0]],
+                )
+                avaiable_actions = []
+                for avaible_position, avaiable_leverage in zip(
+                    avaiable_position_choices, avaiable_leverage_choices
+                ):
+                    avaiable_actions.append(
+                        self.env_map_position_leverage_to_action(
+                            avaible_position, avaiable_leverage
+                        )
+                    )
+                avaiable_actions = list(set(avaiable_actions))
+
+                avaiable_action_mask = np.zeros(self.action_space.n)
+                avaiable_action_mask[avaiable_actions] = 1
+
+                require_money = calculate_required_money(
+                    np.array(self.initial_margin_history),
+                    np.array(self.maintain_marigine_history),
+                    np.array(self.new_position_required_money_history),
+                    np.array(self.unrealized_pnl_history),
+                    np.array(self.wallet_balance_history),
+                )
+                self.single_holding_return_rate = self.single_holding_return / (
+                    require_money + 1e-12
+                )
+                self.single_holding_max_drawdown = calculate_single_holsing_max_draw_down(
+                    self.single_holding_history,
+                    self.initial_margin_history,
+                    self.maintain_marigine_history,
+                    self.new_position_required_money_history,
+                    self.unrealized_pnl_history,
+                    self.wallet_balance_history,
+                )
+                return (
+                    self.state_array[self.day],
+                    self.wallet_balance + self.unrealized_pnl - previous_margine_balance,
+                    self.terminal,
+                    {
+                        "personal_state": (
+                            self.wallet_balance,
+                            self.initial_margin,
+                            self.unrealized_pnl,
+                            self.position,
+                            self.leverage,
+                        ),
+                        "avaiable_action_list": avaiable_actions,
+                        "avaliable_action": avaiable_action_mask,
+                        "previous_timestamp": previous_timestamp,
+                        "current_timestamp": previous_timestamp,
+                        "funding_count_down": previous_funding_timestamp - previous_timestamp,
+                        "funding_count_down_hour": 0,
+                        "funding_count_down_minute": 0,
+                        "funding_count_down_second": 0,
+                        "ask_qyts": self.ask_qtys,
+                        "bid_qyts": self.bid_qtys,
+                        "single_holding_return_rate": self.single_holding_return_rate,
+                        "single_holding_max_drawdown": self.single_holding_max_drawdown,
+                        "trading_info": self._zero_trading_info(),
+                        "limit_reward": 0.0,
+                        "previous_action": self.env_map_position_leverage_to_action(
+                            self.position, self.leverage
+                        ),
+                        **self._execution_metric_info(),
+                    },
+                )
             self.day += 1
             current_timestamp = self.timestamp_array[self.day]
             current_funding_rate = self.funding_rate_array[self.day]

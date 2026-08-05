@@ -36,3 +36,19 @@ def test_base_env_uses_configured_order_book_depth():
 
     assert len(info["ask_qyts"]) == 5
     assert len(info["bid_qyts"]) == 5
+
+
+def test_base_env_single_row_dataset():
+    df_single = _df(depth=5).iloc[:1]
+    env = initiate_base_env(
+        df_single,
+        ["feature_a"],
+        max_holding_number=1,
+        position_choices=3,
+        order_book_depth=5,
+    )
+    s, info = env.reset()
+    assert env.terminal is True
+    s_, r, done, info = env.step(0)
+    assert done is True
+    assert r == 0.0

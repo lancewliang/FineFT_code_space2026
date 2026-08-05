@@ -276,6 +276,21 @@ def test_weighted_trader_passes_order_book_depth_to_base_env(monkeypatch, tmp_pa
         "奖励总和",
         "数据长度",
         "换手率",
+        "平均仓位",
+        "平均绝对仓位",
+        "多头步数占比",
+        "空头步数占比",
+        "空仓步数占比",
+        "多头奖励总和",
+        "空头奖励总和",
+        "空仓奖励总和",
+        "净仓位敞口",
+        "涨停步数占比",
+        "跌停步数占比",
+        "涨停多头奖励总和",
+        "跌停空头奖励总和",
+        "涨停反向空头占比",
+        "跌停反向多头占比",
     ]
     assert json.loads(csv_df.loc[0, "合约"]) == ["fu2507"]
     assert json.loads(csv_df.loc[0, "数据文件"]) == ["fu2507/label_0/df_0.feather"]
@@ -415,3 +430,48 @@ def test_parser_allow_reverse_position_default_and_flag():
 
     args_flag = tai.parser.parse_args(["--allow_reverse_position"])
     assert args_flag.allow_reverse_position is True
+
+
+def test_analysis_result_includes_directional_and_limit_behavior_metrics(monkeypatch, tmp_path):
+    from RL.DiHFT.low_level import test_agent_index as tai
+
+    monkeypatch.setattr(tai, "initiate_base_env", lambda **kwargs: DetailFakeEnv())
+    monkeypatch.setattr(
+        tai,
+        "map_action_to_position_leverage",
+        lambda action, leverage_choices, position_list: (1, 1) if action == 1 else (0, 1),
+    )
+
+    trader = _make_test_trader(tai, tmp_path, save_trading_detail_csv=False)
+    trader.act_test = lambda state, info, bin_index: 1
+    trader.test()
+
+    result = np.load(tmp_path / "analysis_result.npy", allow_pickle=True).tolist()
+    record = result[0]
+    expected_fields = [
+        "mean_position",
+        "mean_abs_position",
+        "long_step_ratio",
+        "short_step_ratio",
+        "flat_step_ratio",
+        "long_reward_sum",
+        "short_reward_sum",
+        "flat_reward_sum",
+        "net_position_exposure",
+        "limit_up_step_ratio",
+        "limit_down_step_ratio",
+        "limit_up_long_reward_sum",
+        "limit_down_short_reward_sum",
+        "limit_up_reverse_short_ratio",
+        "limit_down_reverse_long_ratio",
+    ]
+    for field in expected_fields:
+        assert field in record, f"missing field {field} in npy output"
+        assert len(record[field]) == len(record["contract"])
+
+    df = pd.read_csv(tmp_path / "analysis_result.csv")
+    for field in expected_fields:
+        col = tai.CSV_HEADER_LABELS.get(field, field)
+        assert col in df.columns, f"missing column {col} in csv output"
+        val = json.loads(df.loc[0, col])
+        assert isinstance(val, list)
