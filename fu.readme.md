@@ -4,7 +4,7 @@
 
 推荐串联运行顺序：
 
-`main_30min_fu.sh` -> `commodity_data_handler_30min_fu.sh` -> `train_commodity_fu_30.sh` -> `test_util_fu_30.sh` -> `low_level_fu_30.sh` -> `VAE_util_fu_30.sh` -> `vae_optuna_fu_30.sh`
+`main_30min_fu.sh` -> `commodity_data_handler_30min_fu.sh` -> `train_commodity_fu_30.sh` -> `test_util_fu_30.sh` -> `low_level_fu_30.sh` -> `VAE_util_fu_30.sh` -> `vae_optuna_fu_30.sh` -> `high_level_heurstic_fu_30_half.sh`
 
 > **提示**：30min 专属脚本（`train_commodity_fu_30.sh`、`test_util_fu_30.sh`、`low_level_fu_30.sh`、`VAE_util_fu_30.sh`、`vae_optuna_fu_30.sh`）内部默认的 `EXPERIMENT_NAME` 均为 `30min`，保证了实验路径的一致性。
 
@@ -243,6 +243,34 @@
     - `log/DiHFT/fu/high_level/optuna/30min/optuna.log`（Optuna 搜索过程、GPU 调度及各个 Trial 运行状态日志）
 - **位置**：完成高层 VAE 路由与超参寻优。
 
+## 8. 高层启发式路由策略筛选与分析
+
+### `FineFT/script/analysis/pick_agent/high_level_heurstic_fu_30_half.sh`
+
+- **作用**：基于步骤 7 高层 VAE 路由 Optuna 寻优得到的多组路由策略参数诊断数据，全量计算组合收益、最大回撤、夏普比率、卡玛比率等指标，筛选并保存最佳高层 Agent 路由配置与诊断结果，同时绘制单合约及全合约组合验证集收益对比曲线（PNG/PDF）。
+- **依赖输入物**（前置各步骤联合依赖）：
+  - **高层路由策略回测诊断数据**（由步骤 7 产出）：`result/DiHFT/high_level/fu/30min_multi/vae_risk_aware_routing/` 下各超参数目录（包含 `reward_history.npy`, `initial_margin_history.npy`, `maintain_marigine_history.npy`, `new_position_required_money_history.npy`, `unrealized_pnl_history.npy`, `wallet_balance_history.npy` 等）
+  - **验证集 Feather 数据与行情戳**（由步骤 2 产出）：`dataset/30min/fu/valid/` 及其 `processed/valid_processed_*.feather`（用于计算基准 Buy & Hold 收益与画图 timestamp）
+  - **启发式筛选与可视化 Python 脚本**：`FineFT/analysis/pick_agent/DiHFT_high_level_heurstic.py`
+- **默认参数**：
+  - `ROOTPATH=$(pwd)`
+  - `BASE_PATH=dataset/30min`
+  - `DATASET_NAME=fu`
+  - `EXPERIMENT_NAME=30min_multi`
+  - `SAVE_PATH=analysis_result/DiHFT/high_level_heurstic`
+- **关键产出物**：
+  - **`analysis_result/` 高层路由评估与对比图表目录 (`analysis_result/DiHFT/high_level_heurstic/fu/30min_multi/`)**：
+    - `result.csv`（包含所有高层路由超参组合的平均收益率 `tr`、组合收益率 `portfolio_tr`、日波动率 `daily_vol`、最大回撤 `mdd`、夏普比率 `annual_sr`、卡玛比率 `daily_cr`、索提诺比率 `daily_SoR` 等多维指标汇总表）
+    - `best_result.csv`（分别按最高收益率、夏普比率、卡玛比率及最低回撤等指标筛选出的最佳超参组合记录表）
+    - `best_result_<contract>.png` / `.pdf`（各个单合约在验证集上 DiHFT 路由策略与 Buy & Hold 基准收益对比图）
+    - `best_result_all_contracts.pdf` / `best_result.pdf`（全合约组合多面板验证集收益对比图）
+  - **`result/` 最终 Agent 配置与诊断导出目录 (`result/DiHFT/final_result/fu/30min_multi/`)**：
+    - `high_level_agent_para.txt`（记录最佳高层路由策略超参数目录名称）
+    - `contracts/<contract>/` 及其根目录下导出的最终路由诊断数据向量（`.npy` 和 `.csv`）
+  - **`log/` 筛选分析日志**：
+    - `log/analysis/pick_agent/DiHFT/fu/high_level_heurstic/30min_multi.log`（筛选与画图控制台日志）
+- **位置**：完成高层路由策略筛选与分析评估。
+
 ## 总结：全流程依赖输入与产出对照表
 
 | 阶段 / 步骤 | 核心执行脚本 | 核心依赖输入物 | 关键产出物目录与核心文件 |
@@ -254,3 +282,4 @@
 | **5. 低层 Agent 筛选** | `low_level_fu_30.sh` | 步骤 4 产出的 `analysis_result.csv` + 步骤 2 产出的 `valid/` 数据 | `analysis_result/DiHFT/low_level/fu/30min/`<br>(`result.csv`, `result_all.csv`, `selection_manifest.json`) |
 | **6. VAE 训练与评估** | `VAE_util_fu_30.sh` | 步骤 2 产出的 `VAE_data/<contract>/label_*.npy` + 步骤 5 的 Label 划分 | `result/DiHFT/vae_results/fu/30min/`<br>(`label_*/model_latest.pth`, `summary.json`, `ood_logpx_*.csv`, `routing_summary.json`) |
 | **7. 高层 Optuna 寻优** | `vae_optuna_fu_30.sh` | 步骤 3/5 筛选的 Agent 模型 + 步骤 6 的 VAE 模型 + 步骤 2 的 `valid/` 数据 | `result/DiHFT/high_level/fu/30min/`<br>(`vae_risk_aware_routing_optuna/optuna_results.csv`, `vae_risk_aware_routing/.../contract_results.csv`, `trading_info.npy`, `macro_action.npy`) |
+| **8. 高层路由筛选与可视化** | `high_level_heurstic_fu_30_half.sh` | 步骤 7 产出的 `vae_risk_aware_routing/` 诊断数据 + 步骤 2 的 `valid/*.feather` | `analysis_result/DiHFT/high_level_heurstic/fu/30min_multi/`<br>(`result.csv`, `best_result.csv`, `best_result_*.png/pdf`)<br>`result/DiHFT/final_result/fu/30min_multi/`<br>(`high_level_agent_para.txt`, 最终路由诊断向量 `.npy`/`.csv`) |
