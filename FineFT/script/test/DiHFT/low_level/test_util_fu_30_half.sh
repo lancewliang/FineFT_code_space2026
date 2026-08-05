@@ -1,3 +1,4 @@
+#!/bin/bash
 function run_ddqn_context {
     local dataset_name=$1
     local max_holding_number=$2
