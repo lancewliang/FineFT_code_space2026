@@ -41,4 +41,4 @@ fi
 
 nohup python FineFT/analysis/pick_agent/FineFT_single_agent_with_different_position.py \
     "${CMD_ARGS[@]}" \
-    >"log/analysis/pick_agent/DiHFT/${DATASET_NAME}/${EXPERIMENT_NAME}.log" 2>&1 &
+    >"log/analysis/pick_agent/DiHFT/${DATASET_NAME}/${EXPERIMENT_NAME}.log" 2>&1

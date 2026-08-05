@@ -1,3 +1,4 @@
+#!/bin/bash
 function run_ddqn_context {
     local dataset_name=$1
     local max_holding_number=$2
@@ -12,7 +13,7 @@ function run_ddqn_context {
     log_dir="log/DiHFT/${dataset_name}/low_level/test/${experiment_name}"
     mkdir -p "${log_dir}"
     export PYTHONPATH="${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
-    local max_parallel=2
+    local max_parallel=4
     # 保存PID的数组
     pids=()
 
@@ -95,7 +96,7 @@ function run_ddqn_average {
 
 DATASET_NAME=${DATASET_NAME:-fu}
 MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-1}
-EPOCH_START=${EPOCH_START:-11}
+EPOCH_START=${EPOCH_START:-45}
 EPOCH_END=${EPOCH_END:-100}
 BASE_PATH=${BASE_PATH:-dataset/30min}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-30min}

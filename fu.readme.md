@@ -179,7 +179,9 @@
   - **分析与绩效评估 CSV / JSON**：
     - `log/analysis/pick_agent/DiHFT/fu/30min.log`（策略选拔执行日志）
     - `log/analysis/calculate_metric/fu.csv` / `fu.json`（各 Epoch 与不同持仓选择下的年化收益、夏普比率、最大回撤、胜率等财务与行为指标对比分析表）
-    - `log/analysis/pick_agent/DiHFT/fu/result.csv` / `best_result.csv`（筛选出的 Top-K 选拔 Agent 汇总与推荐结果）
+    - `analysis_result/DiHFT/low_level/fu/30min/result.csv`（筛选后的 Agent 汇总结果）
+    - `analysis_result/DiHFT/low_level/fu/30min/result_all.csv`（所有候选 Agent 的完整结果）
+    - `analysis_result/DiHFT/low_level/fu/30min/selection_manifest.json`（最终 Label、模型路径、bin 及筛选信息）
 - **位置**：承接低层测试结果，做筛选与财务指标分析。
 
 ## 6. VAE 训练与分布分析
@@ -249,6 +251,6 @@
 | **2. FineFT 数据准备** | `commodity_data_handler_30min_fu.sh` | 步骤 1 产出的 `SCALE_SAVE`, `dataset_split_manifest.json`, `state_features.npy` | `dataset/30min/fu/`<br>(`train/`, `valid/`, `test/`, `VAE_data/`, `dataset_manifest.json`) |
 | **3. 低层 Agent 训练** | `train_commodity_fu_30.sh` | 步骤 2 产出的 `dataset/30min/fu/train/`, `state_features.npy`, `margin_dict.npy` | `result/DiHFT/low_level/fu/30min/weights_advantage_pretrain/`<br>(`epoch_1/`~`epoch_100/trained_model.pkl`, `log/`, `qtable_diagnostics/`) |
 | **4. 低层 Agent 测试** | `test_util_fu_30.sh` | 步骤 3 产出的 `trained_model.pkl` + 步骤 2 产出的 `valid/` 数据 | `result/DiHFT/low_level/fu/30min/weights_advantage_pretrain/epoch_{epoch}/`<br>(`analysis_result.csv`, `trading_action_detail_*.csv`, `analysis_result.npy`) |
-| **5. 低层 Agent 筛选** | `low_level_fu_30.sh` | 步骤 4 产出的 `analysis_result.csv` + 步骤 2 产出的 `valid/` 数据 | `log/analysis/pick_agent/DiHFT/fu/`<br>(`fu.json`, `fu.csv`, `result.csv`, `best_result.csv`) |
+| **5. 低层 Agent 筛选** | `low_level_fu_30.sh` | 步骤 4 产出的 `analysis_result.csv` + 步骤 2 产出的 `valid/` 数据 | `analysis_result/DiHFT/low_level/fu/30min/`<br>(`result.csv`, `result_all.csv`, `selection_manifest.json`) |
 | **6. VAE 训练与评估** | `VAE_util_fu_30.sh` | 步骤 2 产出的 `VAE_data/<contract>/label_*.npy` + 步骤 5 的 Label 划分 | `result/DiHFT/vae_results/fu/30min/`<br>(`label_*/model_latest.pth`, `summary.json`, `ood_logpx_*.csv`, `routing_summary.json`) |
 | **7. 高层 Optuna 寻优** | `vae_optuna_fu_30.sh` | 步骤 3/5 筛选的 Agent 模型 + 步骤 6 的 VAE 模型 + 步骤 2 的 `valid/` 数据 | `result/DiHFT/high_level/fu/30min/`<br>(`vae_risk_aware_routing_optuna/optuna_results.csv`, `vae_risk_aware_routing/.../contract_results.csv`, `trading_info.npy`, `macro_action.npy`) |
