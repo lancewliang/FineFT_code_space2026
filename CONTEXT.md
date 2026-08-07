@@ -323,6 +323,34 @@ _Avoid_: 路由摘要
 通过 VAE 重构损失识别超出训练分布的市场状态，触发保守策略。
 _Avoid_: 异常检测、分布外检测
 
+**Agent 策略原型档案库 (Agent Archetype Profile)**:
+为每个 VAE Label 维护包含 12 大策略原型（动量、均值回归、盘口失衡、持仓量驱动等）离线择优选出的专属 Agent 智囊团档案。
+_Avoid_: Agent 档案、策略池
+
+**PnL 记忆追踪器 (PnL Memory Tracker)**:
+动态记录各 Agent 近 50 步滚动收益与胜率的全局记忆池，输出综合 PnL 得分与近端回撤状态。
+_Avoid_: 收益追踪器、Agent 记忆
+
+**候选池生成器 (Candidate Generator)**:
+接收门控 Label 智囊团 Agents 的拟执行动作，应用 Label 固有动作语义一致性校验 (Semantic Guard) 与 20% 近端 PnL 回撤硬隔离后生成安全候选集。
+_Avoid_: 候选集筛选器、动作过滤器
+
+**Label 方向语义 (Label Direction Semantics)**:
+由 slope 市场动态切片规则赋予每个 Label 的方向与强度，权威记录在 `label_semantics.json`（`direction` / `direction_sign` / `strength`）。Label 索引按方向单调有序：`label_0` 跌停(strong_down) → `label_1/2` 下跌 → `label_3` 震荡 → `label_4/5` 上涨 → `label_6` 涨停(strong_up)；路由实际使用 7 个 Label（label_0~label_6），非 5 个。该表是 Semantic Guard 判定 Label 原生动作范围的唯一来源；表本身静态，推理期 VAE 仅观测当前 state，无未来泄漏。
+_Avoid_: Label 含义、标签语义、label direction
+
+**语义硬隔离 (Semantic Guard)**:
+强制校验 Agent 动作是否符合所属 Label 的原生动作语义范围（如 Label 4 上涨方向禁止做空）；违者不再一票否决，改为按软惩罚计入 Meta Router 得分。原生动作范围由 Label 方向语义表决定。
+_Avoid_: 动作语义防错、语义检查
+
+**Meta Router**:
+在安全候选集中计算 VAE 似然与 PnL 记忆多因子加权得分，并结合单合约累计回撤熔断门槛决定最终调度的 Agent 索引与动作。
+_Avoid_: 元路由器、路由选择器
+
+**单合约熔断保护 (Circuit Breaker)**:
+当单合约累计最大回撤率超过 15% 时强行切断 Agent 路由，全量降级为规则平仓 (`macro_action = 5`)。
+_Avoid_: 熔断器、强平保护
+
 ### Evaluation And Diagnostics
 
 **Aggregate CSV**:
@@ -332,6 +360,30 @@ _Avoid_: 聚合结果、汇总 CSV
 **Detail CSV**:
 可选的逐时间步交易动作明细 CSV，记录每步的仓位变化、手续费、滑点和账户价值。
 _Avoid_: 明细 CSV、交易明细
+
+**行为轨迹 (Action Trajectory)**:
+单个 valid segment 在给定初始动作下，agent 逐 step 产生的 (执行后仓位, 标记价格, 动作, 累计已实现盈亏) 序列；是策略形态分类器的原料，由 (label, epoch, bin_index, contract, df_seq, initial_action) 唯一确定，对应 Detail CSV 中按 (标签, 分箱索引, 初始动作, 数据文件) 分组的一组连续行。
+_Avoid_: 轨迹、trajectory（不明确时）、episode、rollout
+
+**市场动态片段 (Market Dynamic Segment)**:
+slice_model 按 slope 标签切换点切出的连续同质行情区间文件（df_0, df_1, ..., df_n），是 label 切分过程中产生的时间切片；只表示一阶趋势同质性（方向 + 强度档位），不表示二阶 K 线形态。segment 是 K 线数据的来源文件，不构成分类维度。
+_Avoid_: 片段、segment 文件（不明确时）、label 切片
+
+**K 线形态 (Kline Pattern)**:
+行情侧二阶形态分类，在 segment 内按 N=20 步不重叠窗口识别。7 类：突破即时型 (KT1)、回调型 (KT2)、加速型 (KT3)、V 反转型 (KM1)、箱体型 (KM2)、背离型 (KM3)、涨跌停型 (KX1)。由 K 线形态分类器读 mark_price/volume 序列独立判定，与 agent 策略正交。KX1 专用于 label_0/label_6 涨跌停 segment（trajectory 极短，median=3 步，不参与 6 类滑窗识别）；label_1~label_5 使用 N=20 步不重叠窗口，不识别 KX1。单窗口单选，命中顺序 KX1→KM1→KT2→KT1→KT3→KM2→KM3→未分类（KT2 优先于 KT1 以保留回调形态）。
+_Avoid_: K 线形状、行情形态（不明确时）、价格形态
+
+**策略二阶形态 (Strategy Second-order Pattern)**:
+agent 侧二阶形态分类，从行为轨迹整体（position_after + mark_price + volume + cumulative_realized_pnl）识别 agent 动作与行情的关系模式，而非纯动作形状。6 类：突破即时型 (ST1)、回调加仓型 (ST2)、金字塔递增型 (ST3)、硬边界抄底型 (SM1)、网格微调型 (SM2)、背离增强型 (SM3)。由策略形态分类器独立判定，与 K 线形态正交。单窗口多选，一个窗口可命中多类（如 ST1+SM3：阶跃动作 + 背离过滤不互斥）；盈亏重复计入各命中行，聚合时按形态 distinct 计算总盈亏（不跨形态求和，避免放大）。
+_Avoid_: 动作形态、策略类型（不明确时）、agent 类型
+
+**Agent 形态明细表 (Agent Pattern Detail Table)**:
+按 (label, epoch, bin_index, K 线形态, 策略形态, 盈亏) 组织的明细数据，读法为"哪个 agent (epoch, bin) 在哪个 label 的哪个 K 线形态下用哪种策略盈利如何"。K 线形态与策略形态是两个独立维度，构成 7×6 组合空间（K 线含 KX1）。一个 agent triple 可命中多行（跨窗口 + 策略形态多选），天然支持"一个 agent 属于多种类型"。盈亏归因：每行盈亏 = 该窗口内已实现 PnL 变化 + 浮动 PnL 变化；K 线形态单选不重复计入，策略形态多选重复计入各命中行，聚合时按形态 distinct 计算总盈亏。
+_Avoid_: agent 分类表、形态对照表
+
+**形态识别窗口 (Pattern Recognition Window)**:
+label_1~label_5 segment 内按 N=20 步、步长 N（不重叠）切分的连续区间，是 K 线形态与策略形态识别及盈亏归因的基本单元。不重叠设计避免盈亏重复计入，每窗口的盈亏 = 窗口内已实现 PnL 变化 + 浮动 PnL 变化。label_0/label_6 不使用窗口（trajectory 中位数 3 步，直接标记 KX1）。
+_Avoid_: 滑窗、识别窗口（不明确时）、N 窗口
 
 **Execution Metrics**:
 环境每步暴露的真实手续费、已实现利润和滑点指标，供测试明细和诊断使用。
