@@ -105,8 +105,10 @@ def test_snapshot_features_reject_both_sides_empty():
 def test_manifest_replaces_first_106_reward_columns():
     reward_columns = get_reward_execution_columns(depth=5)
 
-    assert len(reward_columns) == 29
+    assert len(reward_columns) == 31
     assert "contract" in reward_columns
+    assert "volume" in reward_columns
+    assert "tradeval" in reward_columns
     assert "ask5_price" in reward_columns
     assert "LowerLimitPrice" in reward_columns
     assert "UpperLimitPrice" in reward_columns
@@ -124,6 +126,8 @@ def test_ic_correlation_uses_commodity_manifest_for_reward_columns():
     )
 
     assert selected_reward == reward_columns
+    assert "volume" in selected_reward
+    assert "tradeval" in selected_reward
     assert selected_state == ["state_alpha"]
 
 

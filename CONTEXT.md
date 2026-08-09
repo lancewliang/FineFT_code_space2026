@@ -398,8 +398,8 @@ _Avoid_: agent 分类表、形态对照表
 _Avoid_: 明细表（不明确数据粒度时）、扁平表
 
 **形态识别窗口 (Pattern Recognition Window)**:
-K 线形态、策略二阶形态与窗口盈亏共享的最小归因单元。
-_Avoid_: 滑窗、识别窗口（不明确时）、N 窗口
+K 线形态、策略二阶形态与窗口盈亏共享的最小归因单元，由 `window_id` 唯一标识；需求中所说的“不同场景”均指不同形态识别窗口，不指 Initial-action 情景。
+_Avoid_: 场景、滑窗、识别窗口（不明确时）、N 窗口
 
 **涨跌停事件窗口 (Limit-state Event Window)**:
 label_0/label_6 中由整条行为轨迹构成的形态识别窗口；其 K 线形态固定为 KX1。

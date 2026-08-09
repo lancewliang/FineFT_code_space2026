@@ -51,6 +51,8 @@ def get_reward_execution_columns(depth: int) -> List[str]:
     return [
         "timestamp",
         "contract",
+        "volume",
+        "tradeval",
         *build_orderbook_columns(depth),
         *PRICE_LIMIT_COLUMNS,
         *DERIVATIVE_REFERENCE_COLUMNS,

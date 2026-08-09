@@ -107,6 +107,8 @@ def test_reward_execution_manifest_for_depth_five():
     assert "mark_price" in columns
     assert "funding_rate" in columns
     assert "contract" in columns
+    assert "volume" in columns
+    assert "tradeval" in columns
     assert "ask5_price" in columns
     assert "bid5_size" in columns
     assert "ask6_price" not in columns
@@ -117,6 +119,8 @@ def test_reward_execution_manifest_for_depth_five():
     assert columns == [
         "timestamp",
         "contract",
+        "volume",
+        "tradeval",
         *orderbook_columns,
         "LowerLimitPrice",
         "UpperLimitPrice",
@@ -126,7 +130,7 @@ def test_reward_execution_manifest_for_depth_five():
         "index_price",
         "mark_price",
     ]
-    assert len(columns) == 1 + 1 + 20 + 2 + 5
+    assert len(columns) == 1 + 1 + 2 + 20 + 2 + 5
 
 
 def test_resample_kwargs_are_right_closed_and_right_labeled():
