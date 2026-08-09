@@ -376,15 +376,16 @@ def _iter_valid_feather_files(root_dir):
     return entries
 
 
+DETAIL_REQUIRED_MARKET_COLUMNS = ["timestamp", "close", "volume", "mark_price"]
 DETAIL_MARKET_COLUMNS = ["timestamp", "open", "high", "low", "close", "volume", "mark_price"]
 
 
 def _market_fields(test_df, timestep):
     row = test_df.iloc[timestep]
     return {
-        column: row[column]
+        column: row.get(column, np.nan)
         for column in DETAIL_MARKET_COLUMNS
-        if column in test_df.columns
+        if column in DETAIL_REQUIRED_MARKET_COLUMNS or column in test_df.columns
     }
 
 

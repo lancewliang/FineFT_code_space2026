@@ -1,36 +1,18 @@
-"""Isolated Agent evaluation and pattern-analysis entry point.
-
-This module intentionally does not import the legacy ``test_agent_index``
-entry point or consume its output files.  It produces the complete isolated
-step-detail, window, classifier, summary, and manifest artifact set.
-"""
+"""Aggregate test_agent_index epoch detail CSVs into analysis artifacts."""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
-import os
-import random
 import re
-import sys
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
-import torch
-
-
-_FINEFT_ROOT = Path(__file__).resolve().parents[3]
-if str(_FINEFT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_FINEFT_ROOT))
-
-from env.env_class.futures_util import map_action_to_position_leverage
-from env.env_initiate.base_initiate import initiate_base_env
-from model.low_level import ensemble_Qnet
-
 
 EPOCH_PATTERN = re.compile(r"^epoch_(\d+)$")
 LABEL_PATTERN = re.compile(r"^label_\d+$")
@@ -72,6 +54,196 @@ STEP_DETAIL_COLUMNS = [
     "cash_balance",
     "total_value",
 ]
+
+DETAIL_CSV_HEADER_TO_FIELD = {
+    "标签": "label",
+    "数据文件": "df_path",
+    "初始动作": "initial_action",
+    "分箱索引": "bin_index",
+    "时间步": "timestep",
+    "时间戳": "timestamp",
+    "开盘价": "open",
+    "最高价": "high",
+    "最低价": "low",
+    "收盘价": "close",
+    "成交量": "volume",
+    "标记价格": "mark_price",
+    "动作": "action",
+    "目标仓位": "target_position",
+    "目标杠杆": "target_leverage",
+    "执行前仓位": "position_before",
+    "执行前杠杆": "leverage_before",
+    "执行后仓位": "position_after",
+    "执行后杠杆": "leverage_after",
+    "动作变化": "action_change_step",
+    "交易计数": "trade_count_step",
+    "累计动作变化次数": "cumulative_action_change_count",
+    "累计交易次数": "cumulative_trade_count",
+    "单步奖励": "step_reward",
+    "单步实现盈亏": "realized_pnl_step",
+    "累计已实现盈亏": "cumulative_realized_pnl",
+    "单步手续费": "commission_fee_step",
+    "累计手续费": "cumulative_commission_fee",
+    "单步滑点": "slippage_step",
+    "累计滑点": "cumulative_slippage",
+    "结算总价值": "wallet_balance",
+    "结算总价值.1": "cash_balance",
+    "浮动盈亏": "unrealized_pnl",
+    "保证金余额": "margin_balance",
+    "持仓资产": "notional_asset_value",
+    "浮动总价值": "total_value",
+}
+
+AGGREGATE_CSV_HEADER_LABELS = {
+    "record_type": "记录类型",
+    "epoch": "轮次",
+    "label": "标签",
+    "bin_index": "分箱索引",
+    "contract": "合约",
+    "df_path": "数据文件",
+    "initial_action": "初始动作",
+    "expected_count": "预期步数",
+    "observed_count": "实际步数",
+    "coverage_ratio": "覆盖率",
+    "status": "状态",
+    "window_count": "窗口数量",
+    "dropped_tail_steps": "丢弃尾部步数",
+    "dropped_tail_gross_pnl": "丢弃尾部毛利润",
+    "dropped_tail_net_pnl": "丢弃尾部净利润",
+    "message": "信息",
+    "window_index": "窗口索引",
+    "start_timestep": "开始时间步",
+    "end_timestep": "结束时间步",
+    "start_timestamp": "开始时间戳",
+    "end_timestamp": "结束时间戳",
+    "step_count": "步数",
+    "window_id": "窗口ID",
+    "kline_patterns": "K线形态列表",
+    "strategy_patterns": "策略形态列表",
+    "realized_pnl_sum": "已实现盈亏合计",
+    "unrealized_pnl_before_start": "开始前浮动盈亏",
+    "unrealized_pnl_end": "结束时浮动盈亏",
+    "commission_fee_sum": "手续费合计",
+    "slippage_sum": "滑点合计",
+    "gross_pnl": "毛利润",
+    "net_pnl": "净利润",
+    "kline_pattern": "K线形态",
+    "strategy_pattern": "策略形态",
+    "scope": "统计范围",
+    "pattern_axis": "形态维度",
+    "is_unclassified": "是否未分类",
+    "window_ratio": "窗口占比",
+    "total_net_pnl": "净利润合计",
+    "pnl_p25": "利润P25",
+    "pnl_p50": "利润P50",
+    "pnl_p75": "利润P75",
+    "pnl_median_range": "利润中位区间",
+    "warning_code": "警告代码",
+    "warning_message": "警告信息",
+    "mean_initial_action_total_net_pnl": "初始动作平均净利润合计",
+    "mean_initial_action_window_count": "初始动作平均窗口数量",
+    "mean_initial_action_pnl_p25": "初始动作平均利润P25",
+    "mean_initial_action_pnl_p50": "初始动作平均利润P50",
+    "mean_initial_action_pnl_p75": "初始动作平均利润P75",
+    "observed_initial_action_count": "实际初始动作数量",
+    "expected_initial_action_count": "预期初始动作数量",
+    "initial_action_coverage_ratio": "初始动作覆盖率",
+}
+
+
+def build_position_levels(max_holding_number: float, position_choices: int) -> list[float]:
+    if position_choices < 3 or position_choices % 2 == 0:
+        raise ValueError("position_choices must be an odd integer >= 3")
+    if not np.isfinite(max_holding_number) or max_holding_number <= 0:
+        raise ValueError("max_holding_number must be finite and positive")
+    side_count = (position_choices - 1) // 2
+    step = float(max_holding_number) / side_count
+    return [step * index for index in range(-side_count, side_count + 1)]
+
+
+@dataclass(frozen=True)
+class EvaluationConfig:
+    model_root: Path
+    valid_root: Path
+    output_dir: Path
+    state_features_path: Path
+    maintenance_margin_path: Path
+    max_holding_number: float = 8.0
+    position_choices: int = 9
+    leverage_choices: tuple[int, ...] = (1,)
+    hidden_nodes: int = 128
+    ensemble_number: int = 7
+    time_info_dim: int = 2
+    order_book_depth: int = 25
+    long_estimated_rate: float = 0.0005
+    short_estimated_rate: float = 0.0
+    transaction_cost: float = 0.0002
+    initial_wallet_balance: float = 100000.0
+    initial_unrealized_pnl: float = 0.0
+    initial_leverage: float = 5.0
+    allow_reverse_position: bool = False
+    dataset_name: str = ""
+    experiment_name: str = ""
+
+    @property
+    def position_levels(self) -> list[float]:
+        return build_position_levels(self.max_holding_number, self.position_choices)
+
+    @property
+    def action_count(self) -> int:
+        return (self.position_choices - 1) * len(self.leverage_choices) + 1
+
+    @property
+    def initial_actions(self) -> range:
+        return range(self.action_count)
+
+
+def discover_validation_files(valid_root: Path) -> list[dict[str, str]]:
+    valid_root = Path(valid_root)
+    if not valid_root.is_dir():
+        raise FileNotFoundError(f"valid data root does not exist: {valid_root}")
+    entries: list[dict[str, str]] = []
+    for contract_dir in sorted(valid_root.iterdir(), key=lambda path: path.name):
+        if not contract_dir.is_dir() or contract_dir.name == "processed":
+            continue
+        for label_dir in sorted(contract_dir.iterdir(), key=lambda path: path.name):
+            if not label_dir.is_dir() or not LABEL_PATTERN.fullmatch(label_dir.name):
+                continue
+            for data_file in sorted(label_dir.glob("df_*.feather"), key=lambda path: path.name):
+                entries.append(
+                    {
+                        "contract": contract_dir.name,
+                        "label": label_dir.name,
+                        "df_path": data_file.relative_to(valid_root).as_posix(),
+                        "abs_path": str(data_file),
+                    }
+                )
+    if not entries:
+        raise FileNotFoundError(
+            f"no validation files found under {valid_root}; expected "
+            "contract/label_*/df_*.feather"
+        )
+    return entries
+
+
+def _number(value: Any, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    numeric = float(value)
+    if not np.isfinite(numeric):
+        raise ValueError(f"non-finite execution value: {value!r}")
+    return numeric
+
+
+def _write_chinese_header_csv(frame: pd.DataFrame, output_path: Path) -> None:
+    missing = sorted(set(frame.columns) - set(AGGREGATE_CSV_HEADER_LABELS))
+    if missing:
+        raise ValueError(f"aggregate CSV columns have no Chinese labels: {missing}")
+    frame.rename(columns=AGGREGATE_CSV_HEADER_LABELS).to_csv(
+        output_path,
+        index=False,
+        encoding="utf-8",
+    )
 
 COVERAGE_COLUMNS = [
     "record_type",
@@ -155,22 +327,6 @@ DEFAULT_THRESHOLDS = {
     "min_hold_steps": 10,
 }
 
-REQUIRED_MARKET_COLUMNS = ("contract", "volume", "mark_price")
-
-
-def build_position_levels(max_holding_number: float, position_choices: int) -> list[float]:
-    """Return the ordered signed position grid used by the environment."""
-
-    if position_choices < 3 or position_choices % 2 == 0:
-        raise ValueError("position_choices must be an odd integer >= 3")
-    if not np.isfinite(max_holding_number) or max_holding_number <= 0:
-        raise ValueError("max_holding_number must be finite and positive")
-    side_count = (position_choices - 1) // 2
-    step = float(max_holding_number) / side_count
-    levels = [-step * i for i in range(side_count, 0, -1)]
-    levels.append(0.0)
-    levels.extend(step * i for i in range(1, side_count + 1))
-    return levels
 
 
 def discover_model_epochs(model_root: Path) -> list[tuple[int, Path]]:
@@ -199,150 +355,13 @@ def discover_missing_model_epochs(model_root: Path) -> list[int]:
     return sorted(missing)
 
 
-def discover_validation_files(valid_root: Path) -> list[dict[str, str]]:
-    """Discover contract/Label validation files in deterministic order."""
-
-    valid_root = Path(valid_root)
-    if not valid_root.is_dir():
-        raise FileNotFoundError(f"valid data root does not exist: {valid_root}")
-    entries: list[dict[str, str]] = []
-    for contract_dir in sorted(valid_root.iterdir(), key=lambda path: path.name):
-        if not contract_dir.is_dir() or contract_dir.name == "processed":
-            continue
-        for label_dir in sorted(contract_dir.iterdir(), key=lambda path: path.name):
-            if not label_dir.is_dir() or not LABEL_PATTERN.fullmatch(label_dir.name):
-                continue
-            for data_file in sorted(label_dir.glob("df_*.feather"), key=lambda path: path.name):
-                entries.append(
-                    {
-                        "contract": contract_dir.name,
-                        "label": label_dir.name,
-                        "df_path": data_file.relative_to(valid_root).as_posix(),
-                        "abs_path": str(data_file),
-                    }
-                )
-    if not entries:
-        raise FileNotFoundError(
-            f"no validation files found under {valid_root}; expected contract/label_*/df_*.feather"
-        )
-    return entries
-
-
-def validate_required_market_columns(data_frame: pd.DataFrame) -> None:
-    """Validate the raw market fields required by the new evaluator."""
-
-    missing = [column for column in REQUIRED_MARKET_COLUMNS if column not in data_frame.columns]
-    if missing:
-        raise ValueError(f"validation data missing required columns: {missing}")
-    for column in ("volume", "mark_price"):
-        values = pd.to_numeric(data_frame[column], errors="coerce")
-        if values.isna().any() or not np.isfinite(values.to_numpy(dtype=float)).all():
-            raise ValueError(f"validation data column {column} contains non-finite values")
-    if data_frame["contract"].isna().any() or (data_frame["contract"].astype(str).str.len() == 0).any():
-        raise ValueError("validation data column contract contains empty values")
-
-
-def _number(value: Any, default: float = 0.0) -> float:
-    if value is None:
-        return default
-    numeric = float(value)
-    if not np.isfinite(numeric):
-        raise ValueError(f"non-finite execution value: {value!r}")
-    return numeric
-
-
-def build_step_detail_row(
-    *,
-    epoch: int,
-    label: str,
-    contract: str,
-    df_path: str,
-    initial_action: int,
-    bin_index: int,
-    timestep: int,
-    market_row: Mapping[str, Any],
-    action: int,
-    target_position: float,
-    target_leverage: float,
-    position_before: float,
-    leverage_before: float,
-    position_after: float,
-    leverage_after: float,
-    step_reward: float,
-    info: Mapping[str, Any],
-    wallet_balance: float,
-    unrealized_pnl: float,
-    action_change_step: int,
-    trade_count_step: int,
-    cumulative_action_change_count: int,
-    cumulative_trade_count: int,
-) -> dict[str, Any]:
-    """Build one stable English Detail row from public evaluator values."""
-
-    if timestep < 0:
-        raise ValueError("timestep must be non-negative")
-    if not contract:
-        raise ValueError("contract must not be empty")
-    if "volume" not in market_row or "mark_price" not in market_row:
-        raise ValueError("market row must contain raw volume and mark_price")
-    mark_price = _number(market_row["mark_price"])
-    volume = _number(market_row["volume"])
-    wallet = _number(wallet_balance)
-    unrealized = _number(unrealized_pnl)
-    row = {
-        "epoch": int(epoch),
-        "label": str(label),
-        "contract": str(contract),
-        "df_path": str(df_path),
-        "initial_action": int(initial_action),
-        "bin_index": int(bin_index),
-        "timestep": int(timestep),
-        "timestamp": market_row.get("timestamp"),
-        "close": market_row.get("close"),
-        "volume": volume,
-        "mark_price": mark_price,
-        "action": int(action),
-        "target_position": _number(target_position),
-        "target_leverage": _number(target_leverage),
-        "position_before": _number(position_before),
-        "leverage_before": _number(leverage_before),
-        "position_after": _number(position_after),
-        "leverage_after": _number(leverage_after),
-        "action_change_step": int(action_change_step),
-        "trade_count_step": int(trade_count_step),
-        "cumulative_action_change_count": int(cumulative_action_change_count),
-        "cumulative_trade_count": int(cumulative_trade_count),
-        "step_reward": _number(step_reward),
-        "realized_pnl_step": _number(info.get("realized_pnl_step")),
-        "cumulative_realized_pnl": _number(info.get("cumulative_realized_pnl")),
-        "commission_fee_step": _number(info.get("commission_fee_step")),
-        "cumulative_commission_fee": _number(info.get("cumulative_commission_fee")),
-        "slippage_step": _number(info.get("slippage_step")),
-        "cumulative_slippage": _number(info.get("cumulative_slippage")),
-        "wallet_balance": wallet,
-        "unrealized_pnl": unrealized,
-        "margin_balance": wallet + unrealized,
-        "notional_asset_value": mark_price * _number(position_after),
-        "cash_balance": wallet,
-        "total_value": wallet + unrealized,
-    }
-    return {column: row[column] for column in STEP_DETAIL_COLUMNS}
-
-
-def write_step_detail_csv(rows: Sequence[Mapping[str, Any]], output_path: Path) -> None:
-    """Write one epoch's Detail rows with a stable English schema."""
-
-    frame = pd.DataFrame(rows, columns=STEP_DETAIL_COLUMNS)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_csv(output_path, index=False, encoding="utf-8")
-
 
 def write_coverage_report(rows: Sequence[Mapping[str, Any]], output_path: Path) -> None:
     """Write deterministic epoch and trajectory coverage records."""
 
     frame = pd.DataFrame(rows, columns=COVERAGE_COLUMNS)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_csv(output_path, index=False, encoding="utf-8")
+    _write_chinese_header_csv(frame, output_path)
 
 
 def _canonical_window_identity(window: Mapping[str, Any]) -> str:
@@ -521,11 +540,11 @@ def expand_window_rows(window_rows: Sequence[Mapping[str, Any]]) -> list[dict[st
 
 
 def write_window_table(rows: Sequence[Mapping[str, Any]], output_path: Path) -> None:
-    pd.DataFrame(rows, columns=WINDOW_COLUMNS).to_csv(output_path, index=False, encoding="utf-8")
+    _write_chinese_header_csv(pd.DataFrame(rows, columns=WINDOW_COLUMNS), output_path)
 
 
 def write_expanded_table(rows: Sequence[Mapping[str, Any]], output_path: Path) -> None:
-    pd.DataFrame(rows, columns=EXPANDED_COLUMNS).to_csv(output_path, index=False, encoding="utf-8")
+    _write_chinese_header_csv(pd.DataFrame(rows, columns=EXPANDED_COLUMNS), output_path)
 
 
 DIAGNOSTIC_COLUMNS = [
@@ -749,7 +768,7 @@ def build_diagnostics(window_rows: Sequence[Mapping[str, Any]], expanded_rows: S
 
 
 def write_csv_rows(rows: Sequence[Mapping[str, Any]], columns: Sequence[str], output_path: Path) -> None:
-    pd.DataFrame(rows, columns=list(columns)).to_csv(output_path, index=False, encoding="utf-8")
+    _write_chinese_header_csv(pd.DataFrame(rows, columns=list(columns)), output_path)
 
 
 def sha256_file(path: Path) -> str:
@@ -776,7 +795,7 @@ def build_analysis_manifest(
     validation_files: Sequence[Mapping[str, str]],
     epochs: Sequence[tuple[int, Path]],
     missing_epochs: Sequence[int],
-    output_paths: Sequence[Path],
+    detail_paths: Sequence[Path],
     window_count: int,
 ) -> dict[str, Any]:
     """Build the reproducibility manifest for one isolated run."""
@@ -786,19 +805,17 @@ def build_analysis_manifest(
     input_records = [
         _fingerprint(path, config.model_root) for path in model_inputs
     ] + [
+        _fingerprint(path, config.model_root) for path in detail_paths
+    ] + [
         _fingerprint(path, config.valid_root) for path in data_inputs
     ] + [
         _fingerprint(config.state_features_path, config.state_features_path.parent),
         _fingerprint(config.maintenance_margin_path, config.maintenance_margin_path.parent),
     ]
     output_records = [
-        _fingerprint(path, config.output_dir) for path in sorted(output_paths)
-    ]
-    output_records.extend(
         _fingerprint(path, config.output_dir)
         for path in sorted(config.output_dir.rglob("*.csv"))
-        if path not in output_paths
-    )
+    ]
     return {
         "schema_version": "1.0",
         "dataset_name": config.dataset_name,
@@ -1063,351 +1080,254 @@ def classify_strategy_patterns(
     return patterns or ["策略未分类"]
 
 
-@dataclass(frozen=True)
-class EvaluationConfig:
-    model_root: Path
-    valid_root: Path
-    output_dir: Path
-    state_features_path: Path
-    maintenance_margin_path: Path
-    max_holding_number: float = 8.0
-    position_choices: int = 9
-    leverage_choices: tuple[int, ...] = (1,)
-    hidden_nodes: int = 128
-    ensemble_number: int = 7
-    time_info_dim: int = 2
-    order_book_depth: int = 25
-    long_estimated_rate: float = 0.0005
-    short_estimated_rate: float = 0.0
-    transaction_cost: float = 0.0002
-    initial_wallet_balance: float = 100000.0
-    initial_unrealized_pnl: float = 0.0
-    initial_leverage: float = 5.0
-    allow_reverse_position: bool = False
-    dataset_name: str = ""
-    experiment_name: str = ""
 
-    @property
-    def position_levels(self) -> list[float]:
-        return build_position_levels(self.max_holding_number, self.position_choices)
-
-    @property
-    def action_count(self) -> int:
-        return (self.position_choices - 1) * len(self.leverage_choices) + 1
-
-    @property
-    def initial_actions(self) -> range:
-        return range(self.action_count)
+def _detail_path(model_root: Path, epoch: int) -> Path:
+    return (
+        model_root
+        / f"epoch_{epoch}"
+        / f"trading_action_detail_epoch_{epoch}.csv"
+    )
 
 
-def _seed(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+def _contract_from_df_path(df_path: Any) -> str:
+    parts = str(df_path).replace("\\", "/").split("/")
+    if len(parts) < 3 or not parts[0]:
+        raise ValueError(f"cannot derive contract from detail df_path: {df_path!r}")
+    return parts[0]
 
 
-class IsolatedAgentEvaluator:
-    """Run new evaluations without depending on the legacy test entry point."""
+def read_detail_csv(detail_path: Path, *, epoch: int) -> pd.DataFrame:
+    """Read a test_agent_index detail CSV into the analysis English schema."""
 
-    def __init__(
-        self,
-        config: EvaluationConfig,
-        *,
-        model_factory: Callable[..., Any] = ensemble_Qnet,
-        environment_factory: Callable[..., Any] = initiate_base_env,
-        model_loader: Callable[[Path], Any] | None = None,
-    ) -> None:
-        self.config = config
-        self.model_factory = model_factory
-        self.environment_factory = environment_factory
-        self.model_loader = model_loader
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.state_features = np.load(config.state_features_path, allow_pickle=True).tolist()
-        self.maintenance_margin = np.load(
-            config.maintenance_margin_path, allow_pickle=True
-        ).item()
-        if not self.state_features:
-            raise ValueError("state feature list must not be empty")
+    frame = pd.read_csv(detail_path)
+    normalized_columns = [
+        DETAIL_CSV_HEADER_TO_FIELD.get(column, column) for column in frame.columns
+    ]
+    if len(normalized_columns) != len(set(normalized_columns)):
+        raise ValueError(f"detail CSV has ambiguous headers: {detail_path}")
+    frame.columns = normalized_columns
 
-    def _load_model(self, epoch_path: Path) -> Any:
-        if self.model_loader is not None:
-            return self.model_loader(epoch_path)
-        network = self.model_factory(
-            N_STATES=len(self.state_features),
-            N_ACTIONS=self.config.action_count,
-            hidden_nodes=self.config.hidden_nodes,
-            TIME_INFO_DIM=self.config.time_info_dim,
-            ensemble_number=self.config.ensemble_number,
-        ).to(self.device)
-        network.load_state_dict(torch.load(epoch_path / "trained_model.pkl", map_location=self.device))
-        network.eval()
-        return network
-
-    def _select_action(self, network: Any, state: Any, info: Mapping[str, Any], bin_index: int) -> int:
-        state_tensor = torch.as_tensor(np.asarray(state).reshape(-1), dtype=torch.float32, device=self.device).unsqueeze(0)
-        previous_action = torch.tensor([[info["previous_action"]]], dtype=torch.float32, device=self.device)
-        available = torch.as_tensor([info["avaliable_action"]], device=self.device)
-        time_input = torch.tensor(
-            [[info["funding_count_down_hour"], info["funding_count_down_minute"]]],
-            dtype=torch.float32,
-            device=self.device,
+    source_columns = set(STEP_DETAIL_COLUMNS) - {"epoch", "contract"}
+    missing = sorted(source_columns - set(frame.columns))
+    if missing:
+        raise ValueError(
+            f"detail CSV is missing required columns {missing}: {detail_path}"
         )
-        trading_info = torch.as_tensor([info["trading_info"]], dtype=torch.float32, device=self.device)
-        if bin_index < 0 or bin_index >= len(network.qnet_list):
-            raise ValueError(f"bin_index out of range: {bin_index}")
-        with torch.inference_mode():
-            values = network.qnet_list[bin_index](
-                state=state_tensor,
-                time=time_input,
-                previous_action=previous_action,
-                avaliable_action=available,
-                trading_info=trading_info,
+
+    if "epoch" in frame.columns:
+        if not frame.empty and set(frame["epoch"].astype(int)) != {epoch}:
+            raise ValueError(
+                f"detail CSV contains rows from another epoch: {detail_path}"
             )
-        return int(torch.argmax(values, dim=1).item())
+    else:
+        frame.insert(0, "epoch", epoch)
 
-    def _build_environment(self, data_frame: pd.DataFrame, initial_action: int) -> Any:
-        initial_position, initial_leverage = map_action_to_position_leverage(
-            initial_action, list(self.config.leverage_choices), self.config.position_levels
-        )
-        initial_margin = abs(
-            float(initial_position) * float(data_frame["mark_price"].iloc[0]) / float(initial_leverage)
-        )
-        return self.environment_factory(
-            df=data_frame,
-            feature_list=self.state_features,
-            max_holding_number=self.config.max_holding_number,
-            order_book_depth=self.config.order_book_depth,
-            position_choices=self.config.position_choices,
-            leverage_choice=list(self.config.leverage_choices),
-            long_estimated_rate=self.config.long_estimated_rate,
-            short_estimated_rate=self.config.short_estimated_rate,
-            commission_rate=self.config.transaction_cost,
-            maintenance_margin_ratio_dict=self.maintenance_margin,
-            early_stop=0,
-            initial_state=(
-                self.config.initial_wallet_balance,
-                initial_margin,
-                self.config.initial_unrealized_pnl,
-                initial_position,
-                initial_leverage,
-            ),
-            allow_reverse_position=self.config.allow_reverse_position,
-        )
-
-    def evaluate_trajectory(
-        self,
-        *,
-        network: Any,
-        epoch: int,
-        entry: Mapping[str, str],
-        initial_action: int,
-        bin_index: int,
-    ) -> list[dict[str, Any]]:
-        data_frame = pd.read_feather(entry["abs_path"])
-        validate_required_market_columns(data_frame)
-        if len(data_frame) == 0:
-            raise ValueError(f"empty validation file: {entry['abs_path']}")
-        environment = self._build_environment(data_frame, initial_action)
-        state, info = environment.reset()
-        rows: list[dict[str, Any]] = []
-        previous_action = initial_action
-        action_changes = 0
-        trade_count = 0
-        done = False
-        timestep = 0
-        while not done:
-            position_before = float(getattr(environment, "position"))
-            leverage_before = float(getattr(environment, "leverage"))
-            action = self._select_action(network, state, info, bin_index)
-            target_position, target_leverage = map_action_to_position_leverage(
-                action, list(self.config.leverage_choices), self.config.position_levels
+    derived_contracts = frame["df_path"].map(_contract_from_df_path)
+    if "contract" in frame.columns:
+        if not frame["contract"].astype(str).equals(derived_contracts):
+            raise ValueError(
+                f"detail CSV contract does not match df_path: {detail_path}"
             )
-            action_change = int(action != previous_action)
-            action_changes += action_change
-            next_state, reward, done, info = environment.step(action)
-            if timestep >= len(data_frame):
-                raise RuntimeError("environment exceeded validation data length")
-            position_after = float(getattr(environment, "position"))
-            leverage_after = float(getattr(environment, "leverage"))
-            trade = int(position_after != position_before or leverage_after != leverage_before)
-            trade_count += trade
-            row = build_step_detail_row(
-                epoch=epoch,
-                label=entry["label"],
-                contract=entry["contract"],
-                df_path=entry["df_path"],
-                initial_action=initial_action,
-                bin_index=bin_index,
-                timestep=timestep,
-                market_row=data_frame.iloc[timestep].to_dict(),
-                action=action,
-                target_position=target_position,
-                target_leverage=target_leverage,
-                position_before=position_before,
-                leverage_before=leverage_before,
-                position_after=position_after,
-                leverage_after=leverage_after,
-                step_reward=reward,
-                info=info,
-                wallet_balance=getattr(environment, "wallet_balance"),
-                unrealized_pnl=getattr(environment, "unrealized_pnl"),
-                action_change_step=action_change,
-                trade_count_step=trade,
-                cumulative_action_change_count=action_changes,
-                cumulative_trade_count=trade_count,
-            )
-            rows.append(row)
-            state = next_state
-            previous_action = action
-            timestep += 1
-        return rows
+    else:
+        frame.insert(2, "contract", derived_contracts)
 
-    def run(self, *, seed: int = 0) -> list[Path]:
-        _seed(seed)
-        self.config.output_dir.mkdir(parents=True, exist_ok=False)
-        entries = discover_validation_files(self.config.valid_root)
-        epochs = discover_model_epochs(self.config.model_root)
-        missing_epochs = discover_missing_model_epochs(self.config.model_root)
-        if not epochs:
-            raise FileNotFoundError("no direct epoch_<N>/trained_model.pkl found")
-        output_paths: list[Path] = []
-        all_window_rows: list[dict[str, Any]] = []
-        coverage_rows: list[dict[str, Any]] = [
-            {
-                "record_type": "epoch",
-                "epoch": epoch,
-                "status": "missing_model",
-                "expected_count": 0,
-                "observed_count": 0,
-                "coverage_ratio": 0.0,
-                "message": "epoch directory has no trained_model.pkl",
-            }
-            for epoch in missing_epochs
-        ]
-        for epoch, epoch_path in epochs:
-            network = self._load_model(epoch_path)
-            epoch_rows: list[dict[str, Any]] = []
-            expected_lengths = {
-                entry["abs_path"]: len(pd.read_feather(entry["abs_path"]))
-                for entry in entries
-            }
-            for entry in entries:
-                for initial_action in self.config.initial_actions:
-                    bin_count = len(network.qnet_list)
-                    if bin_count != self.config.ensemble_number:
-                        raise ValueError(
-                            f"epoch {epoch} ensemble count {bin_count} does not match "
-                            f"configured ensemble_number {self.config.ensemble_number}"
-                        )
-                    for bin_index in range(bin_count):
-                        trajectory_rows = self.evaluate_trajectory(
-                            network=network,
+    extra_columns = [
+        column for column in frame.columns if column not in STEP_DETAIL_COLUMNS
+    ]
+    return frame[STEP_DETAIL_COLUMNS + extra_columns]
+
+
+def _coverage_row(
+    *,
+    epoch: int,
+    entry: Mapping[str, str],
+    initial_action: int,
+    bin_index: int,
+    expected_count: int,
+    trajectory_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    observed_count = len(trajectory_rows)
+    status = "complete" if observed_count == expected_count else "failed"
+    message = "" if status == "complete" else (
+        f"observed_count={observed_count} expected_count={expected_count}; "
+        "trajectory identity is incomplete"
+    )
+    is_limit_label = entry["label"] in {"label_0", "label_6"}
+    window_count = int(observed_count > 0) if is_limit_label else observed_count // 20
+    dropped_tail_steps = 0 if is_limit_label else observed_count % 20
+    ordered_rows = sorted(trajectory_rows, key=lambda row: int(row["timestep"]))
+    tail_rows = ordered_rows[-dropped_tail_steps:] if dropped_tail_steps else []
+    return {
+        "record_type": "trajectory",
+        "epoch": epoch,
+        "label": entry["label"],
+        "bin_index": bin_index,
+        "contract": entry["contract"],
+        "df_path": entry["df_path"],
+        "initial_action": initial_action,
+        "expected_count": expected_count,
+        "observed_count": observed_count,
+        "coverage_ratio": observed_count / expected_count if expected_count else 0.0,
+        "status": status,
+        "window_count": window_count,
+        "dropped_tail_steps": dropped_tail_steps,
+        "dropped_tail_gross_pnl": float(
+            sum(_number(row.get("realized_pnl_step")) for row in tail_rows)
+        ),
+        "dropped_tail_net_pnl": float(
+            sum(
+                _number(row.get("realized_pnl_step"))
+                - _number(row.get("commission_fee_step"))
+                for row in tail_rows
+            )
+        ),
+        "message": message,
+    }
+
+
+def aggregate_detail_csvs(
+    config: EvaluationConfig,
+    *,
+    epoch_start: int,
+    epoch_end: int,
+) -> list[Path]:
+    """Validate the requested detail CSVs and write all aggregate artifacts."""
+
+    if epoch_end < epoch_start:
+        raise ValueError("epoch_end must be greater than or equal to epoch_start")
+
+    config.output_dir.mkdir(parents=True, exist_ok=True)
+    entries = discover_validation_files(config.valid_root)
+    expected_lengths = {
+        entry["df_path"]: len(pd.read_feather(entry["abs_path"]))
+        for entry in entries
+    }
+    epochs: list[tuple[int, Path]] = []
+    detail_paths: list[Path] = []
+    coverage_rows: list[dict[str, Any]] = []
+    all_window_rows: list[dict[str, Any]] = []
+
+    for epoch in range(epoch_start, epoch_end + 1):
+        epoch_path = config.model_root / f"epoch_{epoch}"
+        model_path = epoch_path / "trained_model.pkl"
+        if not model_path.is_file():
+            raise FileNotFoundError(f"model does not exist: {model_path}")
+        detail_path = _detail_path(config.model_root, epoch)
+        if not detail_path.is_file():
+            raise FileNotFoundError(f"epoch detail CSV does not exist: {detail_path}")
+
+        frame = read_detail_csv(detail_path, epoch=epoch)
+
+        epoch_rows = frame.to_dict("records")
+        grouped_rows: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
+        for row in epoch_rows:
+            key = (
+                str(row["label"]),
+                str(row["contract"]),
+                str(row["df_path"]),
+                int(row["initial_action"]),
+                int(row["bin_index"]),
+            )
+            grouped_rows[key].append(row)
+
+        epoch_coverage_rows: list[dict[str, Any]] = []
+        for entry in entries:
+            expected_count = expected_lengths[entry["df_path"]]
+            for initial_action in config.initial_actions:
+                for bin_index in range(config.ensemble_number):
+                    key = (
+                        entry["label"],
+                        entry["contract"],
+                        entry["df_path"],
+                        initial_action,
+                        bin_index,
+                    )
+                    epoch_coverage_rows.append(
+                        _coverage_row(
                             epoch=epoch,
                             entry=entry,
                             initial_action=initial_action,
                             bin_index=bin_index,
+                            expected_count=expected_count,
+                            trajectory_rows=grouped_rows.pop(key, []),
                         )
-                        epoch_rows.extend(trajectory_rows)
-                        expected_count = expected_lengths[entry["abs_path"]]
-                        observed_count = len(trajectory_rows)
-                        status = "complete" if observed_count == expected_count else "failed"
-                        message = "" if status == "complete" else (
-                            f"observed_count={observed_count} expected_count={expected_count}; "
-                            "trajectory identity is incomplete"
-                        )
-                        is_limit_label = entry["label"] in {"label_0", "label_6"}
-                        window_count = int(observed_count > 0) if is_limit_label else observed_count // 20
-                        dropped_tail_steps = 0 if is_limit_label else observed_count % 20
-                        tail_rows = trajectory_rows[-dropped_tail_steps:] if dropped_tail_steps else []
-                        coverage_rows.append(
-                            {
-                                "record_type": "trajectory",
-                                "epoch": epoch,
-                                "label": entry["label"],
-                                "bin_index": bin_index,
-                                "contract": entry["contract"],
-                                "df_path": entry["df_path"],
-                                "initial_action": initial_action,
-                                "expected_count": expected_count,
-                                "observed_count": observed_count,
-                                "coverage_ratio": observed_count / expected_count,
-                                "status": status,
-                                "window_count": window_count,
-                                "dropped_tail_steps": dropped_tail_steps,
-                                "dropped_tail_gross_pnl": float(sum(_number(row.get("realized_pnl_step")) for row in tail_rows)),
-                                "dropped_tail_net_pnl": float(sum(_number(row.get("realized_pnl_step")) - _number(row.get("commission_fee_step")) for row in tail_rows)),
-                                "message": message,
-                            }
-                        )
-            output_path = self.config.output_dir / "step_detail" / f"agent_pattern_step_detail_epoch_{epoch}.csv"
-            write_step_detail_csv(epoch_rows, output_path)
-            output_paths.append(output_path)
-            all_window_rows.extend(
-                build_window_rows(
-                    epoch_rows,
-                    position_levels=self.config.position_levels,
-                )
+                    )
+        if grouped_rows:
+            raise ValueError(
+                f"detail CSV contains unexpected trajectories: {detail_path}"
             )
-        write_coverage_report(
-            coverage_rows,
-            self.config.output_dir / "agent_pattern_coverage_report.csv",
+        failed_rows = [
+            row for row in epoch_coverage_rows if row["status"] != "complete"
+        ]
+        if failed_rows:
+            first = failed_rows[0]
+            raise ValueError(
+                "detail CSV trajectory is incomplete: "
+                f"epoch={first['epoch']} df_path={first['df_path']} "
+                f"initial_action={first['initial_action']} "
+                f"bin_index={first['bin_index']}"
+            )
+
+        coverage_rows.extend(epoch_coverage_rows)
+        all_window_rows.extend(
+            build_window_rows(epoch_rows, position_levels=config.position_levels)
         )
-        write_window_table(
-            all_window_rows,
-            self.config.output_dir / "agent_pattern_window_table.csv",
-        )
-        expanded_rows = expand_window_rows(all_window_rows)
-        write_expanded_table(
-            expanded_rows,
-            self.config.output_dir / "agent_pattern_expanded_table.csv",
+        epochs.append((epoch, epoch_path))
+        detail_paths.append(detail_path)
+
+    write_coverage_report(
+        coverage_rows,
+        config.output_dir / "agent_pattern_coverage_report.csv",
+    )
+    write_window_table(
+        all_window_rows,
+        config.output_dir / "agent_pattern_window_table.csv",
+    )
+    expanded_rows = expand_window_rows(all_window_rows)
+    write_expanded_table(
+        expanded_rows,
+        config.output_dir / "agent_pattern_expanded_table.csv",
+    )
+    write_csv_rows(
+        build_diagnostics(all_window_rows, expanded_rows),
+        DIAGNOSTIC_COLUMNS,
+        config.output_dir / "agent_pattern_classifier_diagnostics.csv",
+    )
+    for axis in ("kline", "strategy", "cross"):
+        scenario_rows = _scenario_rows(expanded_rows, axis=axis)
+        triple_rows = _triple_rows(scenario_rows, expanded_rows, axis=axis)
+        write_csv_rows(
+            scenario_rows,
+            {
+                "kline": SCENARIO_KLINE_COLUMNS,
+                "strategy": SCENARIO_STRATEGY_COLUMNS,
+                "cross": SCENARIO_CROSS_COLUMNS,
+            }[axis],
+            config.output_dir / f"agent_pattern_{axis}_scenario_summary.csv",
         )
         write_csv_rows(
-            build_diagnostics(all_window_rows, expanded_rows),
-            DIAGNOSTIC_COLUMNS,
-            self.config.output_dir / "agent_pattern_classifier_diagnostics.csv",
+            triple_rows,
+            {
+                "kline": TRIPLE_KLINE_COLUMNS,
+                "strategy": TRIPLE_STRATEGY_COLUMNS,
+                "cross": TRIPLE_CROSS_COLUMNS,
+            }[axis],
+            config.output_dir / f"agent_pattern_{axis}_triple_summary.csv",
         )
-        for axis in ("kline", "strategy", "cross"):
-            scenario_rows = _scenario_rows(expanded_rows, axis=axis)
-            triple_rows = _triple_rows(scenario_rows, expanded_rows, axis=axis)
-            write_csv_rows(
-                scenario_rows,
-                {
-                    "kline": SCENARIO_KLINE_COLUMNS,
-                    "strategy": SCENARIO_STRATEGY_COLUMNS,
-                    "cross": SCENARIO_CROSS_COLUMNS,
-                }[axis],
-                self.config.output_dir / f"agent_pattern_{axis}_scenario_summary.csv",
-            )
-            write_csv_rows(
-                triple_rows,
-                {
-                    "kline": TRIPLE_KLINE_COLUMNS,
-                    "strategy": TRIPLE_STRATEGY_COLUMNS,
-                    "cross": TRIPLE_CROSS_COLUMNS,
-                }[axis],
-                self.config.output_dir / f"agent_pattern_{axis}_triple_summary.csv",
-            )
-        manifest = build_analysis_manifest(
-            self.config,
-            validation_files=entries,
-            epochs=epochs,
-            missing_epochs=missing_epochs,
-            output_paths=output_paths,
-            window_count=len(all_window_rows),
-        )
-        write_analysis_manifest(
-            manifest,
-            self.config.output_dir / "analysis_manifest.json",
-        )
-        return output_paths
+
+    manifest = build_analysis_manifest(
+        config,
+        validation_files=entries,
+        epochs=epochs,
+        missing_epochs=[],
+        detail_paths=detail_paths,
+        window_count=len(all_window_rows),
+    )
+    write_analysis_manifest(manifest, config.output_dir / "analysis_manifest.json")
+    return detail_paths
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
+def add_config_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--model_root", type=Path, required=True)
     parser.add_argument("--valid_root", type=Path, required=True)
     parser.add_argument("--output_dir", type=Path, required=True)
@@ -1429,8 +1349,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow_reverse_position", action="store_true")
     parser.add_argument("--dataset_name", default="")
     parser.add_argument("--experiment_name", default="")
-    parser.add_argument("--seed", type=int, default=0)
-    return parser
 
 
 def config_from_args(args: argparse.Namespace) -> EvaluationConfig:
@@ -1459,10 +1377,21 @@ def config_from_args(args: argparse.Namespace) -> EvaluationConfig:
     )
 
 
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_config_arguments(parser)
+    parser.add_argument("--epoch_start", type=int, required=True)
+    parser.add_argument("--epoch_end", type=int, required=True)
+    return parser
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    config = config_from_args(args)
-    IsolatedAgentEvaluator(config).run(seed=args.seed)
+    aggregate_detail_csvs(
+        config_from_args(args),
+        epoch_start=args.epoch_start,
+        epoch_end=args.epoch_end,
+    )
     return 0
 
 

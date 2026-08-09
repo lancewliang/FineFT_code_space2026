@@ -7,15 +7,22 @@ function run_ddqn_context {
     local base_path=$5
     local experiment_name=$6
     local ensemble_number=${ENSEMBLE_NUMBER:-7}
+    local result_path=${RESULT_PATH:-result/DiHFT/low_level}
+    local max_parallel=${MAX_PARALLEL:-4}
     ROOTPATH=${ROOTPATH:-$(pwd)}
     cd "$ROOTPATH"
     # 检查并创建日志目录
     log_dir="log/DiHFT/${dataset_name}/low_level/test/${experiment_name}"
     mkdir -p "${log_dir}"
     export PYTHONPATH="${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
-    local max_parallel=4
+    local model_root="${result_path}/${dataset_name}/${experiment_name}/weights_advantage_pretrain"
+    local valid_root="${base_path}/${dataset_name}/valid"
+    local state_features_path="${base_path}/${dataset_name}/state_features.npy"
+    local maintenance_margin_path="${base_path}/${dataset_name}/maintenance_margin_ratio_dict.npy"
+    local output_dir="analysis_result/DiHFT/low_level/${dataset_name}/${experiment_name}/test_agent_index"
     # 保存PID的数组
     pids=()
+    local failed=0
 
     # 循环执行Epoch 1到50
     for epoch in $(seq $epoch_start $epoch_end); do
@@ -24,28 +31,62 @@ function run_ddqn_context {
         nohup python FineFT/RL/DiHFT/low_level/test_agent_index.py \
             --base_path "${base_path}" \
             --dataset_name "${dataset_name}" --experiment_name "${experiment_name}" \
+            --result_path "${result_path}" \
             --max_holding_number "${max_holding_number}" --initial_wallet_balance 10000 --order_book_depth 5 \
             --epoch_num "${epoch}" --position_choices 5 --N "${ensemble_number}" --transcation_cost 0.0004 --short_estimated_rate 0 --long_estimated_rate 0 \
             --allow_reverse_position \
+            --save_trading_detail_csv \
             >"${log_dir}/epoch_${epoch}.log" 2>&1 &
         pids+=($!) # 将每个后台进程的PID添加到数组中
 
-        echo "${dataset_name} ${experiment_name} ${max_holding_number}  epoch ${epoch} completed successfully."
+        echo "${dataset_name} ${experiment_name} ${max_holding_number} epoch ${epoch} started."
 
         if ((${#pids[@]} >= max_parallel)); then
             for pid in "${pids[@]}"; do
-                wait "$pid"
+                wait "$pid" || failed=1
             done
             pids=()
+            if ((failed)); then
+                echo "Failed to generate one or more epoch detail CSVs. See ${log_dir}." >&2
+                return 1
+            fi
         fi
     done
 
     # 等待最后一批不足 max_parallel 的进程
     for pid in "${pids[@]}"; do
-        wait "$pid"
+        wait "$pid" || failed=1
     done
+    if ((failed)); then
+        echo "Failed to generate one or more epoch detail CSVs. See ${log_dir}." >&2
+        return 1
+    fi
 
-    echo "${dataset_name} ${experiment_name} ${max_holding_number}  All processes completed successfully."
+    python FineFT/RL/DiHFT/low_level/aggregate_agents_indexs.py \
+        --model_root "${model_root}" \
+        --valid_root "${valid_root}" \
+        --output_dir "${output_dir}" \
+        --state_features_path "${state_features_path}" \
+        --maintenance_margin_path "${maintenance_margin_path}" \
+        --max_holding_number "${max_holding_number}" \
+        --position_choices 5 \
+        --ensemble_number "${ensemble_number}" \
+        --order_book_depth 5 \
+        --initial_wallet_balance 10000 \
+        --transaction_cost 0.0004 \
+        --short_estimated_rate 0 \
+        --long_estimated_rate 0 \
+        --allow_reverse_position \
+        --dataset_name "${dataset_name}" \
+        --experiment_name "${experiment_name}" \
+        --epoch_start "${epoch_start}" \
+        --epoch_end "${epoch_end}" \
+        >"${log_dir}/aggregate.log" 2>&1 || {
+            echo "Failed to aggregate epoch detail CSVs. See ${log_dir}/aggregate.log." >&2
+            return 1
+        }
+
+    echo "${dataset_name} ${experiment_name} ${max_holding_number} testing and aggregation completed successfully."
 }
 
 function run_ddqn_average {
