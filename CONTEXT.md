@@ -378,12 +378,12 @@ Agent 侧的二阶形态分类，描述已执行仓位变化与行情事件的�
 _Avoid_: 动作形态、策略类型（不明确时）、agent 类型
 
 **Agent 形态候选全集 (Agent Pattern Candidate Universe)**:
-存在逐步 Detail CSV 的全部 `(label, epoch, bin_index)` Agent triple 集合；当前已选 Agent 是该全集的标记子集，不是分类输入边界。
-_Avoid_: 已选 Agent 集合、selection manifest 内容
+形态分析运行实际覆盖的全部 `(label, epoch, bin_index)` Agent triple 集合；每个 triple 必须在全部数据文件和全部 Initial-action 情景上执行。该全集由分析运行参数和可用模型决定，与 Selection Manifest 及既有 Detail CSV 无关。
+_Avoid_: 已选 Agent 集合、Selection Manifest 内容、既有 Detail CSV 集合
 
 **Detail 覆盖率 (Detail Coverage)**:
-可用行为轨迹相对应评估 checkpoint 与已选 Agent 集合的完整程度。
-_Avoid_: 候选全集大小、训练 epoch 完整性
+新形态分析运行已生成行为轨迹相对预期 `epoch × bin_index × label × 数据文件 × initial_action` 组合的完整程度。
+_Avoid_: Selection Manifest 覆盖率、既有 Detail CSV 数量、训练 epoch 完整性
 
 **Initial-action 情景 (Initial-action Scenario)**:
 同一 Agent triple 在相同行情上以某个初始动作启动的反事实回测情景；情景是否存在取决于是否完成了该行为轨迹，与它是否命中某个形态无关。不同 Initial-action 情景不是可相加的独立账户。
@@ -398,7 +398,7 @@ _Avoid_: agent 分类表、形态对照表
 _Avoid_: 明细表（不明确数据粒度时）、扁平表
 
 **形态识别窗口 (Pattern Recognition Window)**:
-K 线形态、策略二阶形态与窗口盈亏共享的最小归因单元，由 `window_id` 唯一标识；需求中所说的“不同场景”均指不同形态识别窗口，不指 Initial-action 情景。
+K 线形态、策略二阶形态与窗口盈亏共享的最小归因单元，由 `window_id` 唯一标识；不同 Initial-action 情景中的相同市场区间属于不同窗口。需求中所说的“不同场景”均指不同形态识别窗口，不指 Initial-action 情景。
 _Avoid_: 场景、滑窗、识别窗口（不明确时）、N 窗口
 
 **涨跌停事件窗口 (Limit-state Event Window)**:
