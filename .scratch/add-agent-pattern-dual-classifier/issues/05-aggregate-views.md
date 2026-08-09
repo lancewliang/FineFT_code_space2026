@@ -1,24 +1,16 @@
-# 05 — 聚合视图脚本:distinct 盈亏汇总
+# 05 — Initial-action Scenario/triple 聚合视图
 
-**What to build:** 端到端行为:用户给出 04 产出的完整 `agent_pattern_detail_table.csv`,脚本读它 → 按两种 distinct 维度聚合 → 输出 `agent_pattern_pnl_summary.csv`,让用户看到"每个 triple 在各形态下的总盈亏、窗口数、盈亏分位数"。
+**What to build:** 从唯一窗口事实生成 K 线、策略和 7×6 交叉的 Scenario 级与 triple 级汇总，在保留 Initial-action 反事实语义的同时防止多选形态放大账户 PnL。
 
-两种聚合视图(同一脚本产出,或分两个 CSV 输出):
-1. 按 `(label, epoch, bin_index, K 线形态)` distinct 聚合:该 triple 在每个 K 线形态下的总盈亏(所有命中该 K 线形态的窗口盈亏求和)、窗口数、盈亏分位数(中位数 / p25 / p75)。因为 K 线形态单选,distinct 不放大。
-2. 按 `(label, epoch, bin_index, 策略形态)` distinct 聚合:该 triple 在每个策略形态下的总盈亏、窗口数、盈亏分位数。关键正确性——策略形态多选导致同一窗口盈亏出现在多行,distinct 聚合时按形态独立计算总盈亏(每个形态独立 sum/mean,不跨形态求和),避免放大。
-
-输出列:`label, epoch, bin_index, 形态(标签), 形态类型(K线/策略), 总盈亏, 窗口数, 盈亏中位数, p25, p75`。
-
-验证:总盈亏不放大(distinct 语义正确——多选策略形态下,同一窗口盈亏在 ST1 行和 SM3 行各计入一次,但聚合按形态 distinct,ST1 总盈亏只含命中 ST1 的窗口,SM3 总盈亏只含命中 SM3 的窗口,不混入对方)。
-
-这是薄 groupby 逻辑,一个 smoke test 验证 distinct 语义即可。
-
-**Blocked by:** 04 — 多 triple orchestrator(顺序执行:需要完整明细表作为输入)
+**Blocked by:** 04 — 全候选窗口产物与完整性契约
 
 **Status:** ready-for-agent
 
-- [ ] 聚合脚本实现:读 `agent_pattern_detail_table.csv`
-- [ ] 按 `(label, epoch, bin_index, K 线形态)` distinct 聚合:总盈亏、窗口数、盈亏分位数
-- [ ] 按 `(label, epoch, bin_index, 策略形态)` distinct 聚合:总盈亏、窗口数、盈亏分位数
-- [ ] 输出 `agent_pattern_pnl_summary.csv`(或分两个 CSV)
-- [ ] smoke test:合成明细表(含多选策略形态行)→ 验证 distinct 聚合不放大
-- [ ] distinct 语义验证:ST1 行和 SM3 行的同一窗口盈亏各计入各形态总盈亏,不混入
+- [ ] 固定生成 K 线、策略和交叉三类视图的 Scenario 级与 triple 级 summary，共六个文件。
+- [ ] Scenario 级按 Initial-action 输出 `total_net_pnl`, `window_count`, `pnl_p25`, `pnl_p50`, `pnl_p75`，net PnL 为默认绩效口径。
+- [ ] triple 级每个形态组只对至少有一个窗口命中该形态的 Initial-action Scenario 做算术平均，输出 `mean_initial_action_*`。
+- [ ] triple 级同时输出已命中情景数、期望情景数和 Initial-action 覆盖率。
+- [ ] 未命中某形态的 Initial-action Scenario 不被伪造为零 PnL；期望 Initial-action Detail 行为轨迹本身缺失时立即失败。
+- [ ] 账户总 PnL 只能在单个 Initial-action Scenario 中按窗口表的唯一 `window_id` 汇总，不从展开表跨策略形态求和。
+- [ ] 未分类和策略未分类哨兵不进入任何正式 K 线、策略或交叉 summary，但仍保留在明细和展开表。
+- [ ] smoke test 覆盖单窗多策略、数组展开、PnL 不放大、Initial-action 不相加、命中情景等权平均、覆盖率、不伪造零 PnL 和行为轨迹缺失失败。

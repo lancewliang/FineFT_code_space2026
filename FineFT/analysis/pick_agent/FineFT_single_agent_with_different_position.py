@@ -19,12 +19,14 @@ from model.low_level import create_new_ensemble_qnet_from_different_save_path
 # * the analysis is cater to the choosing a single agent that can handle well different dynamics using different preferenced number
 # TODO for each dynamics, pick the agent with the highest reward sum and least std across different position
 parser = argparse.ArgumentParser()
+# replay buffer coffient
 parser.add_argument(
     "--dataset_name",
     type=str,
     default="BTCUSDT",
-    help="dataset name",
+    help="the number of transcation we store in one memory",
 )
+
 parser.add_argument(
     "--num_label",
     type=int,
@@ -35,7 +37,7 @@ parser.add_argument(
     "--epoch_num",
     type=int,
     default=50,
-    help="the number of epoch",
+    help="the number of initial_position",
 )
 parser.add_argument(
     "--initial_position",
@@ -84,76 +86,31 @@ parser.add_argument(
     "--hidden_nodes",
     type=int,
     default=128,
-    help="the number of hidden nodes",
-)
-parser.add_argument(
-    "--label_semantics_path",
-    type=str,
-    default=None,
-    help="path to label_semantics.json",
-)
-parser.add_argument(
-    "--labeling_method",
-    type=str,
-    default="slope",
-    help="labeling method used: slope, quantile, or DTW",
+    help="the number of the hidden nodes",
 )
 
 LABEL_PATTERN = re.compile(r"^label_(\d+)$")
-ARRAY_FIELDS = [
-    "contract",
-    "df_path",
-    "reward_sum",
-    "df_length",
-    "turnover",
-    "mean_position",
-    "mean_abs_position",
-    "long_step_ratio",
-    "short_step_ratio",
-    "flat_step_ratio",
-    "long_reward_sum",
-    "short_reward_sum",
-    "flat_reward_sum",
-    "net_position_exposure",
-    "limit_up_step_ratio",
-    "limit_down_step_ratio",
-    "limit_up_long_reward_sum",
-    "limit_down_short_reward_sum",
-    "limit_up_reverse_short_ratio",
-    "limit_down_reverse_long_ratio",
-]
+ARRAY_FIELDS = ["contract", "df_path", "reward_sum", "df_length", "turnover"]
 REQUIRED_RESULT_FIELDS = ["label", "initial_action", "bin_index"] + ARRAY_FIELDS
-
 
 class picker:
     def __init__(self, args) -> None:
-        self.base_path = getattr(args, "base_path", "dataset")
-        self.dataset_name = getattr(args, "dataset_name", "BTCUSDT")
-        self.num_label = getattr(args, "num_label", 5)
-        self.num_initial_position = getattr(args, "initial_position", 9)
+        self.base_path = args.base_path
+        self.dataset_name = args.dataset_name
+        self.num_label = args.num_label
+        print(self.num_label)
+        self.num_initial_position = args.initial_position
         self.label_list = ["label_{}".format(i) for i in range(self.num_label)]
+        print(self.label_list)
         self.initial_position_list = range(self.num_initial_position)
-        self.position_choices = getattr(args, "position_choices", 3)
-        self.hidden_nodes = getattr(args, "hidden_nodes", 128)
-
-        self.epoch_num = getattr(args, "epoch_num", 50)
-        self.save_path = getattr(args, "save_path", "analysis_result/DiHFT/low_level")
-        self.model_save_path = os.path.join(
-            getattr(args, "model_save_path", "result/DiHFT/potential_model"),
-            self.dataset_name,
-            getattr(args, "experiment_name", "default"),
-        )
-        self.std_preference = getattr(args, "std_preference", 0.1)
-        self.experiment_name = getattr(args, "experiment_name", "default")
-        self.label_semantics_path = getattr(args, "label_semantics_path", None)
-        self.labeling_method = getattr(args, "labeling_method", "slope")
-        self.semantic_filter_thresholds = {
-            "min_directional_exposure": 0.10,
-            "min_directional_step_ratio": 0.35,
-            "max_neutral_abs_exposure": 0.20,
-            "max_limit_reverse_ratio": 0.20,
-        }
-        self.label_semantics = None
+        self.position_choices = args.position_choices
+        self.hidden_nodes = args.hidden_nodes
+        
+        self.epoch_num = args.epoch_num
+        self.save_path = args.save_path
+        self.model_save_path = os.path.join(args.model_save_path, args.dataset_name, args.experiment_name)
+        self.std_preference = args.std_preference
+        self.experiment_name = args.experiment_name
 
     def _result_output_dir(self):
         return os.path.join(self.save_path, self.dataset_name, self.experiment_name)
@@ -166,215 +123,6 @@ class picker:
 
     def _expected_label_set(self):
         return set(self.label_list)
-
-    def generate_default_label_semantics(self):
-        num_label = self.num_label
-        if num_label < 2:
-            raise ValueError(f"num_label must be at least 2, got {num_label}")
-        labels = []
-
-        # label_0 is limit_down
-        labels.append(
-            {
-                "label": "label_0",
-                "direction": "strong_down",
-                "direction_sign": -1,
-                "strength": 2,
-                "description": "跌停",
-                "limit_state": "limit_down",
-                "limit_state_sign": -1,
-            }
-        )
-
-        num_middle = num_label - 2
-        for i in range(1, num_label - 1):
-            lbl_name = f"label_{i}"
-            if num_middle == 1:
-                direction, direction_sign, desc = "sideways", 0, "震荡"
-            else:
-                rel_pos = (i - 1) / (num_middle - 1)
-                if rel_pos < 0.33:
-                    direction, direction_sign, desc = "down", -1, "下跌"
-                elif rel_pos > 0.67:
-                    direction, direction_sign, desc = "up", 1, "上涨"
-                else:
-                    direction, direction_sign, desc = "sideways", 0, "震荡"
-            labels.append(
-                {
-                    "label": lbl_name,
-                    "direction": direction,
-                    "direction_sign": direction_sign,
-                    "strength": 1 if direction_sign != 0 else 0,
-                    "description": desc,
-                    "limit_state": "none",
-                    "limit_state_sign": 0,
-                }
-            )
-
-        # last label is limit_up
-        last_lbl = f"label_{num_label - 1}"
-        labels.append(
-            {
-                "label": last_lbl,
-                "direction": "strong_up",
-                "direction_sign": 1,
-                "strength": 2,
-                "description": "涨停",
-                "limit_state": "limit_up",
-                "limit_state_sign": 1,
-            }
-        )
-
-        manifest_data = {
-            "dataset_name": self.dataset_name,
-            "labeling_method": self.labeling_method,
-            "dynamic_number": num_label - 2,
-            "label_number": num_label,
-            "labels": labels,
-        }
-        out_dir = self._result_output_dir()
-        os.makedirs(out_dir, exist_ok=True)
-        gen_path = os.path.join(out_dir, "label_semantics.json")
-        with open(gen_path, "w", encoding="utf-8") as f:
-            json.dump(manifest_data, f, ensure_ascii=False, indent=2)
-        return manifest_data
-
-    def load_label_semantics(self):
-        if self.label_semantics is not None:
-            return self.label_semantics
-
-        data = None
-        sem_path = self.label_semantics_path
-        if sem_path and os.path.exists(sem_path):
-            with open(sem_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        else:
-            default_dataset_sem = os.path.join(
-                self.base_path, self.dataset_name, "label_semantics.json"
-            )
-            if os.path.exists(default_dataset_sem):
-                with open(default_dataset_sem, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            else:
-                if getattr(self, "labeling_method", "slope") == "DTW":
-                    raise ValueError(
-                        "DTW labeling method requires an explicit label_semantics.json manifest; "
-                        "cluster ids have no stable bullish/bearish ordering"
-                    )
-                data = self.generate_default_label_semantics()
-
-        labels = data.get("labels", [])
-        if len(labels) != self.num_label:
-            raise ValueError(
-                f"label_semantics count ({len(labels)}) does not match num_label ({self.num_label})"
-            )
-
-        label_map = {item["label"]: item for item in labels}
-        expected_set = set(self.label_list)
-        if set(label_map.keys()) != expected_set:
-            raise ValueError(
-                f"label_semantics missing labels: {expected_set - set(label_map.keys())}"
-            )
-
-        l0 = label_map["label_0"]
-        if (
-            l0.get("limit_state") not in ["limit_down", "near_limit_down"]
-            or l0.get("limit_state_sign") != -1
-        ):
-            raise ValueError(
-                "current commodity labels require label_0 to be limit_down/near_limit_down with limit_state_sign=-1"
-            )
-
-        last_lbl_name = f"label_{self.num_label - 1}"
-        ln = label_map[last_lbl_name]
-        if (
-            ln.get("limit_state") not in ["limit_up", "near_limit_up"]
-            or ln.get("limit_state_sign") != 1
-        ):
-            raise ValueError(
-                f"current commodity labels require the last label ({last_lbl_name}) to be limit_up/near_limit_up with limit_state_sign=1"
-            )
-
-        for item in labels:
-            if item.get("direction_sign") not in [-1, 0, 1]:
-                raise ValueError(
-                    f"invalid direction_sign {item.get('direction_sign')} in label {item.get('label')}"
-                )
-            if item.get("limit_state") not in [
-                "none",
-                "near_limit_up",
-                "limit_up",
-                "near_limit_down",
-                "limit_down",
-            ]:
-                raise ValueError(
-                    f"invalid limit_state {item.get('limit_state')} in label {item.get('label')}"
-                )
-            if item.get("limit_state_sign") not in [-1, 0, 1]:
-                raise ValueError(
-                    f"invalid limit_state_sign {item.get('limit_state_sign')} in label {item.get('label')}"
-                )
-
-        self.label_semantics = label_map
-        return self.label_semantics
-
-    def check_semantic_alignment(self, candidate_record, semantic_entry):
-        def _val(f):
-            if isinstance(candidate_record, dict):
-                return candidate_record[f]
-            return candidate_record[f]
-
-        cand_exp = float(_val("candidate_mean_exposure"))
-        cand_l_ratio = float(_val("candidate_long_ratio"))
-        cand_s_ratio = float(_val("candidate_short_ratio"))
-        cand_l_rew = float(_val("candidate_long_reward_mean"))
-        cand_s_rew = float(_val("candidate_short_reward_mean"))
-        cand_lim_u_rew = float(_val("candidate_limit_up_long_reward_mean"))
-        cand_lim_d_rew = float(_val("candidate_limit_down_short_reward_mean"))
-        cand_lim_u_rev = float(_val("candidate_limit_up_reverse_short_ratio"))
-        cand_lim_d_rev = float(_val("candidate_limit_down_reverse_long_ratio"))
-
-        dir_sign = semantic_entry["direction_sign"]
-        lim_state = semantic_entry["limit_state"]
-
-        th = self.semantic_filter_thresholds
-        min_dir_exp = th["min_directional_exposure"]
-        min_dir_step = th["min_directional_step_ratio"]
-        max_neut_exp = th["max_neutral_abs_exposure"]
-        max_lim_rev = th["max_limit_reverse_ratio"]
-
-        if dir_sign == 1:
-            if cand_exp < min_dir_exp or cand_l_ratio < min_dir_step or cand_l_rew <= 0:
-                return False, (
-                    f"bullish semantic mismatch (exp={cand_exp:.3f} < {min_dir_exp}, "
-                    f"long_ratio={cand_l_ratio:.3f} < {min_dir_step}, long_reward={cand_l_rew:.3f} <= 0)"
-                )
-        elif dir_sign == -1:
-            if cand_exp > -min_dir_exp or cand_s_ratio < min_dir_step or cand_s_rew <= 0:
-                return False, (
-                    f"bearish semantic mismatch (exp={cand_exp:.3f} > {-min_dir_exp}, "
-                    f"short_ratio={cand_s_ratio:.3f} < {min_dir_step}, short_reward={cand_s_rew:.3f} <= 0)"
-                )
-        elif dir_sign == 0:
-            if abs(cand_exp) > max_neut_exp:
-                return False, (
-                    f"neutral semantic mismatch (abs_exp={abs(cand_exp):.3f} > {max_neut_exp})"
-                )
-
-        if lim_state in ["limit_up", "near_limit_up"]:
-            if cand_lim_u_rew <= 0 or cand_lim_u_rev > max_lim_rev:
-                return False, (
-                    f"limit-up semantic mismatch (limit_up_long_reward={cand_lim_u_rew:.3f} <= 0 "
-                    f"or reverse_short_ratio={cand_lim_u_rev:.3f} > {max_lim_rev})"
-                )
-        elif lim_state in ["limit_down", "near_limit_down"]:
-            if cand_lim_d_rew <= 0 or cand_lim_d_rev > max_lim_rev:
-                return False, (
-                    f"limit-down semantic mismatch (limit_down_short_reward={cand_lim_d_rew:.3f} <= 0 "
-                    f"or reverse_long_ratio={cand_lim_d_rev:.3f} > {max_lim_rev})"
-                )
-
-        return True, "passed"
 
     def _validate_result_record(self, single_result):
         missing_fields = [
@@ -415,7 +163,9 @@ class picker:
             raise ValueError(f"label coverage mismatch; missing={missing}, extra={extra}")
 
     def transform_single_epoch_result(self, result, epoch_path):
+        # calculate the mean and std of the normalized return for each record and throw away the original return and length record
         new_result = []
+        print("transform_single_epoch_result {} {}", epoch_path, len(result))
         for single_result in result:
             single_result = dict(single_result)
             self._validate_result_record(single_result)
@@ -429,29 +179,18 @@ class picker:
                 single_result["normalized_reward"]
             )
             single_result["mean_turnover"] = np.mean(single_result["turnover"])
-
-            single_result["candidate_mean_exposure"] = float(np.mean(single_result["net_position_exposure"]))
-            single_result["candidate_long_ratio"] = float(np.mean(single_result["long_step_ratio"]))
-            single_result["candidate_short_ratio"] = float(np.mean(single_result["short_step_ratio"]))
-            single_result["candidate_long_reward_mean"] = float(np.mean(single_result["long_reward_sum"]))
-            single_result["candidate_short_reward_mean"] = float(np.mean(single_result["short_reward_sum"]))
-            single_result["candidate_limit_up_long_reward_mean"] = float(np.mean(single_result["limit_up_long_reward_sum"]))
-            single_result["candidate_limit_down_short_reward_mean"] = float(np.mean(single_result["limit_down_short_reward_sum"]))
-            single_result["candidate_limit_up_reverse_short_ratio"] = float(np.mean(single_result["limit_up_reverse_short_ratio"]))
-            single_result["candidate_limit_down_reverse_long_ratio"] = float(np.mean(single_result["limit_down_reverse_long_ratio"]))
-
+            # single_result.pop("normalized_reward")
+            # single_result.pop("reward_sum")
+            # single_result.pop("df_length")
+            # single_result.pop("turnover")
             single_result["epoch_path"] = epoch_path
             new_result.append(single_result)
         return new_result
 
-    def transform_single_epoch_result_all(self, result, epoch_path):
-        transformed = self.transform_single_epoch_result(result, epoch_path)
-        return pd.DataFrame(transformed)
-
     def conclude_single_parameter(self, parameter_path):
         single_parameter_result = []
         single_parameter_best_result = []
-        for i in range(45, self.epoch_num):
+        for i in range(45,self.epoch_num):
             epoch_path = os.path.join(parameter_path, "epoch_{}".format(i + 1))
             best_result, result = self.analysis_single_epoch(epoch_path)
             single_parameter_result.extend(result)
@@ -463,10 +202,10 @@ class picker:
         result,
         epoch_path,
     ):
-        semantics = self.load_label_semantics()
+        # 找到这个epoch各种dynamics和initial position下最好的agent
+        print("pick_best_index_from_single_epoch {} {}", self.label_list, len(self.label_list))
         max_result = []
         for label in self.label_list:
-            sem_entry = semantics[label]
             for initial_action in self.initial_position_list:
                 single_condition_result = []
                 for single_result in result:
@@ -474,9 +213,7 @@ class picker:
                         single_result["initial_action"] == initial_action
                         and single_result["label"] == label
                     ):
-                        passed, _ = self.check_semantic_alignment(single_result, sem_entry)
-                        if passed:
-                            single_condition_result.append(single_result)
+                        single_condition_result.append(single_result)
                 if not single_condition_result:
                     continue
                 max_item = max(
@@ -531,109 +268,48 @@ class picker:
         )
         df_all = df_all.drop(columns="epoch_number")
 
-        out_dir = self._result_output_dir()
-        if not os.path.exists(out_dir):
-            os.makedirs(out_dir)
-        df_best.to_csv(os.path.join(out_dir, "result.csv"))
-        df_all.to_csv(os.path.join(out_dir, "result_all.csv"))
+        if not os.path.exists(os.path.join(self.save_path, self.dataset_name, self.experiment_name)):
+            os.makedirs(os.path.join(self.save_path, self.dataset_name, self.experiment_name))
+        df_best.to_csv(os.path.join(self.save_path, self.dataset_name, self.experiment_name, "result.csv"))
+        df_all.to_csv(os.path.join(self.save_path, self.dataset_name, self.experiment_name, "result_all.csv"))
         self.result_df_best = df_best
         self.result_df_all = df_all
         return df_best, df_all
 
     def pick_best_agent_regarding_dynamics_bin_index_path(self, result_all):
         self._validate_label_coverage(result_all["label"].unique())
-        semantics = self.load_label_semantics()
-
         label_list = []
         epoch_path_list = []
         bin_index_list = []
         reward_max_list = []
         source_rows_list = []
-        behavior_summaries = []
-
         for label in result_all["label"].unique():
-            selected_df = result_all[result_all["label"] == label].copy()
-            sem_entry = semantics[label]
-
-            # Step 1: Filter positive reward candidate models first
-            pos_df = selected_df[selected_df["trans_reward_mean"] > 0]
-            if not pos_df.empty:
-                pool_df = pos_df
-                pool_is_positive = True
-            else:
-                pool_df = selected_df
-                pool_is_positive = False
-
-            # Step 2: Directional Semantics check within candidate pool
-            eligible_rows = []
-            for idx, row in pool_df.iterrows():
-                passed, reason = self.check_semantic_alignment(row, sem_entry)
-                if passed:
-                    eligible_rows.append(row)
-
-            if eligible_rows:
-                target_df = pd.DataFrame(eligible_rows)
-                selection_note = (
-                    "passed positive reward filter and strict directional semantics gate"
-                    if pool_is_positive
-                    else "passed strict directional semantics gate (fallback pool)"
-                )
-            else:
-                target_df = pool_df
-                selection_note = (
-                    "positive reward model fallback (soft directional semantics)"
-                    if pool_is_positive
-                    else "all model fallback (soft directional semantics)"
-                )
-
+            print(label)
+            selected_df = result_all[result_all["label"] == label]
             reward_mean_info = (
-                target_df.groupby(["label", "bin_index", "epoch_path"])[
+                selected_df.groupby(["label", "bin_index", "epoch_path"])[
                     "trans_reward_mean"
                 ]
                 .agg(["mean", "count"])
                 .dropna()
             )
             if reward_mean_info.empty:
-                raise ValueError(
-                    f"label {label} has no finite selection candidates after candidate pool filtering"
-                )
-
+                raise ValueError(f"label {label} has no finite selection candidates")
             selected_information_based_reward_sum = reward_mean_info["mean"].idxmax()
-            sel_label = selected_information_based_reward_sum[0]
-            sel_bin_index = selected_information_based_reward_sum[1]
-            sel_epoch_path = selected_information_based_reward_sum[2]
+            label = selected_information_based_reward_sum[0]
+            bin_index = selected_information_based_reward_sum[1]
+            epoch_path = selected_information_based_reward_sum[2]
             reward_max = reward_mean_info.loc[
                 selected_information_based_reward_sum, "mean"
             ]
             source_rows = int(
                 reward_mean_info.loc[selected_information_based_reward_sum, "count"]
             )
-
-            matched_group = target_df[
-                (target_df["bin_index"] == sel_bin_index)
-                & (target_df["epoch_path"] == sel_epoch_path)
-            ]
-            summary = {
-                "candidate_mean_exposure": float(matched_group["candidate_mean_exposure"].mean()),
-                "candidate_long_ratio": float(matched_group["candidate_long_ratio"].mean()),
-                "candidate_short_ratio": float(matched_group["candidate_short_ratio"].mean()),
-                "candidate_long_reward_mean": float(matched_group["candidate_long_reward_mean"].mean()),
-                "candidate_short_reward_mean": float(matched_group["candidate_short_reward_mean"].mean()),
-                "candidate_limit_up_long_reward_mean": float(matched_group["candidate_limit_up_long_reward_mean"].mean()),
-                "candidate_limit_down_short_reward_mean": float(matched_group["candidate_limit_down_short_reward_mean"].mean()),
-                "candidate_limit_up_reverse_short_ratio": float(matched_group["candidate_limit_up_reverse_short_ratio"].mean()),
-                "candidate_limit_down_reverse_long_ratio": float(matched_group["candidate_limit_down_reverse_long_ratio"].mean()),
-                "selection_note": selection_note,
-                "pool_is_positive": pool_is_positive,
-            }
-
-            label_list.append(sel_label)
-            epoch_path_list.append(sel_epoch_path)
-            bin_index_list.append(sel_bin_index)
+            label_list.append(label)
+            epoch_path_list.append(epoch_path)
+            bin_index_list.append(bin_index)
             reward_max_list.append(reward_max)
             source_rows_list.append(source_rows)
-            behavior_summaries.append(summary)
-
         best_agent_info = pd.DataFrame(
             {
                 "label": label_list,
@@ -641,15 +317,14 @@ class picker:
                 "bin_index": bin_index_list,
                 "reward_max": reward_max_list,
                 "source_rows": source_rows_list,
-                "behavior_summary": behavior_summaries,
             }
         )
         self._validate_label_coverage(best_agent_info["label"].tolist())
-        out_dir = self._result_output_dir()
-        os.makedirs(out_dir, exist_ok=True)
         best_agent_info.to_csv(
             os.path.join(
-                out_dir,
+                self.save_path,
+                self.dataset_name,
+                self.experiment_name,
                 "best_index_info_by_dynamics_with_different_position.csv",
             )
         )
@@ -669,30 +344,17 @@ class picker:
         ordered_df = self._ordered_best_agent_df(best_agent_df)
         output_dir = self._result_output_dir()
         os.makedirs(output_dir, exist_ok=True)
-        semantics = self.load_label_semantics()
-
         labels = []
         for row in ordered_df.to_dict("records"):
-            lbl_name = row["label"]
-            sem = semantics[lbl_name]
             model_path = os.path.join(row["epoch_path"], "trained_model.pkl")
-            b_summary = row.get("behavior_summary", {})
             labels.append(
                 {
-                    "label": lbl_name,
-                    "description": sem.get("description", ""),
-                    "direction": sem.get("direction", ""),
-                    "direction_sign": sem.get("direction_sign", 0),
-                    "limit_state": sem.get("limit_state", "none"),
-                    "limit_state_sign": sem.get("limit_state_sign", 0),
+                    "label": row["label"],
                     "epoch_path": row["epoch_path"],
                     "model_path": model_path,
                     "bin_index": int(row["bin_index"]),
                     "score": float(row["reward_max"]),
                     "source_rows": int(row.get("source_rows", 0)),
-                    "semantic_filter": self.semantic_filter_thresholds,
-                    "behavior_summary": b_summary,
-                    "selection_reason": b_summary.get("selection_note", "passed semantic gate, then ranked by trans_reward_mean"),
                 }
             )
         manifest = {
@@ -721,6 +383,10 @@ class picker:
         ]
         bin_index_list = best_agent_df["bin_index"].tolist()
         assert len(label_list) == len(epoch_path_list) == len(bin_index_list)
+        # print(label_list)
+        # print(epoch_path_list)        
+        # print(bin_index_list)      
+        # print(f"self.model_save_path: {self.model_save_path}")
         new_ensemble = create_new_ensemble_qnet_from_different_save_path(
             n_state,
             n_action,

@@ -358,11 +358,11 @@ _Avoid_: 熔断器、强平保护
 _Avoid_: 聚合结果、汇总 CSV
 
 **Detail CSV**:
-可选的逐时间步交易动作明细 CSV，记录每步的仓位变化、手续费、滑点和账户价值。
+可选的逐时间步交易动作明细，将行情、已执行仓位和账户损益记录在同一行中，是 Agent 形态分析的逐步事实来源。
 _Avoid_: 明细 CSV、交易明细
 
 **行为轨迹 (Action Trajectory)**:
-单个 valid segment 在给定初始动作下，agent 逐 step 产生的 (执行后仓位, 标记价格, 动作, 累计已实现盈亏) 序列；是策略形态分类器的原料，由 (label, epoch, bin_index, contract, df_seq, initial_action) 唯一确定，对应 Detail CSV 中按 (标签, 分箱索引, 初始动作, 数据文件) 分组的一组连续行。
+单个 valid segment 在给定初始动作下，agent 逐 step 产生的执行前后仓位、标记价格、动作及已实现/浮动盈亏序列；是策略形态分类器的原料，由 (label, epoch, bin_index, contract, df_seq, initial_action) 唯一确定。
 _Avoid_: 轨迹、trajectory（不明确时）、episode、rollout
 
 **市场动态片段 (Market Dynamic Segment)**:
@@ -370,24 +370,48 @@ slice_model 按 slope 标签切换点切出的连续同质行情区间文件（d
 _Avoid_: 片段、segment 文件（不明确时）、label 切片
 
 **K 线形态 (Kline Pattern)**:
-行情侧二阶形态分类，在 segment 内按 N=20 步不重叠窗口识别。7 类：突破即时型 (KT1)、回调型 (KT2)、加速型 (KT3)、V 反转型 (KM1)、箱体型 (KM2)、背离型 (KM3)、涨跌停型 (KX1)。由 K 线形态分类器读 mark_price/volume 序列独立判定，与 agent 策略正交。KX1 专用于 label_0/label_6 涨跌停 segment（trajectory 极短，median=3 步，不参与 6 类滑窗识别）；label_1~label_5 使用 N=20 步不重叠窗口，不识别 KX1。单窗口单选，命中顺序 KX1→KM1→KT2→KT1→KT3→KM2→KM3→未分类（KT2 优先于 KT1 以保留回调形态）。
+行情侧的二阶形态分类，用价格与成交量描述突破、回调、加速、反转、箱体、背离或涨跌停状态；单个形态识别窗口只属于一种 K 线形态。
 _Avoid_: K 线形状、行情形态（不明确时）、价格形态
 
 **策略二阶形态 (Strategy Second-order Pattern)**:
-agent 侧二阶形态分类，从行为轨迹整体（position_after + mark_price + volume + cumulative_realized_pnl）识别 agent 动作与行情的关系模式，而非纯动作形状。6 类：突破即时型 (ST1)、回调加仓型 (ST2)、金字塔递增型 (ST3)、硬边界抄底型 (SM1)、网格微调型 (SM2)、背离增强型 (SM3)。由策略形态分类器独立判定，与 K 线形态正交。单窗口多选，一个窗口可命中多类（如 ST1+SM3：阶跃动作 + 背离过滤不互斥）；盈亏重复计入各命中行，聚合时按形态 distinct 计算总盈亏（不跨形态求和，避免放大）。
+Agent 侧的二阶形态分类，描述已执行仓位变化与行情事件的关系，而不是纯动作形状；单个形态识别窗口可同时属于多种策略二阶形态。
 _Avoid_: 动作形态、策略类型（不明确时）、agent 类型
 
+**Agent 形态候选全集 (Agent Pattern Candidate Universe)**:
+存在逐步 Detail CSV 的全部 `(label, epoch, bin_index)` Agent triple 集合；当前已选 Agent 是该全集的标记子集，不是分类输入边界。
+_Avoid_: 已选 Agent 集合、selection manifest 内容
+
+**Detail 覆盖率 (Detail Coverage)**:
+可用行为轨迹相对应评估 checkpoint 与已选 Agent 集合的完整程度。
+_Avoid_: 候选全集大小、训练 epoch 完整性
+
+**Initial-action 情景 (Initial-action Scenario)**:
+同一 Agent triple 在相同行情上以某个初始动作启动的反事实回测情景；情景是否存在取决于是否完成了该行为轨迹，与它是否命中某个形态无关。不同 Initial-action 情景不是可相加的独立账户。
+_Avoid_: 独立账户、独立行情样本、可累加回测
+
 **Agent 形态明细表 (Agent Pattern Detail Table)**:
-按 (label, epoch, bin_index, K 线形态, 策略形态, 盈亏) 组织的明细数据，读法为"哪个 agent (epoch, bin) 在哪个 label 的哪个 K 线形态下用哪种策略盈利如何"。K 线形态与策略形态是两个独立维度，构成 7×6 组合空间（K 线含 KX1）。一个 agent triple 可命中多行（跨窗口 + 策略形态多选），天然支持"一个 agent 属于多种类型"。盈亏归因：每行盈亏 = 该窗口内已实现 PnL 变化 + 浮动 PnL 变化；K 线形态单选不重复计入，策略形态多选重复计入各命中行，聚合时按形态 distinct 计算总盈亏。
+以形态识别窗口为粒度的明细数据，每个 window_id 恰好一行，读法为"哪个 agent 在哪个 label 的哪个 K 线形态下用哪些策略盈利如何"。K 线形态保存为单元素数组，策略形态保存为多选数组，窗口 `gross_pnl` / `net_pnl` 各只保存一次。
 _Avoid_: agent 分类表、形态对照表
 
+**Agent 形态展开表 (Agent Pattern Expanded Table)**:
+从 Agent 形态明细表展开两个形态数组得到的分析数据，每个 (window_id, K 线形态, 策略形态) 组合恰好一行，用于单形态与 7×6 组合分析。
+_Avoid_: 明细表（不明确数据粒度时）、扁平表
+
 **形态识别窗口 (Pattern Recognition Window)**:
-label_1~label_5 segment 内按 N=20 步、步长 N（不重叠）切分的连续区间，是 K 线形态与策略形态识别及盈亏归因的基本单元。不重叠设计避免盈亏重复计入，每窗口的盈亏 = 窗口内已实现 PnL 变化 + 浮动 PnL 变化。label_0/label_6 不使用窗口（trajectory 中位数 3 步，直接标记 KX1）。
+K 线形态、策略二阶形态与窗口盈亏共享的最小归因单元。
 _Avoid_: 滑窗、识别窗口（不明确时）、N 窗口
+
+**涨跌停事件窗口 (Limit-state Event Window)**:
+label_0/label_6 中由整条行为轨迹构成的形态识别窗口；其 K 线形态固定为 KX1。
+_Avoid_: 短窗口、涨跌停轨迹（不明确时）
 
 **Execution Metrics**:
 环境每步暴露的真实手续费、已实现利润和滑点指标，供测试明细和诊断使用。
 _Avoid_: 执行指标、交易指标
+
+**窗口毛盈亏 / 净盈亏 (Window Gross / Net PnL)**:
+窗口毛盈亏 `gross_pnl` 等于窗口内已实现 PnL 总和加浮动 PnL 的窗口边界变化；窗口净盈亏 `net_pnl` 再扣除窗口内手续费，是形态绩效聚合的默认口径。滑点已体现在实际成交价值与已实现 PnL 中，不得重复扣除。
+_Avoid_: 盈亏值（未说明手续费口径时）、净盈亏再扣滑点
 
 **Trading Process Feature (交易过程特征)**:
 Agent 侧动作执行后的实时交易状态输入，由归一化 signed position exposure、当前持仓的收益率/最大回撤率和当前持仓时长组成。
@@ -422,6 +446,18 @@ _Avoid_: 实验名、实验标识
 _Avoid_: 单合约遴选、test 集合遴选
 
 ### Trading Actions
+
+**仓位档位 (Position Level)**:
+由 max_holding_number 和 position_choices 启动参数按交易环境公式生成的完整有序 signed position 集合，负值为空头、0 为空仓、正值为多头；形态分类器显式消费同一集合。
+_Avoid_: 固定五档、观测到的仓位集合、仓位数量（不明确是档位还是持仓量时）
+
+**同向加仓 (Same-direction Position Increase)**:
+执行前后仓位同号且在仓位档位集合中向更大绝对风险暴露移动的调仓；多头和空头按绝对仓位对称判定。从 0 到非 0 是开仓，仓位变号是反手，均不属于同向加仓。
+_Avoid_: 仓位数值增加、开仓（不明确时）、加多仓
+
+**盈利后同向加仓 (Profitable Same-direction Position Increase)**:
+执行同向加仓前当前持仓的浮动盈亏大于 0；是 ST3 金字塔递增型的判定事件，多头与空头使用相同的绝对仓位规则。
+_Avoid_: 盈利加仓（不明确持仓方向时）、累计已实现盈亏加仓
 
 **Reverse Position (反手)**:
 在一步内先平掉当前仓位再反向开仓的动作；持多时先平多后开空，持空时先平空后开多；采用 best-effort 语义，平仓一定成功，反向开仓可能因保证金不足或深度不足而失败。

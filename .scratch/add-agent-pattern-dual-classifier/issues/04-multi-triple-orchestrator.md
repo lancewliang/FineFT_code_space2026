@@ -1,28 +1,21 @@
-# 04 — 多 triple orchestrator:从完整 Detail CSV 生成全明细表
+# 04 — 全候选窗口产物与完整性契约
 
-**What to build:** 把 01 的单 triple orchestrator 扩展到遍历完整 Detail CSV 的所有 `(label, epoch, bin_index)` triple × 所有 segment 文件,输出完整 `agent_pattern_detail_table.csv`。
+**What to build:** 将完整双分类器接入薄 orchestrator，对多 epoch 的 Agent Pattern Candidate Universe 生成可追溯、确定、可审计的窗口表、展开表、Detail Coverage 报告和分析 manifest。
 
-端到端行为:用户给出一个 `trading_action_detail_epoch_*.csv` 路径,脚本读它 → 按 `(标签, 分箱索引, 数据文件)` 分组得到所有 trajectory → 对每个 trajectory:label ∈ {0,6} 直接标 KX1 产出一行 / label ∈ {1..5} 按 N=20 不重叠切窗,每窗口跑两个完整分类器(02/03 已实现) → 产出明细表行(K线形态单选 1 个,策略形态多选 N 个 → 该窗口产出 1×N 行) → 写出 CSV。
-
-关键正确性:
-- 盈亏归因:每行盈亏 = 窗口内 `(cumulative_realized_pnl[end]-[start]) + (unrealized_pnl[end]-[start])`。
-- K 线形态单选 → 一个窗口的盈亏只归到其唯一 K 线形态行,不重复计入。
-- 策略形态多选 → 一个窗口的盈亏重复计入各命中策略形态行(同一窗口盈亏出现在多行)。
-- label_0/6 短路:不进窗口识别,直接标 KX1,盈亏仍按 trajectory 整体算(或按窗口?需在实现时确认——label_0/6 trajectory 极短 median=3,整体算即可)。
-- 明细表行数符合预期(label_1~5 窗口数 × 命中策略形态数 + label_0/6 trajectory 数)。
-
-输入数据:真实 Detail CSV 位于 `analysis_result/DiHFT/low_level/<dataset>/<experiment>/trading_action_detail_epoch_*.csv`(n≈366k 行/triple 级别)。输出 `agent_pattern_detail_table.csv` 同目录。
-
-**Blocked by:** 03 — 完整 策略形态分类器(顺序执行:需要两个分类器都完整才能 scale out)
+**Blocked by:** 03 — 补全策略二阶形态分类器
 
 **Status:** ready-for-agent
 
-- [ ] orchestrator 扩展:遍历完整 Detail CSV 的所有 `(label, epoch, bin_index)` triple × 所有 segment
-- [ ] trajectory 分组:按 `(标签, 分箱索引, 数据文件)` 分组,`initial_action` 进分组键但不进分类输出
-- [ ] label_0/6 短路:直接标 KX1,不切窗
-- [ ] label_1~5 切 N=20 不重叠窗口,每窗口调两个完整分类器
-- [ ] K 线形态单选 + 策略形态多选的行展开逻辑(1 个窗口 → 1×N 行)
-- [ ] 盈亏归因正确(已实现+浮动 PnL 变化)
-- [ ] 输出 `agent_pattern_detail_table.csv`,列含 `label, epoch, bin_index, K线形态, 策略形态, 盈亏` + 窗口起止 step
-- [ ] smoke test:真实 Detail CSV 样本上跑通,行数符合预期、盈亏列非空
-- [ ] 语义验证 smoke:K 线形态单选不重复(同窗口只 1 个 K 线形态)、策略形态多选重复(同窗口盈亏出现在多行)
+- [ ] 提供独立的 model root、Selection Manifest 和 output directory 输入，Selection Manifest 仅标记已选 Agent，不过滤候选。
+- [ ] Selection Manifest 在匹配前校验数据集/实验逻辑归属、7 个 Label 唯一完整性、epoch 路径一致性和 checkpoint 存在性，且不依赖机器绝对路径前缀。
+- [ ] 输入表头规范化为唯一英文内部 schema；缺少原始 volume、合约或 sidecar 时提示重生成 Detail，不使用派生 volume 替代。
+- [ ] 行为轨迹按逻辑身份分组并以 timestep 升序排序；timestep 必须从 0 开始、唯一、连续且非负，CSV 全局行序不影响结果。
+- [ ] 每个已观测 `(epoch, label, bin_index, contract, df_path)` 都具有 sidecar 推导的全部期望 Initial-action Detail 行为轨迹；任一轨迹缺失时立即失败。
+- [ ] 普通 Label 只产生长度 20、步长 20 的完整窗口；尾部丢弃步数和 gross/net PnL 按行为轨迹写入 Detail Coverage。
+- [ ] 涨跌停 Label 每条轨迹恰好产生一个 KX1 事件窗口；即使策略未分类也保留该窗口。
+- [ ] 窗口表包含已约定追溯字段、单选 K 线 JSON 数组、多选策略 JSON 数组和唯一 gross/net PnL；每个 `window_id` 恰好一行。
+- [ ] 展开表以 `(window_id, kline_pattern, strategy_pattern)` 为唯一键，继承 Selection 和全部追溯字段。
+- [ ] `window_id` 仅由已确认的逻辑窗口身份生成，相对数据路径使用规范 POSIX 形式，不纳入 Selection、形态、PnL、阈值或绝对目录。
+- [ ] Detail Coverage 区分未选 epoch 缺失告警、已选 triple 缺失失败、epoch 身份冲突和重复 Detail 失败。
+- [ ] 分析 manifest 记录阈值/窗口配置、缺少 Detail 的 checkpoint，并为所有输入与输出文件记录逻辑相对路径、字节数和 SHA-256。
+- [ ] 端到端 smoke test 覆盖多 epoch、全候选保留、Selection 标记、乱序稳定性、timestep 异常、Initial-action 缺失、Selection 错配、epoch 冲突、PnL 守恒和文件指纹。
