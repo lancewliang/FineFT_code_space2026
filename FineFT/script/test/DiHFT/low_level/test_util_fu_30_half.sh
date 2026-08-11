@@ -1,5 +1,5 @@
 #!/bin/bash
-function run_ddqn_context {
+function run_test_agent_index {
     local dataset_name=$1
     local max_holding_number=$2
     local epoch_start=$3
@@ -15,11 +15,6 @@ function run_ddqn_context {
     log_dir="log/DiHFT/${dataset_name}/low_level/test/${experiment_name}"
     mkdir -p "${log_dir}"
     export PYTHONPATH="${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
-    local model_root="${result_path}/${dataset_name}/${experiment_name}/weights_advantage_pretrain"
-    local valid_root="${base_path}/${dataset_name}/valid"
-    local state_features_path="${base_path}/${dataset_name}/state_features.npy"
-    local maintenance_margin_path="${base_path}/${dataset_name}/maintenance_margin_ratio_dict.npy"
-    local output_dir="analysis_result/DiHFT/low_level/${dataset_name}/${experiment_name}/test_agent_index"
     # 保存PID的数组
     pids=()
     local failed=0
@@ -62,31 +57,72 @@ function run_ddqn_context {
         return 1
     fi
 
-    python FineFT/RL/DiHFT/low_level/aggregate_agents_indexs.py \
-        --model_root "${model_root}" \
-        --valid_root "${valid_root}" \
+    echo "${dataset_name} ${experiment_name} ${max_holding_number} testing completed successfully."
+}
+
+function run_test_agents_type_index {
+    local dataset_name=$1
+    local epoch_start=$2
+    local epoch_end=$3
+    local experiment_name=$4
+    local result_path=${RESULT_PATH:-result/DiHFT/low_level}
+    ROOTPATH=${ROOTPATH:-$(pwd)}
+    cd "$ROOTPATH"
+    # 检查并创建日志目录
+    log_dir="log/DiHFT/${dataset_name}/low_level/test/${experiment_name}"
+    mkdir -p "${log_dir}"
+    export PYTHONPATH="${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
+    local result_root="${result_path}/${dataset_name}/${experiment_name}"
+    local analysis_root="analysis_result/DiHFT/low_level/${dataset_name}/${experiment_name}"
+    local output_dir="${analysis_root}/test_agent_index"
+    mkdir -p "${output_dir}"
+    echo "${dataset_name} ${experiment_name} aggregation started."
+    export PYTHONUNBUFFERED=1
+    python -u FineFT/RL/DiHFT/low_level/test_agents_type_index.py \
+        --result_root "${result_root}" \
         --output_dir "${output_dir}" \
-        --state_features_path "${state_features_path}" \
-        --maintenance_margin_path "${maintenance_margin_path}" \
-        --max_holding_number "${max_holding_number}" \
-        --position_choices 5 \
-        --ensemble_number "${ensemble_number}" \
-        --order_book_depth 5 \
-        --initial_wallet_balance 10000 \
-        --transaction_cost 0.0004 \
-        --short_estimated_rate 0 \
-        --long_estimated_rate 0 \
-        --allow_reverse_position \
-        --dataset_name "${dataset_name}" \
-        --experiment_name "${experiment_name}" \
-        --epoch_start "${epoch_start}" \
-        --epoch_end "${epoch_end}" \
         >"${log_dir}/aggregate.log" 2>&1 || {
             echo "Failed to aggregate epoch detail CSVs. See ${log_dir}/aggregate.log." >&2
             return 1
         }
 
-    echo "${dataset_name} ${experiment_name} ${max_holding_number} testing and aggregation completed successfully."
+    echo "${dataset_name} ${experiment_name} aggregation completed successfully."
+}
+
+function run_test_agents_type_index2 {
+    local dataset_name=$1
+    local max_holding_number=$2
+    local epoch_start=$3
+    local epoch_end=$4
+    local experiment_name=$5
+    local result_path=${RESULT_PATH:-result/DiHFT/low_level}
+    ROOTPATH=${ROOTPATH:-$(pwd)}
+    cd "$ROOTPATH"
+    # 检查并创建日志目录
+    log_dir="log/DiHFT/${dataset_name}/low_level/test/${experiment_name}"
+    mkdir -p "${log_dir}"
+    export PYTHONPATH="${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
+    echo "${dataset_name} ${experiment_name} type 2 aggregation started."
+    export PYTHONUNBUFFERED=1
+    python -u FineFT/RL/DiHFT/low_level/test_agents_type_index2.py \
+        --result_path "${result_path}" \
+        --dataset_name "${dataset_name}" \
+        --experiment_name "${experiment_name}" \
+        --epoch_start "${epoch_start}" \
+        --epoch_end "${epoch_end}" \
+        --max_holding_number "${max_holding_number}" \
+        >>"${log_dir}/aggregate.log" 2>&1 || {
+            echo "Failed to aggregate epoch detail CSVs (type 2). See ${log_dir}/aggregate.log." >&2
+            return 1
+        }
+
+    echo "${dataset_name} ${experiment_name} type 2 aggregation completed successfully."
+}
+
+function run_ddqn_context {
+    # run_test_agent_index "$@" || return 1
+    run_test_agents_type_index "$1" "$3" "$4" "$6" || return 1
+    run_test_agents_type_index2 "$1" "$2" "$3" "$4" "$6" || return 1
 }
 
 function run_ddqn_average {
