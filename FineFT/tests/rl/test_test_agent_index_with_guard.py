@@ -208,8 +208,13 @@ def _write_guard_slice(
     ).to_feather(label_dir / filename)
 
 
-def _write_real_env_guard_slice(tmp_path: Path) -> None:
-    mark_prices = np.array([100.0, 97.0, 97.0])
+def _write_real_env_guard_slice(tmp_path: Path, *, limit_side: str) -> None:
+    is_limit_down = limit_side == "down"
+    mark_prices = np.array(
+        [100.0, 97.0, 97.0]
+        if is_limit_down
+        else [100.0, 103.0, 103.0]
+    )
     row_count = len(mark_prices)
     data = {
         "timestamp": pd.date_range("2026-01-01", periods=row_count, freq="min"),
@@ -220,14 +225,26 @@ def _write_real_env_guard_slice(tmp_path: Path) -> None:
         "funding_timestamp": pd.date_range(
             "2026-01-01", periods=row_count, freq="min"
         ),
-        "is_limit_down": [False, True, True],
-        "is_limit_up": [False, False, False],
-        "limit_up_single_sided_ratio": np.zeros(row_count),
-        "limit_down_single_sided_ratio": [0.0, 1.0, 1.0],
+        "is_limit_down": [False, is_limit_down, is_limit_down],
+        "is_limit_up": [False, not is_limit_down, not is_limit_down],
+        "limit_up_single_sided_ratio": (
+            np.zeros(row_count) if is_limit_down else [0.0, 1.0, 1.0]
+        ),
+        "limit_down_single_sided_ratio": (
+            [0.0, 1.0, 1.0] if is_limit_down else np.zeros(row_count)
+        ),
         "limit_up_ask_depth_ratio_5": np.zeros(row_count),
         "limit_down_bid_depth_ratio_5": np.zeros(row_count),
-        "UpperLimitPrice": np.full(row_count, 110.0),
-        "LowerLimitPrice": np.array([90.0, 97.0, 97.0]),
+        "UpperLimitPrice": (
+            np.full(row_count, 110.0)
+            if is_limit_down
+            else np.array([110.0, 103.0, 103.0])
+        ),
+        "LowerLimitPrice": (
+            np.array([90.0, 97.0, 97.0])
+            if is_limit_down
+            else np.full(row_count, 90.0)
+        ),
     }
     for level in range(1, 26):
         data[f"ask{level}_price"] = mark_prices + level
@@ -654,17 +671,37 @@ def test_invalid_discovered_label_mapping_fails_before_model_construction(
         guarded.weighted_trader(args)
 
 
-def test_real_env_limit_down_can_prevent_guard_stop_loss_close(tmp_path):
+@pytest.mark.parametrize(
+    (
+        "limit_side",
+        "semantic",
+        "proposed_actions",
+        "initial_action",
+        "expected_position",
+    ),
+    [
+        ("down", "weak_down", [3, 4], 3, 2.0),
+        ("up", "weak_up", [1, 0], 1, -2.0),
+    ],
+)
+def test_real_env_price_limit_can_prevent_guard_stop_loss_close(
+    tmp_path,
+    limit_side,
+    semantic,
+    proposed_actions,
+    initial_action,
+    expected_position,
+):
     from RL.DiHFT.low_level import test_agent_index_with_guard as guarded
 
-    _write_real_env_guard_slice(tmp_path)
+    _write_real_env_guard_slice(tmp_path, limit_side=limit_side)
     trader = _make_guarded_trader(
         guarded,
         tmp_path,
-        semantic="weak_down",
-        proposed_actions=[3, 4],
+        semantic=semantic,
+        proposed_actions=proposed_actions,
         weak_ratio=0.0,
-        initial_action=3,
+        initial_action=initial_action,
     )
     trader.max_holding_number = 4
     trader.position_list = [-4.0, -2.0, 0.0, 2.0, 4.0]
@@ -674,5 +711,10 @@ def test_real_env_limit_down_can_prevent_guard_stop_loss_close(tmp_path):
 
     detail = pd.read_csv(tmp_path / "trading_action_detail_epoch_1.csv")
     assert detail["guard_decision"].tolist() == ["allowed", "stop_loss_close"]
-    assert detail["动作"].tolist() == [3, 2]
-    assert detail["执行后仓位"].tolist() == [2.0, 2.0]
+    assert detail["proposed_action"].tolist() == proposed_actions
+    assert detail["动作"].tolist() == [initial_action, 2]
+    assert detail["opposed_action_count"].tolist() == [0, 0]
+    assert detail["opposed_action_capacity"].tolist() == [0, 0]
+    assert detail["current_holding_opening_price"].tolist() == [100.0, 100.0]
+    assert detail["current_holding_average_price"].tolist() == [100.0, 100.0]
+    assert detail["执行后仓位"].tolist() == [expected_position, expected_position]
