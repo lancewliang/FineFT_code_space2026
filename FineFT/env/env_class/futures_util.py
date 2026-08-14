@@ -20,6 +20,9 @@ class WalletChangeResult:
     slippage_step: float
     commission_fee_step: float = 0.0
     realized_pnl_step: float = 0.0
+    opened_quantity: float = 0.0
+    opened_value: float = 0.0
+    opening_fee: float = 0.0
 
     def legacy_tuple(self):
         return (
@@ -290,6 +293,9 @@ def change_of_wallet(
                         slippage_step=close_result.slippage_step + open_result.slippage_step,
                         commission_fee_step=close_result.commission_fee_step + open_result.commission_fee_step,
                         realized_pnl_step=close_result.realized_pnl_step + open_result.realized_pnl_step,
+                        opened_quantity=open_result.opened_quantity,
+                        opened_value=open_result.opened_value,
+                        opening_fee=open_result.opening_fee,
                     )
                 elif previous_position < 0 and current_position > 0:
                     # Close short position to 0
@@ -370,6 +376,9 @@ def change_of_wallet(
                         slippage_step=close_result.slippage_step + open_result.slippage_step,
                         commission_fee_step=close_result.commission_fee_step + open_result.commission_fee_step,
                         realized_pnl_step=close_result.realized_pnl_step + open_result.realized_pnl_step,
+                        opened_quantity=open_result.opened_quantity,
+                        opened_value=open_result.opened_value,
+                        opening_fee=open_result.opening_fee,
                     )
         elif max(current_position, previous_position) > 0:
             # 多头情况，分close long 和 open long
@@ -650,6 +659,11 @@ def open_short_position(
         slippage_step=slippage,
         commission_fee_step=commission_fee if current_position != previous_position else 0,
         realized_pnl_step=0,
+        opened_quantity=(
+            open_short_position if current_position != previous_position else 0.0
+        ),
+        opened_value=open_value if current_position != previous_position else 0.0,
+        opening_fee=commission_fee if current_position != previous_position else 0.0,
     )
 
 
@@ -787,6 +801,11 @@ def open_long_position(
         slippage_step=slippage,
         commission_fee_step=commission_fee if current_position != previous_position else 0,
         realized_pnl_step=0,
+        opened_quantity=(
+            open_long_position if current_position != previous_position else 0.0
+        ),
+        opened_value=open_value if current_position != previous_position else 0.0,
+        opening_fee=commission_fee if current_position != previous_position else 0.0,
     )
 
 
