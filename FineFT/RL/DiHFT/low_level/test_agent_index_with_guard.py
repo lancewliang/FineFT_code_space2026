@@ -7,6 +7,7 @@ import os
 import random
 import argparse
 import json
+import math
 import re
 import numpy as np
 import torch
@@ -28,6 +29,12 @@ from env.env_class.futures_util import (
     map_action_to_position_leverage,
 )
 from env.env_class.policy_util import get_close_element
+from RL.DiHFT.harness.action_guard import (
+    GuardDecision,
+    LABEL_ACTION_SEMANTIC_METADATA,
+    RollingLabelActionGuard,
+    SUPPORTED_LABEL_ACTION_SEMANTICS,
+)
 import copy
 
 
@@ -183,6 +190,91 @@ parser.add_argument(
     action="store_true",
     help="allow direct position reversal from long to short or vice versa",
 )
+parser.add_argument(
+    "--label_action_semantics",
+    type=str,
+    required=True,
+    help="comma-separated label:semantic mapping for discovered validation labels",
+)
+parser.add_argument("--label_action_window_size", type=int, default=10)
+parser.add_argument("--weak_label_opposed_ratio", type=float, default=0.40)
+parser.add_argument("--strong_label_opposed_ratio", type=float, default=0.20)
+parser.add_argument("--opposed_holding_stop_loss_ratio", type=float, default=0.03)
+
+
+def resolve_label_action_semantics(
+    discovered_labels: list[str], mapping_text: str
+) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    duplicate_labels: list[str] = []
+    malformed_items: list[str] = []
+    for raw_item in mapping_text.split(","):
+        item = raw_item.strip()
+        if item.count(":") != 1:
+            malformed_items.append(item)
+            continue
+        label, semantic = (part.strip() for part in item.split(":", 1))
+        if not label or not semantic:
+            malformed_items.append(item)
+            continue
+        if label in mapping:
+            duplicate_labels.append(label)
+        mapping[label] = semantic
+
+    discovered = set(discovered_labels)
+    configured = set(mapping)
+    errors = []
+    if malformed_items:
+        errors.append(f"malformed items: {sorted(malformed_items)}")
+    if duplicate_labels:
+        errors.append(f"duplicate labels: {sorted(set(duplicate_labels))}")
+    missing_labels = discovered - configured
+    if missing_labels:
+        errors.append(f"missing labels: {sorted(missing_labels)}")
+    unknown_labels = configured - discovered
+    if unknown_labels:
+        errors.append(f"unknown labels: {sorted(unknown_labels)}")
+    unsupported_semantics = {
+        semantic
+        for semantic in mapping.values()
+        if semantic not in SUPPORTED_LABEL_ACTION_SEMANTICS
+    }
+    if unsupported_semantics:
+        errors.append(f"unsupported semantics: {sorted(unsupported_semantics)}")
+    if errors:
+        raise ValueError("invalid --label_action_semantics; " + "; ".join(errors))
+    return mapping
+
+
+def validate_guard_cli_args(args: argparse.Namespace) -> None:
+    if args.label_action_window_size <= 0:
+        raise ValueError("--label_action_window_size must be greater than 0")
+    for name in ("weak_label_opposed_ratio", "strong_label_opposed_ratio"):
+        ratio = getattr(args, name)
+        if not 0 <= ratio <= 1:
+            raise ValueError(f"--{name} must be between 0 and 1")
+    if args.opposed_holding_stop_loss_ratio < 0:
+        raise ValueError(
+            "--opposed_holding_stop_loss_ratio must be greater than or equal to 0"
+        )
+
+
+def label_action_capacity(
+    semantic: str,
+    *,
+    window_size: int,
+    weak_ratio: float,
+    strong_ratio: float,
+) -> int:
+    _, quota_class = LABEL_ACTION_SEMANTIC_METADATA[semantic]
+    ratio = {
+        "weak": weak_ratio,
+        "strong": strong_ratio,
+        "limit": 0.0,
+        "sideways": 1.0,
+    }[quota_class]
+    return math.floor(window_size * ratio)
+
 
 def build_serial_model_path(result_path, dataset_name, experiment_name):
     return os.path.join(
@@ -400,25 +492,27 @@ def _personal_state_from_env(test_env):
 
 def build_trading_detail_row(
     *,
-    label,
-    df_path,
-    initial_action,
-    bin_index,
-    timestep,
-    test_df,
-    action,
-    target_position,
-    target_leverage,
-    position_before,
-    leverage_before,
-    test_env,
-    info,
-    step_reward,
-    action_change_step,
-    trade_count_step,
-    cumulative_action_change_count,
-    cumulative_trade_count,
-):
+    label: str,
+    df_path: str,
+    initial_action: int,
+    bin_index: int,
+    timestep: int,
+    test_df: pd.DataFrame,
+    proposed_action: int,
+    final_action: int,
+    guard_result: GuardDecision,
+    target_position: float,
+    target_leverage: float,
+    position_before: float,
+    leverage_before: float,
+    test_env: object,
+    info: dict[str, object],
+    step_reward: float,
+    action_change_step: int,
+    trade_count_step: int,
+    cumulative_action_change_count: int,
+    cumulative_trade_count: int,
+) -> dict[str, object]:
     state_after = _personal_state_from_env(test_env)
     market_fields = _market_fields(test_df, timestep)
     mark_price = market_fields.get("mark_price", np.nan)
@@ -426,14 +520,18 @@ def build_trading_detail_row(
     unrealized_pnl = state_after["unrealized_pnl"]
     position_after = state_after["position"]
     margin_balance = wallet_balance + unrealized_pnl
-    row = {
+    row: dict[str, object] = {
         "label": label,
         "df_path": df_path,
         "initial_action": initial_action,
         "bin_index": bin_index,
         "timestep": timestep,
         **market_fields,
-        "action": action,
+        "proposed_action": proposed_action,
+        "action": final_action,
+        "guard_decision": guard_result.reason,
+        "opposed_action_count": guard_result.opposed_action_count,
+        "opposed_action_capacity": guard_result.opposed_action_capacity,
         "target_position": target_position,
         "target_leverage": target_leverage,
         "position_before": position_before,
@@ -457,6 +555,12 @@ def build_trading_detail_row(
         "notional_asset_value": mark_price * position_after,
         "cash_balance": wallet_balance,
         "total_value": margin_balance,
+        "current_holding_opening_price": info[
+            "current_holding_opening_price"
+        ],
+        "current_holding_average_price": info[
+            "current_holding_average_price"
+        ],
     }
     return row
 
@@ -475,6 +579,8 @@ def seed_torch(seed):
 class weighted_trader:
     def __init__(self, args):
 
+        validate_guard_cli_args(args)
+
         # device
         if torch.cuda.is_available():
             self.device = "cuda"
@@ -491,6 +597,11 @@ class weighted_trader:
         self.base_path = args.base_path
         self.dataset_name = args.dataset_name
         self.valid_data_path = os.path.join(self.base_path, self.dataset_name, "valid")
+        self.df_entries = _iter_valid_feather_files(self.valid_data_path)
+        self.label_action_semantics = resolve_label_action_semantics(
+            sorted({entry["label"] for entry in self.df_entries}),
+            args.label_action_semantics,
+        )
         self.tech_indicator_list = np.load(
             os.path.join(self.base_path, self.dataset_name, "state_features.npy")
         )
@@ -521,6 +632,12 @@ class weighted_trader:
         self.short_estimated_rate = args.short_estimated_rate
         self.transcation_cost = args.transcation_cost
         self.allow_reverse_position = getattr(args, "allow_reverse_position", False)
+        self.label_action_window_size = args.label_action_window_size
+        self.weak_label_opposed_ratio = args.weak_label_opposed_ratio
+        self.strong_label_opposed_ratio = args.strong_label_opposed_ratio
+        self.opposed_holding_stop_loss_ratio = (
+            args.opposed_holding_stop_loss_ratio
+        )
         self.early_stop = args.early_stop
         self.initial_wallet_balance = args.initial_wallet_balance
         self.initial_margin = args.initial_margin
@@ -608,7 +725,11 @@ class weighted_trader:
         overall_result = []
         trading_detail_rows = []
         self.eval_net.eval()
-        df_entries = _iter_valid_feather_files(self.valid_data_path)
+        df_entries = (
+            self.df_entries
+            if hasattr(self, "df_entries")
+            else _iter_valid_feather_files(self.valid_data_path)
+        )
         label_list = sorted({entry["label"] for entry in df_entries})
         for label in label_list:
             print('start label {}'.format(label))
@@ -682,6 +803,20 @@ class weighted_trader:
                         limit_up_list = []
                         limit_down_list = []
                         s, info = test_env.reset()
+                        semantic = self.label_action_semantics[label]
+                        action_guard = RollingLabelActionGuard(
+                            semantic=semantic,
+                            window_size=self.label_action_window_size,
+                            capacity=label_action_capacity(
+                                semantic,
+                                window_size=self.label_action_window_size,
+                                weak_ratio=self.weak_label_opposed_ratio,
+                                strong_ratio=self.strong_label_opposed_ratio,
+                            ),
+                            stop_loss_ratio=self.opposed_holding_stop_loss_ratio,
+                            leverage_choices=self.leverage_choices,
+                            position_list=self.position_list,
+                        )
                         done = False
                         reward_sum = 0
                         reward_list = []
@@ -698,17 +833,37 @@ class weighted_trader:
                             leverage_before = getattr(
                                 test_env, "leverage", initial_leverage
                             )
-                            a = self.act_test(s, info, bin_index)
+                            proposed_action = self.act_test(s, info, bin_index)
+                            guard_result = action_guard.apply(
+                                proposed_action,
+                                current_action=int(info["previous_action"]),
+                                current_position=position_before,
+                                current_mark_price=float(
+                                    getattr(
+                                        test_env,
+                                        "current_markprice",
+                                        self.test_df["mark_price"].iloc[timestep],
+                                    )
+                                ),
+                                current_holding_opening_price=float(
+                                    info["current_holding_opening_price"]
+                                ),
+                            )
+                            final_action = guard_result.action
                             target_position, target_leverage = (
                                 map_action_to_position_leverage(
-                                    a,
+                                    final_action,
                                     self.leverage_choices,
                                     self.position_list,
                                 )
                             )
-                            action_change_step = int(a != previous_action)
-                            turn_over += np.abs(a - previous_action) / 4
-                            s_, r, done, info = test_env.step(a)
+                            action_change_step = int(
+                                final_action != previous_action
+                            )
+                            turn_over += (
+                                np.abs(final_action - previous_action) / 4
+                            )
+                            s_, r, done, info = test_env.step(final_action)
                             position_after = getattr(
                                 test_env, "position", position_before
                             )
@@ -730,7 +885,9 @@ class weighted_trader:
                                         bin_index=bin_index,
                                         timestep=timestep,
                                         test_df=self.test_df,
-                                        action=a,
+                                        proposed_action=proposed_action,
+                                        final_action=final_action,
+                                        guard_result=guard_result,
                                         target_position=target_position,
                                         target_leverage=target_leverage,
                                         position_before=position_before,
@@ -744,7 +901,7 @@ class weighted_trader:
                                         cumulative_trade_count=cumulative_trade_count,
                                     )
                                 )
-                            action_list.append(a)
+                            action_list.append(final_action)
                             reward_list.append(r)
                             position_after_list.append(position_after)
                             is_limit_up, is_limit_down = _detect_step_limit_states(self.test_df, timestep)
@@ -752,7 +909,7 @@ class weighted_trader:
                             limit_down_list.append(is_limit_down)
                             s = s_
                             reward_sum += r
-                            previous_action = a
+                            previous_action = final_action
                         initial_margin_history = test_env.initial_margin_history
                         wallet_balance_history = test_env.wallet_balance_history
                         unrealized_pnl_history = test_env.unrealized_pnl_history
@@ -911,6 +1068,19 @@ class weighted_trader:
                         single_label_initial_action_bin_index_limit_down_reverse_long_ratio_result.append(limit_down_reverse_long_ratio)
                     _overall_result = {
                             "label": label,
+                            "label_action_semantic": semantic,
+                            "label_action_window_size": (
+                                self.label_action_window_size
+                            ),
+                            "weak_label_opposed_ratio": (
+                                self.weak_label_opposed_ratio
+                            ),
+                            "strong_label_opposed_ratio": (
+                                self.strong_label_opposed_ratio
+                            ),
+                            "opposed_holding_stop_loss_ratio": (
+                                self.opposed_holding_stop_loss_ratio
+                            ),
                             "initial_action": initial_action,
                             "bin_index": bin_index,
                             "contract": single_label_initial_action_bin_index_contract_result,
