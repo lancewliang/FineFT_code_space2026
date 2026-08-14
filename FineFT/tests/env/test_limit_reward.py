@@ -49,7 +49,7 @@ def test_disabled_by_default():
 
 def test_limit_up_reward_and_penalty():
     df = _make_dummy_df(num_rows=5, include_limit_cols=True)
-    df["limit_up_single_sided_ratio"] = 1.0
+    df["limit_up_ask_depth_ratio_5"] = 1.0
 
     env = initiate_base_env(
         df,
@@ -77,7 +77,7 @@ def test_limit_up_reward_and_penalty():
 
 def test_limit_down_reward_and_penalty():
     df = _make_dummy_df(num_rows=5, include_limit_cols=True)
-    df["limit_down_single_sided_ratio"] = 1.0
+    df["limit_down_bid_depth_ratio_5"] = 1.0
 
     env = initiate_base_env(
         df,

@@ -124,17 +124,6 @@ class Base_Env(gym.Env):
         self.limit_stay_bonus = float(limit_stay_bonus)
         self.limit_reverse_penalty = float(limit_reverse_penalty)
         self.near_limit_threshold = float(near_limit_threshold)
-        self.is_limit_up_array = is_limit_up_array
-        self.is_limit_down_array = is_limit_down_array
-        self.limit_up_ask_depth_ratio_5_array = limit_up_ask_depth_ratio_5_array
-        self.limit_down_bid_depth_ratio_5_array = limit_down_bid_depth_ratio_5_array
-        self.upper_limit_prices_array = upper_limit_prices_array
-        self.lower_limit_prices_array = lower_limit_prices_array
-        self.enable_limit_reward = enable_limit_reward
-        self.limit_hold_bonus = float(limit_hold_bonus)
-        self.limit_stay_bonus = float(limit_stay_bonus)
-        self.limit_reverse_penalty = float(limit_reverse_penalty)
-        self.near_limit_threshold = float(near_limit_threshold)
         # RL setting
         self.single_side_action_num = int((position_choices - 1) / 2)
         self.action_space = spaces.Discrete(
@@ -351,6 +340,30 @@ class Base_Env(gym.Env):
             position, leverage, self.leverage_choices, self.position_list
         )
 
+    def _is_price_limit_blocked(self, target_position):
+        is_limit_up = (
+            self.is_limit_up_array is not None
+            and bool(self.is_limit_up_array[self.day])
+        )
+        is_limit_down = (
+            self.is_limit_down_array is not None
+            and bool(self.is_limit_down_array[self.day])
+        )
+        return (is_limit_up and target_position > self.position) or (
+            is_limit_down and target_position < self.position
+        )
+
+    def _filter_price_limit_actions(self, position_choices, leverage_choices):
+        allowed_pairs = [
+            (position, leverage)
+            for position, leverage in zip(position_choices, leverage_choices)
+            if not self._is_price_limit_blocked(position)
+        ]
+        return (
+            [position for position, _ in allowed_pairs],
+            [leverage for _, leverage in allowed_pairs],
+        )
+
     def reset(self):
         self.day = 0
         self.terminal = self.day >= len(self.state_array) - self.early_stop - 1
@@ -391,6 +404,11 @@ class Base_Env(gym.Env):
                 leverage_choices=self.leverage_choices,
                 position_choices=self.position_list,
                 allow_reverse_position=self.allow_reverse_position,
+            )
+        )
+        avaiable_position_choices, avaiable_leverage_choices = (
+            self._filter_price_limit_actions(
+                avaiable_position_choices, avaiable_leverage_choices
             )
         )
 
@@ -461,6 +479,9 @@ class Base_Env(gym.Env):
         target_position, target_leverage = self.env_map_action_to_position_leverage(
             action
         )
+        if self._is_price_limit_blocked(target_position):
+            target_position = self.position
+            target_leverage = self.leverage
         previous_margine_balance = self.wallet_balance + self.unrealized_pnl
         previous_timestamp = self.timestamp_array[self.day]
         previous_funding_rate = self.funding_rate_array[self.day]
@@ -855,6 +876,11 @@ class Base_Env(gym.Env):
                         leverage_choices=self.leverage_choices,
                         position_choices=self.position_list,
                         allow_reverse_position=self.allow_reverse_position,
+                    )
+                )
+                avaiable_position_choices, avaiable_leverage_choices = (
+                    self._filter_price_limit_actions(
+                        avaiable_position_choices, avaiable_leverage_choices
                     )
                 )
                 avaiable_actions = []
