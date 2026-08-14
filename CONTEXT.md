@@ -336,7 +336,7 @@ _Avoid_: 收益追踪器、Agent 记忆
 _Avoid_: 候选集筛选器、动作过滤器
 
 **Label 方向语义 (Label Direction Semantics)**:
-由 slope 市场动态切片规则赋予每个 Label 的方向与强度，权威记录在 `label_semantics.json`（`direction` / `direction_sign` / `strength`）。Label 索引按方向单调有序：`label_0` 跌停(strong_down) → `label_1/2` 下跌 → `label_3` 震荡 → `label_4/5` 上涨 → `label_6` 涨停(strong_up)；路由实际使用 7 个 Label（label_0~label_6），非 5 个。该表是 Semantic Guard 判定 Label 原生动作范围的唯一来源；表本身静态，推理期 VAE 仅观测当前 state，无未来泄漏。
+由市场动态切片规则赋予每个 Label 的方向、幅度与涨跌停状态。低层测试运行必须显式声明这些语义，不根据 Label 编号或外部 JSON 隐式推断。
 _Avoid_: Label 含义、标签语义、label direction
 
 **语义硬隔离 (Semantic Guard)**:
@@ -361,49 +361,51 @@ _Avoid_: 聚合结果、汇总 CSV
 可选的逐时间步交易动作明细，将行情、已执行仓位和账户损益记录在同一行中，是 Agent 形态分析的逐步事实来源。
 _Avoid_: 明细 CSV、交易明细
 
+**Agent Trade Lifecycle Detail CSV**:
+以持仓回合为行粒度的 Agent 交易生命周期明细，每个 epoch 单独保存；它与 trade lifecycle detail CSV 语义相同，仅存储字段集不同。
+_Avoid_: 逐时间步明细、跨 epoch 生命周期汇总
+
 **行为轨迹 (Action Trajectory)**:
-单个 valid segment 在给定初始动作下，agent 逐 step 产生的执行前后仓位、标记价格、动作及已实现/浮动盈亏序列；是策略形态分类器的原料，由 (label, epoch, bin_index, contract, df_seq, initial_action) 唯一确定。
-_Avoid_: 轨迹、trajectory（不明确时）、episode、rollout
+单个 valid segment 在给定初始动作下，agent 逐 step 产生的执行前后仓位、标记价格、动作和 step reward 序列；由 (label, epoch, bin_index, df_path, initial_action) 唯一确定。
+_Avoid_: 轨迹、trajectory（不明确时）、持仓回合
 
 **市场动态片段 (Market Dynamic Segment)**:
-slice_model 按 slope 标签切换点切出的连续同质行情区间文件（df_0, df_1, ..., df_n），是 label 切分过程中产生的时间切片；只表示一阶趋势同质性（方向 + 强度档位），不表示二阶 K 线形态。segment 是 K 线数据的来源文件，不构成分类维度。
-_Avoid_: 片段、segment 文件（不明确时）、label 切片
-
-**K 线形态 (Kline Pattern)**:
-行情侧的二阶形态分类，用价格与成交量描述突破、回调、加速、反转、箱体、背离或涨跌停状态；单个形态识别窗口只属于一种 K 线形态。
-_Avoid_: K 线形状、行情形态（不明确时）、价格形态
-
-**策略二阶形态 (Strategy Second-order Pattern)**:
-Agent 侧的二阶形态分类，描述已执行仓位变化与行情事件的关系，而不是纯动作形状；单个形态识别窗口可同时属于多种策略二阶形态。
-_Avoid_: 动作形态、策略类型（不明确时）、agent 类型
-
-**Agent 形态候选全集 (Agent Pattern Candidate Universe)**:
-形态分析运行实际覆盖的全部 `(label, epoch, bin_index)` Agent triple 集合；每个 triple 必须在全部数据文件和全部 Initial-action 情景上执行。该全集由分析运行参数和可用模型决定，与 Selection Manifest 及既有 Detail CSV 无关。
-_Avoid_: 已选 Agent 集合、Selection Manifest 内容、既有 Detail CSV 集合
-
-**Detail 覆盖率 (Detail Coverage)**:
-新形态分析运行已生成行为轨迹相对预期 `epoch × bin_index × label × 数据文件 × initial_action` 组合的完整程度。
-_Avoid_: Selection Manifest 覆盖率、既有 Detail CSV 数量、训练 epoch 完整性
+slice_model 按 slope 标签切换点切出的连续同质行情区间文件（df_0, df_1, ..., df_n），是 label 切分过程中产生的时间切片，不是策略分类单位。
+_Avoid_: 片段、segment 文件（不明确时）、持仓回合
 
 **Initial-action 情景 (Initial-action Scenario)**:
-同一 Agent triple 在相同行情上以某个初始动作启动的反事实回测情景；情景是否存在取决于是否完成了该行为轨迹，与它是否命中某个形态无关。不同 Initial-action 情景不是可相加的独立账户。
+同一 Agent 在相同行情上以某个初始动作启动的反事实回测情景；不同 Initial-action 情景不是可相加的独立账户。
 _Avoid_: 独立账户、独立行情样本、可累加回测
 
-**Agent 形态明细表 (Agent Pattern Detail Table)**:
-以形态识别窗口为粒度的明细数据，每个 window_id 恰好一行，读法为"哪个 agent 在哪个 label 的哪个 K 线形态下用哪些策略盈利如何"。K 线形态保存为单元素数组，策略形态保存为多选数组，窗口 `gross_pnl` / `net_pnl` 各只保存一次。
-_Avoid_: agent 分类表、形态对照表
+**持仓回合 (Position Episode)**:
+从非零仓位开仓开始，到仓位归零、方向反转或行为轨迹结束为止的连续方向性风险暴露。同方向加仓或减仓不结束回合；初始非零仓位构成开仓决策不可观察的回合。
+_Avoid_: 固定窗口、K 线窗口、行为轨迹
 
-**Agent 形态展开表 (Agent Pattern Expanded Table)**:
-从 Agent 形态明细表展开两个形态数组得到的分析数据，每个 (window_id, K 线形态, 策略形态) 组合恰好一行，用于单形态与 7×6 组合分析。
-_Avoid_: 明细表（不明确数据粒度时）、扁平表
+**回合策略风格 (Episode Strategy Style)**:
+一个持仓回合的互斥策略分类，只能是趋势追随或均值回归之一。新增风险暴露按绝对新增仓位加权投票，加权得分为零或没有有效投票的回合保持未分类。
+_Avoid_: 多标签策略形态、K 线形态
 
-**形态识别窗口 (Pattern Recognition Window)**:
-K 线形态、策略二阶形态与窗口盈亏共享的最小归因单元，由 `window_id` 唯一标识；不同 Initial-action 情景中的相同市场区间属于不同窗口。需求中所说的“不同场景”均指不同形态识别窗口，不指 Initial-action 情景。
-_Avoid_: 场景、滑窗、识别窗口（不明确时）、N 窗口
+**趋势追随 (Trend Following)**:
+持仓回合中的开仓和同向加仓决策，经新增风险暴露加权后，主要与先行动量方向一致的回合策略风格。
 
-**涨跌停事件窗口 (Limit-state Event Window)**:
-label_0/label_6 中由整条行为轨迹构成的形态识别窗口；其 K 线形态固定为 KX1。
-_Avoid_: 短窗口、涨跌停轨迹（不明确时）
+**均值回归 (Mean Reversion)**:
+持仓回合中的开仓和同向加仓决策，经新增风险暴露加权后，主要与先行动量方向相反的回合策略风格。
+
+**先行动量 (Prior Price Momentum)**:
+开仓或同向加仓发生前连续五个 mark price 中，末值相对首值的方向。不足五个先行价格或首末价格相等时，该决策不产生分类票。
+
+**未分类回合 (Unclassified Episode)**:
+加权分类得分为零或没有可分类开仓、加仓决策的持仓回合；不进入趋势追随或均值回归正式汇总。
+
+**回合利润 (Episode Profit)**:
+归属于持仓回合的 step reward 总和。反手步骤完全归入被结束的旧回合，新方向回合从后续步骤开始累计，确保利润不重复。
+
+**方向回合平均利润 (Directional Episode Average Profit)**:
+同一 Agent 情景和回合策略风格中，按持仓方向分别计算的回合利润算术平均值；做多平均利润只包含多头回合，做空平均利润只包含空头回合。
+
+**Label 语义对齐 Agent 选择 (Label-aligned Agent Selection)**:
+上涨 Label 只从做多平均利润为正的 Agent 情景中选择，下降 Label 只从做空平均利润为正的 Agent 情景中选择，并以对应方向的平均利润排序；震荡 Label 使用整体回合平均利润。
+_Avoid_: 总利润排序、忽略 Label 方向的 Agent 排名
 
 **Execution Metrics**:
 环境每步暴露的真实手续费、已实现利润和滑点指标，供测试明细和诊断使用。
@@ -424,6 +426,14 @@ _Avoid_: 上一条交易命令、完整交易状态
 **当前持仓 (Current Holding)**:
 从 position 由 0 变为非 0 或持仓方向改变时开始，并在平仓到 0 或持仓方向再次改变时结束的一段方向性风险暴露；同方向加仓或减仓不结束当前持仓。
 _Avoid_: 未平仓交易、连续非零仓位
+
+**当前持仓开仓价 (Current Holding Opening Price)**:
+开启当前持仓的第一笔真实成交的有效价格，包含滑点和开仓税费的影响。它在当前持仓结束时清空，反手后由新方向的首笔成交重置。
+_Avoid_: mark price、K 线 open、持仓均价
+
+**当前持仓均价 (Current Holding Average Price)**:
+当前持仓中尚未平掉数量的真实成交加权有效价格，包含滑点和已发生的开仓税费，不预估未来平仓税费。同向加仓会更新该均价，部分减仓不改变该均价，当前持仓结束时清空。
+_Avoid_: mark price、保证金、账户累计成本
 
 **当前持仓时长 (Current Holding Duration)**:
 当前持仓已持续的 env step 数；空仓为 0，开仓后的第一个可观测状态为 1，同方向持仓、加仓或减仓每经过一个 env step 继续累加，平仓归 0，反手后新方向从 1 开始。
@@ -448,16 +458,36 @@ _Avoid_: 单合约遴选、test 集合遴选
 ### Trading Actions
 
 **仓位档位 (Position Level)**:
-由 max_holding_number 和 position_choices 启动参数按交易环境公式生成的完整有序 signed position 集合，负值为空头、0 为空仓、正值为多头；形态分类器显式消费同一集合。
+由 max_holding_number 和 position_choices 启动参数按交易环境公式生成的完整有序 signed position 集合，负值为空头、0 为空仓、正值为多头。
 _Avoid_: 固定五档、观测到的仓位集合、仓位数量（不明确是档位还是持仓量时）
 
 **同向加仓 (Same-direction Position Increase)**:
 执行前后仓位同号且在仓位档位集合中向更大绝对风险暴露移动的调仓；多头和空头按绝对仓位对称判定。从 0 到非 0 是开仓，仓位变号是反手，均不属于同向加仓。
 _Avoid_: 仓位数值增加、开仓（不明确时）、加多仓
 
-**盈利后同向加仓 (Profitable Same-direction Position Increase)**:
-执行同向加仓前当前持仓的浮动盈亏大于 0；是 ST3 金字塔递增型的判定事件，多头与空头使用相同的绝对仓位规则。
-_Avoid_: 盈利加仓（不明确持仓方向时）、累计已实现盈亏加仓
+**逆 Label 动作 (Label-opposed Action)**:
+目标仓位为非零且方向与 Label 方向相反的调仓，包括逆向开仓、加仓以及调减后仍保持逆向仓位。保持现有逆向仓位和完全平仓不是逆 Label 动作；震荡 Label 不定义逆 Label 动作。
+_Avoid_: 反向动作（不明确是否相对 Label 时）、逆势仓位
+
+**滚动逆 Label 动作配额 (Rolling Label-opposed Action Quota)**:
+行为轨迹的最近固定数量决策步中，逆 Label 动作允许占用的最大比例。每个时间步记录一个最终交给环境的动作，配额为 `floor(窗口大小 × 配置比例)`；小幅 Label 默认为 40%，大幅 Label 默认为 20%，涨跌停 Label 为 0。
+_Avoid_: 仓位比例、固定分组配额、累计全程比例
+
+**逐步 Label 动作守卫 (Per-step Label Action Guard)**:
+在模型产生原始动作后，依据 Label 方向语义和滚动逆 Label 动作配额将其保留或修正为最终动作的环境外部硬约束。它不修改环境提供的可用动作集，与 Meta Router 的语义软惩罚不同。
+_Avoid_: Semantic Guard、Label 语义对齐 Agent 选择
+
+**最终动作 (Final Action)**:
+逐步 Label 动作守卫校验或修正后实际交给环境执行的动作。滚动配额只记录最终动作，不记录被拦截的原始动作。
+_Avoid_: 模型原始动作、候选动作
+
+**逆向持仓不利变动 (Opposed Holding Adverse Move)**:
+当前持仓方向与 Label 相反时，相对开仓价沿持仓亏损方向发生的价格变动；多头对应价格下跌，空头对应价格上涨。当被配额拦截的原始动作达到或超过止损阈值时，最终动作降级为平仓；若涨跌停成交约束使平仓不可执行，环境保持原仓位。
+_Avoid_: step reward 为负、账户累计亏损
+
+**涨跌停成交约束 (Price-limit Execution Constraint)**:
+由当前行情的 `is_limit_down` / `is_limit_up` 状态决定的硬成交限制。跌停时不能卖出，因而不能减平多头或开加空头；涨停时不能买入，因而不能减平空头或开加多头。不可成交动作既不属于可用动作集，也在直接交给环境时被拒绝并保持实际仓位。
+_Avoid_: Label 涨跌方向、近涨跌停、只依赖订单簿深度的限制
 
 **Reverse Position (反手)**:
 在一步内先平掉当前仓位再反向开仓的动作；持多时先平多后开空，持空时先平空后开多；采用 best-effort 语义，平仓一定成功，反向开仓可能因保证金不足或深度不足而失败。

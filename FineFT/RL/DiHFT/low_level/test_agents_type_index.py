@@ -1,651 +1,957 @@
-"""Aggregate test_agent_index detail CSVs into trade lifecycle detail, trend summary CSVs, and selection_manifest.json using Polars."""
+# Code reference: https://github.com/Lizhi-sjtu/DRL-code-pytorch/tree/main/3.Rainbow_DQN
 
-from __future__ import annotations
+import sys
 
+sys.path.append(".")
+import os
+import random
 import argparse
 import json
 import re
-from pathlib import Path
-from typing import Any, Sequence
-
 import numpy as np
-import polars as pl
+import torch
+from torch import nn
+import pandas as pd
 
-# Standard header mapping from Chinese/English to canonical internal key
-HEADER_MAPPING = {
-    "标签": "label",
-    "label": "label",
-    "数据文件": "df_path",
-    "df_path": "df_path",
-    "初始动作": "initial_action",
-    "initial_action": "initial_action",
-    "分箱索引": "bin_index",
-    "bin_index": "bin_index",
-    "时间步": "timestep",
-    "timestep": "timestep",
-    "时间戳": "timestamp",
-    "timestamp": "timestamp",
-    "开盘价": "open",
-    "open": "open",
-    "最高价": "high",
-    "high": "high",
-    "最低价": "low",
-    "low": "low",
-    "收盘价": "close",
-    "close": "close",
-    "成交量": "volume",
-    "volume": "volume",
-    "标记价格": "mark_price",
-    "mark_price": "mark_price",
-    "动作": "action",
-    "action": "action",
-    "目标仓位": "target_position",
-    "target_position": "target_position",
-    "目标杠杆": "target_leverage",
-    "target_leverage": "target_leverage",
-    "执行前仓位": "position_before",
-    "position_before": "position_before",
-    "执行前杠杆": "leverage_before",
-    "leverage_before": "leverage_before",
-    "执行后仓位": "position_after",
-    "position_after": "position_after",
-    "执行后杠杆": "leverage_after",
-    "leverage_after": "leverage_after",
-    "单步奖励": "step_reward",
-    "step_reward": "step_reward",
-    "单步实现盈亏": "realized_pnl_step",
-    "realized_pnl_step": "realized_pnl_step",
-    "累计已实现盈亏": "cumulative_realized_pnl",
-    "cumulative_realized_pnl": "cumulative_realized_pnl",
-    "单步手续费": "commission_fee_step",
-    "commission_fee_step": "commission_fee_step",
-    "累计手续费": "cumulative_commission_fee",
-    "cumulative_commission_fee": "cumulative_commission_fee",
-    "单步滑点": "slippage_step",
-    "slippage_step": "slippage_step",
-    "累计滑点": "cumulative_slippage",
-    "cumulative_slippage": "cumulative_slippage",
-    "浮动盈亏": "unrealized_pnl",
-    "unrealized_pnl": "unrealized_pnl",
-    "保证金余额": "margin_balance",
-    "margin_balance": "margin_balance",
-    "持仓资产": "notional_asset_value",
-    "notional_asset_value": "notional_asset_value",
-    "结算总价值": "wallet_balance",
-    "wallet_balance": "wallet_balance",
-    "浮动总价值": "total_value",
-    "total_value": "total_value",
-}
+# RL util
+import torch.nn.functional as F
 
-# Output bilingual header mappings
-LIFECYCLE_HEADER_LABELS = {
-    "epoch": "轮次",
+
+# model
+from model.low_level import ensemble_Qnet
+
+# env
+from env.env_initiate.base_initiate import initiate_base_env
+from env.env_class.futures_util import (
+    create_optimal_q_table_from_df,
+    get_dp_action_from_qtable,
+    map_action_to_position_leverage,
+)
+from env.env_class.policy_util import get_close_element
+import copy
+
+
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["F_ENABLE_ONEDNN_OPTS"] = "0"
+
+
+parser = argparse.ArgumentParser()
+
+parser = argparse.ArgumentParser()
+
+# * Env setting
+parser.add_argument(
+    "--base_path",
+    type=str,
+    default="dataset",
+    help="the number of action we have in the training and testing env",
+)
+parser.add_argument(
+    "--dataset_name",
+    type=str,
+    default="BTCUSDT",
+    help="training data chunk",
+)
+parser.add_argument(
+    "--max_holding_number",
+    type=float,
+    default=8,
+    help="the transcation cost of not holding the same action as before",
+)
+parser.add_argument(
+    "--position_choices",
+    type=int,
+    default=9,
+    help="the transcation cost of not holding the same action as before",
+)
+parser.add_argument(
+    "--leverage_choices",
+    action="append",
+    type=int,
+    default=[1],
+    help="the transaction cost of not holding the same action as before",
+)
+parser.add_argument(
+    "--long_estimated_rate",
+    type=float,
+    default=0.0005,
+    help="the transcation cost of not holding the same action as before",
+)
+parser.add_argument(
+    "--short_estimated_rate",
+    type=float,
+    default=0,
+    help="the transcation cost of not holding the same action as before",
+)
+parser.add_argument(
+    "--transcation_cost",
+    type=float,
+    default=0.0002,
+    help="the transcation cost of not holding the same action as before",
+)
+
+parser.add_argument(
+    "--early_stop",
+    type=int,
+    default=2160,
+    help="the transcation cost of not holding the same action as before",
+)
+parser.add_argument(
+    "--initial_wallet_balance",
+    type=float,
+    default=1e5,
+    help="wallet balance",
+)
+parser.add_argument(
+    "--initial_margin",
+    type=float,
+    default=0,
+    help="initial margin",
+)
+parser.add_argument(
+    "--initial_unrealized_pnL",
+    type=float,
+    default=0,
+    help="unrealized pnL",
+)
+parser.add_argument(
+    "--initial_position",
+    type=float,
+    default=0,
+    help="unrealized pnL",
+)
+parser.add_argument(
+    "--initial_leverage",
+    type=float,
+    default=5,
+    help="initial leverage",
+)
+parser.add_argument(
+    "--order_book_depth",
+    type=int,
+    default=25,
+    help="number of bid/ask price levels available in the order book",
+)
+# network setting
+parser.add_argument(
+    "--hidden_nodes",
+    type=int,
+    default=128,
+    help="the number of the hidden nodes",
+)
+parser.add_argument(
+    "--N",
+    type=int,
+    default=7,
+    help="context number",
+)
+parser.add_argument(
+    "--time_info_dim",
+    type=int,
+    default=2,
+    help="context number",
+)
+# model setting
+parser.add_argument(
+    "--epoch_num",
+    type=int,
+    default=1,
+    help="the path for storing the test result",
+)
+parser.add_argument(
+    "--result_path",
+    type=str,
+    default="result/DiHFT/low_level",
+    help="the path for storing the test result",
+)
+parser.add_argument(
+    "--experiment_name",
+    type=str,
+    default="default",
+    help="experiment name used to namespace serial training outputs",
+)
+parser.add_argument(
+    "--save_trading_detail_csv",
+    default=True,
+    action="store_true",
+    help="write per-step trading detail CSV for the tested epoch",
+)
+parser.add_argument(
+    "--allow_reverse_position",
+    action="store_true",
+    help="allow direct position reversal from long to short or vice versa",
+)
+
+def build_serial_model_path(result_path, dataset_name, experiment_name):
+    return os.path.join(
+        result_path,
+        dataset_name,
+        experiment_name,
+        "weights_advantage_pretrain",
+    )
+
+
+
+def _detect_step_limit_states(test_df, step_index):
+    if step_index >= len(test_df):
+        idx = len(test_df) - 1
+    else:
+        idx = step_index
+
+    is_limit_up = False
+    is_limit_down = False
+
+    if "limit_up_single_sided_ratio" in test_df.columns:
+        if test_df["limit_up_single_sided_ratio"].iloc[idx] > 0:
+            is_limit_up = True
+    if "limit_down_single_sided_ratio" in test_df.columns:
+        if test_df["limit_down_single_sided_ratio"].iloc[idx] > 0:
+            is_limit_down = True
+
+    if "is_limit_up" in test_df.columns and bool(test_df["is_limit_up"].iloc[idx]):
+        is_limit_up = True
+    if "is_limit_down" in test_df.columns and bool(test_df["is_limit_down"].iloc[idx]):
+        is_limit_down = True
+
+    if "UpperLimitPrice" in test_df.columns:
+        upper_price = test_df["UpperLimitPrice"].iloc[idx]
+        if pd.notna(upper_price) and upper_price > 0:
+            p = test_df["mark_price"].iloc[idx] if "mark_price" in test_df.columns else test_df["close"].iloc[idx]
+            if p >= upper_price:
+                is_limit_up = True
+
+    if "LowerLimitPrice" in test_df.columns:
+        lower_price = test_df["LowerLimitPrice"].iloc[idx]
+        if pd.notna(lower_price) and lower_price > 0:
+            p = test_df["mark_price"].iloc[idx] if "mark_price" in test_df.columns else test_df["close"].iloc[idx]
+            if p <= lower_price:
+                is_limit_down = True
+
+    return is_limit_up, is_limit_down
+
+AGGREGATE_JSON_COLUMNS = [
+    "contract",
+    "df_path",
+    "reward_sum",
+    "df_length",
+    "turnover",
+    "mean_position",
+    "mean_abs_position",
+    "long_step_ratio",
+    "short_step_ratio",
+    "flat_step_ratio",
+    "long_reward_sum",
+    "short_reward_sum",
+    "flat_reward_sum",
+    "net_position_exposure",
+    "limit_up_step_ratio",
+    "limit_down_step_ratio",
+    "limit_up_long_reward_sum",
+    "limit_down_short_reward_sum",
+    "limit_up_reverse_short_ratio",
+    "limit_down_reverse_long_ratio",
+]
+LABEL_DIR_PATTERN = re.compile(r"^label_\d+$")
+
+CSV_HEADER_LABELS = {
+    "mean_position": "平均仓位",
+    "mean_abs_position": "平均绝对仓位",
+    "long_step_ratio": "多头步数占比",
+    "short_step_ratio": "空头步数占比",
+    "flat_step_ratio": "空仓步数占比",
+    "long_reward_sum": "多头奖励总和",
+    "short_reward_sum": "空头奖励总和",
+    "flat_reward_sum": "空仓奖励总和",
+    "net_position_exposure": "净仓位敞口",
+    "limit_up_step_ratio": "涨停步数占比",
+    "limit_down_step_ratio": "跌停步数占比",
+    "limit_up_long_reward_sum": "涨停多头奖励总和",
+    "limit_down_short_reward_sum": "跌停空头奖励总和",
+    "limit_up_reverse_short_ratio": "涨停反向空头占比",
+    "limit_down_reverse_long_ratio": "跌停反向多头占比",
     "label": "标签",
+    "initial_action": "初始动作",
     "bin_index": "分箱索引",
     "contract": "合约",
     "df_path": "数据文件",
-    "initial_action": "初始动作",
-    "trade_id": "交易ID",
-    "start_timestep": "开始时间步",
-    "end_timestep": "结束时间步",
-    "start_timestamp": "开始时间戳",
-    "end_timestamp": "结束时间戳",
-    "holding_duration": "持仓步数",
-    "trade_direction": "交易方向",
-    "segment_type": "分片类型",
-    "trend_type": "趋势类型",
-    "entry_price": "开仓价格",
-    "avg_entry_price": "加权开仓价格",
-    "exit_price": "平仓价格",
-    "realized_pnl_sum": "已实现盈亏合计",
-    "tail_unrealized_pnl": "尾部浮动盈亏结算",
-    "commission_fee_sum": "手续费合计",
-    "slippage_sum": "滑点合计",
-    "net_pnl": "净利润",
-    "return_rate": "持仓收益率",
-    "max_position_abs": "最大绝对仓位",
-    "mean_position_abs": "平均绝对仓位",
-    "position_change_count": "调仓次数",
-    "profitable_increase_count": "盈利同向加仓次数",
-    "max_drawdown": "持仓最大回撤",
-    "is_tail_forced_close": "是否尾部强平",
-}
-
-SUMMARY_HEADER_LABELS = {
-    "epoch": "轮次",
-    "label": "标签",
-    "bin_index": "分箱索引",
-    "trend_type": "趋势类型",
-    "trade_count": "交易总笔数",
-    "long_trade_count": "做多次数",
-    "short_trade_count": "做空次数",
-    "win_trade_count": "盈利笔数",
-    "win_rate": "胜率",
-    "long_win_rate": "做多胜率",
-    "short_win_rate": "做空胜率",
-    "total_holding_steps": "总持仓步数",
-    "mean_holding_duration": "平均持仓步数",
-    "total_realized_pnl": "总已实现盈亏",
-    "total_commission_fee": "总手续费",
-    "total_slippage": "总滑点",
-    "total_net_pnl": "总净利润",
-    "mean_net_pnl": "平均单笔交易利润",
-    "pnl_p25": "净利润P25",
-    "pnl_p50": "净利润P50",
-    "pnl_p75": "净利润P75",
-    "profit_factor": "盈亏比",
-    "mean_max_position_abs": "平均最大仓位",
-    "total_profitable_increase_count": "盈利加仓总次数",
-    "mean_max_drawdown": "平均持仓最大回撤",
-    "max_drawdown": "最大持仓回撤",
+    "reward_sum": "奖励总和",
+    "df_length": "数据长度",
+    "turnover": "换手率",
+    "timestep": "时间步",
+    "timestamp": "时间戳",
+    "open": "开盘价",
+    "high": "最高价",
+    "low": "最低价",
+    "close": "收盘价",
+    "volume": "成交量",
+    "mark_price": "标记价格",
+    "action": "动作",
+    "target_position": "目标仓位",
+    "target_leverage": "目标杠杆",
+    "position_before": "执行前仓位",
+    "leverage_before": "执行前杠杆",
+    "position_after": "执行后仓位",
+    "leverage_after": "执行后杠杆",
+    "action_change_step": "动作变化",
+    "trade_count_step": "交易计数",
+    "cumulative_action_change_count": "累计动作变化次数",
+    "cumulative_trade_count": "累计交易次数",
+    "step_reward": "单步奖励",
+    "realized_pnl_step": "单步实现盈亏",
+    "cumulative_realized_pnl": "累计已实现盈亏",
+    "commission_fee_step": "单步手续费",
+    "cumulative_commission_fee": "累计手续费",
+    "slippage_step": "单步滑点",
+    "cumulative_slippage": "累计滑点",
+    "wallet_balance": "结算总价值",
+    "unrealized_pnl": "浮动盈亏",
+    "margin_balance": "保证金余额",
+    "notional_asset_value": "持仓资产",
+    "cash_balance": "结算总价值",
+    "total_value": "浮动总价值",
 }
 
 
-def _parse_label_info(label_val: Any) -> tuple[str, str]:
-    """Extract standard label name and determine directional segment type."""
-    label_str = str(label_val).strip()
-    match = re.search(r"(\d+)", label_str)
-    if match:
-        idx = int(match.group(1))
-    else:
-        idx = -1
-
-    clean_label = f"label_{idx}" if idx >= 0 else label_str
-
-    # 0, 1, 2: downtrend; 3, 4, 5: uptrend
-    if idx in (0, 1, 2):
-        segment_type = "下跌分片"
-    elif idx in (3, 4, 5):
-        segment_type = "上涨分片"
-    else:
-        segment_type = "未知分片"
-
-    return clean_label, segment_type
+def _bilingual_csv_columns(df):
+    return df.rename(columns=CSV_HEADER_LABELS)
 
 
-def _determine_trend_type(segment_type: str, position: float) -> str:
-    """Classify trade position into Trend-Following or Trend-Reversion based on segment."""
-    if segment_type == "下跌分片":
-        if position < 0:
-            return "趋势跟随"
-        elif position > 0:
-            return "趋势回归"
-    elif segment_type == "上涨分片":
-        if position > 0:
-            return "趋势跟随"
-        elif position < 0:
-            return "趋势回归"
-    return "未分类"
+def _json_default(value):
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
 
 
-def _extract_contract(df_path: str) -> str:
-    """Extract contract symbol from df_path (e.g. 'BTCUSDT/label_0/df_0.feather')."""
-    if not df_path or not isinstance(df_path, str):
-        return ""
-    parts = Path(df_path).parts
-    if len(parts) > 0 and parts[0] != ".":
-        return parts[0]
-    return ""
+def _json_array(value):
+    return json.dumps(list(value), default=_json_default)
 
 
-def _standardize_pl_df(df: pl.DataFrame) -> pl.DataFrame:
-    """Standardize Polars DataFrame column names using HEADER_MAPPING."""
-    rename_dict = {}
-    for col in df.columns:
-        clean_col = col.strip()
-        if clean_col in HEADER_MAPPING and HEADER_MAPPING[clean_col] != col:
-            rename_dict[col] = HEADER_MAPPING[clean_col]
-    return df.rename(rename_dict) if rename_dict else df
+def write_analysis_csv(overall_result, csv_path):
+    analysis_df = pd.DataFrame(overall_result)
+    for column in AGGREGATE_JSON_COLUMNS:
+        analysis_df[column] = analysis_df[column].apply(_json_array)
+    _bilingual_csv_columns(analysis_df).to_csv(csv_path, index=False)
 
 
-def extract_trade_lifecycles(
-    df: pl.DataFrame,
-    default_epoch: int = 0,
-    initial_wallet_balance: float = 100000.0,
-) -> list[dict[str, Any]]:
-    """Extract trade lifecycles (open to close round-trip) from a detail Polars DataFrame."""
-    std_df = _standardize_pl_df(df)
-    if std_df.is_empty():
-        return []
+def trading_detail_csv_path(epoch_path, epoch_num):
+    return os.path.join(epoch_path, f"trading_action_detail_epoch_{epoch_num}.csv")
 
-    # Sort by timestep if present
-    if "timestep" in std_df.columns:
-        std_df = std_df.sort("timestep")
 
-    # Group by (label, df_path, initial_action, bin_index) to process contiguous market execution slices
-    group_cols = [c for c in ["label", "df_path", "initial_action", "bin_index"] if c in std_df.columns]
+def write_trading_detail_csv(detail_rows, csv_path):
+    _bilingual_csv_columns(pd.DataFrame(detail_rows)).to_csv(csv_path, index=False)
 
-    if not group_cols:
-        groups = [("default", std_df)]
-    else:
-        groups = std_df.group_by(group_cols, maintain_order=True)
 
-    trade_rows: list[dict[str, Any]] = []
+def _iter_valid_feather_files(root_dir):
+    entries = []
+    if not os.path.isdir(root_dir):
+        raise FileNotFoundError(f"valid data path does not exist: {root_dir}")
 
-    for _, group in groups:
-        rows = group.to_dicts()
-        if not rows:
+    for contract in sorted(os.listdir(root_dir)):
+        contract_dir = os.path.join(root_dir, contract)
+        if contract == "processed" or not os.path.isdir(contract_dir):
             continue
+        for label in sorted(os.listdir(contract_dir)):
+            label_dir = os.path.join(contract_dir, label)
+            if not os.path.isdir(label_dir) or not LABEL_DIR_PATTERN.fullmatch(label):
+                continue
+            for filename in sorted(os.listdir(label_dir)):
+                if filename.startswith("df_") and filename.endswith(".feather"):
+                    rel_path = os.path.join(contract, label, filename)
+                    entries.append(
+                        {
+                            "contract": contract,
+                            "label": label,
+                            "df_path": rel_path,
+                            "abs_path": os.path.join(root_dir, rel_path),
+                        }
+                    )
 
-        active_trade: dict[str, Any] | None = None
-        trade_counter = 0
-
-        for row in rows:
-            pos_before = float(row.get("position_before") or 0.0)
-            pos_after = float(row.get("position_after") or 0.0)
-            t_step = int(row.get("timestep") or 0)
-            t_stamp = str(row.get("timestamp") or "")
-            mark_p = row.get("mark_price")
-            close_p = row.get("close")
-            price = float(mark_p if mark_p is not None and not np.isnan(mark_p) and mark_p > 0 else (close_p or 0.0))
-
-            realized_pnl = float(row.get("realized_pnl_step") or 0.0)
-            commission = float(row.get("commission_fee_step") or 0.0)
-            slippage = float(row.get("slippage_step") or 0.0)
-            unrealized = float(row.get("unrealized_pnl") or 0.0)
-            epoch_val = int(row.get("epoch") or default_epoch)
-
-            label_raw = row.get("label") or "label_0"
-            clean_label, segment_type = _parse_label_info(label_raw)
-            df_path = str(row.get("df_path") or "")
-            contract = _extract_contract(df_path)
-            bin_index = row.get("bin_index", 0)
-            initial_action = row.get("initial_action", 0)
-
-            is_reversal = (pos_before * pos_after < 0) and (pos_before != 0) and (pos_after != 0)
-
-            # 1. Close existing trade if position returned to 0 or reversed
-            if active_trade is not None and (pos_after == 0 or is_reversal):
-                active_trade["end_timestep"] = t_step
-                active_trade["end_timestamp"] = t_stamp
-                active_trade["exit_price"] = price
-                active_trade["realized_pnl_sum"] += realized_pnl
-                active_trade["commission_fee_sum"] += commission
-                active_trade["slippage_sum"] += slippage
-                active_trade["holding_duration"] = t_step - active_trade["start_timestep"] + 1
-
-                # Net PnL = realized_pnl - commission
-                active_trade["net_pnl"] = (
-                    active_trade["realized_pnl_sum"]
-                    + active_trade["tail_unrealized_pnl"]
-                    - active_trade["commission_fee_sum"]
-                )
-
-                # Return rate calculation relative to initial wallet balance
-                if initial_wallet_balance > 0:
-                    active_trade["return_rate"] = active_trade["net_pnl"] / initial_wallet_balance
-                else:
-                    active_trade["return_rate"] = 0.0
-
-                trade_rows.append(active_trade)
-                active_trade = None
-
-            # 2. Open new trade if starting from 0 or after reversal
-            if (pos_before == 0 and pos_after != 0) or is_reversal:
-                trade_counter += 1
-                direction = "Long" if pos_after > 0 else "Short"
-                trend_type = _determine_trend_type(segment_type, pos_after)
-
-                active_trade = {
-                    "epoch": epoch_val,
-                    "label": clean_label,
-                    "bin_index": bin_index,
-                    "contract": contract,
-                    "df_path": df_path,
-                    "initial_action": initial_action,
-                    "trade_id": trade_counter,
-                    "start_timestep": t_step,
-                    "end_timestep": t_step,
-                    "start_timestamp": t_stamp,
-                    "end_timestamp": t_stamp,
-                    "holding_duration": 1,
-                    "trade_direction": direction,
-                    "segment_type": segment_type,
-                    "trend_type": trend_type,
-                    "entry_price": price,
-                    "total_weighted_price": price * abs(pos_after),
-                    "total_position_qty": abs(pos_after),
-                    "avg_entry_price": price,
-                    "exit_price": price,
-                    "initial_pos_abs": abs(pos_after),
-                    "realized_pnl_sum": 0.0 if is_reversal else realized_pnl,
-                    "tail_unrealized_pnl": 0.0,
-                    "commission_fee_sum": 0.0 if is_reversal else commission,
-                    "slippage_sum": 0.0 if is_reversal else slippage,
-                    "net_pnl": 0.0,
-                    "return_rate": 0.0,
-                    "max_position_abs": abs(pos_after),
-                    "position_abs_list": [abs(pos_after)],
-                    "position_change_count": 0,
-                    "profitable_increase_count": 0,
-                    "unrealized_pnl_peak": max(0.0, unrealized),
-                    "max_drawdown": 0.0,
-                    "last_unrealized_pnl": unrealized,
-                    "is_tail_forced_close": False,
-                }
-            # 3. Update existing ongoing trade
-            elif active_trade is not None:
-                active_trade["holding_duration"] = t_step - active_trade["start_timestep"] + 1
-                active_trade["realized_pnl_sum"] += realized_pnl
-                active_trade["commission_fee_sum"] += commission
-                active_trade["slippage_sum"] += slippage
-                active_trade["position_abs_list"].append(abs(pos_after))
-                active_trade["max_position_abs"] = max(active_trade["max_position_abs"], abs(pos_after))
-
-                # Check position change & profitable same-direction position increase
-                if pos_after != pos_before:
-                    active_trade["position_change_count"] += 1
-                    # Same-direction size increase
-                    if abs(pos_after) > abs(pos_before) and (pos_after * pos_before > 0):
-                        added_qty = abs(pos_after) - abs(pos_before)
-                        active_trade["total_weighted_price"] += price * added_qty
-                        active_trade["total_position_qty"] += added_qty
-                        active_trade["avg_entry_price"] = (
-                            active_trade["total_weighted_price"] / active_trade["total_position_qty"]
-                        )
-                        if active_trade["last_unrealized_pnl"] > 0:
-                            active_trade["profitable_increase_count"] += 1
-
-                # Update drawdown tracking
-                active_trade["unrealized_pnl_peak"] = max(active_trade["unrealized_pnl_peak"], unrealized)
-                dd = active_trade["unrealized_pnl_peak"] - unrealized
-                active_trade["max_drawdown"] = max(active_trade["max_drawdown"], dd)
-                active_trade["last_unrealized_pnl"] = unrealized
-
-        # 4. Tail forced close if trade is still active at the end of slice
-        if active_trade is not None:
-            last_row = rows[-1]
-            active_trade["end_timestep"] = int(last_row.get("timestep") or 0)
-            active_trade["end_timestamp"] = str(last_row.get("timestamp") or "")
-            mark_p = last_row.get("mark_price")
-            close_p = last_row.get("close")
-            last_price = float(mark_p if mark_p is not None and not np.isnan(mark_p) and mark_p > 0 else (close_p or 0.0))
-
-            active_trade["exit_price"] = last_price
-            active_trade["tail_unrealized_pnl"] = float(last_row.get("unrealized_pnl") or 0.0)
-            active_trade["is_tail_forced_close"] = True
-            active_trade["net_pnl"] = (
-                active_trade["realized_pnl_sum"]
-                + active_trade["tail_unrealized_pnl"]
-                - active_trade["commission_fee_sum"]
-            )
-
-            if initial_wallet_balance > 0:
-                active_trade["return_rate"] = active_trade["net_pnl"] / initial_wallet_balance
-            else:
-                active_trade["return_rate"] = 0.0
-
-            trade_rows.append(active_trade)
-
-    # Post-process mean_position_abs
-    for tr in trade_rows:
-        pos_list = tr.pop("position_abs_list", [tr["max_position_abs"]])
-        tr["mean_position_abs"] = float(np.mean(pos_list)) if pos_list else float(tr["max_position_abs"])
-        tr.pop("total_weighted_price", None)
-        tr.pop("total_position_qty", None)
-        tr.pop("initial_pos_abs", None)
-        tr.pop("unrealized_pnl_peak", None)
-        tr.pop("last_unrealized_pnl", None)
-
-    return trade_rows
+    if not entries:
+        raise FileNotFoundError(
+            f"no validation label slices found under {root_dir}; expected "
+            "valid/<contract>/label_*/df_*.feather"
+        )
+    return entries
 
 
-def aggregate_summary_statistics(lifecycle_rows: list[dict[str, Any]]) -> pl.DataFrame:
-    """Aggregate lifecycle trade rows by [epoch, label, bin_index, trend_type] using Polars."""
-    if not lifecycle_rows:
-        return pl.DataFrame(schema={
-            "epoch": pl.Int64,
-            "label": pl.String,
-            "bin_index": pl.Int64,
-            "trend_type": pl.String,
-            "trade_count": pl.Int64,
-            "long_trade_count": pl.Int64,
-            "short_trade_count": pl.Int64,
-            "win_trade_count": pl.Int64,
-            "win_rate": pl.Float64,
-            "long_win_rate": pl.Float64,
-            "short_win_rate": pl.Float64,
-            "total_holding_steps": pl.Int64,
-            "mean_holding_duration": pl.Float64,
-            "total_realized_pnl": pl.Float64,
-            "total_commission_fee": pl.Float64,
-            "total_slippage": pl.Float64,
-            "total_net_pnl": pl.Float64,
-            "mean_net_pnl": pl.Float64,
-            "pnl_p25": pl.Float64,
-            "pnl_p50": pl.Float64,
-            "pnl_p75": pl.Float64,
-            "profit_factor": pl.Float64,
-            "mean_max_position_abs": pl.Float64,
-            "total_profitable_increase_count": pl.Int64,
-            "mean_max_drawdown": pl.Float64,
-            "max_drawdown": pl.Float64,
-        })
-
-    df = pl.DataFrame(lifecycle_rows)
-    group_cols = ["epoch", "label", "bin_index", "trend_type"]
-    if "trade_direction" not in df.columns:
-        df = df.with_columns(pl.lit("Long").alias("trade_direction"))
-    if "max_drawdown" not in df.columns:
-        df = df.with_columns(pl.lit(0.0).alias("max_drawdown"))
-    for col in group_cols:
-        if col not in df.columns:
-            df = df.with_columns(pl.lit("unknown").alias(col))
-
-    long_filter = pl.col("trade_direction") == "Long"
-    short_filter = pl.col("trade_direction") == "Short"
-    win_filter = pl.col("net_pnl") > 0
-
-    # Aggregation using Polars expressions
-    summary_df = (
-        df.group_by(group_cols, maintain_order=True)
-        .agg([
-            pl.len().alias("trade_count"),
-            pl.col("trade_direction").filter(long_filter).len().alias("long_trade_count"),
-            pl.col("trade_direction").filter(short_filter).len().alias("short_trade_count"),
-            (pl.col("net_pnl") > 0).sum().alias("win_trade_count"),
-            ((pl.col("net_pnl") > 0).sum() / pl.len()).alias("win_rate"),
-            (
-                pl.when(pl.col("trade_direction").filter(long_filter).len() > 0)
-                .then(pl.col("net_pnl").filter(long_filter & win_filter).len() / pl.col("trade_direction").filter(long_filter).len())
-                .otherwise(0.0)
-            ).alias("long_win_rate"),
-            (
-                pl.when(pl.col("trade_direction").filter(short_filter).len() > 0)
-                .then(pl.col("net_pnl").filter(short_filter & win_filter).len() / pl.col("trade_direction").filter(short_filter).len())
-                .otherwise(0.0)
-            ).alias("short_win_rate"),
-            pl.col("holding_duration").sum().alias("total_holding_steps"),
-            pl.col("holding_duration").mean().alias("mean_holding_duration"),
-            pl.col("realized_pnl_sum").sum().alias("total_realized_pnl"),
-            pl.col("commission_fee_sum").sum().alias("total_commission_fee"),
-            pl.col("slippage_sum").sum().alias("total_slippage"),
-            pl.col("net_pnl").sum().alias("total_net_pnl"),
-            pl.col("net_pnl").mean().alias("mean_net_pnl"),
-            pl.col("net_pnl").quantile(0.25).alias("pnl_p25"),
-            pl.col("net_pnl").quantile(0.50).alias("pnl_p50"),
-            pl.col("net_pnl").quantile(0.75).alias("pnl_p75"),
-            (
-                pl.when(pl.col("net_pnl").filter(pl.col("net_pnl") < 0).abs().sum() > 0)
-                .then(pl.col("net_pnl").filter(pl.col("net_pnl") > 0).sum() / pl.col("net_pnl").filter(pl.col("net_pnl") < 0).abs().sum())
-                .otherwise(pl.col("net_pnl").filter(pl.col("net_pnl") > 0).sum())
-            ).alias("profit_factor"),
-            pl.col("max_position_abs").mean().alias("mean_max_position_abs"),
-            pl.col("profitable_increase_count").sum().alias("total_profitable_increase_count"),
-            pl.col("max_drawdown").mean().alias("mean_max_drawdown"),
-            pl.col("max_drawdown").max().alias("max_drawdown"),
-        ])
-    )
-
-    return summary_df
+DETAIL_REQUIRED_MARKET_COLUMNS = ["timestamp", "close", "volume", "mark_price"]
+DETAIL_MARKET_COLUMNS = ["timestamp", "open", "high", "low", "close", "volume", "mark_price"]
 
 
-def select_best_agents(summary_df: pl.DataFrame, min_trades: int = 3) -> dict[str, Any]:
-    """Select the best agent (epoch, bin_index) for each (label, trend_type) using Option A.
+def _market_fields(test_df, timestep):
+    row = test_df.iloc[timestep]
+    return {
+        column: row.get(column, np.nan)
+        for column in DETAIL_MARKET_COLUMNS
+        if column in DETAIL_REQUIRED_MARKET_COLUMNS or column in test_df.columns
+    }
 
-    Option A Rules:
-      1. Filter candidates by (trade_count >= min_trades) & (total_net_pnl > 0) & (profit_factor >= 1.0).
-      2. Choose candidate with maximum total_net_pnl.
-      3. Fallback: If no candidate satisfies all filters, choose max total_net_pnl among trade_count >= 1.
-    """
-    manifest: dict[str, Any] = {}
-    if summary_df.is_empty():
-        return manifest
 
-    dicts = summary_df.to_dicts()
-    # Group rows by (label, trend_type)
-    by_label_trend: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for row in dicts:
-        lbl = str(row.get("label", ""))
-        trd = str(row.get("trend_type", ""))
-        key = (lbl, trd)
-        if key not in by_label_trend:
-            by_label_trend[key] = []
-        by_label_trend[key].append(row)
+def _personal_state_from_env(test_env):
+    return {
+        "wallet_balance": getattr(test_env, "wallet_balance", np.nan),
+        "unrealized_pnl": getattr(test_env, "unrealized_pnl", np.nan),
+        "position": getattr(test_env, "position", np.nan),
+        "leverage": getattr(test_env, "leverage", np.nan),
+    }
 
-    for (label, trend_type), rows in by_label_trend.items():
-        if label not in manifest:
-            manifest[label] = {}
 
-        # 1. Filter qualified candidates
-        qualified = [
-            r for r in rows
-            if r.get("trade_count", 0) >= min_trades
-            and r.get("total_net_pnl", 0.0) > 0
-            and r.get("profit_factor", 0.0) >= 1.0
-        ]
+def build_trading_detail_row(
+    *,
+    label,
+    df_path,
+    initial_action,
+    bin_index,
+    timestep,
+    test_df,
+    action,
+    target_position,
+    target_leverage,
+    position_before,
+    leverage_before,
+    test_env,
+    info,
+    step_reward,
+    action_change_step,
+    trade_count_step,
+    cumulative_action_change_count,
+    cumulative_trade_count,
+):
+    state_after = _personal_state_from_env(test_env)
+    market_fields = _market_fields(test_df, timestep)
+    mark_price = market_fields.get("mark_price", np.nan)
+    wallet_balance = state_after["wallet_balance"]
+    unrealized_pnl = state_after["unrealized_pnl"]
+    position_after = state_after["position"]
+    margin_balance = wallet_balance + unrealized_pnl
+    row = {
+        "label": label,
+        "df_path": df_path,
+        "initial_action": initial_action,
+        "bin_index": bin_index,
+        "timestep": timestep,
+        **market_fields,
+        "action": action,
+        "target_position": target_position,
+        "target_leverage": target_leverage,
+        "position_before": position_before,
+        "leverage_before": leverage_before,
+        "position_after": position_after,
+        "leverage_after": state_after["leverage"],
+        "action_change_step": action_change_step,
+        "trade_count_step": trade_count_step,
+        "cumulative_action_change_count": cumulative_action_change_count,
+        "cumulative_trade_count": cumulative_trade_count,
+        "step_reward": step_reward,
+        "realized_pnl_step": info["realized_pnl_step"],
+        "cumulative_realized_pnl": info["cumulative_realized_pnl"],
+        "commission_fee_step": info["commission_fee_step"],
+        "cumulative_commission_fee": info["cumulative_commission_fee"],
+        "slippage_step": info["slippage_step"],
+        "cumulative_slippage": info["cumulative_slippage"],
+        "wallet_balance": wallet_balance,
+        "unrealized_pnl": unrealized_pnl,
+        "margin_balance": margin_balance,
+        "notional_asset_value": mark_price * position_after,
+        "cash_balance": wallet_balance,
+        "total_value": margin_balance,
+    }
+    return row
 
-        if qualified:
-            best_row = max(qualified, key=lambda x: float(x.get("total_net_pnl", 0.0)))
-            is_fallback = False
+
+def seed_torch(seed):
+    random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+
+
+class weighted_trader:
+    def __init__(self, args):
+
+        # device
+        if torch.cuda.is_available():
+            self.device = "cuda"
         else:
-            # Fallback to trade_count >= 1
-            valid_trades = [r for r in rows if r.get("trade_count", 0) >= 1]
-            if valid_trades:
-                best_row = max(valid_trades, key=lambda x: float(x.get("total_net_pnl", 0.0)))
-            else:
-                best_row = max(rows, key=lambda x: float(x.get("total_net_pnl", 0.0)))
-            is_fallback = True
+            self.device = "cpu"
+        # log path
+        self.model_path = build_serial_model_path(
+            args.result_path,
+            args.dataset_name,
+            args.experiment_name,
+        )
+  
+        # trading environment setting
+        self.base_path = args.base_path
+        self.dataset_name = args.dataset_name
+        self.valid_data_path = os.path.join(self.base_path, self.dataset_name, "valid")
+        self.tech_indicator_list = np.load(
+            os.path.join(self.base_path, self.dataset_name, "state_features.npy")
+        )
+        self.maintenance_margin_ratio_dict = np.load(
+            os.path.join(
+                self.base_path, self.dataset_name, "maintenance_margin_ratio_dict.npy"
+            ),
+            allow_pickle=True,
+        ).item()
+        self.max_holding_number = args.max_holding_number
+        self.order_book_depth = args.order_book_depth
+        self.position_choices = args.position_choices
+        self.single_side_action_num = int((self.position_choices - 1) / 2)
+        self.position_list = (
+            [
+                self.max_holding_number / self.single_side_action_num * i
+                for i in range(1, self.single_side_action_num + 1)
+            ]
+            + [0]
+            + [
+                self.max_holding_number / self.single_side_action_num * -i
+                for i in range(1, self.single_side_action_num + 1)
+            ]
+        )
+        self.position_list.sort()
+        self.leverage_choices = args.leverage_choices
+        self.long_estimated_rate = args.long_estimated_rate
+        self.short_estimated_rate = args.short_estimated_rate
+        self.transcation_cost = args.transcation_cost
+        self.allow_reverse_position = getattr(args, "allow_reverse_position", False)
+        self.early_stop = args.early_stop
+        self.initial_wallet_balance = args.initial_wallet_balance
+        self.initial_margin = args.initial_margin
+        self.initial_unrealized_pnL = args.initial_unrealized_pnL
+        self.initial_position = args.initial_position
+        self.initial_leverage = args.initial_leverage
+        self.initial_state = (
+            self.initial_wallet_balance,
+            self.initial_margin,
+            self.initial_unrealized_pnL,
+            self.initial_position,
+            self.initial_leverage,
+        )
 
-        manifest[label][trend_type] = {
-            "best_epoch": int(best_row.get("epoch", 0)),
-            "best_bin_index": int(best_row.get("bin_index", 0)),
-            "total_net_pnl": float(best_row.get("total_net_pnl", 0.0)),
-            "win_rate": float(best_row.get("win_rate", 0.0)),
-            "long_win_rate": float(best_row.get("long_win_rate", 0.0)),
-            "short_win_rate": float(best_row.get("short_win_rate", 0.0)),
-            "profit_factor": float(best_row.get("profit_factor", 0.0)),
-            "trade_count": int(best_row.get("trade_count", 0)),
-            "long_trade_count": int(best_row.get("long_trade_count", 0)),
-            "short_trade_count": int(best_row.get("short_trade_count", 0)),
-            "mean_holding_duration": float(best_row.get("mean_holding_duration", 0.0)),
-            "mean_max_drawdown": float(best_row.get("mean_max_drawdown", 0.0)),
-            "max_drawdown": float(best_row.get("max_drawdown", 0.0)),
-            "is_fallback": is_fallback,
-        }
+        # network
+        self.time_info_dim = args.time_info_dim
+        self.hidden_nodes = args.hidden_nodes
+        self.N = args.N
+        self.N_ACTIONS = (self.position_choices - 1) * len(self.leverage_choices) + 1
+        self.eval_net = ensemble_Qnet(
+            N_STATES=len(self.tech_indicator_list),
+            N_ACTIONS=self.N_ACTIONS,
+            hidden_nodes=self.hidden_nodes,
+            TIME_INFO_DIM=self.time_info_dim,
+            ensemble_number=self.N,
+        ).to(self.device)
 
-    return manifest
-
-
-def find_trading_detail_csvs(root_dir: Path) -> list[Path]:
-    """Find all trading_action_detail_epoch_*.csv files in root_dir."""
-    if not root_dir.exists():
-        return []
-    detail_files: list[Path] = []
-    for path in root_dir.rglob("trading_action_detail_epoch_*.csv"):
-        if path.is_file():
-            detail_files.append(path)
-            print(f"Found detail file: {path}", flush=True)
-    detail_files = sorted(detail_files)
-    print(f"Total detail files found: {len(detail_files)} in {root_dir}", flush=True)
-    return detail_files
-
-
-def aggregate_agents_indexs(
-    result_root: Path,
-    output_dir: Path,
-    initial_wallet_balance: float = 100000.0,
-    min_trades: int = 3,
-) -> tuple[Path, Path, Path]:
-    """Find detail CSVs, extract lifecycle details, calculate summary statistics, and generate selection_manifest.json using Polars."""
-    detail_files = find_trading_detail_csvs(result_root)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    all_lifecycles: list[dict[str, Any]] = []
-    total_files = len(detail_files)
-    print(f"Starting aggregation for {total_files} detail files from {result_root}...", flush=True)
-
-    for idx, file_path in enumerate(detail_files, 1):
-        match = re.search(r"epoch_(\d+)", file_path.name)
-        default_epoch = int(match.group(1)) if match else 0
-
-        print(f"[{idx}/{total_files}] Processing {file_path}...", flush=True)
-        try:
-            df = pl.read_csv(file_path)
-            lifecycles = extract_trade_lifecycles(
-                df,
-                default_epoch=default_epoch,
-                initial_wallet_balance=initial_wallet_balance,
+        self.epoch_num = args.epoch_num
+        self.save_trading_detail_csv = args.save_trading_detail_csv
+        self.epoch_path = os.path.join(
+            self.model_path,
+            "epoch_" + str(self.epoch_num),
+        )
+        self.eval_net.load_state_dict(
+            torch.load(
+                os.path.join(self.epoch_path, "trained_model.pkl"),
+                map_location=self.device,
             )
-            all_lifecycles.extend(lifecycles)
-            print(f"[{idx}/{total_files}] Processed {file_path}: extracted {len(lifecycles)} lifecycles", flush=True)
-        except Exception as err:
-            print(f"[{idx}/{total_files}] Warning: failed to process {file_path}: {err}", flush=True)
+        )
+        self.eval_net.eval()
+        self.initial_action_list = range(
+            (self.position_choices - 1) * len(self.leverage_choices) + 1
+        )
 
-    if all_lifecycles:
-        detail_df = pl.DataFrame(all_lifecycles)
-    else:
-        detail_df = pl.DataFrame()
+    def act_test(self, state, info, context_index):
+        assert context_index in range(self.N)
+        state = torch.unsqueeze(torch.FloatTensor(state).reshape(-1), 0).to(self.device)
+        previous_action = torch.unsqueeze(
+            torch.tensor([info["previous_action"]]).float().to(self.device), 0
+        ).to(self.device)
+        avaliable_action = torch.unsqueeze(
+            torch.tensor(info["avaliable_action"]).to(self.device), 0
+        ).to(self.device)
+        hour_count_down = (
+            torch.unsqueeze(torch.tensor([info["funding_count_down_hour"]]), 0)
+            .to(self.device)
+            .float()
+        )
+        minute_count_down = (
+            torch.unsqueeze(torch.tensor([info["funding_count_down_minute"]]), 0)
+            .to(self.device)
+            .float()
+        )
+        time_input = torch.cat([hour_count_down, minute_count_down], dim=1).to(
+            self.device
+        )
+        trading_info = torch.unsqueeze(
+            torch.tensor(info["trading_info"]).float().to(self.device), 0
+        )
+        with torch.inference_mode():
+            action_value_chosen_index = self.eval_net.qnet_list[context_index](
+                state=state,
+                time=time_input,
+                previous_action=previous_action,
+                avaliable_action=avaliable_action,
+                trading_info=trading_info,
+            )
+            action = torch.max(action_value_chosen_index, 1)[1].data.cpu().numpy()
+        action = action[0]
 
-    summary_df = aggregate_summary_statistics(all_lifecycles)
-    selection_manifest = select_best_agents(summary_df, min_trades=min_trades)
+        return action
 
-    detail_csv_path = output_dir / "agent_trade_lifecycle_detail.csv"
-    summary_csv_path = output_dir / "agent_trend_type_summary.csv"
-    manifest_json_path = output_dir / "selection_manifest.json"
+    def test(self):
+        print('start')
+        overall_result = []
+        trading_detail_rows = []
+        self.eval_net.eval()
+        df_entries = _iter_valid_feather_files(self.valid_data_path)
+        label_list = sorted({entry["label"] for entry in df_entries})
+        for label in label_list:
+            print('start label {}'.format(label))
+            label_entries = [
+                entry for entry in df_entries if entry["label"] == label
+            ]
+            for initial_action in self.initial_action_list:
+                for bin_index in range(self.N):
+                    single_label_initial_action_bin_index_reward_sum_result = []
+                    single_label_initial_action_bin_index_df_length_result = []
+                    single_label_initial_action_bin_index_turnover_result = []
+                    single_label_initial_action_bin_index_contract_result = []
+                    single_label_initial_action_bin_index_df_path_result = []
+                    single_label_initial_action_bin_index_mean_position_result = []
+                    single_label_initial_action_bin_index_mean_abs_position_result = []
+                    single_label_initial_action_bin_index_long_step_ratio_result = []
+                    single_label_initial_action_bin_index_short_step_ratio_result = []
+                    single_label_initial_action_bin_index_flat_step_ratio_result = []
+                    single_label_initial_action_bin_index_long_reward_sum_result = []
+                    single_label_initial_action_bin_index_short_reward_sum_result = []
+                    single_label_initial_action_bin_index_flat_reward_sum_result = []
+                    single_label_initial_action_bin_index_net_position_exposure_result = []
+                    single_label_initial_action_bin_index_limit_up_step_ratio_result = []
+                    single_label_initial_action_bin_index_limit_down_step_ratio_result = []
+                    single_label_initial_action_bin_index_limit_up_long_reward_sum_result = []
+                    single_label_initial_action_bin_index_limit_down_short_reward_sum_result = []
+                    single_label_initial_action_bin_index_limit_up_reverse_short_ratio_result = []
+                    single_label_initial_action_bin_index_limit_down_reverse_long_ratio_result = []
+                    for entry in label_entries:
+                        contract = entry["contract"]
+                        df_path = entry["df_path"]
+                        initial_position, initial_leverage = (
+                            map_action_to_position_leverage(
+                                initial_action,
+                                self.leverage_choices,
+                                self.position_list,
+                            )
+                        )
+                        self.test_df = pd.read_feather(entry["abs_path"])
+                        current_markprice = self.test_df["mark_price"].values[0]
+                        self.initial_margin = np.abs(
+                            initial_position * current_markprice / initial_leverage
+                        )
+                        self.initial_state = (
+                            self.initial_wallet_balance,
+                            self.initial_margin,
+                            self.initial_unrealized_pnL,
+                            initial_position,
+                            initial_leverage,
+                        )
+                        test_env = initiate_base_env(
+                            df=self.test_df,
+                            feature_list=self.tech_indicator_list,
+                            max_holding_number=self.max_holding_number,
+                            order_book_depth=self.order_book_depth,
+                            position_choices=self.position_choices,  # (must be an odd number, the minum of trading equals to (max_holder_number)/((action_dim-1)/2)s))
+                            leverage_choice=self.leverage_choices,  # recommend only use one leverage choice, because the leverage does not influence the return directly, the position
+                            # itself is enough to show the risk preference
+                            long_estimated_rate=self.long_estimated_rate,
+                            short_estimated_rate=self.short_estimated_rate,
+                            commission_rate=self.transcation_cost,
+                            # maten_mar_ratio_dict varies among different perpertual contracts, need to perform a config file for different perpertual
+                            # the default is for btcusdt perpetual contract
+                            maintenance_margin_ratio_dict=self.maintenance_margin_ratio_dict,
+                            early_stop=0,
+                            # initial_personal_state
+                            initial_state=self.initial_state,
+                            allow_reverse_position=getattr(self, "allow_reverse_position", False),
+                        )
+                        position_after_list = []
+                        limit_up_list = []
+                        limit_down_list = []
+                        s, info = test_env.reset()
+                        done = False
+                        reward_sum = 0
+                        reward_list = []
+                        action_list = []
+                        turn_over = 0
+                        previous_action = initial_action
+                        cumulative_action_change_count = 0
+                        cumulative_trade_count = 0
+                        while not done:
+                            timestep = len(action_list)
+                            position_before = getattr(
+                                test_env, "position", initial_position
+                            )
+                            leverage_before = getattr(
+                                test_env, "leverage", initial_leverage
+                            )
+                            a = self.act_test(s, info, bin_index)
+                            target_position, target_leverage = (
+                                map_action_to_position_leverage(
+                                    a,
+                                    self.leverage_choices,
+                                    self.position_list,
+                                )
+                            )
+                            action_change_step = int(a != previous_action)
+                            turn_over += np.abs(a - previous_action) / 4
+                            s_, r, done, info = test_env.step(a)
+                            position_after = getattr(
+                                test_env, "position", position_before
+                            )
+                            leverage_after = getattr(
+                                test_env, "leverage", leverage_before
+                            )
+                            trade_count_step = int(
+                                position_after != position_before
+                                or leverage_after != leverage_before
+                            )
+                            cumulative_action_change_count += action_change_step
+                            cumulative_trade_count += trade_count_step
+                            if self.save_trading_detail_csv:
+                                trading_detail_rows.append(
+                                    build_trading_detail_row(
+                                        label=label,
+                                        df_path=df_path,
+                                        initial_action=initial_action,
+                                        bin_index=bin_index,
+                                        timestep=timestep,
+                                        test_df=self.test_df,
+                                        action=a,
+                                        target_position=target_position,
+                                        target_leverage=target_leverage,
+                                        position_before=position_before,
+                                        leverage_before=leverage_before,
+                                        test_env=test_env,
+                                        info=info,
+                                        step_reward=r,
+                                        action_change_step=action_change_step,
+                                        trade_count_step=trade_count_step,
+                                        cumulative_action_change_count=cumulative_action_change_count,
+                                        cumulative_trade_count=cumulative_trade_count,
+                                    )
+                                )
+                            action_list.append(a)
+                            reward_list.append(r)
+                            position_after_list.append(position_after)
+                            is_limit_up, is_limit_down = _detect_step_limit_states(self.test_df, timestep)
+                            limit_up_list.append(is_limit_up)
+                            limit_down_list.append(is_limit_down)
+                            s = s_
+                            reward_sum += r
+                            previous_action = a
+                        initial_margin_history = test_env.initial_margin_history
+                        wallet_balance_history = test_env.wallet_balance_history
+                        unrealized_pnl_history = test_env.unrealized_pnl_history
+                        maintain_marigine_history = test_env.maintain_marigine_history
+                        new_position_required_money_history = (
+                            test_env.new_position_required_money_history
+                        )
+                        # single_epoch_single_index_single_df_path = os.path.join(
+                        #     self.epoch_path,
+                        #     "test_dynamics",
+                        #     "bin_index_{}".format(bin_index),
+                        #     label,
+                        #     "initial_action_{}".format(initial_action),
+                        #     df_path.removesuffix(".feather"),
+                        # )
+                        # if not os.path.exists(single_epoch_single_index_single_df_path):
+                        #     os.makedirs(single_epoch_single_index_single_df_path)
+                        # np.save(
+                        #     os.path.join(
+                        #         single_epoch_single_index_single_df_path,
+                        #         "micro_action_history.npy",
+                        #     ),
+                        #     action_list,
+                        # )
+                        # np.save(
+                        #     os.path.join(
+                        #         single_epoch_single_index_single_df_path,
+                        #         "reward_history.npy",
+                        #     ),
+                        #     reward_list,
+                        # )
+                        # np.save(
+                        #     os.path.join(
+                        #         single_epoch_single_index_single_df_path,
+                        #         "initial_margin_history.npy",
+                        #     ),
+                        #     initial_margin_history,
+                        # )
+                        # np.save(
+                        #     os.path.join(
+                        #         single_epoch_single_index_single_df_path,
+                        #         "wallet_balance_history.npy",
+                        #     ),
+                        #     wallet_balance_history,
+                        # )
+                        # np.save(
+                        #     os.path.join(
+                        #         single_epoch_single_index_single_df_path,
+                        #         "unrealized_pnl_history.npy",
+                        #     ),
+                        #     unrealized_pnl_history,
+                        # )
+                        # np.save(
+                        #     os.path.join(
+                        #         single_epoch_single_index_single_df_path,
+                        #         "maintain_marigine_history.npy",
+                        #     ),
+                        #     maintain_marigine_history,
+                        # )
+                        # np.save(
+                        #     os.path.join(
+                        #         single_epoch_single_index_single_df_path,
+                        #         "new_position_required_money_history.npy",
+                        #     ),
+                        #     new_position_required_money_history,
+                        # )
 
-    if not detail_df.is_empty():
-        renamed_detail = detail_df.rename({k: v for k, v in LIFECYCLE_HEADER_LABELS.items() if k in detail_df.columns})
-        renamed_detail.write_csv(detail_csv_path)
-    else:
-        pl.DataFrame().write_csv(detail_csv_path)
+                        single_label_initial_action_bin_index_reward_sum_result.append(
+                            reward_sum
+                        )
+                        single_label_initial_action_bin_index_df_length_result.append(
+                            len(self.test_df)
+                        )
+                        single_label_initial_action_bin_index_turnover_result.append(
+                            turn_over
+                        )
+                        single_label_initial_action_bin_index_contract_result.append(
+                            contract
+                        )
+                        single_label_initial_action_bin_index_df_path_result.append(
+                            df_path
+                        )
 
-    if not summary_df.is_empty():
-        renamed_summary = summary_df.rename({k: v for k, v in SUMMARY_HEADER_LABELS.items() if k in summary_df.columns})
-        renamed_summary.write_csv(summary_csv_path)
-    else:
-        pl.DataFrame().write_csv(summary_csv_path)
+                        total_steps = len(position_after_list)
+                        if total_steps > 0:
+                            pos_arr = np.array(position_after_list, dtype=float)
+                            rew_arr = np.array(reward_list, dtype=float)
+                            up_arr = np.array(limit_up_list, dtype=bool)
+                            down_arr = np.array(limit_down_list, dtype=bool)
 
-    with open(manifest_json_path, "w", encoding="utf-8") as f:
-        json.dump(selection_manifest, f, indent=2, ensure_ascii=False)
+                            mean_pos = float(np.mean(pos_arr))
+                            mean_abs_pos = float(np.mean(np.abs(pos_arr)))
+                            long_mask = pos_arr > 0
+                            short_mask = pos_arr < 0
+                            flat_mask = pos_arr == 0
 
-    print(f"Generated trade lifecycle detail CSV: {detail_csv_path} ({len(detail_df)} rows)", flush=True)
-    print(f"Generated trend type summary CSV: {summary_csv_path} ({len(summary_df)} rows)", flush=True)
-    print(f"Generated selection manifest JSON: {manifest_json_path}", flush=True)
+                            long_step_ratio = float(np.mean(long_mask))
+                            short_step_ratio = float(np.mean(short_mask))
+                            flat_step_ratio = float(np.mean(flat_mask))
 
-    return detail_csv_path, summary_csv_path, manifest_json_path
+                            long_reward_sum = float(np.sum(rew_arr[long_mask]))
+                            short_reward_sum = float(np.sum(rew_arr[short_mask]))
+                            flat_reward_sum = float(np.sum(rew_arr[flat_mask]))
 
+                            max_hold = float(getattr(self, "max_holding_number", 1.0))
+                            if max_hold <= 0:
+                                max_hold = 1.0
+                            net_position_exposure = float(mean_pos / max_hold)
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Aggregate agent trading details into trend lifecycle metrics and selection_manifest using Polars.")
-    parser.add_argument("--result_root", type=Path, default=Path("result/DiHFT/low_level"), help="Root directory searching for detail CSVs")
-    parser.add_argument("--output_dir", type=Path, required=True, help="Output directory to save summary, detail CSVs, and selection_manifest.json")
-    parser.add_argument("--initial_wallet_balance", type=float, default=100000.0, help="Initial wallet balance used for return_rate calculation")
-    parser.add_argument("--min_trades", type=int, default=3, help="Minimum trade count threshold for agent selection filter")
-    return parser
+                            limit_up_step_ratio = float(np.mean(up_arr))
+                            limit_down_step_ratio = float(np.mean(down_arr))
 
+                            limit_up_long_reward_sum = float(np.sum(rew_arr[up_arr & long_mask]))
+                            limit_down_short_reward_sum = float(np.sum(rew_arr[down_arr & short_mask]))
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    print(args, flush=True)
-    aggregate_agents_indexs(
-        args.result_root,
-        args.output_dir,
-        initial_wallet_balance=args.initial_wallet_balance,
-        min_trades=args.min_trades,
-    )
-    return 0
+                            up_count = np.sum(up_arr)
+                            down_count = np.sum(down_arr)
+
+                            limit_up_reverse_short_ratio = (
+                                float(np.sum(up_arr & short_mask) / up_count) if up_count > 0 else 0.0
+                            )
+                            limit_down_reverse_long_ratio = (
+                                float(np.sum(down_arr & long_mask) / down_count) if down_count > 0 else 0.0
+                            )
+                        else:
+                            mean_pos = 0.0
+                            mean_abs_pos = 0.0
+                            long_step_ratio = 0.0
+                            short_step_ratio = 0.0
+                            flat_step_ratio = 0.0
+                            long_reward_sum = 0.0
+                            short_reward_sum = 0.0
+                            flat_reward_sum = 0.0
+                            net_position_exposure = 0.0
+                            limit_up_step_ratio = 0.0
+                            limit_down_step_ratio = 0.0
+                            limit_up_long_reward_sum = 0.0
+                            limit_down_short_reward_sum = 0.0
+                            limit_up_reverse_short_ratio = 0.0
+                            limit_down_reverse_long_ratio = 0.0
+
+                        single_label_initial_action_bin_index_mean_position_result.append(mean_pos)
+                        single_label_initial_action_bin_index_mean_abs_position_result.append(mean_abs_pos)
+                        single_label_initial_action_bin_index_long_step_ratio_result.append(long_step_ratio)
+                        single_label_initial_action_bin_index_short_step_ratio_result.append(short_step_ratio)
+                        single_label_initial_action_bin_index_flat_step_ratio_result.append(flat_step_ratio)
+                        single_label_initial_action_bin_index_long_reward_sum_result.append(long_reward_sum)
+                        single_label_initial_action_bin_index_short_reward_sum_result.append(short_reward_sum)
+                        single_label_initial_action_bin_index_flat_reward_sum_result.append(flat_reward_sum)
+                        single_label_initial_action_bin_index_net_position_exposure_result.append(net_position_exposure)
+                        single_label_initial_action_bin_index_limit_up_step_ratio_result.append(limit_up_step_ratio)
+                        single_label_initial_action_bin_index_limit_down_step_ratio_result.append(limit_down_step_ratio)
+                        single_label_initial_action_bin_index_limit_up_long_reward_sum_result.append(limit_up_long_reward_sum)
+                        single_label_initial_action_bin_index_limit_down_short_reward_sum_result.append(limit_down_short_reward_sum)
+                        single_label_initial_action_bin_index_limit_up_reverse_short_ratio_result.append(limit_up_reverse_short_ratio)
+                        single_label_initial_action_bin_index_limit_down_reverse_long_ratio_result.append(limit_down_reverse_long_ratio)
+                    _overall_result = {
+                            "label": label,
+                            "initial_action": initial_action,
+                            "bin_index": bin_index,
+                            "contract": single_label_initial_action_bin_index_contract_result,
+                            "df_path": single_label_initial_action_bin_index_df_path_result,
+                            "reward_sum": single_label_initial_action_bin_index_reward_sum_result,
+                            "df_length": single_label_initial_action_bin_index_df_length_result,
+                            "turnover": single_label_initial_action_bin_index_turnover_result,
+                            "mean_position": single_label_initial_action_bin_index_mean_position_result,
+                            "mean_abs_position": single_label_initial_action_bin_index_mean_abs_position_result,
+                            "long_step_ratio": single_label_initial_action_bin_index_long_step_ratio_result,
+                            "short_step_ratio": single_label_initial_action_bin_index_short_step_ratio_result,
+                            "flat_step_ratio": single_label_initial_action_bin_index_flat_step_ratio_result,
+                            "long_reward_sum": single_label_initial_action_bin_index_long_reward_sum_result,
+                            "short_reward_sum": single_label_initial_action_bin_index_short_reward_sum_result,
+                            "flat_reward_sum": single_label_initial_action_bin_index_flat_reward_sum_result,
+                            "net_position_exposure": single_label_initial_action_bin_index_net_position_exposure_result,
+                            "limit_up_step_ratio": single_label_initial_action_bin_index_limit_up_step_ratio_result,
+                            "limit_down_step_ratio": single_label_initial_action_bin_index_limit_down_step_ratio_result,
+                            "limit_up_long_reward_sum": single_label_initial_action_bin_index_limit_up_long_reward_sum_result,
+                            "limit_down_short_reward_sum": single_label_initial_action_bin_index_limit_down_short_reward_sum_result,
+                            "limit_up_reverse_short_ratio": single_label_initial_action_bin_index_limit_up_reverse_short_ratio_result,
+                            "limit_down_reverse_long_ratio": single_label_initial_action_bin_index_limit_down_reverse_long_ratio_result,
+                    }    
+                    print(_overall_result)
+                    overall_result.append(
+                        _overall_result
+                    )
+        
+        np.save(os.path.join(self.epoch_path, "analysis_result.npy"), overall_result)
+        write_analysis_csv(
+            overall_result,
+            os.path.join(self.epoch_path, "analysis_result.csv"),
+        )
+        if self.save_trading_detail_csv:
+            write_trading_detail_csv(
+                trading_detail_rows,
+                trading_detail_csv_path(self.epoch_path, self.epoch_num),
+            )
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    args = parser.parse_args()
+    trader = weighted_trader(args)
+    trader.test()

@@ -141,9 +141,23 @@ def test_generate_epoch_artifacts_uses_required_paths_and_no_manifest(tmp_path):
         / "epoch_7"
     )
     epoch_dir.mkdir(parents=True)
-    chinese_detail = _detail_frame(
-        [(0, 1), (1, 0)], rewards=[2, 3], label="label_6"
-    ).rename(
+    detail = pl.concat(
+        [
+            _detail_frame(
+                [(0, 1), (1, 0)],
+                rewards=[2, 3],
+                label="label_6",
+                df_path="fu2505/label_6/following.feather",
+            ),
+            _detail_frame(
+                [(0, -1), (-1, 0)],
+                rewards=[5, 7],
+                label="label_6",
+                df_path="fu2505/label_6/reversion.feather",
+            ),
+        ]
+    )
+    chinese_detail = detail.rename(
         {
             "label": "标签",
             "df_path": "数据文件",
@@ -158,7 +172,7 @@ def test_generate_epoch_artifacts_uses_required_paths_and_no_manifest(tmp_path):
     )
     chinese_detail.write_csv(epoch_dir / "trading_action_detail_epoch_7.csv")
 
-    lifecycle_path, analysis_path, analysis_csv_path = generate_epoch_artifacts(
+    artifacts = generate_epoch_artifacts(
         result_path=tmp_path,
         dataset_name="fu",
         experiment_name="experiment",
@@ -166,14 +180,34 @@ def test_generate_epoch_artifacts_uses_required_paths_and_no_manifest(tmp_path):
         max_holding_number=2,
     )
 
-    assert lifecycle_path == epoch_dir / "agent_trade_lifecycle_detail_7.csv"
-    assert analysis_path == epoch_dir / "analysis_result_with_type.npy"
-    assert analysis_csv_path == epoch_dir / "analysis_result_with_type.csv"
-    assert pl.read_csv(lifecycle_path).columns == LIFECYCLE_COLUMNS
+    assert set(artifacts) == {"趋势跟随", "趋势回归"}
+    lifecycle_path, analysis_path, analysis_csv_path = artifacts["趋势跟随"]
+    assert lifecycle_path == (
+        epoch_dir / "agent_trade_lifecycle_detail_7_趋势跟随.csv"
+    )
+    assert analysis_path == epoch_dir / "analysis_result_with_趋势跟随.npy"
+    assert analysis_csv_path == epoch_dir / "analysis_result_with_趋势跟随.csv"
+    lifecycle_df = pl.read_csv(lifecycle_path)
+    assert lifecycle_df.columns == LIFECYCLE_COLUMNS
+    assert lifecycle_df["trend_type"].unique().to_list() == ["趋势跟随"]
     saved = np.load(analysis_path, allow_pickle=True)
     assert saved.shape == (1,)
     assert saved[0]["trend_type"] == "趋势跟随"
     assert saved[0]["limit_up_step_ratio"] == [1.0]
+
+    reversion_lifecycle, reversion_analysis, reversion_csv = artifacts["趋势回归"]
+    assert reversion_lifecycle == (
+        epoch_dir / "agent_trade_lifecycle_detail_7_趋势回归.csv"
+    )
+    assert reversion_analysis == epoch_dir / "analysis_result_with_趋势回归.npy"
+    assert reversion_csv == epoch_dir / "analysis_result_with_趋势回归.csv"
+    assert (
+        pl.read_csv(reversion_lifecycle)["trend_type"].unique().to_list()
+        == ["趋势回归"]
+    )
+    reversion_saved = np.load(reversion_analysis, allow_pickle=True)
+    assert reversion_saved.shape == (1,)
+    assert reversion_saved[0]["trend_type"] == "趋势回归"
     assert not (epoch_dir / "selection_manifest.json").exists()
     assert analysis_csv_path.exists()
     csv_df = pl.read_csv(analysis_csv_path)

@@ -202,7 +202,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument(
     "--buffer_size",
     type=int,
-    default=1000000,
+    default=2000000,
     help="the number of transcation we store in one memory",
 )
 parser.add_argument(
@@ -381,7 +381,7 @@ parser.add_argument("--lr_step", type=float, default=2e4, help="the learning rat
 parser.add_argument(
     "--num_sample",
     type=int,
-    default=400,
+    default=500,
     help="the overall number of sampling",
 )
 parser.add_argument(

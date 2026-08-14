@@ -2,8 +2,8 @@
 
 The input is the per-step ``trading_action_detail_epoch_{epoch}.csv`` emitted by
 ``test_agent_index.py``.  Each output lifecycle row represents one continuous
-directional position episode.  ``analysis_result_with_type.npy`` and
-``analysis_result_with_type.csv`` are rebuilt from that lifecycle CSV.
+directional position episode.  Lifecycle and analysis artifacts are written to
+separate files for each trend type.
 """
 
 from __future__ import annotations
@@ -466,7 +466,7 @@ def generate_epoch_artifacts(
     experiment_name: str,
     epoch: int,
     max_holding_number: float,
-) -> tuple[Path, Path, Path]:
+) -> dict[str, tuple[Path, Path, Path]]:
     output_dir = epoch_directory(
         result_path, dataset_name, experiment_name, epoch
     )
@@ -478,29 +478,43 @@ def generate_epoch_artifacts(
     lifecycle_rows = extract_trade_lifecycles(
         detail_frame, max_holding_number=max_holding_number
     )
-    lifecycle_path = output_dir / f"agent_trade_lifecycle_detail_{epoch}.csv"
-    pl.DataFrame(lifecycle_rows, schema=LIFECYCLE_COLUMNS, orient="row").write_csv(
-        lifecycle_path
-    )
+    rows_by_trend_type: dict[str, list[dict[str, Any]]] = {}
+    for row in lifecycle_rows:
+        trend_type = str(row["trend_type"])
+        rows_by_trend_type.setdefault(trend_type, []).append(row)
 
-    lifecycle_frame = pl.read_csv(lifecycle_path)
-    analysis_result = build_analysis_result(
-        lifecycle_frame, max_holding_number=max_holding_number
-    )
-    analysis_path = output_dir / "analysis_result_with_type.npy"
-    np.save(analysis_path, np.asarray(analysis_result, dtype=object))
+    artifacts: dict[str, tuple[Path, Path, Path]] = {}
+    for trend_type, trend_rows in sorted(rows_by_trend_type.items()):
+        lifecycle_path = output_dir / (
+            f"agent_trade_lifecycle_detail_{epoch}_{trend_type}.csv"
+        )
+        lifecycle_frame = pl.DataFrame(
+            trend_rows, schema=LIFECYCLE_COLUMNS, orient="row"
+        )
+        lifecycle_frame.write_csv(lifecycle_path)
 
-    analysis_csv_path = output_dir / "analysis_result_with_type.csv"
-    write_analysis_csv(analysis_result, analysis_csv_path)
+        analysis_result = build_analysis_result(
+            lifecycle_frame, max_holding_number=max_holding_number
+        )
+        analysis_path = output_dir / f"analysis_result_with_{trend_type}.npy"
+        np.save(analysis_path, np.asarray(analysis_result, dtype=object))
 
-    return lifecycle_path, analysis_path, analysis_csv_path
+        analysis_csv_path = output_dir / f"analysis_result_with_{trend_type}.csv"
+        write_analysis_csv(analysis_result, analysis_csv_path)
+        artifacts[trend_type] = (
+            lifecycle_path,
+            analysis_path,
+            analysis_csv_path,
+        )
+
+    return artifacts
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate per-epoch agent trade lifecycle CSVs and "
-            "analysis_result_with_type.npy files"
+            "Generate per-epoch agent trade lifecycle and analysis files "
+            "separated by trend type"
         )
     )
     parser.add_argument(
@@ -520,16 +534,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     if epoch_end < args.epoch_start:
         raise ValueError("epoch_end must be greater than or equal to epoch_start")
     for epoch in range(args.epoch_start, epoch_end + 1):
-        lifecycle_path, analysis_path, analysis_csv_path = generate_epoch_artifacts(
+        artifacts = generate_epoch_artifacts(
             result_path=args.result_path,
             dataset_name=args.dataset_name,
             experiment_name=args.experiment_name,
             epoch=epoch,
             max_holding_number=args.max_holding_number,
         )
-        print(f"Generated lifecycle CSV: {lifecycle_path}", flush=True)
-        print(f"Generated typed analysis NPY: {analysis_path}", flush=True)
-        print(f"Generated typed analysis CSV: {analysis_csv_path}", flush=True)
+        for trend_type, paths in artifacts.items():
+            lifecycle_path, analysis_path, analysis_csv_path = paths
+            print(
+                f"Generated {trend_type} lifecycle CSV: {lifecycle_path}",
+                flush=True,
+            )
+            print(
+                f"Generated {trend_type} analysis NPY: {analysis_path}",
+                flush=True,
+            )
+            print(
+                f"Generated {trend_type} analysis CSV: {analysis_csv_path}",
+                flush=True,
+            )
     return 0
 
 

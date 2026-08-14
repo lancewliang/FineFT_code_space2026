@@ -121,7 +121,7 @@ function run_test_agents_type_index2 {
 
 function run_ddqn_context {
     # run_test_agent_index "$@" || return 1
-    run_test_agents_type_index "$1" "$3" "$4" "$6" || return 1
+    # run_test_agents_type_index "$1" "$3" "$4" "$6" || return 1
     run_test_agents_type_index2 "$1" "$2" "$3" "$4" "$6" || return 1
 }
 
