@@ -185,11 +185,7 @@ class Base_Env(gym.Env):
             self.leverage,
         ) = self.initial_state
         self.current_markprice = markprice_array[self.day]
-        initial_holding_price = (
-            float(self.current_markprice) if self.position != 0 else 0.0
-        )
-        self.current_holding_opening_price = initial_holding_price
-        self.current_holding_average_price = initial_holding_price
+        self._initialize_position_cost()
         # history related
         # one per step
         self.micro_action_history = []
@@ -304,11 +300,21 @@ class Base_Env(gym.Env):
             "current_holding_average_price": self.current_holding_average_price,
         }
 
+    def _initialize_position_cost(self):
+        initial_holding_price = (
+            float(self.current_markprice) if self.position != 0 else 0.0
+        )
+        self.current_holding_opening_price = initial_holding_price
+        self.current_holding_average_price = initial_holding_price
+
+    def _clear_position_cost(self):
+        self.current_holding_opening_price = 0.0
+        self.current_holding_average_price = 0.0
+
     def _update_position_cost(self, old_position, wallet_change):
         new_position = wallet_change.position
         if new_position == 0:
-            self.current_holding_opening_price = 0.0
-            self.current_holding_average_price = 0.0
+            self._clear_position_cost()
             return
 
         opened_quantity = wallet_change.opened_quantity
@@ -356,11 +362,7 @@ class Base_Env(gym.Env):
             self.leverage,
         ) = self.initial_state
         self.current_markprice = self.markprice_array[self.day]
-        initial_holding_price = (
-            float(self.current_markprice) if self.position != 0 else 0.0
-        )
-        self.current_holding_opening_price = initial_holding_price
-        self.current_holding_average_price = initial_holding_price
+        self._initialize_position_cost()
         state = self.state_array[self.day]
         self.ask_prices = self.ask_prices_array[self.day]
         self.bid_prices = self.bid_prices_array[self.day]
@@ -593,6 +595,7 @@ class Base_Env(gym.Env):
                 self.unrealized_pnl_history,
                 self.wallet_balance_history,
             )
+            self._clear_position_cost()
             return (
                 state,
                 reward,
@@ -788,6 +791,7 @@ class Base_Env(gym.Env):
                         self.wallet_balance_history,
                     )
                 )
+                self._clear_position_cost()
                 return (
                     state,
                     reward,
@@ -813,7 +817,7 @@ class Base_Env(gym.Env):
                         "single_holding_return_rate": self.single_holding_return_rate,
                         "single_holding_max_drawdown": self.single_holding_max_drawdown,
                         "trading_info": self._zero_trading_info(),
-                        "limit_reward": 0.0,
+                    "limit_reward": 0.0,
                         "previous_action": self.env_map_position_leverage_to_action(
                             self.position, self.leverage
                         ),

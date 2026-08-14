@@ -215,6 +215,23 @@ def test_terminal_step_info_keeps_exposing_current_holding_cost():
     assert info["current_holding_average_price"] == pytest.approx(102.01)
 
 
+def test_liquidation_ends_current_holding_cost_lifecycle():
+    env = _make_env(
+        markprices=[100.0, 0.0, 0.0],
+        buy_fee_rate=0.02,
+    )
+    env.initial_state = (410.0, 0.0, 0.0, 0.0, 1)
+    env.reset()
+
+    _, _, terminal, info = env.step(
+        env.env_map_position_leverage_to_action(4.0, 1)
+    )
+
+    assert terminal is True
+    assert info["current_holding_opening_price"] == 0.0
+    assert info["current_holding_average_price"] == 0.0
+
+
 def test_wallet_change_keeps_legacy_six_values_and_names_opening_leg_metadata():
     result = change_of_wallet(
         markprice=100.0,
