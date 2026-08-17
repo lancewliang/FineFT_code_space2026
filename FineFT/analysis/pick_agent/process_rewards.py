@@ -24,16 +24,17 @@ for f in files:
             return False
         total = sum(vals)
         min_val = min(vals)
-        pos_frac = sum(1 for v in vals if v > 0) / len(vals)
+        pos_frac = sum(1 for v in vals if v >= 0) / len(vals)
         # 条件: 总和>0 且 单个值>-500 且 正值占比>=50%
-        return total > 0 and min_val > -500 and pos_frac >= 0.50
+        return total > 300 and min_val > -500 and pos_frac >= 0.60
 
     mask = df["奖励总和"].apply(all_positive)
     matched_rows += int(mask.sum())
     sub = df[mask].copy()
     if not sub.empty:
         if "标签" in sub.columns:
-            sub = sub[sub["标签"] != "label_2"]
+            sub = sub[sub["标签"] != "label_0"]
+            sub = sub[sub["标签"] != "label_6"]
         sub.insert(0, "epoch_dir", epoch)
         frames.append(sub)
 
