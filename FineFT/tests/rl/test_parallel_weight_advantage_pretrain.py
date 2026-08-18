@@ -577,3 +577,22 @@ def test_configure_logger_captures_parallel_pretrain_logs(tmp_path, monkeypatch)
         if isinstance(handler, logging.FileHandler) and handler.baseFilename == abs_path:
             handler.close()
             root_logger.removeHandler(handler)
+
+
+def test_select_pretrain_action_clamps_unavailable_perfection_action():
+    from RL.DiHFT.low_level.parallel_pretrain import select_pretrain_action
+
+    info = {"avaiable_action_list": [0, 1, 2, 3, 4, 5]}
+    perfection_action_list = [10, 10, 10]
+
+    action = select_pretrain_action(
+        info=info,
+        optimal_step_counter=0,
+        rollout_index=0,
+        perfection_action_list=perfection_action_list,
+        position_choices=11,
+        leverage_choices=[1],
+    )
+
+    assert action in info["avaiable_action_list"]
+    assert action == 5

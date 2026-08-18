@@ -62,7 +62,8 @@ def select_pretrain_action(
 ):
     avaliable_action_list = info["avaiable_action_list"]
     if rollout_index == 0:
-        return perfection_action_list[optimal_step_counter]
+        action = perfection_action_list[optimal_step_counter]
+        return get_close_element(action, avaliable_action_list)
     elif rollout_index == 1:
         action = (position_choices - 1) * len(leverage_choices)
         return get_close_element(action, avaliable_action_list)

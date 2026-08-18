@@ -905,7 +905,9 @@ class Weighted_Contexts_DQN:
         avaliable_action_list = info["avaiable_action_list"]
         # 0 perfect 1 buy and hold 2 sell and keep 3 empty position 4..N different preference
         if rollout_index == 0:
-            return self.perfection_action_list[optimal_step_counter]
+            action = self.perfection_action_list[optimal_step_counter]
+            action = get_close_element(action, avaliable_action_list)
+            return action
         elif rollout_index == 1:
             action = (self.position_choices - 1) * len(self.leverage_choices) + 1 - 1
             action = get_close_element(action, avaliable_action_list)
