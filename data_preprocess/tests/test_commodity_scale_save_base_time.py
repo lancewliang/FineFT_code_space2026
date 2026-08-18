@@ -46,6 +46,8 @@ def test_scale_save_passthrough_base_time_features(tmp_path):
         "night_session": [0.0] * n,
         "is_opening_30m": [1.0] * n,
         "is_closing_30m": [0.0] * n,
+        "is_session_first_bar": [1.0, 1.0] + [0.0] * (n - 2),
+        "is_session_last_bar": [0.0] * (n - 2) + [1.0, 1.0],
         "contract_month_sin": [0.5] * n,
         "contract_month_cos": [0.5] * n,
         "contract_life_remaining_ratio": [0.8] * n,
@@ -88,4 +90,10 @@ def test_scale_save_passthrough_base_time_features(tmp_path):
     expected_progress = [0.1 * i for i in range(n)]
     assert np.allclose(out_df["trading_minute_progress"].to_list(), expected_progress)
     assert np.allclose(out_df["morning_session"].to_list(), [1.0] * n)
+    assert out_df["is_session_first_bar"].to_list() == [
+        1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    ]
+    assert out_df["is_session_last_bar"].to_list() == [
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0,
+    ]
     assert np.allclose(out_df["contract_life_remaining_ratio"].to_list(), [0.8] * n)

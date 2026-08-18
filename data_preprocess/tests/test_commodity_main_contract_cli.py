@@ -1422,6 +1422,20 @@ def test_commodity_full_process_shell_preserves_cross_month_features():
     )
 
 
+def test_commodity_full_process_shell_preserves_session_boundary_features():
+    script = (
+        REPO_ROOT
+        / "data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
+    )
+    text = script.read_text(encoding="utf-8")
+
+    assert "BASE_TIME_FEATURE_COLUMNS=(" in text
+    assert "is_session_first_bar" in text
+    assert "is_session_last_bar" in text
+    assert '--passthrough_features "${BASE_TIME_FEATURE_COLUMNS[@]}"' in text
+    assert '--mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}"' in text
+
+
 def test_commodity_full_process_shell_runs_cross_month_before_merge():
     script = (
         REPO_ROOT

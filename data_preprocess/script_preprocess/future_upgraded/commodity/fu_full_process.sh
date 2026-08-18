@@ -211,6 +211,8 @@ BASE_TIME_FEATURE_COLUMNS=(
     night_session
     is_opening_30m
     is_closing_30m
+    is_session_first_bar
+    is_session_last_bar
     contract_month_sin
     contract_month_cos
     contract_life_remaining_ratio

@@ -15,6 +15,8 @@ BASE_TIME_FEATURE_COLUMNS: list[str] = [
     "night_session",
     "is_opening_30m",
     "is_closing_30m",
+    "is_session_first_bar",
+    "is_session_last_bar",
     "contract_month_sin",
     "contract_month_cos",
     "contract_life_remaining_ratio",
@@ -97,8 +99,9 @@ def generate_base_time_features(
     night_list = []
     opening_30m_list = []
     closing_30m_list = []
+    session_row_indices: dict[tuple[datetime, datetime], list[int]] = {}
 
-    for ts in timestamps:
+    for row_index, ts in enumerate(timestamps):
         if isinstance(ts, (int, float)):
             # convert ms / us / ns or unix sec if integer
             if ts > 1e16:
@@ -133,6 +136,8 @@ def generate_base_time_features(
         else:
             s, start_dt, end_dt = match
 
+        session_row_indices.setdefault((start_dt, end_dt), []).append(row_index)
+
         duration_sec = (end_dt - start_dt).total_seconds()
         elapsed_sec = (dt - start_dt).total_seconds()
 
@@ -162,6 +167,14 @@ def generate_base_time_features(
         closing_30m_list.append(1.0 if (duration_sec - elapsed_sec) <= 1800 else 0.0)
 
     n = len(timestamps)
+    session_first_bar_list = [0.0] * n
+    session_last_bar_list = [0.0] * n
+    for row_indices in session_row_indices.values():
+        for row_index in row_indices[:2]:
+            session_first_bar_list[row_index] = 1.0
+        for row_index in row_indices[-2:]:
+            session_last_bar_list[row_index] = 1.0
+
     result = pl.DataFrame({
         "timestamp": base_df["timestamp"],
         "trading_minute_progress": progress_list,
@@ -170,6 +183,8 @@ def generate_base_time_features(
         "night_session": night_list,
         "is_opening_30m": opening_30m_list,
         "is_closing_30m": closing_30m_list,
+        "is_session_first_bar": session_first_bar_list,
+        "is_session_last_bar": session_last_bar_list,
         "contract_month_sin": [float(sin_val)] * n,
         "contract_month_cos": [float(cos_val)] * n,
         "contract_life_remaining_ratio": [float(remaining_ratio)] * n,

@@ -17,6 +17,8 @@ def test_base_time_feature_columns_constant():
         "night_session",
         "is_opening_30m",
         "is_closing_30m",
+        "is_session_first_bar",
+        "is_session_last_bar",
         "contract_month_sin",
         "contract_month_cos",
         "contract_life_remaining_ratio",
@@ -105,3 +107,44 @@ def test_generate_base_time_features_last_trading_day_ratio():
 
     # On last trading day, remaining = 1, ratio = 1 / 10 = 0.1
     assert np.isclose(res["contract_life_remaining_ratio"][0], 0.1)
+
+
+def test_session_boundary_features_mark_first_and_last_two_observed_bars():
+    timestamps = [
+        datetime(2026, 1, 5, 9, 0),
+        datetime(2026, 1, 5, 9, 30),
+        datetime(2026, 1, 5, 10, 0),
+        datetime(2026, 1, 5, 10, 15),
+        datetime(2026, 1, 5, 10, 30),
+        datetime(2026, 1, 5, 11, 0),
+        datetime(2026, 1, 5, 11, 30),
+        datetime(2026, 1, 5, 13, 30),
+        datetime(2026, 1, 5, 21, 0),
+        datetime(2026, 1, 5, 21, 30),
+        datetime(2026, 1, 5, 22, 0),
+        datetime(2026, 1, 5, 22, 30),
+        datetime(2026, 1, 5, 23, 0),
+    ]
+    base_df = pl.DataFrame({"timestamp": timestamps})
+
+    result = generate_base_time_features(
+        base_df=base_df,
+        symbol="fu",
+        contract="fu2605",
+        trading_day="20260105",
+        last_trading_day="20260116",
+        total_trading_day_count=10,
+    )
+
+    assert result["is_session_first_bar"].to_list() == [
+        1.0, 1.0, 0.0, 0.0,
+        1.0, 1.0, 0.0,
+        1.0,
+        1.0, 1.0, 0.0, 0.0, 0.0,
+    ]
+    assert result["is_session_last_bar"].to_list() == [
+        0.0, 0.0, 1.0, 1.0,
+        0.0, 1.0, 1.0,
+        1.0,
+        0.0, 0.0, 0.0, 1.0, 1.0,
+    ]

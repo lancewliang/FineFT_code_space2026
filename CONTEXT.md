@@ -461,6 +461,10 @@ _Avoid_: 单合约遴选、test 集合遴选
 由 max_holding_number 和 position_choices 启动参数按交易环境公式生成的完整有序 signed position 集合，负值为空头、0 为空仓、正值为多头。
 _Avoid_: 固定五档、观测到的仓位集合、仓位数量（不明确是档位还是持仓量时）
 
+**交易日末方向收敛 (Trading-day-end Directional Convergence)**:
+逐步 Label 动作守卫在每个 `TradingDay` 最后一根 Bar 上应用的规则：先完成常规配额与降级判断，再将结果收敛为空仓或其方向的最小非零仓位。
+_Avoid_: 日末强平、按模型原始动作收仓、Session 收仓
+
 **同向加仓 (Same-direction Position Increase)**:
 执行前后仓位同号且在仓位档位集合中向更大绝对风险暴露移动的调仓；多头和空头按绝对仓位对称判定。从 0 到非 0 是开仓，仓位变号是反手，均不属于同向加仓。
 _Avoid_: 仓位数值增加、开仓（不明确时）、加多仓
@@ -474,11 +478,11 @@ _Avoid_: 反向动作（不明确是否相对 Label 时）、逆势仓位
 _Avoid_: 仓位比例、固定分组配额、累计全程比例
 
 **逐步 Label 动作守卫 (Per-step Label Action Guard)**:
-在模型产生原始动作后，依据 Label 方向语义和滚动逆 Label 动作配额将其保留或修正为最终动作的环境外部硬约束。它不修改环境提供的可用动作集，与 Meta Router 的语义软惩罚不同。
+在模型产生原始动作后，依据 Label 方向语义、滚动逆 Label 动作配额和交易日末方向收敛规则将其保留或修正为最终动作的环境外部硬约束。它不修改环境提供的可用动作集，与 Meta Router 的语义软惩罚不同。
 _Avoid_: Semantic Guard、Label 语义对齐 Agent 选择
 
 **最终动作 (Final Action)**:
-逐步 Label 动作守卫校验或修正后实际交给环境执行的动作。滚动配额只记录最终动作，不记录被拦截的原始动作。
+逐步 Label 动作守卫校验或修正后实际交给环境执行的动作。滚动配额只记录最终动作，不记录被拦截的模型原始动作。
 _Avoid_: 模型原始动作、候选动作
 
 **逆向持仓不利变动 (Opposed Holding Adverse Move)**:
