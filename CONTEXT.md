@@ -69,8 +69,12 @@ _Avoid_: NaN 检查、空值校验
 _Avoid_: 横截面特征、快照特征
 
 **Base_Time_feature**:
-与 Base Feature 平级的商品期货时间编码特征产物，描述交易时间分钟、早盘/下午盘/夜间盘及开收盘半小时、合约所在月份和合约剩余生命周期；属于必须保留的 State Feature，不能被 Feature Selection 过滤掉，也不参与 Scale Save 缩放。
+与 Base Feature 平级的商品期货时间编码特征产物，描述交易时间分钟、早盘/下午盘/夜间盘、开收盘半小时、Session 首尾 Bar、合约所在月份和合约剩余生命周期；属于必须保留的 State Feature，不能被 Feature Selection 过滤掉，也不参与 Scale Save 缩放。
 _Avoid_: 时间滚动窗口特征、绝对时间特征、日历特征
+
+**Session 首尾 Bar 标记 (Session Boundary Bar Flag)**:
+`is_session_first_bar` 标记每个 Trading Session 实际存在的前两根 Bar，`is_session_last_bar` 标记实际存在的最后两根 Bar；只有一根 Bar 时两个标记均成立。
+_Avoid_: 开收盘 30 分钟标记、TradingDay 首尾标记、计划 Bar 时刻标记
 
 **Trading Session 内进度 (Trading Session Progress)**:
 当前 timestamp 在所属 Trading Session 内按 session 持续分钟数归一化得到的进度，不跨午休或非交易空档连续计算。
@@ -461,9 +465,9 @@ _Avoid_: 单合约遴选、test 集合遴选
 由 max_holding_number 和 position_choices 启动参数按交易环境公式生成的完整有序 signed position 集合，负值为空头、0 为空仓、正值为多头。
 _Avoid_: 固定五档、观测到的仓位集合、仓位数量（不明确是档位还是持仓量时）
 
-**交易日末方向收敛 (Trading-day-end Directional Convergence)**:
-逐步 Label 动作守卫在每个 `TradingDay` 最后一根 Bar 上应用的规则：先完成常规配额与降级判断，再将结果收敛为空仓或其方向的最小非零仓位。
-_Avoid_: 日末强平、按模型原始动作收仓、Session 收仓
+**Session 边界方向收敛 (Session-boundary Directional Convergence)**:
+逐步 Label 动作守卫在 Session 首端或末端 Bar 上应用的规则：先完成常规配额与降级判断，再将结果收敛为空仓或其方向的最小非零仓位。
+_Avoid_: 日末强平、按模型原始动作收仓、交易日末收仓
 
 **同向加仓 (Same-direction Position Increase)**:
 执行前后仓位同号且在仓位档位集合中向更大绝对风险暴露移动的调仓；多头和空头按绝对仓位对称判定。从 0 到非 0 是开仓，仓位变号是反手，均不属于同向加仓。
@@ -478,7 +482,7 @@ _Avoid_: 反向动作（不明确是否相对 Label 时）、逆势仓位
 _Avoid_: 仓位比例、固定分组配额、累计全程比例
 
 **逐步 Label 动作守卫 (Per-step Label Action Guard)**:
-在模型产生原始动作后，依据 Label 方向语义、滚动逆 Label 动作配额和交易日末方向收敛规则将其保留或修正为最终动作的环境外部硬约束。它不修改环境提供的可用动作集，与 Meta Router 的语义软惩罚不同。
+在模型产生原始动作后，依据 Label 方向语义、滚动逆 Label 动作配额和 Session 边界方向收敛规则将其保留或修正为最终动作的环境外部硬约束。它不修改环境提供的可用动作集，与 Meta Router 的语义软惩罚不同。
 _Avoid_: Semantic Guard、Label 语义对齐 Agent 选择
 
 **最终动作 (Final Action)**:

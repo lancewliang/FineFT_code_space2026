@@ -1315,14 +1315,16 @@
 
 
 ### Requirement: 商品期货 BASE_TIME_FEATURE 时间编码特征
-系统 SHALL 生成 9 个非绝对 BASE_TIME_FEATURE 时间编码特征，强制作为 State Feature 保留并跳过 Robust Scaling。
+系统 SHALL 生成 11 个非绝对 BASE_TIME_FEATURE 时间编码特征，强制作为 State Feature 保留并跳过 Robust Scaling。
 
-#### Scenario: 9 个 BASE_TIME_FEATURE 列名与语义
+#### Scenario: 11 个 BASE_TIME_FEATURE 列名与语义
 - **WHEN** 生成商品期货 `BASE_TIME_FEATURE`
-- **THEN** 输出包含 9 个列：`trading_minute_progress`、`morning_session`、`afternoon_session`、`night_session`、`is_opening_30m`、`is_closing_30m`、`contract_month_sin`、`contract_month_cos` 和 `contract_life_remaining_ratio`
+- **THEN** 输出包含 11 个列：`trading_minute_progress`、`morning_session`、`afternoon_session`、`night_session`、`is_opening_30m`、`is_closing_30m`、`is_session_first_bar`、`is_session_last_bar`、`contract_month_sin`、`contract_month_cos` 和 `contract_life_remaining_ratio`
 - **AND** `trading_minute_progress` 为当前 timestamp 在所属 Trading Session 内的归一化进度
 - **AND** `morning_session` / `afternoon_session` / `night_session` 为互斥 one-hot 标记
 - **AND** `is_opening_30m` / `is_closing_30m` 为 session 独立首尾半小时标记
+- **AND** `is_session_first_bar` / `is_session_last_bar` 分别标记每个 session 实际存在的前两根 / 后两根 Bar
+- **AND** session 只有一根 Bar 时两个 Session 首尾 Bar 标记均为 1
 - **AND** `contract_month_sin` / `contract_month_cos` 为合约交割月份的 sin/cos 周期编码
 - **AND** `contract_life_remaining_ratio` 为合约剩余生命周期比例
 

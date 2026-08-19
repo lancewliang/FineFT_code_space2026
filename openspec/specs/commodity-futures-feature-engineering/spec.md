@@ -145,9 +145,11 @@
 4. `night_session`: 夜盘 Session One-hot 标记。
 5. `is_opening_30m`: 当前是否处于 Session 开盘前 30 分钟。
 6. `is_closing_30m`: 当前是否处于 Session 收盘前 30 分钟。
-7. `contract_month_sin`: 合约交割月份的正弦周期编码。
-8. `contract_month_cos`: 合约交割月份的余弦周期编码。
-9. `contract_life_remaining_ratio`: 合约剩余交易日生命周期比例 $[0, 1]$。
+7. `is_session_first_bar`: 当前是否为所属 Session 实际存在的前两根 Bar 之一。
+8. `is_session_last_bar`: 当前是否为所属 Session 实际存在的最后两根 Bar 之一。
+9. `contract_month_sin`: 合约交割月份的正弦周期编码。
+10. `contract_month_cos`: 合约交割月份的余弦周期编码。
+11. `contract_life_remaining_ratio`: 合约剩余交易日生命周期比例 $[0, 1]$。
 
 #### 数学公式
 - **月份周期编码**:
