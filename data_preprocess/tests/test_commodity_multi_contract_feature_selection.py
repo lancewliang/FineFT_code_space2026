@@ -356,6 +356,9 @@ def test_state_features_exclude_absolute_price_levels():
             "mark_price": [1.0, 2.0],
             "wap_1": [1.0, 2.0],
             "vwap": [1.0, 2.0],
+            "buy_wap": [1.0, 2.0],
+            "buy_spread_oe_max": [1.0, 2.0],
+            "relative_spread": [1.0, 2.0],
             "close_log_return_1": [0.0, 0.1],
             "relative_strength": [0.0, 0.1],
         }
@@ -363,7 +366,11 @@ def test_state_features_exclude_absolute_price_levels():
 
     result = _state_features(frame, orderbook_depth=5)
 
-    assert result == ["close_log_return_1", "relative_strength"]
+    assert result == [
+        "relative_spread",
+        "close_log_return_1",
+        "relative_strength",
+    ]
 
 
 def test_parser_enables_short_trend_ablation_and_signed_rank_ic_by_default():

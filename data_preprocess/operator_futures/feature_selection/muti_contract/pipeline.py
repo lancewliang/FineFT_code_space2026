@@ -45,15 +45,40 @@ def _parse_windows_list(value: list[int | str] | str | None) -> list[int] | None
 
 NON_STATE_COLUMNS = {"timestamp", "trading_day", "TradingDay", "symbol", "contract"}
 ABSOLUTE_PRICE_PATTERN = re.compile(
-    r"^(open|high|low|close|lastprice|vwap|wap|awap|twap)(_(\d+|buy|sell))?$",
+    r"(^|_)(open|high|low|close|lastprice|vwap|wap|awap|twap)(_|$)",
     re.IGNORECASE,
+)
+ABSOLUTE_SPREAD_PATTERN = re.compile(r"(^|_)spread(_|$)", re.IGNORECASE)
+PRICE_DERIVED_MARKERS = (
+    "_log_return",
+    "_trend_",
+    "_ratio",
+    "_norm",
+    "_zscore",
+    "_slope",
+    "_velocity",
+    "_acceleration",
+    "relative_",
 )
 DEFAULT_PERSISTENCE_FILTER_PATTERN = r"_log_return_(1|2)$"
 DEFAULT_FEATURE_ABLATION_PATTERNS = (
     r"^(open|high|low|close|lastprice|vwap|wap|awap|twap)(_(\d+|buy|sell))?$",
+    r"(^|_)(buy|sell)_wap(_|$)",
+    r"(^|_)(buy|sell)_spread(_|$)",
+    r"(^|_)spread_oe(_|$)",
     r"_trend_(2|6|12|24)$",
 )
 LOG_RETURN_ALIAS_PATTERN = re.compile(r"^(.+)_log_return_\d+$")
+
+
+def _is_absolute_price_feature(column: str) -> bool:
+    normalized = column.lower()
+    if any(marker in normalized for marker in PRICE_DERIVED_MARKERS):
+        return False
+    return bool(
+        ABSOLUTE_PRICE_PATTERN.search(normalized)
+        or ABSOLUTE_SPREAD_PATTERN.search(normalized)
+    )
 
 
 def _stage_input_dir(
@@ -93,7 +118,7 @@ def _state_features(df: pl.DataFrame, *, orderbook_depth: int) -> list[str]:
         for column in df.columns
         if column not in reward
         and column not in NON_STATE_COLUMNS
-        and not ABSOLUTE_PRICE_PATTERN.fullmatch(column)
+        and not _is_absolute_price_feature(column)
         and not column.endswith("timestamp")
         and not column.endswith("_right")
         and (schema[column].is_numeric() or schema[column] == pl.Boolean)

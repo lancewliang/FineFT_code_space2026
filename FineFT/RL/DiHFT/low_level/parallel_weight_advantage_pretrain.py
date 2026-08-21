@@ -1,13 +1,11 @@
 # Code reference: https://github.com/Lizhi-sjtu/DRL-code-pytorch/tree/main/3.Rainbow_DQN
 
 import copy
-import sys
-
-sys.path.append(".")
 import os
 import random
 import argparse
 import logging
+import sys
 import traceback
 from dataclasses import dataclass
 import numpy as np
@@ -15,6 +13,8 @@ import torch
 import torch.multiprocessing as tmp
 from torch import nn
 from torch.utils.tensorboard import SummaryWriter
+
+sys.path.append(".")
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:

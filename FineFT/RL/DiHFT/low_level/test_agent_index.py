@@ -1,14 +1,12 @@
 # Code reference: https://github.com/Lizhi-sjtu/DRL-code-pytorch/tree/main/3.Rainbow_DQN
 
 import copy
-import sys
-
-sys.path.append(".")
 import os
 import random
 import argparse
 import json
 import re
+import sys
 import numpy as np
 import torch
 from torch import nn
@@ -16,6 +14,8 @@ import pandas as pd
 
 # RL util
 import torch.nn.functional as F
+
+sys.path.append(".")
 
 
 # model

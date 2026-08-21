@@ -1,12 +1,10 @@
 # Code reference: https://github.com/Lizhi-sjtu/DRL-code-pytorch/tree/main/3.Rainbow_DQN
 
 import copy
-import sys
-
-sys.path.append(".")
 import os
 import random
 import argparse
+import sys
 import numpy as np
 import torch
 from torch import nn
@@ -14,6 +12,8 @@ import pandas as pd
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
+
+sys.path.append(".")
 
 # RL util
 from RL.util.replay_buffer_DQN import Multi_step_ReplayBuffer_multi_info
