@@ -14,7 +14,9 @@ from operator_futures.feature_selection.muti_contract.metrics import (
 )
 from operator_futures.feature_selection.muti_contract import metrics
 from operator_futures.feature_selection.muti_contract.pipeline import (
+    DEFAULT_FEATURE_ABLATION_PATTERNS,
     _ordered_filter_features,
+    _state_features,
     build_parser,
     run_feature_selection,
 )
@@ -306,6 +308,71 @@ def test_hard_filter_rejects_high_ic_feature_when_rankic_is_too_low():
     assert "sufficient_rankic" in filter_results["Hard Filter"]
 
 
+def test_signed_rank_ic_excludes_negative_direction_features():
+    features = ["trend_following", "trend_reversion"]
+    aggregate = pl.DataFrame(
+        {
+            "feature": features,
+            "IC_Mean": [0.2, -0.2],
+            "IC_Std": [0.1, 0.1],
+            "RankIC_Mean": [0.2, -0.8],
+            "RankIC_Std": [0.1, 0.1],
+            "Sharpe_Mean": [0.0, 0.0],
+            "Permutation Importance_Mean": [0.0, 0.0],
+            "CatBoost Importance_Mean": [0.0, 0.0],
+        }
+    )
+    frames = {
+        "fu2601": pl.DataFrame(
+            {
+                "trend_following": [0.0, 1.0, 2.0, 3.0],
+                "trend_reversion": [0.0, 2.0, 1.0, 3.0],
+            }
+        )
+    }
+
+    selected, filter_results = _ordered_filter_features(
+        frames,
+        aggregate,
+        features,
+        min_abs_ic=0.1,
+        max_metric_std=1.0,
+        max_correlation=1.0,
+        composite_drop_ratio=0.0,
+        rank_ic_mode="signed",
+    )
+
+    assert selected == ["trend_following"]
+    assert filter_results["Hard Filter"] == ["trend_following"]
+
+
+def test_state_features_exclude_absolute_price_levels():
+    frame = pl.DataFrame(
+        {
+            "open": [1.0, 2.0],
+            "high": [1.0, 2.0],
+            "low": [1.0, 2.0],
+            "close": [1.0, 2.0],
+            "mark_price": [1.0, 2.0],
+            "close_log_return_1": [0.0, 0.1],
+            "relative_strength": [0.0, 0.1],
+        }
+    )
+
+    result = _state_features(frame, orderbook_depth=5)
+
+    assert result == ["close_log_return_1", "relative_strength"]
+
+
+def test_parser_enables_short_trend_ablation_and_signed_rank_ic_by_default():
+    args = build_parser().parse_args(
+        ["--symbol", "fu", "--target_freq", "5min", "--stage", "train"]
+    )
+
+    assert args.rank_ic_mode == "signed"
+    assert args.feature_ablation_patterns == list(DEFAULT_FEATURE_ABLATION_PATTERNS)
+
+
 def test_parser_accepts_runtime_feature_blacklist():
     args = build_parser().parse_args(
         [
@@ -445,6 +512,7 @@ def test_train_stage_applies_feature_blacklist_only_to_final_outputs(tmp_path, f
         max_correlation=1.0,
         composite_drop_ratio=0.0,
         feature_blacklist=["wap_1", "mark_price", "ask1_price"],
+        rank_ic_mode="absolute",
     )
 
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
@@ -517,6 +585,7 @@ def test_train_stage_filters_fast_decay_micro_returns_by_persistence(
         composite_drop_ratio=0.0,
         min_half_life_bars=1.0,
         mandatory_state_features=["mandatory_log_return_2"],
+        rank_ic_mode="absolute",
     )
 
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"

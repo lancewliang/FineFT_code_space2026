@@ -449,6 +449,7 @@ class Base_Env(gym.Env):
         self.single_holding_max_drawdown = 0
         # the history track the cash flow for a single holding
         self.single_holding_history = [0]
+        self.current_holding_duration = 0 if self.position == 0 else 1
         return (
             state,
             {
@@ -738,7 +739,7 @@ class Base_Env(gym.Env):
                 self.current_markprice - previous_markprice
             )
             self.unrealized_pnl = unrealized_pnL + future_value_increment
-            self.single_holding_return = +future_value_increment
+            self.single_holding_return += future_value_increment
             self.wallet_balance = wallet_balance
             funding_count_down = current_funding_timestamp - current_timestamp
             total_seconds = funding_count_down / np.timedelta64(1, "s")

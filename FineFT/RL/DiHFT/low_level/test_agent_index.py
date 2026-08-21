@@ -28,6 +28,7 @@ from env.env_class.futures_util import (
     map_action_to_position_leverage,
 )
 from env.env_class.policy_util import get_close_element
+from RL.DiHFT.low_level.policy_diagnostics import calculate_policy_direction_metrics
 import copy
 
 
@@ -246,6 +247,11 @@ AGGREGATE_JSON_COLUMNS = [
     "short_reward_sum",
     "flat_reward_sum",
     "net_position_exposure",
+    "position_forward_return_corr",
+    "position_flip_rate",
+    "mean_holding_duration",
+    "long_forward_return_mean",
+    "short_forward_return_mean",
     "limit_up_step_ratio",
     "limit_down_step_ratio",
     "limit_up_long_reward_sum",
@@ -265,6 +271,11 @@ CSV_HEADER_LABELS = {
     "short_reward_sum": "空头奖励总和",
     "flat_reward_sum": "空仓奖励总和",
     "net_position_exposure": "净仓位敞口",
+    "position_forward_return_corr": "仓位与下一期收益相关",
+    "position_flip_rate": "仓位换向率",
+    "mean_holding_duration": "平均持仓时长",
+    "long_forward_return_mean": "多头下一期平均收益",
+    "short_forward_return_mean": "空头下一期平均收益",
     "limit_up_step_ratio": "涨停步数占比",
     "limit_down_step_ratio": "跌停步数占比",
     "limit_up_long_reward_sum": "涨停多头奖励总和",
@@ -631,6 +642,11 @@ class weighted_trader:
                     single_label_initial_action_bin_index_short_reward_sum_result = []
                     single_label_initial_action_bin_index_flat_reward_sum_result = []
                     single_label_initial_action_bin_index_net_position_exposure_result = []
+                    single_label_initial_action_bin_index_position_forward_return_corr_result = []
+                    single_label_initial_action_bin_index_position_flip_rate_result = []
+                    single_label_initial_action_bin_index_mean_holding_duration_result = []
+                    single_label_initial_action_bin_index_long_forward_return_mean_result = []
+                    single_label_initial_action_bin_index_short_forward_return_mean_result = []
                     single_label_initial_action_bin_index_limit_up_step_ratio_result = []
                     single_label_initial_action_bin_index_limit_down_step_ratio_result = []
                     single_label_initial_action_bin_index_limit_up_long_reward_sum_result = []
@@ -861,6 +877,10 @@ class weighted_trader:
                             if max_hold <= 0:
                                 max_hold = 1.0
                             net_position_exposure = float(mean_pos / max_hold)
+                            direction_metrics = calculate_policy_direction_metrics(
+                                pos_arr,
+                                self.test_df["mark_price"].to_numpy(),
+                            )
 
                             limit_up_step_ratio = float(np.mean(up_arr))
                             limit_down_step_ratio = float(np.mean(down_arr))
@@ -893,6 +913,13 @@ class weighted_trader:
                             limit_down_short_reward_sum = 0.0
                             limit_up_reverse_short_ratio = 0.0
                             limit_down_reverse_long_ratio = 0.0
+                            direction_metrics = {
+                                "position_forward_return_corr": 0.0,
+                                "position_flip_rate": 0.0,
+                                "mean_holding_duration": 0.0,
+                                "long_forward_return_mean": 0.0,
+                                "short_forward_return_mean": 0.0,
+                            }
 
                         single_label_initial_action_bin_index_mean_position_result.append(mean_pos)
                         single_label_initial_action_bin_index_mean_abs_position_result.append(mean_abs_pos)
@@ -903,6 +930,21 @@ class weighted_trader:
                         single_label_initial_action_bin_index_short_reward_sum_result.append(short_reward_sum)
                         single_label_initial_action_bin_index_flat_reward_sum_result.append(flat_reward_sum)
                         single_label_initial_action_bin_index_net_position_exposure_result.append(net_position_exposure)
+                        single_label_initial_action_bin_index_position_forward_return_corr_result.append(
+                            direction_metrics["position_forward_return_corr"]
+                        )
+                        single_label_initial_action_bin_index_position_flip_rate_result.append(
+                            direction_metrics["position_flip_rate"]
+                        )
+                        single_label_initial_action_bin_index_mean_holding_duration_result.append(
+                            direction_metrics["mean_holding_duration"]
+                        )
+                        single_label_initial_action_bin_index_long_forward_return_mean_result.append(
+                            direction_metrics["long_forward_return_mean"]
+                        )
+                        single_label_initial_action_bin_index_short_forward_return_mean_result.append(
+                            direction_metrics["short_forward_return_mean"]
+                        )
                         single_label_initial_action_bin_index_limit_up_step_ratio_result.append(limit_up_step_ratio)
                         single_label_initial_action_bin_index_limit_down_step_ratio_result.append(limit_down_step_ratio)
                         single_label_initial_action_bin_index_limit_up_long_reward_sum_result.append(limit_up_long_reward_sum)
@@ -927,6 +969,11 @@ class weighted_trader:
                             "short_reward_sum": single_label_initial_action_bin_index_short_reward_sum_result,
                             "flat_reward_sum": single_label_initial_action_bin_index_flat_reward_sum_result,
                             "net_position_exposure": single_label_initial_action_bin_index_net_position_exposure_result,
+                            "position_forward_return_corr": single_label_initial_action_bin_index_position_forward_return_corr_result,
+                            "position_flip_rate": single_label_initial_action_bin_index_position_flip_rate_result,
+                            "mean_holding_duration": single_label_initial_action_bin_index_mean_holding_duration_result,
+                            "long_forward_return_mean": single_label_initial_action_bin_index_long_forward_return_mean_result,
+                            "short_forward_return_mean": single_label_initial_action_bin_index_short_forward_return_mean_result,
                             "limit_up_step_ratio": single_label_initial_action_bin_index_limit_up_step_ratio_result,
                             "limit_down_step_ratio": single_label_initial_action_bin_index_limit_down_step_ratio_result,
                             "limit_up_long_reward_sum": single_label_initial_action_bin_index_limit_up_long_reward_sum_result,

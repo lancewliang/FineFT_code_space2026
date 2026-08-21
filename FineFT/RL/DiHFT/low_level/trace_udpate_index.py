@@ -42,6 +42,7 @@ from env.env_class.futures_util import (
     map_action_to_position_leverage,
 )
 from env.env_class.policy_util import get_close_element
+from RL.DiHFT.low_level.qtable_config import build_optimal_qtable_kwargs
 import copy
 
 
@@ -846,17 +847,17 @@ class Weighted_Contexts_DQN:
             if pretrain:
                 q_table = create_optimal_q_table_from_df(
                     df=self.train_df,
-                    max_holding_number=self.max_holding_number,
-                    position_choices=self.position_choices,  # (must be an odd number, the minum of trading equals to (max_holder_number)/((action_dim-1)/2)s))
-                    leverage_choice=self.leverage_choices,  # recommend only use one leverage choice, because the leverage does not influence the return directly, the position
-                    # itself is enough to show the risk preference
-                    long_estimated_rate=self.long_estimated_rate,
-                    short_estimated_rate=self.short_estimated_rate,
-                    commission_rate=self.transcation_cost,
-                    # the default is for btcusdt perpetual contract
-                    max_punishment=1e10,
-                    gamma=1,
-                    allow_reverse_position=self.allow_reverse_position,
+                    **build_optimal_qtable_kwargs(
+                        max_holding_number=self.max_holding_number,
+                        order_book_depth=self.order_book_depth,
+                        position_choices=self.position_choices,
+                        leverage_choice=self.leverage_choices,
+                        long_estimated_rate=self.long_estimated_rate,
+                        short_estimated_rate=self.short_estimated_rate,
+                        commission_rate=self.transcation_cost,
+                        gamma=self.gamma,
+                        allow_reverse_position=self.allow_reverse_position,
+                    ),
                 )
                 self.perfection_action_list = get_dp_action_from_qtable(
                     q_table, initial_action

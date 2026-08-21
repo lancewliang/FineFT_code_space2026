@@ -187,6 +187,7 @@ from RL.DiHFT.low_level.pretrain_qtable_diagnostics import (
     prepare_pretrain_qtable_diagnostics,
 )
 from RL.DiHFT.low_level.loss_nan_diagnostics import log_loss_nan_diagnostics
+from RL.DiHFT.low_level.qtable_config import build_optimal_qtable_kwargs
 import copy
 
 
@@ -1173,18 +1174,17 @@ class Weighted_Contexts_DQN:
         step_counter_pretrain = 0
         step_counter_diverse = 0
         qtable_diagnostics_dir = os.path.join(self.model_path, "qtable_diagnostics")
-        qtable_kwargs = {
-            "max_holding_number": self.max_holding_number,
-            "order_book_depth": self.order_book_depth,
-            "position_choices": self.position_choices,
-            "leverage_choice": self.leverage_choices,
-            "long_estimated_rate": self.long_estimated_rate,
-            "short_estimated_rate": self.short_estimated_rate,
-            "commission_rate": self.transcation_cost,
-            "max_punishment": 1e10,
-            "gamma": 1,
-            "allow_reverse_position": self.allow_reverse_position,
-        }
+        qtable_kwargs = build_optimal_qtable_kwargs(
+            max_holding_number=self.max_holding_number,
+            order_book_depth=self.order_book_depth,
+            position_choices=self.position_choices,
+            leverage_choice=self.leverage_choices,
+            long_estimated_rate=self.long_estimated_rate,
+            short_estimated_rate=self.short_estimated_rate,
+            commission_rate=self.transcation_cost,
+            gamma=self.gamma,
+            allow_reverse_position=self.allow_reverse_position,
+        )
         env_kwargs = {
             "feature_list": self.tech_indicator_list,
             "max_holding_number": self.max_holding_number,

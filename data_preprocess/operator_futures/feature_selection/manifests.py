@@ -83,6 +83,8 @@ class FeatureSelectionManifest:
     selected_features: list[str] | None = None
     composite_drop_ratio: float | None = None
     feature_blacklist: list[str] | None = None
+    feature_ablation_patterns: list[str] | None = None
+    rank_ic_mode: str | None = None
     mandatory_state_features: list[str] | None = None
     filter_results: dict[str, list[str]] | None = None
     persistence_filter: PersistenceFilterConfig | None = None
@@ -113,6 +115,10 @@ class FeatureSelectionManifest:
             payload["composite_drop_ratio"] = self.composite_drop_ratio
         if self.feature_blacklist is not None:
             payload["feature_blacklist"] = list(self.feature_blacklist)
+        if self.feature_ablation_patterns is not None:
+            payload["feature_ablation_patterns"] = list(self.feature_ablation_patterns)
+        if self.rank_ic_mode is not None:
+            payload["rank_ic_mode"] = self.rank_ic_mode
         if self.mandatory_state_features is not None:
             payload["mandatory_state_features"] = list(self.mandatory_state_features)
         payload["aggregate_metrics_path"] = self.aggregate_metrics_path

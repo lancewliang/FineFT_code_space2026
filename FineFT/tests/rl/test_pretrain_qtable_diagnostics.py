@@ -50,6 +50,25 @@ def test_build_sample_plan_traverses_every_df_and_position():
     ]
 
 
+def test_optimal_qtable_kwargs_use_training_gamma():
+    from RL.DiHFT.low_level.qtable_config import build_optimal_qtable_kwargs
+
+    kwargs = build_optimal_qtable_kwargs(
+        max_holding_number=5,
+        order_book_depth=5,
+        position_choices=11,
+        leverage_choice=[1],
+        long_estimated_rate=0.0,
+        short_estimated_rate=0.0,
+        commission_rate=0.0005,
+        gamma=0.99,
+        allow_reverse_position=True,
+    )
+
+    assert kwargs["gamma"] == pytest.approx(0.99)
+    assert kwargs["max_punishment"] == pytest.approx(1e10)
+
+
 def test_select_sample_from_plan_randomly_picks_one_combination(monkeypatch):
     from RL.DiHFT.low_level import pretrain_qtable_diagnostics as diag
 

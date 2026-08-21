@@ -44,7 +44,17 @@ def _parse_windows_list(value: list[int | str] | str | None) -> list[int] | None
     return result if result else None
 
 NON_STATE_COLUMNS = {"timestamp", "trading_day", "TradingDay", "symbol", "contract"}
+ABSOLUTE_PRICE_COLUMNS = {
+    "open",
+    "high",
+    "low",
+    "close",
+}
 DEFAULT_PERSISTENCE_FILTER_PATTERN = r"_log_return_(1|2)$"
+DEFAULT_FEATURE_ABLATION_PATTERNS = (
+    r"^(open|high|low|close)$",
+    r"_trend_(2|6|12|24)$",
+)
 LOG_RETURN_ALIAS_PATTERN = re.compile(r"^(.+)_log_return_\d+$")
 
 
@@ -85,6 +95,7 @@ def _state_features(df: pl.DataFrame, *, orderbook_depth: int) -> list[str]:
         for column in df.columns
         if column not in reward
         and column not in NON_STATE_COLUMNS
+        and column.lower() not in ABSOLUTE_PRICE_COLUMNS
         and not column.endswith("timestamp")
         and not column.endswith("_right")
         and (schema[column].is_numeric() or schema[column] == pl.Boolean)
@@ -258,12 +269,20 @@ def _ordered_filter_features(
     composite_drop_ratio: float = 0.1,
     min_half_life_bars: float = 0.0,
     persistence_diagnostics: list[PersistenceDiagnostic] | None = None,
+    rank_ic_mode: str = "signed",
 ) -> tuple[list[str], dict[str, list[str]]]:
     if composite_drop_ratio < 0 or composite_drop_ratio >= 1:
         raise ValueError("composite_drop_ratio must be in [0, 1)")
+    if rank_ic_mode not in {"absolute", "signed"}:
+        raise ValueError("rank_ic_mode must be 'absolute' or 'signed'")
 
     selected = aggregate.filter(pl.col("feature").is_in(feature_universe))
-    hard = selected.filter(pl.col("RankIC_Mean").abs() >= min_abs_ic)[
+    rank_ic_filter = (
+        pl.col("RankIC_Mean") >= min_abs_ic
+        if rank_ic_mode == "signed"
+        else pl.col("RankIC_Mean").abs() >= min_abs_ic
+    )
+    hard = selected.filter(rank_ic_filter)[
         "feature"
     ].to_list()
     if not hard:
@@ -308,17 +327,19 @@ def _ordered_filter_features(
     )
     if "SHAP Importance_Mean" in scored_input.columns:
         secondary_raw = secondary_raw + pl.col("SHAP Importance_Mean").fill_null(0.0)
-    
+
     # Normalize secondary components to percentile rank [0, 1] to prevent magnitude distortion
     secondary_score = (secondary_raw.rank() / height) + (pl.col("CatBoost Importance_Mean").fill_null(0.0).rank() / height)
+    rank_ic_score = (
+        pl.col("RankIC_Mean").abs()
+        if rank_ic_mode == "absolute"
+        else pl.col("RankIC_Mean")
+    ).fill_null(0.0)
 
     scored = (
         scored_input.with_columns(
             [
-                pl.col("RankIC_Mean")
-                .abs()
-                .fill_null(0.0)
-                .alias("Composite RankIC Score"),
+                rank_ic_score.alias("Composite RankIC Score"),
                 secondary_score.alias("Composite Secondary Score"),
                 pl.col("CatBoost Importance_Mean")
                 .fill_null(0.0)
@@ -382,6 +403,21 @@ def _apply_feature_blacklist(
     filtered = [feature for feature in selected_features if feature not in blacklist]
     dropped = [feature for feature in selected_features if feature in blacklist]
     return filtered, dropped
+
+
+def _apply_feature_ablation_patterns(
+    features: list[str], patterns: Sequence[str]
+) -> tuple[list[str], list[str]]:
+    if not patterns:
+        return features, []
+    compiled_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in patterns]
+    kept = [
+        feature
+        for feature in features
+        if not any(pattern.search(feature) for pattern in compiled_patterns)
+    ]
+    dropped = [feature for feature in features if feature not in kept]
+    return kept, dropped
 
 
 def _validate_contract_frame(
@@ -452,20 +488,42 @@ def run_feature_selection(
     windows_list: list[int] | None = None,
     composite_drop_ratio: float = 0.1,
     feature_blacklist: list[str] | None = None,
+    feature_ablation_patterns: Sequence[str] | None = DEFAULT_FEATURE_ABLATION_PATTERNS,
     mandatory_state_features: list[str] | None = None,
     min_half_life_bars: float = 1.0,
     persistence_filter_pattern: str = DEFAULT_PERSISTENCE_FILTER_PATTERN,
+    rank_ic_mode: str = "signed",
 ) -> FeatureSelectionResult:
     if stage not in {"train", "valid"}:
         raise ValueError("stage must be 'train' or 'valid'")
+    if rank_ic_mode not in {"absolute", "signed"}:
+        raise ValueError("rank_ic_mode must be 'absolute' or 'signed'")
 
     mandatory_features = list(mandatory_state_features or [])
+    feature_ablation_patterns = tuple(
+        DEFAULT_FEATURE_ABLATION_PATTERNS
+        if feature_ablation_patterns is None
+        else feature_ablation_patterns
+    )
     if feature_blacklist and mandatory_features:
         conflict = sorted(set(feature_blacklist).intersection(mandatory_features))
         if conflict:
             raise ValueError(
                 f"feature blacklist contains mandatory state feature column(s): {conflict}"
             )
+    ablation_conflict = [
+        feature
+        for feature in mandatory_features
+        if any(
+            re.search(pattern, feature, flags=re.IGNORECASE)
+            for pattern in feature_ablation_patterns
+        )
+    ]
+    if ablation_conflict:
+        raise ValueError(
+            "feature ablation patterns target mandatory state feature(s): "
+            f"{ablation_conflict}"
+        )
 
     windows_list = list(DEFAULT_WINDOWS_LIST if windows_list is None else windows_list)
     root_path = Path(root_path)
@@ -493,6 +551,11 @@ def run_feature_selection(
         )
     if not feature_universe:
         raise ValueError(f"{stage} feature universe is empty")
+    feature_universe, ablation_dropped = _apply_feature_ablation_patterns(
+        feature_universe, feature_ablation_patterns
+    )
+    if not feature_universe:
+        raise ValueError(f"{stage} feature universe is empty after feature ablation")
 
     per_contract_dir = output_dir / "per_contract"
     per_contract_dir.mkdir(parents=True, exist_ok=True)
@@ -538,6 +601,8 @@ def run_feature_selection(
             windows_list=windows_list,
             aggregate_metrics_path=str(aggregate_path),
             contracts=per_contract,
+            feature_ablation_patterns=list(feature_ablation_patterns),
+            rank_ic_mode=rank_ic_mode,
             report_only=True,
         )
         manifest_path = output_dir / "feature_selection_manifest.json"
@@ -561,7 +626,13 @@ def run_feature_selection(
         composite_drop_ratio=composite_drop_ratio,
         min_half_life_bars=min_half_life_bars,
         persistence_diagnostics=persistence_diagnostics,
+        rank_ic_mode=rank_ic_mode,
     )
+    if ablation_dropped:
+        filter_results = {
+            "Feature Ablation Dropped": ablation_dropped,
+            **filter_results,
+        }
     if semantic_dedup_dropped:
         filter_results = {
             "Feature Semantic Deduplication Dropped": semantic_dedup_dropped,
@@ -604,6 +675,8 @@ def run_feature_selection(
         feature_blacklist=(
             list(feature_blacklist) if feature_blacklist is not None else None
         ),
+        feature_ablation_patterns=list(feature_ablation_patterns),
+        rank_ic_mode=rank_ic_mode,
         mandatory_state_features=mandatory_features if mandatory_features else None,
         persistence_filter={
             "min_half_life_bars": float(min_half_life_bars),
@@ -643,6 +716,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min_rank_ic_ir", type=float, default=0.0)
     parser.add_argument("--composite_drop_ratio", type=float, default=0.1)
     parser.add_argument("--feature_blacklist", nargs="*", default=None)
+    parser.add_argument(
+        "--feature_ablation_patterns",
+        nargs="*",
+        default=list(DEFAULT_FEATURE_ABLATION_PATTERNS),
+    )
+    parser.add_argument(
+        "--rank_ic_mode",
+        choices=["absolute", "signed"],
+        default="signed",
+    )
     parser.add_argument("--min_half_life_bars", type=float, default=1.0)
     parser.add_argument(
         "--persistence_filter_pattern",
@@ -683,7 +766,9 @@ def main(argv=None):
         windows_list=_parse_windows_list(args.windows_list),
         composite_drop_ratio=args.composite_drop_ratio,
         feature_blacklist=args.feature_blacklist,
+        feature_ablation_patterns=args.feature_ablation_patterns,
         mandatory_state_features=args.mandatory_state_features,
         min_half_life_bars=args.min_half_life_bars,
         persistence_filter_pattern=args.persistence_filter_pattern,
+        rank_ic_mode=args.rank_ic_mode,
     )

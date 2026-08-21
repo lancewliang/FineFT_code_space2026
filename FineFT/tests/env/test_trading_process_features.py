@@ -118,3 +118,39 @@ def test_holding_duration_clipping():
 
     # Must clip to 1.0
     assert info["trading_info"][3] == 1.0
+
+
+def test_single_holding_return_accumulates_across_same_direction_holds():
+    df, features = _sample_data(rows=20)
+    env = initiate_base_env(df, features, allow_reverse_position=True)
+    _, info = env.reset()
+    long_action = env.env_map_position_leverage_to_action(4, env.leverage_choices[0])
+
+    _, _, _, _ = env.step(long_action)
+    first_return = env.single_holding_return
+    _, _, _, _ = env.step(long_action)
+    second_return = env.single_holding_return
+    expected_increment = env.position * (df["mark_price"].iloc[2] - df["mark_price"].iloc[1])
+
+    assert second_return == pytest.approx(first_return + expected_increment)
+
+
+def test_reset_restarts_holding_duration_for_a_new_episode():
+    df, features = _sample_data(rows=20)
+    env = initiate_base_env(
+        df,
+        features,
+        allow_reverse_position=True,
+        holding_duration_norm_steps=10,
+        initial_state=(100000.0, 80.0, 0.0, 4.0, 5),
+    )
+    _, info = env.reset()
+    long_action = env.env_map_position_leverage_to_action(4, env.leverage_choices[0])
+
+    _, _, _, info = env.step(long_action)
+    _, _, _, info = env.step(long_action)
+    assert info["trading_info"][3] == pytest.approx(3.0 / 10.0)
+
+    _, reset_info = env.reset()
+
+    assert reset_info["trading_info"][3] == pytest.approx(1.0 / 10.0)
