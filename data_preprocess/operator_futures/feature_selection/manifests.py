@@ -3,9 +3,21 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import polars as pl
+
+
+class PersistenceFilterConfig(TypedDict):
+    min_half_life_bars: float
+    active_feature_pattern: str
+
+
+class PersistenceDiagnostic(TypedDict):
+    feature: str
+    lag1_autocorrelation_median: float | None
+    half_life_bars_median: float | None
+    active_filter: bool
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -73,6 +85,8 @@ class FeatureSelectionManifest:
     feature_blacklist: list[str] | None = None
     mandatory_state_features: list[str] | None = None
     filter_results: dict[str, list[str]] | None = None
+    persistence_filter: PersistenceFilterConfig | None = None
+    persistence_diagnostics: list[PersistenceDiagnostic] | None = None
     filtered_outputs: list[FilteredOutputRecord] | None = None
     evaluated_feature_file: str | None = None
     evaluated_feature_count: int | None = None
@@ -106,6 +120,12 @@ class FeatureSelectionManifest:
             payload["filter_results"] = {
                 key: list(values) for key, values in self.filter_results.items()
             }
+        if self.persistence_filter is not None:
+            payload["persistence_filter"] = dict(self.persistence_filter)
+        if self.persistence_diagnostics is not None:
+            payload["persistence_diagnostics"] = [
+                dict(row) for row in self.persistence_diagnostics
+            ]
         payload["contracts"] = [contract.to_dict() for contract in self.contracts]
         if self.filtered_outputs is not None:
             payload["filtered_outputs"] = [

@@ -144,6 +144,10 @@ _Avoid_: 状态特征、观测特征
 通过 IC、RankIC、CatBoost Importance、Permutation Importance、Sharpe 等指标评估和筛选 State Feature 的流水线。
 _Avoid_: 特征筛选、因子选择
 
+**特征语义去重 (Feature Semantic Deduplication)**:
+数学公式在有效区间等价、仅列名或窗口标签不同的 candidate State Feature 只保留一个规范实现；公式不同但统计相关性高的特征不属于语义重复，仍由 Feature Selection 评估。
+_Avoid_: 仅按列名去重、把高相关特征直接视为公式重复
+
 **Feature Selection Manifest**:
 Feature Selection 输出的 JSON 清单，记录候选特征来源、IC 结果路径、过滤配置、mandatory state feature 和最终特征列表。
 _Avoid_: 特征选择清单、选择描述
@@ -234,8 +238,8 @@ _Avoid_: 静态主力配对、固定合约配对
 _Avoid_: 挂牌顺序配对、自然月配对
 
 **无绝对价格约束 (No Absolute Price Rule)**:
-跨月合约结构特征不得表达绝对价格水平或原始价格差。包含价格的跨月表达必须是无量纲、相对化或平稳化的形式。
-_Avoid_: 绝对价差、原始价格差
+candidate State Feature 和 State Feature 不表达绝对价格水平；包含价格的特征必须是无量纲、相对化、收益率化或平稳化的形式。
+_Avoid_: raw close、raw VWAP、raw EMA、绝对价差、原始价格差
 
 ### Dataset And Splitting
 

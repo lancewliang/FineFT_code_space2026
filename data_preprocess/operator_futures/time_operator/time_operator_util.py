@@ -373,6 +373,118 @@ def process_enhanced_state_features(df: pl.DataFrame) -> pl.DataFrame:
         exprs.append(v10.fill_null(0.0).alias("price_velocity_10m"))
         exprs.append(acc10.fill_null(0.0).fill_nan(0.0).alias("price_acceleration_10m_norm"))
 
+        ema_base = close.ewm_mean(span=20)
+        for window in (96, 192):
+            ema_prev = ema_base.shift(window)
+            ema_slope = (
+                pl.when(ema_prev.abs() > 1e-8)
+                .then((ema_base - ema_prev) / ema_prev.abs() / window)
+                .otherwise(0.0)
+            )
+            exprs.append(
+                ema_slope.fill_null(0.0).fill_nan(0.0).alias(f"ema_slope_{window}")
+            )
+
+    if {"high", "low", "close"}.issubset(frame.columns):
+        high = pl.col("high")
+        low = pl.col("low")
+        close = pl.col("close")
+        up_move = high.diff()
+        down_move = -low.diff()
+        plus_dm = (
+            pl.when((up_move > down_move) & (up_move > 0.0))
+            .then(up_move)
+            .otherwise(0.0)
+        )
+        minus_dm = (
+            pl.when((down_move > up_move) & (down_move > 0.0))
+            .then(down_move)
+            .otherwise(0.0)
+        )
+        true_range = pl.max_horizontal(
+            [
+                high - low,
+                (high - close.shift(1)).abs(),
+                (low - close.shift(1)).abs(),
+            ]
+        )
+        wilder_alpha = 1.0 / 14.0
+        atr = true_range.ewm_mean(
+            alpha=wilder_alpha,
+            adjust=False,
+            min_samples=14,
+        )
+        plus_dm_smoothed = plus_dm.ewm_mean(
+            alpha=wilder_alpha,
+            adjust=False,
+            min_samples=14,
+        )
+        minus_dm_smoothed = minus_dm.ewm_mean(
+            alpha=wilder_alpha,
+            adjust=False,
+            min_samples=14,
+        )
+        plus_di = (
+            pl.when(atr > 1e-8)
+            .then(100.0 * plus_dm_smoothed / atr)
+            .otherwise(0.0)
+        )
+        minus_di = (
+            pl.when(atr > 1e-8)
+            .then(100.0 * minus_dm_smoothed / atr)
+            .otherwise(0.0)
+        )
+        dx = (
+            pl.when((plus_di + minus_di) > 1e-8)
+            .then(100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di))
+            .otherwise(0.0)
+        )
+        exprs.append(plus_di.fill_null(0.0).fill_nan(0.0).alias("plus_di_14"))
+        exprs.append(minus_di.fill_null(0.0).fill_nan(0.0).alias("minus_di_14"))
+        exprs.append(
+            dx.ewm_mean(alpha=wilder_alpha, adjust=False, min_samples=14)
+            .fill_null(0.0)
+            .fill_nan(0.0)
+            .alias("adx_14")
+        )
+
+    vwap = None
+    if "vwap" in frame.columns:
+        vwap = pl.col("vwap")
+    elif "tradeval" in frame.columns and "volume" in frame.columns:
+        volume = pl.col("volume")
+        vwap = pl.when(volume.abs() > 1e-8).then(pl.col("tradeval") / volume).otherwise(0.0)
+    elif "amount" in frame.columns and "volume" in frame.columns:
+        volume = pl.col("volume")
+        vwap = pl.when(volume.abs() > 1e-8).then(pl.col("amount") / volume).otherwise(0.0)
+    if vwap is not None:
+        for window in (96, 192):
+            vwap_prev = vwap.shift(window)
+            vwap_slope = (
+                pl.when(vwap_prev.abs() > 1e-8)
+                .then((vwap - vwap_prev) / vwap_prev.abs() / window)
+                .otherwise(0.0)
+            )
+            exprs.append(
+                vwap_slope.fill_null(0.0).fill_nan(0.0).alias(f"vwap_slope_{window}")
+            )
+
+    if {"volume", "ntrade_up_estimated", "ntrade_down_estimated"}.issubset(frame.columns):
+        up = pl.col("ntrade_up_estimated")
+        down = pl.col("ntrade_down_estimated")
+        direction_ratio = ((up - down) / (up + down + 1e-8)).clip(-1.0, 1.0)
+        signed_volume = pl.col("volume") * direction_ratio
+        for window in (96, 192):
+            volume_sum = pl.col("volume").rolling_sum(window)
+            cvd_slope = (
+                pl.when(volume_sum.abs() > 1e-8)
+                .then(signed_volume.rolling_sum(window) / volume_sum.abs())
+                .otherwise(0.0)
+            )
+            exprs.append(
+                cvd_slope.fill_null(0.0).fill_nan(0.0).alias(f"cvd_slope_{window}")
+            )
+
     if "garman_klass_volatility" in frame.columns:
         gk_vol = pl.col("garman_klass_volatility")
         q192 = gk_vol.rolling_quantile(0.5, window_size=192).fill_null(0.0)

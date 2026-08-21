@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import numpy as np
 import polars as pl
 import pytest
@@ -19,7 +19,7 @@ def _sample_quote_snapshots(n: int = 50) -> pl.DataFrame:
     for i in range(n):
         rows.append(
             {
-                "timestamp": datetime(2026, 2, 2, 9, 0, i),
+                "timestamp": datetime(2026, 2, 2, 9, 0, 0) + timedelta(minutes=i),
                 "BidPrice1": 100.0 + i * 0.05,
                 "AskPrice1": 100.2 + i * 0.05,
                 "BidPrice2": 99.9,
@@ -76,19 +76,21 @@ def test_depth_depletion_and_replenishment_features():
 
 def test_enhanced_time_operator_features():
     rows = []
-    for i in range(60):
+    for i in range(220):
+        close = 100.5 + i * 0.1
+        volume = 100.0 + (i % 7) * 10
         rows.append(
             {
-                "timestamp": datetime(2026, 2, 2, 9, 0, i),
+                "timestamp": datetime(2026, 2, 2, 9, 0, 0) + timedelta(minutes=i),
                 "open": 100.0 + i * 0.1,
                 "high": 101.0 + i * 0.1,
                 "low": 99.0 + i * 0.1,
-                "close": 100.5 + i * 0.1,
-                "volume": 100.0 + (i % 7) * 10,
-                "tradeval": 10000.0,
+                "close": close,
+                "volume": volume,
+                "tradeval": close * volume,
                 "open_interest": 5000.0 + i * 10,
-                "ntrade_up_estimated": 20 + i,
-                "ntrade_down_estimated": 10 + (i % 4),
+                "ntrade_up_estimated": 30,
+                "ntrade_down_estimated": 10,
                 "relative_bid_ask_spread": 0.001 + (i % 3) * 0.0002,
                 "garman_klass_volatility_12": 0.01 + (i % 5) * 0.001,
                 "parkinson_volatility_12": 0.01 + (i % 4) * 0.001,
@@ -111,12 +113,27 @@ def test_enhanced_time_operator_features():
         "oi_change_rate_norm_10m",
         "cm_main_sub_log_price_spread_velocity_10m",
         "cm_open_interest_shift_speed_10m",
+        "vwap_slope_96",
+        "vwap_slope_192",
+        "ema_slope_96",
+        "ema_slope_192",
+        "plus_di_14",
+        "minus_di_14",
+        "adx_14",
+        "cvd_slope_96",
+        "cvd_slope_192",
     ]
     for col in expected:
         assert col in res.columns
         assert res[col].null_count() == 0
         assert not res[col].is_nan().any()
         assert not res[col].is_infinite().any()
+
+    assert "raw_vwap" not in res.columns
+    assert "raw_ema" not in res.columns
+    assert "macd" not in res.columns
+    assert res["vwap_slope_96"][96] == pytest.approx(9.6 / 100.5 / 96)
+    assert res["cvd_slope_96"][95] == pytest.approx(0.5)
 
 
 def test_data_quality_validator_passes_enhanced_features():

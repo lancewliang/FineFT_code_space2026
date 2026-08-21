@@ -473,6 +473,136 @@ def test_train_stage_applies_feature_blacklist_only_to_final_outputs(tmp_path, f
     assert manifest.manifest.selected_feature_count == len(selected_features)
 
 
+def test_train_stage_filters_fast_decay_micro_returns_by_persistence(
+    tmp_path, fake_catboost
+):
+    row_count = 24
+    fast_decay = [1.0 if index % 2 == 0 else -1.0 for index in range(row_count)]
+    slow_signal = [float(index) for index in range(row_count)]
+    _write_long_split_contract(
+        tmp_path,
+        "train",
+        "fu2601",
+        slow_signal,
+        [float(row_count - index) for index in range(row_count)],
+        extra_features={
+            "wap_1_log_return_2": fast_decay,
+            "mandatory_log_return_2": fast_decay,
+            "trend_strength_norm": slow_signal,
+        },
+    )
+    _write_long_split_contract(
+        tmp_path,
+        "train",
+        "fu2605",
+        [value + 1.0 for value in slow_signal],
+        [float(row_count - index + 1) for index in range(row_count)],
+        extra_features={
+            "wap_1_log_return_2": fast_decay,
+            "mandatory_log_return_2": fast_decay,
+            "trend_strength_norm": [value + 1.0 for value in slow_signal],
+        },
+    )
+
+    manifest = run_feature_selection(
+        root_path=tmp_path,
+        split_path="PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST",
+        save_path="PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION",
+        symbol="fu",
+        target_freq="5min",
+        stage="train",
+        orderbook_depth=5,
+        min_abs_ic=0.0,
+        max_correlation=1.0,
+        composite_drop_ratio=0.0,
+        min_half_life_bars=1.0,
+        mandatory_state_features=["mandatory_log_return_2"],
+    )
+
+    stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
+    selected_features = np.load(
+        stage_dir / "state_features.npy", allow_pickle=True
+    ).tolist()
+    persisted_manifest = json.loads(
+        (stage_dir / "feature_selection_manifest.json").read_text(encoding="utf-8")
+    )
+
+    assert "wap_1_log_return_2" not in selected_features
+    assert "mandatory_log_return_2" in selected_features
+    assert "trend_strength_norm" in selected_features
+    assert manifest.manifest.filter_results["Persistence Filter Dropped"] == [
+        "wap_1_log_return_2"
+    ]
+    assert persisted_manifest["persistence_filter"]["min_half_life_bars"] == 1.0
+    assert persisted_manifest["persistence_filter"]["active_feature_pattern"] == (
+        "_log_return_(1|2)$"
+    )
+    diagnostics = {
+        row["feature"]: row
+        for row in persisted_manifest["persistence_diagnostics"]
+    }
+    assert diagnostics["wap_1_log_return_2"]["active_filter"] is True
+    assert diagnostics["wap_1_log_return_2"]["half_life_bars_median"] == 0.0
+    assert diagnostics["trend_strength_norm"]["active_filter"] is False
+
+
+def test_train_stage_semantically_deduplicates_equivalent_log_return_aliases(
+    tmp_path, fake_catboost
+):
+    row_count = 24
+    alias_values = [float(index) for index in range(row_count)]
+    _write_long_split_contract(
+        tmp_path,
+        "train",
+        "fu2601",
+        alias_values,
+        [float(row_count - index) for index in range(row_count)],
+        extra_features={
+            "wap_1_log_return_2": alias_values,
+            "wap_1_log_return_6": alias_values,
+        },
+    )
+    _write_long_split_contract(
+        tmp_path,
+        "train",
+        "fu2605",
+        [value + 1.0 for value in alias_values],
+        [float(row_count - index + 1) for index in range(row_count)],
+        extra_features={
+            "wap_1_log_return_2": [value + 1.0 for value in alias_values],
+            "wap_1_log_return_6": [value + 1.0 for value in alias_values],
+        },
+    )
+
+    manifest = run_feature_selection(
+        root_path=tmp_path,
+        split_path="PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST",
+        save_path="PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION",
+        symbol="fu",
+        target_freq="5min",
+        stage="train",
+        orderbook_depth=5,
+        min_abs_ic=0.0,
+        max_correlation=1.0,
+        composite_drop_ratio=0.0,
+    )
+
+    stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
+    aggregate_features = pl.read_csv(stage_dir / "aggregate_metrics.csv")[
+        "feature"
+    ].to_list()
+    selected_features = np.load(
+        stage_dir / "state_features.npy", allow_pickle=True
+    ).tolist()
+
+    assert "wap_1_log_return_2" in aggregate_features
+    assert "wap_1_log_return_6" not in aggregate_features
+    assert "wap_1_log_return_6" not in selected_features
+    assert manifest.manifest.filter_results[
+        "Feature Semantic Deduplication Dropped"
+    ] == ["wap_1_log_return_6"]
+
+
 def test_train_stage_rejects_illegal_feature_values_before_metrics(tmp_path, fake_catboost):
     _write_long_split_contract(
         tmp_path,

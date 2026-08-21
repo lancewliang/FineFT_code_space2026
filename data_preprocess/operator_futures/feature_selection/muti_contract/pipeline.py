@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import math
+import re
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 import polars as pl
@@ -20,6 +22,7 @@ from operator_futures.feature_selection.manifests import (
     FeatureSelectionManifest,
     FeatureSelectionResult,
     FilteredOutputRecord,
+    PersistenceDiagnostic,
 )
 
 
@@ -41,6 +44,8 @@ def _parse_windows_list(value: list[int | str] | str | None) -> list[int] | None
     return result if result else None
 
 NON_STATE_COLUMNS = {"timestamp", "trading_day", "TradingDay", "symbol", "contract"}
+DEFAULT_PERSISTENCE_FILTER_PATTERN = r"_log_return_(1|2)$"
+LOG_RETURN_ALIAS_PATTERN = re.compile(r"^(.+)_log_return_\d+$")
 
 
 def _stage_input_dir(
@@ -96,6 +101,151 @@ def _load_feature_list(path: Path) -> list[str]:
     return values
 
 
+def _lag1_autocorrelation(values: Sequence[float] | np.ndarray) -> float | None:
+    values = np.asarray(values, dtype=float)
+    if values.size < 3:
+        return None
+    left = values[:-1]
+    right = values[1:]
+    valid = np.isfinite(left) & np.isfinite(right)
+    left = left[valid]
+    right = right[valid]
+    if left.size < 2 or np.std(left) == 0.0 or np.std(right) == 0.0:
+        return None
+    value = float(np.corrcoef(left, right)[0, 1])
+    if not np.isfinite(value):
+        return None
+    return value
+
+
+def _directional_half_life_bars(autocorrelation: float | None) -> float | None:
+    if autocorrelation is None:
+        return None
+    if autocorrelation <= 0.0:
+        return 0.0
+    if autocorrelation >= 1.0:
+        return None
+    return float(math.log(0.5) / math.log(autocorrelation))
+
+
+def _median_or_none(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return float(np.median(np.asarray(values, dtype=float)))
+
+
+def _calculate_persistence_diagnostics(
+    frames: dict[str, pl.DataFrame],
+    feature_universe: list[str],
+    *,
+    active_feature_pattern: str,
+) -> list[PersistenceDiagnostic]:
+    active_regex = re.compile(active_feature_pattern)
+    rows: list[PersistenceDiagnostic] = []
+    for feature in feature_universe:
+        autocorrelations: list[float] = []
+        half_lives: list[float] = []
+        for frame in frames.values():
+            autocorrelation = _lag1_autocorrelation(frame[feature].to_numpy())
+            if autocorrelation is not None:
+                autocorrelations.append(autocorrelation)
+            half_life = _directional_half_life_bars(autocorrelation)
+            if half_life is not None:
+                half_lives.append(half_life)
+        rows.append(
+            {
+                "feature": feature,
+                "lag1_autocorrelation_median": _median_or_none(autocorrelations),
+                "half_life_bars_median": _median_or_none(half_lives),
+                "active_filter": bool(active_regex.search(feature)),
+            }
+        )
+    return rows
+
+
+def _filter_by_persistence(
+    features: list[str],
+    diagnostics_by_feature: dict[str, PersistenceDiagnostic],
+    *,
+    min_half_life_bars: float,
+) -> tuple[list[str], list[str]]:
+    if min_half_life_bars <= 0.0:
+        return features, []
+
+    kept: list[str] = []
+    dropped: list[str] = []
+    for feature in features:
+        diagnostics = diagnostics_by_feature.get(feature)
+        half_life = (
+            diagnostics.get("half_life_bars_median")
+            if diagnostics is not None
+            else None
+        )
+        if (
+            diagnostics is not None
+            and diagnostics.get("active_filter") is True
+            and half_life is not None
+            and float(half_life) < min_half_life_bars
+        ):
+            dropped.append(feature)
+        else:
+            kept.append(feature)
+    return kept, dropped
+
+
+def _semantic_group_key(feature: str) -> str:
+    match = LOG_RETURN_ALIAS_PATTERN.match(feature)
+    if match is None:
+        return feature
+    return f"{match.group(1)}_log_return"
+
+
+def _features_equivalent_over_frames(
+    frames: dict[str, pl.DataFrame],
+    left_feature: str,
+    right_feature: str,
+) -> bool:
+    compared = False
+    for frame in frames.values():
+        left = np.asarray(frame[left_feature].to_numpy(), dtype=float)
+        right = np.asarray(frame[right_feature].to_numpy(), dtype=float)
+        valid = np.isfinite(left) & np.isfinite(right)
+        if not valid.any():
+            continue
+        compared = True
+        if not np.allclose(left[valid], right[valid], rtol=1e-12, atol=1e-12):
+            return False
+    return compared
+
+
+def _semantic_deduplicate_features(
+    frames: dict[str, pl.DataFrame],
+    feature_universe: list[str],
+    *,
+    protected_features: set[str] | None = None,
+) -> tuple[list[str], list[str]]:
+    protected = protected_features or set()
+    canonical_by_group: dict[str, list[str]] = {}
+    kept: list[str] = []
+    dropped: list[str] = []
+    for feature in feature_universe:
+        group_key = _semantic_group_key(feature)
+        canonical_features = canonical_by_group.setdefault(group_key, [])
+        if feature in protected:
+            canonical_features.append(feature)
+            kept.append(feature)
+            continue
+        if any(
+            _features_equivalent_over_frames(frames, canonical, feature)
+            for canonical in canonical_features
+        ):
+            dropped.append(feature)
+            continue
+        canonical_features.append(feature)
+        kept.append(feature)
+    return kept, dropped
+
+
 def _ordered_filter_features(
     frames: dict[str, pl.DataFrame],
     aggregate: pl.DataFrame,
@@ -106,6 +256,8 @@ def _ordered_filter_features(
     max_correlation: float,
     min_rank_ic_ir: float = 0.0,
     composite_drop_ratio: float = 0.1,
+    min_half_life_bars: float = 0.0,
+    persistence_diagnostics: list[PersistenceDiagnostic] | None = None,
 ) -> tuple[list[str], dict[str, list[str]]]:
     if composite_drop_ratio < 0 or composite_drop_ratio >= 1:
         raise ValueError("composite_drop_ratio must be in [0, 1)")
@@ -117,6 +269,19 @@ def _ordered_filter_features(
     if not hard:
         raise ValueError("feature selection produced an empty list after Hard Filter")
 
+    diagnostics_by_feature = {
+        str(row["feature"]): row for row in (persistence_diagnostics or [])
+    }
+    persistence, persistence_dropped = _filter_by_persistence(
+        hard,
+        diagnostics_by_feature,
+        min_half_life_bars=min_half_life_bars,
+    )
+    if not persistence:
+        raise ValueError(
+            "feature selection produced an empty list after Persistence Filter"
+        )
+
     stability_cond = pl.col("IC_Std") <= max_metric_std
     if "RankIC_Std" in selected.columns:
         stability_cond = stability_cond & (pl.col("RankIC_Std") <= max_metric_std)
@@ -125,7 +290,7 @@ def _ordered_filter_features(
         stability_cond = stability_cond & (rank_ic_ir >= min_rank_ic_ir)
 
     stability = (
-        selected.filter(pl.col("feature").is_in(hard))
+        selected.filter(pl.col("feature").is_in(persistence))
         .filter(stability_cond)
         ["feature"]
         .to_list()
@@ -199,6 +364,8 @@ def _ordered_filter_features(
         )
     return correlation, {
         "Hard Filter": hard,
+        "Persistence Filter": persistence,
+        "Persistence Filter Dropped": persistence_dropped,
         "Stability Filter": stability,
         "Composite Score": composite,
         "Composite Score Dropped": dropped,
@@ -286,6 +453,8 @@ def run_feature_selection(
     composite_drop_ratio: float = 0.1,
     feature_blacklist: list[str] | None = None,
     mandatory_state_features: list[str] | None = None,
+    min_half_life_bars: float = 1.0,
+    persistence_filter_pattern: str = DEFAULT_PERSISTENCE_FILTER_PATTERN,
 ) -> FeatureSelectionResult:
     if stage not in {"train", "valid"}:
         raise ValueError("stage must be 'train' or 'valid'")
@@ -315,6 +484,13 @@ def run_feature_selection(
             / "state_features.npy"
         )
         feature_universe = _load_feature_list(train_feature_file)
+    semantic_dedup_dropped: list[str] = []
+    if stage == "train":
+        feature_universe, semantic_dedup_dropped = _semantic_deduplicate_features(
+            frames,
+            feature_universe,
+            protected_features=set(mandatory_features),
+        )
     if not feature_universe:
         raise ValueError(f"{stage} feature universe is empty")
 
@@ -369,6 +545,11 @@ def run_feature_selection(
         return FeatureSelectionResult(output_dir=output_dir, manifest=manifest)
 
     candidate_universe = [f for f in feature_universe if f not in mandatory_features]
+    persistence_diagnostics = _calculate_persistence_diagnostics(
+        frames,
+        candidate_universe,
+        active_feature_pattern=persistence_filter_pattern,
+    )
     selected_features, filter_results = _ordered_filter_features(
         frames,
         aggregate,
@@ -378,7 +559,14 @@ def run_feature_selection(
         max_correlation=max_correlation,
         min_rank_ic_ir=min_rank_ic_ir,
         composite_drop_ratio=composite_drop_ratio,
+        min_half_life_bars=min_half_life_bars,
+        persistence_diagnostics=persistence_diagnostics,
     )
+    if semantic_dedup_dropped:
+        filter_results = {
+            "Feature Semantic Deduplication Dropped": semantic_dedup_dropped,
+            **filter_results,
+        }
     selected_features, blacklisted_features = _apply_feature_blacklist(
         selected_features, feature_blacklist
     )
@@ -417,6 +605,11 @@ def run_feature_selection(
             list(feature_blacklist) if feature_blacklist is not None else None
         ),
         mandatory_state_features=mandatory_features if mandatory_features else None,
+        persistence_filter={
+            "min_half_life_bars": float(min_half_life_bars),
+            "active_feature_pattern": persistence_filter_pattern,
+        },
+        persistence_diagnostics=persistence_diagnostics,
         aggregate_metrics_path=str(aggregate_path),
         filter_results=filter_results,
         contracts=per_contract,
@@ -450,6 +643,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min_rank_ic_ir", type=float, default=0.0)
     parser.add_argument("--composite_drop_ratio", type=float, default=0.1)
     parser.add_argument("--feature_blacklist", nargs="*", default=None)
+    parser.add_argument("--min_half_life_bars", type=float, default=1.0)
+    parser.add_argument(
+        "--persistence_filter_pattern",
+        type=str,
+        default=DEFAULT_PERSISTENCE_FILTER_PATTERN,
+    )
     parser.add_argument(
         "--mandatory_state_features",
         "--mandatory_features",
@@ -485,4 +684,6 @@ def main(argv=None):
         composite_drop_ratio=args.composite_drop_ratio,
         feature_blacklist=args.feature_blacklist,
         mandatory_state_features=args.mandatory_state_features,
+        min_half_life_bars=args.min_half_life_bars,
+        persistence_filter_pattern=args.persistence_filter_pattern,
     )
