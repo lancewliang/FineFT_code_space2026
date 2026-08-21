@@ -44,15 +44,13 @@ def _parse_windows_list(value: list[int | str] | str | None) -> list[int] | None
     return result if result else None
 
 NON_STATE_COLUMNS = {"timestamp", "trading_day", "TradingDay", "symbol", "contract"}
-ABSOLUTE_PRICE_COLUMNS = {
-    "open",
-    "high",
-    "low",
-    "close",
-}
+ABSOLUTE_PRICE_PATTERN = re.compile(
+    r"^(open|high|low|close|lastprice|vwap|wap|awap|twap)(_(\d+|buy|sell))?$",
+    re.IGNORECASE,
+)
 DEFAULT_PERSISTENCE_FILTER_PATTERN = r"_log_return_(1|2)$"
 DEFAULT_FEATURE_ABLATION_PATTERNS = (
-    r"^(open|high|low|close)$",
+    r"^(open|high|low|close|lastprice|vwap|wap|awap|twap)(_(\d+|buy|sell))?$",
     r"_trend_(2|6|12|24)$",
 )
 LOG_RETURN_ALIAS_PATTERN = re.compile(r"^(.+)_log_return_\d+$")
@@ -95,7 +93,7 @@ def _state_features(df: pl.DataFrame, *, orderbook_depth: int) -> list[str]:
         for column in df.columns
         if column not in reward
         and column not in NON_STATE_COLUMNS
-        and column.lower() not in ABSOLUTE_PRICE_COLUMNS
+        and not ABSOLUTE_PRICE_PATTERN.fullmatch(column)
         and not column.endswith("timestamp")
         and not column.endswith("_right")
         and (schema[column].is_numeric() or schema[column] == pl.Boolean)

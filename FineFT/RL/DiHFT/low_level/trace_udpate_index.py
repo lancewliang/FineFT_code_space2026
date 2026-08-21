@@ -1,5 +1,6 @@
 # Code reference: https://github.com/Lizhi-sjtu/DRL-code-pytorch/tree/main/3.Rainbow_DQN
 
+import copy
 import sys
 
 sys.path.append(".")
@@ -43,7 +44,6 @@ from env.env_class.futures_util import (
 )
 from env.env_class.policy_util import get_close_element
 from RL.DiHFT.low_level.qtable_config import build_optimal_qtable_kwargs
-import copy
 
 
 os.environ["MKL_NUM_THREADS"] = "1"

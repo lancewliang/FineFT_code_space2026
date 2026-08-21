@@ -26,7 +26,13 @@ def calculate_policy_direction_metrics(
         return dict(ZERO_POLICY_DIRECTION_METRICS)
 
     position_array = position_array[:usable]
-    forward_returns = np.diff(price_array)[:usable]
+    previous_prices = price_array[:-1][:usable]
+    next_prices = price_array[1:][:usable]
+    valid_prices = np.abs(previous_prices) > 1e-12
+    forward_returns = np.full(usable, np.nan, dtype=float)
+    forward_returns[valid_prices] = (
+        next_prices[valid_prices] - previous_prices[valid_prices]
+    ) / previous_prices[valid_prices]
     finite = np.isfinite(position_array) & np.isfinite(forward_returns)
     position_array = position_array[finite]
     forward_returns = forward_returns[finite]

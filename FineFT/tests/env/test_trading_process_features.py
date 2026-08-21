@@ -9,6 +9,7 @@ if str(FINEFT_ROOT) not in sys.path:
     sys.path.insert(0, str(FINEFT_ROOT))
 
 from env.env_initiate.base_initiate import initiate_base_env
+from env.env_initiate.simple_initiate import initiate_simple_env
 from env.env_class.base_env import TRADING_INFO_KEYS
 
 
@@ -154,3 +155,23 @@ def test_reset_restarts_holding_duration_for_a_new_episode():
     _, reset_info = env.reset()
 
     assert reset_info["trading_info"][3] == pytest.approx(1.0 / 10.0)
+
+
+def test_simple_env_single_holding_return_accumulates_across_holds():
+    df, features = _sample_data(rows=20)
+    env = initiate_simple_env(
+        df,
+        features,
+        leverage_choice=[1],
+        initial_state=(100000.0, 0.0, 0.0, 0.0, 1),
+    )
+    env.reset()
+    long_action = env.env_map_position_leverage_to_action(4, 1)
+
+    env.step(long_action)
+    first_return = env.single_holding_return
+    env.step(long_action)
+    second_return = env.single_holding_return
+    expected_increment = env.position * (df["mark_price"].iloc[2] - df["mark_price"].iloc[1])
+
+    assert second_return == pytest.approx(first_return + expected_increment)

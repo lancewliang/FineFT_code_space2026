@@ -20,12 +20,12 @@ def test_policy_direction_metrics_describe_forward_returns_and_position_lifecycl
     )
 
     assert metrics["position_forward_return_corr"] == pytest.approx(
-        0.9284766909
+        0.9302694224
     )
     assert metrics["position_flip_rate"] == pytest.approx(0.2)
     assert metrics["mean_holding_duration"] == pytest.approx(5.0 / 3.0)
-    assert metrics["long_forward_return_mean"] == pytest.approx(1.0)
-    assert metrics["short_forward_return_mean"] == pytest.approx(-1.0)
+    assert metrics["long_forward_return_mean"] == pytest.approx(0.0100006667)
+    assert metrics["short_forward_return_mean"] == pytest.approx(-0.0099504950)
 
 
 def test_policy_direction_metrics_return_zero_for_insufficient_data():

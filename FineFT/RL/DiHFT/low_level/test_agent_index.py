@@ -1,5 +1,6 @@
 # Code reference: https://github.com/Lizhi-sjtu/DRL-code-pytorch/tree/main/3.Rainbow_DQN
 
+import copy
 import sys
 
 sys.path.append(".")
@@ -28,8 +29,10 @@ from env.env_class.futures_util import (
     map_action_to_position_leverage,
 )
 from env.env_class.policy_util import get_close_element
-from RL.DiHFT.low_level.policy_diagnostics import calculate_policy_direction_metrics
-import copy
+from RL.DiHFT.low_level.policy_diagnostics import (
+    ZERO_POLICY_DIRECTION_METRICS,
+    calculate_policy_direction_metrics,
+)
 
 
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -913,13 +916,7 @@ class weighted_trader:
                             limit_down_short_reward_sum = 0.0
                             limit_up_reverse_short_ratio = 0.0
                             limit_down_reverse_long_ratio = 0.0
-                            direction_metrics = {
-                                "position_forward_return_corr": 0.0,
-                                "position_flip_rate": 0.0,
-                                "mean_holding_duration": 0.0,
-                                "long_forward_return_mean": 0.0,
-                                "short_forward_return_mean": 0.0,
-                            }
+                            direction_metrics = dict(ZERO_POLICY_DIRECTION_METRICS)
 
                         single_label_initial_action_bin_index_mean_position_result.append(mean_pos)
                         single_label_initial_action_bin_index_mean_abs_position_result.append(mean_abs_pos)

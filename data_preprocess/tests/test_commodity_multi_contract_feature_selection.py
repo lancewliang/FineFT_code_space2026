@@ -354,6 +354,8 @@ def test_state_features_exclude_absolute_price_levels():
             "low": [1.0, 2.0],
             "close": [1.0, 2.0],
             "mark_price": [1.0, 2.0],
+            "wap_1": [1.0, 2.0],
+            "vwap": [1.0, 2.0],
             "close_log_return_1": [0.0, 0.1],
             "relative_strength": [0.0, 0.1],
         }
@@ -454,7 +456,7 @@ def test_train_stage_applies_feature_blacklist_only_to_final_outputs(tmp_path, f
         [float(index) for index in range(15)],
         [float(14 - index) for index in range(15)],
         extra_features={
-            "wap_1": [
+            "custom_signal": [
                 0.0,
                 2.0,
                 1.0,
@@ -480,7 +482,7 @@ def test_train_stage_applies_feature_blacklist_only_to_final_outputs(tmp_path, f
         [float(index + 1) for index in range(15)],
         [float(15 - index) for index in range(15)],
         extra_features={
-            "wap_1": [
+            "custom_signal": [
                 1.0,
                 3.0,
                 2.0,
@@ -511,7 +513,8 @@ def test_train_stage_applies_feature_blacklist_only_to_final_outputs(tmp_path, f
         min_abs_ic=0.01,
         max_correlation=1.0,
         composite_drop_ratio=0.0,
-        feature_blacklist=["wap_1", "mark_price", "ask1_price"],
+        feature_blacklist=["custom_signal", "mark_price", "ask1_price"],
+        feature_ablation_patterns=[],
         rank_ic_mode="absolute",
     )
 
@@ -525,19 +528,19 @@ def test_train_stage_applies_feature_blacklist_only_to_final_outputs(tmp_path, f
         (stage_dir / "feature_selection_manifest.json").read_text(encoding="utf-8")
     )
 
-    assert "wap_1" in aggregate["feature"].to_list()
-    assert "wap_1" not in selected_features
-    assert "wap_1" not in filtered.columns
+    assert "custom_signal" in aggregate["feature"].to_list()
+    assert "custom_signal" not in selected_features
+    assert "custom_signal" not in filtered.columns
     assert "mark_price" in filtered.columns
     assert "ask1_price" in filtered.columns
-    assert manifest.manifest.feature_blacklist == ["wap_1", "mark_price", "ask1_price"]
+    assert manifest.manifest.feature_blacklist == ["custom_signal", "mark_price", "ask1_price"]
     assert persisted_manifest["feature_blacklist"] == [
-        "wap_1",
+        "custom_signal",
         "mark_price",
         "ask1_price",
     ]
-    assert manifest.manifest.filter_results["Feature Blacklist Dropped"] == ["wap_1"]
-    assert persisted_manifest["filter_results"]["Feature Blacklist Dropped"] == ["wap_1"]
+    assert manifest.manifest.filter_results["Feature Blacklist Dropped"] == ["custom_signal"]
+    assert persisted_manifest["filter_results"]["Feature Blacklist Dropped"] == ["custom_signal"]
     assert manifest.manifest.selected_feature_count == len(selected_features)
 
 

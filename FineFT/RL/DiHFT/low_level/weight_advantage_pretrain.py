@@ -1,5 +1,6 @@
 # Code reference: https://github.com/Lizhi-sjtu/DRL-code-pytorch/tree/main/3.Rainbow_DQN
 
+import copy
 import sys
 
 sys.path.append(".")
@@ -188,7 +189,6 @@ from RL.DiHFT.low_level.pretrain_qtable_diagnostics import (
 )
 from RL.DiHFT.low_level.loss_nan_diagnostics import log_loss_nan_diagnostics
 from RL.DiHFT.low_level.qtable_config import build_optimal_qtable_kwargs
-import copy
 
 
 os.environ["MKL_NUM_THREADS"] = "1"

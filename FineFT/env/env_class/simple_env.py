@@ -119,6 +119,7 @@ class Simple_Env(gym.Env):
         self.unrealized_pnl_history = []
         self.maintain_marigine_history = []
         self.new_position_required_money_history = []
+        self.single_holding_return = 0.0
         self.slippage_sum = 0
         self._reset_execution_metrics()
 
@@ -228,6 +229,7 @@ class Simple_Env(gym.Env):
         self.slippage_sum = 0
         self._reset_execution_metrics()
         self.new_position_required_money_history = [0]
+        self.single_holding_return = 0.0
         return (
             state,
             {
@@ -398,7 +400,7 @@ class Simple_Env(gym.Env):
                 self.current_markprice - previous_markprice
             )
             self.unrealized_pnl = unrealized_pnL + future_value_increment
-            self.single_holding_return = +future_value_increment
+            self.single_holding_return += future_value_increment
             self.wallet_balance = wallet_balance
             funding_count_down = current_funding_timestamp - current_timestamp
             total_seconds = funding_count_down / np.timedelta64(1, "s")

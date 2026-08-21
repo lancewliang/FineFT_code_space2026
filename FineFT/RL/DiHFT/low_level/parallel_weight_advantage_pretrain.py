@@ -1,5 +1,6 @@
 # Code reference: https://github.com/Lizhi-sjtu/DRL-code-pytorch/tree/main/3.Rainbow_DQN
 
+import copy
 import sys
 
 sys.path.append(".")
@@ -118,7 +119,6 @@ from RL.DiHFT.low_level.parallel_diverse_train import (
     ExploreWorkerRound,
     run_parallel_diverse_training,
 )
-import copy
 
 
 os.environ["MKL_NUM_THREADS"] = "1"

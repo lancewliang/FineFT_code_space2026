@@ -769,7 +769,7 @@ class Weighted_Contexts_DQN:
                     commission_rate=self.transcation_cost,
                     # the default is for btcusdt perpetual contract
                     max_punishment=1e10,
-                    gamma=1,
+                    gamma=self.gamma,
                     allow_reverse_position=self.allow_reverse_position,
                 )
                 self.perfection_action_list = get_dp_action_from_qtable(
