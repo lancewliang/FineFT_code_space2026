@@ -39,7 +39,7 @@ python -u FineFT/RL/DiHFT/high_level/vae_routing_final_result_macro_action.py \
     --max_holding_number "${MAX_HOLDING_NUMBER}" \
     --initial_wallet_balance 10000 \
     --position_choices 5 \
-    --label_number 7 \
+    --label_number 5 \
     --transcation_cost 0.0004 \
     --short_estimated_rate 0 \
     --long_estimated_rate 0 \

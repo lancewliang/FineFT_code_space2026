@@ -11,6 +11,7 @@ frames = []
 total_rows = 0
 matched_rows = 0
 for f in files:
+    print(f)
     epoch = os.path.basename(os.path.dirname(f))
     df = pd.read_csv(f)
     total_rows += len(df)
@@ -26,15 +27,12 @@ for f in files:
         min_val = min(vals)
         pos_frac = sum(1 for v in vals if v >= 0) / len(vals)
         # 条件: 总和>0 且 单个值>-500 且 正值占比>=50%
-        return total > 300 and min_val > -500 and pos_frac >= 0.60
+        return total > 100 and min_val > -500 and pos_frac >= 0.70
 
     mask = df["奖励总和"].apply(all_positive)
     matched_rows += int(mask.sum())
     sub = df[mask].copy()
     if not sub.empty:
-        if "标签" in sub.columns:
-            sub = sub[sub["标签"] != "label_0"]
-            sub = sub[sub["标签"] != "label_6"]
         sub.insert(0, "epoch_dir", epoch)
         frames.append(sub)
 
