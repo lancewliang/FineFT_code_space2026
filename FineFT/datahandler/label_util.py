@@ -26,6 +26,36 @@ from scipy.spatial.distance import euclidean
 from fastdtw import fastdtw
 
 
+def calculate_slope_thresholds(
+    normalized_coef_list, dynamic_number, risk_bond=0.1
+):
+    """Return the existing slope thresholds for a set of segment slopes."""
+    sorted_normalized_coef_list = sorted(normalized_coef_list)
+    if not sorted_normalized_coef_list:
+        raise ValueError("cannot build slope dynamic labels without segments")
+    if len(sorted_normalized_coef_list) <= 4:
+        low = sorted_normalized_coef_list[0]
+        high = sorted_normalized_coef_list[-1]
+    else:
+        low_index = min(
+            int(len(normalized_coef_list) * risk_bond / 2) + 2,
+            len(sorted_normalized_coef_list) - 1,
+        )
+        high_index = min(
+            int(len(normalized_coef_list) * (1 - risk_bond / 2)),
+            len(sorted_normalized_coef_list) - 1,
+        )
+        if high_index < low_index:
+            low_index = 0
+            high_index = len(sorted_normalized_coef_list) - 1
+        low = sorted_normalized_coef_list[low_index]
+        high = sorted_normalized_coef_list[high_index]
+    return [
+        low + (high - low) / max(dynamic_number - 2, 1) * (i - 1)
+        for i in range(1, dynamic_number)
+    ]
+
+
 class Dynamic_labeler:
     def __init__(
         self,
@@ -43,31 +73,9 @@ class Dynamic_labeler:
             # low, high = np.quantile(normalized_coef_list, risk_bond / 2), np.quantile(
             #     normalized_coef_list, 1 - risk_bond / 2
             # )
-            sorted_normalized_coef_list=sorted(normalized_coef_list)
-            if not sorted_normalized_coef_list:
-                raise ValueError("cannot build slope dynamic labels without segments")
-            if len(sorted_normalized_coef_list) <= 4:
-                low = sorted_normalized_coef_list[0]
-                high = sorted_normalized_coef_list[-1]
-            else:
-                low_index = min(
-                    int(len(normalized_coef_list)*risk_bond / 2)+2,
-                    len(sorted_normalized_coef_list) - 1,
-                )
-                high_index = min(
-                    int(len(normalized_coef_list)*(1-risk_bond / 2)),
-                    len(sorted_normalized_coef_list) - 1,
-                )
-                if high_index < low_index:
-                    low_index = 0
-                    high_index = len(sorted_normalized_coef_list) - 1
-                low=sorted_normalized_coef_list[low_index]
-                high=sorted_normalized_coef_list[high_index]
-            self.segments = []
-            for i in range(1, self.dynamic_num):
-                self.segments.append(
-                    low + (high - low) / max(dynamic_num-2, 1) * (i-1)
-                )
+            self.segments = calculate_slope_thresholds(
+                normalized_coef_list, dynamic_num, risk_bond
+            )
         elif self.labeling_method == "quantile":
             self.segments = []
             # find the quantile of normalized_coef_list

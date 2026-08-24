@@ -383,6 +383,7 @@ class SliceContractManifest:
     processed_path: str
     file_count: int = 0
     total_row_count: int = 0
+    input_row_count: int | None = None
     labels: dict[str, SliceLabelManifest] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -400,6 +401,11 @@ class SliceContractManifest:
             processed_path=payload["processed_path"],
             file_count=int(payload.get("file_count", 0)),
             total_row_count=int(payload.get("total_row_count", 0)),
+            input_row_count=(
+                int(payload["input_row_count"])
+                if payload.get("input_row_count") is not None
+                else None
+            ),
             labels={
                 label: SliceLabelManifest.from_dict(label_info)
                 for label, label_info in payload.get("labels", {}).items()
@@ -407,7 +413,7 @@ class SliceContractManifest:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "contract": self.contract,
             "processed_path": self.processed_path,
             "file_count": self.file_count,
@@ -417,6 +423,9 @@ class SliceContractManifest:
                 for label, label_info in sorted(self.labels.items())
             },
         }
+        if self.input_row_count is not None:
+            payload["input_row_count"] = self.input_row_count
+        return payload
 
 
 @dataclass
@@ -452,6 +461,7 @@ class SliceManifest:
     skipped_contracts: dict[str, SkippedContractManifest] = field(
         default_factory=dict
     )
+    calibration: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "SliceManifest":
@@ -465,6 +475,7 @@ class SliceManifest:
                 contract: SkippedContractManifest.from_dict(skip_info)
                 for contract, skip_info in payload.get("skipped_contracts", {}).items()
             },
+            calibration=payload.get("calibration"),
         )
         manifest.rebuild_labels()
         manifest.sort()
@@ -524,7 +535,7 @@ class SliceManifest:
         self.skipped_contracts = dict(sorted(self.skipped_contracts.items()))
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "valid_path": self.valid_path,
             "contracts": {
                 contract: contract_info.to_dict()
@@ -539,3 +550,6 @@ class SliceManifest:
                 for contract, skip_info in sorted(self.skipped_contracts.items())
             },
         }
+        if self.calibration is not None:
+            payload["calibration"] = self.calibration
+        return payload

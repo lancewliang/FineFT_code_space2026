@@ -41,6 +41,14 @@ parser.add_argument(
     help="the number of transcation we store in one memory",
 )
 parser.add_argument(
+    "--valid_dir",
+    "--data_dir",
+    dest="valid_dir",
+    type=str,
+    default=None,
+    help="Complete valid directory for atomic cross-contract calibration",
+)
+parser.add_argument(
     "--key_indicator",
     type=str,
     default="mark_price",
@@ -389,5 +397,27 @@ class Linear_Market_Dynamics_Model(object):
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    model = Linear_Market_Dynamics_Model(args)
-    model.run()
+    if args.valid_dir is not None:
+        try:
+            from .valid_cross_contract_label_calibration import build_valid_dataset
+        except ImportError:
+            from valid_cross_contract_label_calibration import build_valid_dataset
+
+        build_valid_dataset(
+            args.valid_dir,
+            dynamic_number=args.dynamic_number,
+            labeling_method=args.labeling_method,
+            timestamp=args.timestamp,
+            tic=args.tic,
+            filter_strength=args.filter_strength,
+            min_length_limit=args.min_length_limit,
+            merging_threshold=args.merging_threshold,
+            merging_metric=args.merging_metric,
+            merging_dynamic_constraint=args.merging_dynamic_constraint,
+            max_length_expectation=args.max_length_expectation,
+        )
+    else:
+        raise SystemExit(
+            "single-contract --data_path mode is diagnostic-only and cannot publish "
+            "official labels; pass --valid_dir for production calibration"
+        )

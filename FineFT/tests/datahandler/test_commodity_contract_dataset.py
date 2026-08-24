@@ -471,8 +471,9 @@ def test_write_train_slices_uses_contiguous_indices_and_single_contract_files(tm
 def test_commodity_data_handler_scripts_use_contract_dataset_tool():
     root = Path(__file__).resolve().parents[3]
     for script_name, symbol in [
-        ("commodity_data_handler_fu.sh", "fu"),
-        ("commodity_data_handler_al.sh", "al"),
+        (f"commodity_data_handler_{frequency}_{symbol}.sh", symbol)
+        for frequency in ("1min", "5min", "10min", "30min")
+        for symbol in ("fu", "al")
     ]:
         text = (root / "FineFT" / "script" / "data" / script_name).read_text()
         assert "commodity_contract_dataset.py" in text
@@ -485,8 +486,9 @@ def test_commodity_data_handler_scripts_use_contract_dataset_tool():
         assert "--state_features_path" in text
         assert "FEATURE_SELECTION" in text
         assert "train/state_features.npy" in text
-        assert "/valid\"/*.feather" in text
-        assert 'slice_model.py --data_path "${valid_file}" --timestamp timestamp' in text
+        assert "slice_model.py" in text
+        assert '--valid_dir "dataset/${TARGET_FREQ}/${SYMBOL}/valid"' in text
+        assert "--data_path" not in text
         assert "--summary_path" not in text
         assert "--feature_union_path" not in text
         assert "preprocess_data.py --trading_pair" not in text
