@@ -111,7 +111,7 @@ function run_ddqn_average {
 #run_ddqn_context fu 1 30 100 dataset/5min 5min_nstep6_costw5
 
 DATASET_NAME=${DATASET_NAME:-fu}
-MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-5}
+MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-2}
 EPOCH_START=${EPOCH_START:-60}
 EPOCH_END=${EPOCH_END:-110}
 BASE_PATH=${BASE_PATH:-dataset/30min}

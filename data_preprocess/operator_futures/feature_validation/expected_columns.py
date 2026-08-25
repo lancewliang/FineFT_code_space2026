@@ -699,9 +699,10 @@ def _windowed_name(template: str, window: int) -> str:
 
 def _build_time_feature_columns() -> list[str]:
     columns = []
-    for window in TIME_WINDOWS:
-        for feature in PRICE_FEATURE_COLUMNS:
-            columns.append(f"{feature}_log_return_{window}")
+    first_window = TIME_WINDOWS[0]
+    for feature in PRICE_FEATURE_COLUMNS:
+        columns.append(f"{feature}_log_return_{first_window}")
+        for window in TIME_WINDOWS:
             columns.append(f"{feature}_trend_{window}")
 
     for suffix in OHLCV_GROUP_SUFFIXES:

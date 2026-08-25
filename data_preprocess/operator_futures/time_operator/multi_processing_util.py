@@ -11,20 +11,22 @@ min_value = 1e-12
 
 def get_multi_feature_window_price(df, windows, feature_name_list):
     df = _ensure_polars_with_timestamp(df)
+    windows = list(windows)
     pieces = []
     for feature_name in feature_name_list:
         if feature_name not in df.columns:
             continue
-        for window in windows:
-            current = pl.col(feature_name)
-            previous = pl.col(feature_name).shift(1)
-            exprs = [
-                (
+        for window_index, window in enumerate(windows):
+            exprs = []
+            if window_index == 0:
+                current = pl.col(feature_name)
+                previous = current.shift(1)
+                exprs.append(
                     pl.when((current > 0) & (previous > 0))
                     .then((current / (previous + min_value)).log() * 1000)
                     .otherwise(0.0)
-                ).alias(f"{feature_name}_log_return_{window}")
-            ]
+                    .alias(f"{feature_name}_log_return_{window}")
+                )
             if window != 1:
                 mean = pl.col(feature_name).rolling_mean(window)
                 std = pl.col(feature_name).rolling_std(window)
@@ -33,7 +35,8 @@ def get_multi_feature_window_price(df, windows, feature_name_list):
                         f"{feature_name}_trend_{window}"
                     )
                 )
-            pieces.append(df.select("timestamp", *exprs).slice(window + 1))
+            if exprs:
+                pieces.append(df.select("timestamp", *exprs).slice(window + 1))
     return _inner_join_on_timestamp(pieces)
 
 
@@ -56,39 +59,7 @@ def _inner_join_on_timestamp(frames: list[pl.DataFrame]) -> pl.DataFrame:
         deduped_frames.append(frame.select(columns))
         seen.update(name for name in frame.columns if name != "timestamp")
     result = reduce(lambda left, right: left.join(right, on="timestamp", how="inner"), deduped_frames)
-    if result.height == 0:
-        return result
-    return _remove_duplicate_columns_preserve_order(result)
-
-
-def _remove_duplicate_columns_preserve_order(df: pl.DataFrame) -> pl.DataFrame:
-    if df.width <= 1:
-        return df
-    keep_columns = []
-    seen_signatures: dict[tuple[str, tuple[int, ...]], list[str]] = {}
-    for name in df.columns:
-        if name == "timestamp":
-            keep_columns.append(name)
-            continue
-        dedupe_key = _equal_value_dedupe_key(name)
-        if dedupe_key is None:
-            keep_columns.append(name)
-            continue
-        column = df.get_column(name)
-        signature = tuple(column.hash().to_list())
-        candidates = seen_signatures.setdefault((dedupe_key, signature), [])
-        if any(column.equals(df.get_column(existing)) for existing in candidates):
-            continue
-        candidates.append(name)
-        keep_columns.append(name)
-    return df.select(keep_columns)
-
-
-def _equal_value_dedupe_key(name: str) -> str | None:
-    base, marker, window = name.rpartition("_log_return_")
-    if marker and window.isdigit():
-        return f"{base}{marker}"
-    return None
+    return result
 
 
 def _clean_numeric(df: pl.DataFrame) -> pl.DataFrame:

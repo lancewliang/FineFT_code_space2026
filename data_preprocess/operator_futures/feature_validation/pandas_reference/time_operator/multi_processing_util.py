@@ -249,30 +249,22 @@ def process_ohlc_single_window(df: pd.DataFrame, w: int):
     return df_feature
 
 
-def process_single_price_single_window(df: pd.Series, w: int):
+def process_single_price_single_window(
+    df: pd.Series, w: int, include_log_return: bool = True
+):
     # the rename has been done in the function
     # create feature for none ohlcv form information
     assert len(df.shape) == 1
     feature_name = df.name
-    columns = [
-        *[f"log_return_{w}"],
-        *[f"rolling_mean_{w}"],
-        *[f"std_{w}"],
-        *[f"trend_{w}"],
-    ]
-    df_time_feature = pd.DataFrame(columns=columns, index=df.index)
-    rolling = df.rolling(w)
-    df_time_feature[f"log_return_{w}"] = np.log(df / (df.shift(1)+min_value)) * 1000
-    if w != 1:
-        df_time_feature[f"rolling_mean_{w}"] = rolling.mean()
-        df_time_feature[f"std_{w}"] = rolling.std()
-        df_time_feature[f"trend_{w}"] = (df - df_time_feature[f"rolling_mean_{w}"]) / (
-            df_time_feature[f"std_{w}"] + min_value
+    df_time_feature = pd.DataFrame(index=df.index)
+    if include_log_return:
+        df_time_feature[f"log_return_{w}"] = (
+            np.log(df / (df.shift(1) + min_value)) * 1000
         )
-        df_time_feature.drop(columns=[f"rolling_mean_{w}", f"std_{w}"], inplace=True)
-    else:
-        df_time_feature.drop(
-            columns=[f"rolling_mean_{w}", f"std_{w}", f"trend_{w}"], inplace=True
+    if w != 1:
+        rolling = df.rolling(w)
+        df_time_feature[f"trend_{w}"] = (df - rolling.mean()) / (
+            rolling.std() + min_value
         )
     df_time_feature = df_time_feature.iloc[w + 1 :]
     df_time_feature.rename(
@@ -321,17 +313,20 @@ def get_multi_window_ohlc(df, windows):
 
 
 def get_multi_feature_window_price(df, windows, feature_name_list):
+    windows = list(windows)
     df_list = [df[feature_name] for feature_name in feature_name_list]
     max_workers = int(min(cpu_count() / 2, len(df_list) * len(windows)))
     with Pool(processes=max_workers) as pool:
         results = [
-            pool.apply_async(process_single_price_single_window, args=(df_single, w))
-            for w in windows
+            pool.apply_async(
+                process_single_price_single_window,
+                args=(df_single, w, window_index == 0),
+            )
+            for window_index, w in enumerate(windows)
             for df_single in df_list
         ]
         processed_dfs = [result.get() for result in results]
     df_final = pd.concat(processed_dfs, axis=1, join="inner")
-    df_final = remove_duplicate_columns(df_final)
     return df_final
 
 

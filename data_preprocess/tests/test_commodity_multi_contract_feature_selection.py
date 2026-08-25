@@ -14,7 +14,6 @@ from operator_futures.feature_selection.muti_contract.metrics import (
 )
 from operator_futures.feature_selection.muti_contract import metrics
 from operator_futures.feature_selection.muti_contract.pipeline import (
-    DEFAULT_FEATURE_ABLATION_PATTERNS,
     _ordered_filter_features,
     _state_features,
     build_parser,
@@ -346,7 +345,44 @@ def test_signed_rank_ic_excludes_negative_direction_features():
     assert filter_results["Hard Filter"] == ["trend_following"]
 
 
-def test_state_features_exclude_absolute_price_levels():
+def test_absolute_rank_ic_keeps_negative_direction_features_by_default():
+    features = ["trend_following", "trend_reversion"]
+    aggregate = pl.DataFrame(
+        {
+            "feature": features,
+            "IC_Mean": [0.2, -0.2],
+            "IC_Std": [0.1, 0.1],
+            "RankIC_Mean": [0.2, -0.8],
+            "RankIC_Std": [0.1, 0.1],
+            "Sharpe_Mean": [0.0, 0.0],
+            "Permutation Importance_Mean": [0.0, 0.0],
+            "CatBoost Importance_Mean": [0.0, 0.0],
+        }
+    )
+    frames = {
+        "fu2601": pl.DataFrame(
+            {
+                "trend_following": [0.0, 1.0, 2.0, 3.0],
+                "trend_reversion": [0.0, 2.0, 1.0, 3.0],
+            }
+        )
+    }
+
+    selected, filter_results = _ordered_filter_features(
+        frames,
+        aggregate,
+        features,
+        min_abs_ic=0.1,
+        max_metric_std=1.0,
+        max_correlation=1.0,
+        composite_drop_ratio=0.0,
+    )
+
+    assert set(selected) == set(features)
+    assert set(filter_results["Hard Filter"]) == set(features)
+
+
+def test_state_features_keep_price_levels_and_price_named_derived_features():
     frame = pl.DataFrame(
         {
             "open": [1.0, 2.0],
@@ -358,6 +394,8 @@ def test_state_features_exclude_absolute_price_levels():
             "vwap": [1.0, 2.0],
             "buy_wap": [1.0, 2.0],
             "buy_spread_oe_max": [1.0, 2.0],
+            "open_interest_change_ratio_192": [0.0, 0.1],
+            "prev_day_vwap_deviation_pct": [0.0, 0.1],
             "relative_spread": [1.0, 2.0],
             "close_log_return_1": [0.0, 0.1],
             "relative_strength": [0.0, 0.1],
@@ -367,19 +405,30 @@ def test_state_features_exclude_absolute_price_levels():
     result = _state_features(frame, orderbook_depth=5)
 
     assert result == [
+        "open",
+        "high",
+        "low",
+        "close",
+        "wap_1",
+        "vwap",
+        "buy_wap",
+        "buy_spread_oe_max",
+        "open_interest_change_ratio_192",
+        "prev_day_vwap_deviation_pct",
         "relative_spread",
         "close_log_return_1",
         "relative_strength",
     ]
 
 
-def test_parser_enables_short_trend_ablation_and_signed_rank_ic_by_default():
+def test_parser_restores_legacy_feature_selection_defaults():
     args = build_parser().parse_args(
         ["--symbol", "fu", "--target_freq", "5min", "--stage", "train"]
     )
 
-    assert args.rank_ic_mode == "signed"
-    assert args.feature_ablation_patterns == list(DEFAULT_FEATURE_ABLATION_PATTERNS)
+    assert args.rank_ic_mode == "absolute"
+    assert args.feature_ablation_patterns == []
+    assert args.min_half_life_bars == 0.0
 
 
 def test_parser_accepts_runtime_feature_blacklist():
@@ -625,7 +674,7 @@ def test_train_stage_filters_fast_decay_micro_returns_by_persistence(
     assert diagnostics["trend_strength_norm"]["active_filter"] is False
 
 
-def test_train_stage_semantically_deduplicates_equivalent_log_return_aliases(
+def test_train_stage_does_not_filter_equivalent_log_return_aliases(
     tmp_path, fake_catboost
 ):
     row_count = 24
@@ -639,6 +688,7 @@ def test_train_stage_semantically_deduplicates_equivalent_log_return_aliases(
         extra_features={
             "wap_1_log_return_2": alias_values,
             "wap_1_log_return_6": alias_values,
+            "buy_volume_oe_trend_2": alias_values,
         },
     )
     _write_long_split_contract(
@@ -650,6 +700,7 @@ def test_train_stage_semantically_deduplicates_equivalent_log_return_aliases(
         extra_features={
             "wap_1_log_return_2": [value + 1.0 for value in alias_values],
             "wap_1_log_return_6": [value + 1.0 for value in alias_values],
+            "buy_volume_oe_trend_2": [value + 1.0 for value in alias_values],
         },
     )
 
@@ -670,16 +721,12 @@ def test_train_stage_semantically_deduplicates_equivalent_log_return_aliases(
     aggregate_features = pl.read_csv(stage_dir / "aggregate_metrics.csv")[
         "feature"
     ].to_list()
-    selected_features = np.load(
-        stage_dir / "state_features.npy", allow_pickle=True
-    ).tolist()
-
     assert "wap_1_log_return_2" in aggregate_features
-    assert "wap_1_log_return_6" not in aggregate_features
-    assert "wap_1_log_return_6" not in selected_features
-    assert manifest.manifest.filter_results[
-        "Feature Semantic Deduplication Dropped"
-    ] == ["wap_1_log_return_6"]
+    assert "wap_1_log_return_6" in aggregate_features
+    assert "buy_volume_oe_trend_2" in aggregate_features
+    assert "Feature Semantic Deduplication Dropped" not in (
+        manifest.manifest.filter_results
+    )
 
 
 def test_train_stage_rejects_illegal_feature_values_before_metrics(tmp_path, fake_catboost):

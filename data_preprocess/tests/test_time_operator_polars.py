@@ -12,6 +12,7 @@ from operator_futures.feature_validation.pandas_reference.time_operator.multi_pr
     process_ohlc_single_window as pandas_process_ohlc_single_window,
     process_ohlcv_single_window as pandas_process_ohlcv_single_window,
 )
+from operator_futures.time_operator import multi_processing_util as time_util
 from operator_futures.time_operator.multi_processing_util import (
     _process_ohlc_single_window_polars,
     _process_ohlcv_single_window_polars,
@@ -348,7 +349,7 @@ def test_single_price_window_cleans_signed_log_return_illegal_values():
     ]
 
 
-def test_multi_feature_price_deduplicates_repeated_window_outputs_like_reference():
+def test_multi_feature_price_matches_reference_output():
     pandas_frame = pd.DataFrame(
         {
             "feature_x": [10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0],
@@ -372,6 +373,35 @@ def test_multi_feature_price_deduplicates_repeated_window_outputs_like_reference
         atol=1e-9,
         rtol=0,
     )
+
+
+def test_multi_feature_price_generates_log_return_only_for_first_window(monkeypatch):
+    frame = pl.DataFrame(
+        {
+            "timestamp": list(range(10)),
+            "feature_x": [10.0 + index for index in range(10)],
+        }
+    )
+    generated_columns = []
+    original_join = time_util._inner_join_on_timestamp
+
+    def capture_generated_frames(frames):
+        generated_columns.extend(
+            column
+            for generated_frame in frames
+            for column in generated_frame.columns
+            if column != "timestamp"
+        )
+        return original_join(frames)
+
+    monkeypatch.setattr(time_util, "_inner_join_on_timestamp", capture_generated_frames)
+
+    out = get_multi_feature_window_price(frame, [2, 6], ["feature_x"])
+
+    assert generated_columns.count("feature_x_log_return_2") == 1
+    assert "feature_x_log_return_6" not in generated_columns
+    assert "feature_x_log_return_2" in out.columns
+    assert "feature_x_log_return_6" not in out.columns
 
 
 def test_ohlcv_window_two_matches_pandas_reference_degenerate_windows():
