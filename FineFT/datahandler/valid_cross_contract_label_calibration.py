@@ -237,6 +237,33 @@ def _slope_statistics(slopes: list[float]) -> dict[str, float | int]:
     }
 
 
+def _calibration_label_statistics(
+    fits: list[_ContractFit],
+    thresholds: list[float],
+    dynamic_number: int,
+) -> dict[str, dict[str, int]]:
+    label_names = [f"label_{index}" for index in range(dynamic_number)]
+    segment_counts = {label: 0 for label in label_names}
+    row_counts = {label: 0 for label in label_names}
+    contracts_by_label = {label: set() for label in label_names}
+
+    for fit in fits:
+        for _, points, slopes, _ in fit.groups:
+            for start, end, slope in zip(points[:-1], points[1:], slopes):
+                label = f"label_{_label_for_slope(slope, thresholds)}"
+                segment_counts[label] += 1
+                row_counts[label] += end - start
+                contracts_by_label[label].add(fit.contract)
+
+    return {
+        "per_label_segment_count": segment_counts,
+        "per_label_row_count": row_counts,
+        "per_label_contract_coverage": {
+            label: len(contracts) for label, contracts in contracts_by_label.items()
+        },
+    }
+
+
 def _build_contract_outputs(
     fit: _ContractFit,
     stage_root: Path,
@@ -329,6 +356,7 @@ def build_valid_dataset(
     *,
     dynamic_number: int = 5,
     labeling_method: str = "slope",
+    threshold_method: str = "legacy_equal_width",
     key_indicator: str = "mark_price",
     timestamp: str = "timestamp",
     tic: str = "symbol",
@@ -349,7 +377,7 @@ def build_valid_dataset(
        - 数据不足 filter_padlen 的合约，作为 skipped 记录跳过拟合。
        - 正常合约调用 _fit_contract 提取拟合转折点与斜率。
     4. 【全局跨合约校准核心】：池化所有参与合约的拟合斜率 (pooled_slopes)，
-       调用 util.calculate_slope_thresholds 统一计算全局跨合约斜率分类分位数阈值 (thresholds)。
+       按 threshold_method 统一计算全局跨合约共享斜率阈值 (thresholds)。
     5. 使用计算得到的全局阈值调用 _build_contract_outputs 生成各合约切片与描述 Manifest。
     6. 校验输出行数与输入行数的守恒关系。
     7. 构造完整的 SliceManifest，重建并排序标签，调用 _publish 实施原子化目录替换与清单写出。
@@ -362,6 +390,11 @@ def build_valid_dataset(
         )
     if dynamic_number < 1:
         raise ValueError("dynamic_number must be positive")
+    if threshold_method not in {
+        "legacy_equal_width",
+        "global_segment_quantile",
+    }:
+        raise ValueError(f"unsupported threshold method: {threshold_method}")
     valid_root = Path(valid_dir).resolve()
     if not valid_root.is_dir():
         raise FileNotFoundError(f"missing valid directory: {valid_root}")
@@ -433,12 +466,17 @@ def build_valid_dataset(
         pooled_slopes = [slope for fit in fits for slope in fit.slopes]
         if not pooled_slopes:
             raise ValueError("valid dataset produced zero final segments")
-        thresholds = [
-            float(value)
-            for value in util.calculate_slope_thresholds(
+        threshold_quantiles: list[float] = []
+        if threshold_method == "global_segment_quantile":
+            threshold_quantiles = [
+                index / dynamic_number for index in range(1, dynamic_number)
+            ]
+            threshold_values = np.quantile(pooled_slopes, threshold_quantiles)
+        else:
+            threshold_values = util.calculate_slope_thresholds(
                 pooled_slopes, dynamic_number, risk_bond=0.1
             )
-        ]
+        thresholds = [float(value) for value in threshold_values]
         
         # 第三阶段：根据全局阈值生成各合约的切片与 Manifest 结构
         contracts = {
@@ -472,9 +510,17 @@ def build_valid_dataset(
                 "final_segment_count": len(pooled_slopes),
                 "dynamic_number": dynamic_number,
                 "labeling_method": "slope",
+                "threshold_method": threshold_method,
+                "threshold_weighting": "equal_segment",
+                "threshold_quantiles": threshold_quantiles,
                 "shared_thresholds": thresholds,
                 "thresholds": thresholds,
                 "slope_statistics": _slope_statistics(pooled_slopes),
+                **_calibration_label_statistics(
+                    fits,
+                    thresholds,
+                    dynamic_number,
+                ),
             },
         )
         manifest.rebuild_labels()
@@ -549,6 +595,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--dynamic_number", type=int, default=5)
     parser.add_argument("--labeling_method", default="slope")
+    parser.add_argument(
+        "--threshold_method",
+        choices=("legacy_equal_width", "global_segment_quantile"),
+        default="legacy_equal_width",
+    )
     parser.add_argument("--timestamp", default="timestamp")
     parser.add_argument("--tic", default="symbol")
     parser.add_argument("--min_length_limit", type=int, default=288)
@@ -565,6 +616,7 @@ def main(args: list[str] | None = None) -> None:
         parsed.valid_dir,
         dynamic_number=parsed.dynamic_number,
         labeling_method=parsed.labeling_method,
+        threshold_method=parsed.threshold_method,
         timestamp=parsed.timestamp,
         tic=parsed.tic,
         min_length_limit=parsed.min_length_limit,

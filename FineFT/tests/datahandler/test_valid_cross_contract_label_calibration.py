@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -62,6 +63,98 @@ def test_build_valid_dataset_publishes_one_shared_threshold_set(tmp_path):
         "contract" in file_info
         for label_info in manifest["labels"].values()
         for file_info in label_info["files"]
+    )
+
+
+def test_build_valid_dataset_publishes_global_segment_quantile_thresholds(
+    tmp_path,
+):
+    from datahandler import valid_cross_contract_label_calibration as calibration
+
+    valid_dir = tmp_path / "valid"
+    valid_dir.mkdir()
+    _write_contract(valid_dir, "fu2501", 100.0)
+    _write_contract(valid_dir, "fu2505", 1000.0)
+
+    calibration.build_valid_dataset(
+        valid_dir,
+        dynamic_number=4,
+        threshold_method="global_segment_quantile",
+        timestamp="timestamp",
+        min_length_limit=4,
+        merging_threshold=-1,
+    )
+
+    manifest = json.loads((valid_dir / "slice_manifest.json").read_text())
+    np.testing.assert_allclose(
+        manifest["calibration"]["shared_thresholds"],
+        [-0.381047258209, -0.000075363309, 0.392236945801],
+    )
+    assert manifest["calibration"]["threshold_method"] == (
+        "global_segment_quantile"
+    )
+    assert manifest["calibration"]["threshold_weighting"] == "equal_segment"
+    assert manifest["calibration"]["threshold_quantiles"] == [0.25, 0.5, 0.75]
+    assert manifest["calibration"]["per_label_segment_count"] == {
+        "label_0": 6,
+        "label_1": 6,
+        "label_2": 6,
+        "label_3": 6,
+    }
+    assert manifest["calibration"]["per_label_row_count"] == {
+        "label_0": 48,
+        "label_1": 48,
+        "label_2": 48,
+        "label_3": 48,
+    }
+    assert manifest["calibration"]["per_label_contract_coverage"] == {
+        "label_0": 1,
+        "label_1": 1,
+        "label_2": 1,
+        "label_3": 1,
+    }
+    assert sorted(manifest["labels"]) == [
+        "label_0",
+        "label_1",
+        "label_2",
+        "label_3",
+    ]
+
+
+def test_cli_accepts_global_segment_quantile_threshold_method(tmp_path):
+    from datahandler import valid_cross_contract_label_calibration as calibration
+
+    valid_dir = tmp_path / "valid"
+    valid_dir.mkdir()
+    _write_contract(valid_dir, "fu2501", 100.0)
+    _write_contract(valid_dir, "fu2505", 1000.0)
+
+    subprocess.run(
+        [
+            sys.executable,
+            calibration.__file__,
+            "--valid_dir",
+            str(valid_dir),
+            "--dynamic_number",
+            "4",
+            "--threshold_method",
+            "global_segment_quantile",
+            "--timestamp",
+            "timestamp",
+            "--min_length_limit",
+            "4",
+            "--merging_threshold",
+            "-1",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    manifest = json.loads((valid_dir / "slice_manifest.json").read_text())
+    assert manifest["calibration"]["dynamic_number"] == 4
+    assert manifest["calibration"]["threshold_method"] == (
+        "global_segment_quantile"
     )
 
 

@@ -24,7 +24,7 @@ python -u FineFT/RL/DiHFT/high_level/vae_routing_optuna.py \
     --initial_wallet_balance 10000 \
     --position_choices 5 \
     --order_book_depth 5 \
-    --label_number 5 \
+    --label_number 4 \
     --transcation_cost 0.0004 \
     --short_estimated_rate 0 \
     --long_estimated_rate 0 \

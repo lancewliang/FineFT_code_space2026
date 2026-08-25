@@ -10,7 +10,7 @@ FineFT 当前对 valid 阶段的每个合约分别运行市场动态分片，并
 
 ## Solution
 
-将 Valid 动态切片改为 valid 数据集级原子构建。所有合约仍独立执行既有 Butterworth、turning-point 和 slice-and-merge；合并过程继续使用合约内临时 quantile Label。所有未跳过合约完成分片后，系统汇总每个最终市场动态片段的带符号百分比斜率，以每个片段一票的方式，使用现有 `Dynamic_labeler` slope 公式拟合一套全合约共享阈值，再把同一套阈值应用到所有合约。
+将 Valid 动态切片改为 valid 数据集级原子构建。所有合约仍独立执行既有 Butterworth、turning-point 和 slice-and-merge；合并过程继续使用合约内临时 quantile Label。所有未跳过合约完成分片后，系统汇总每个最终市场动态片段的带符号百分比斜率，以每个片段一票的方式，在 `i / dynamic_number` 全局 Segment Quantile 位置拟合一套全合约共享阈值，再把同一套阈值应用到所有合约。
 
 系统不平衡合约或 Label 样本比例，不按片段长度或合约重新加权，也不按各合约波动率再次标准化。涨跌停及接近涨跌停行情与普通行情共同进入既有 `dynamic_number` 个无语义动态 Label。构建通过临时位置完成并原子发布；可跳过行数不足的合约，其他数据或分片错误使整个构建失败并保留上一代完整产物。
 
@@ -27,8 +27,8 @@ FineFT 当前对 valid 阶段的每个合约分别运行市场动态分片，并
 9. As a quantitative researcher, I want every final market dynamic segment to contribute one equally weighted score, so that the calibration preserves the current segment-level statistical unit.
 10. As a quantitative researcher, I want no segment-length weighting, so that long segments do not receive more threshold influence than short segments.
 11. As a quantitative researcher, I want no contract-level reweighting, so that contracts with more final segments naturally contribute more observations.
-12. As a quantitative researcher, I want the existing slope threshold formula preserved exactly, so that this change modifies fit scope rather than Label mathematics.
-13. As a quantitative researcher, I want the existing `risk_bond`, low-index offset, and interval calculation preserved, so that historical algorithm behavior is not silently corrected during the refactor.
+12. As a quantitative researcher, I want final shared thresholds fitted at `i / dynamic_number` quantiles of all final segment scores, so that each final Label receives a comparable number of pooled segments when slope values are distinct.
+13. As a quantitative researcher, I want the final threshold method recorded separately from the slope score method, so that global Segment Quantile calibration is not confused with contract-local temporary quantile Labels.
 14. As a pipeline operator, I want production Cross-contract Label Calibration to accept the complete valid directory, so that the system can discover all calibration inputs before publishing outputs.
 15. As a pipeline operator, I want single-contract execution to remain diagnostic-only, so that it cannot partially overwrite official Label outputs or the Slice Manifest.
 16. As a pipeline operator, I want a changed valid contract set to trigger a complete rebuild, so that one published generation never mixes old and new thresholds.
@@ -52,8 +52,8 @@ FineFT 当前对 valid 阶段的每个合约分别运行市场动态分片，并
 34. As an RL researcher, I want the upstream train-only RobustScaler unchanged, so that existing train/valid/test feature-scale guarantees remain intact.
 35. As a VAE trainer, I want existing cross-contract same-Label materialization to consume all non-empty contract arrays, so that shared final thresholds support the current training layout.
 36. As a pipeline operator, I want downstream rebuilds to remain an orchestration responsibility, so that this change does not introduce calibration-ID compatibility gates.
-37. As a maintainer, I want final `quantile` and `DTW` Label requests rejected by the production directory build, so that unsupported calibration semantics fail explicitly.
-38. As a maintainer, I want `quantile` retained only for the contract-local merge constraint, so that the current slice-and-merge algorithm continues to behave as designed.
+37. As a maintainer, I want `labeling_method="quantile"` and final `DTW` Label requests rejected by the production directory build, so that changing the shared slope threshold method is not confused with changing the final segment score or clustering method.
+38. As a maintainer, I want contract-local temporary `quantile` retained only for the merge constraint and global Segment Quantile used only for final shared slope thresholds, so that the two calibration scopes remain distinct.
 39. As a maintainer, I want stale contract and Label outputs removed only during successful atomic publication, so that deleted inputs do not leave misleading artifacts and failed builds do not destroy the previous generation.
 40. As a reviewer, I want all input rows from non-skipped contracts accounted for exactly once across output segments, so that no Label boundary drops or duplicates market data.
 
@@ -66,8 +66,9 @@ FineFT 当前对 valid 阶段的每个合约分别运行市场动态分片，并
 - The final segment score remains the signed percentage slope: segment price slope divided by segment start price and multiplied by 100.
 - Price-unit normalization is part of the Label score. Per-contract return-volatility, IQR, MAD, standard-deviation, or rank normalization is not added.
 - Each final segment contributes one score with weight one. Segment length, row count, and contract identity do not change calibration weight.
-- Production final labeling supports `slope` only. Final `quantile` and `DTW` modes fail before official outputs are mutated.
-- Shared slope thresholds use the current `Dynamic_labeler` behavior exactly, including `risk_bond=0.1`, the existing low-index offset, the current high-index selection, and the `dynamic_number - 2` interval denominator.
+- Production final labeling continues to use signed percentage `slope` scores only. `labeling_method="quantile"` and final `DTW` modes fail before official outputs are mutated.
+- Production shared thresholds support an explicit `global_segment_quantile` threshold method using `i / dynamic_number` pooled-segment quantiles. Every final segment has weight one; row count and contract identity do not change the quantiles.
+- The legacy equal-width slope threshold method remains available for pipelines that have not explicitly migrated.
 - The small-sample fallback remains valid when at least one final segment exists. A build with no final segments fails.
 - The same algorithm applies when the valid set contains one contract or many; no single-contract production special case is introduced.
 - The official build discovers all contract-level Valid Feature files before processing and deterministically identifies each contract from the dataset contract record or file identity.
@@ -78,7 +79,7 @@ FineFT 当前对 valid 阶段的每个合约分别运行市场动态分片，并
 - Every configured Label appears in each non-skipped contract manifest record. Contract-empty Labels use `file_count=0`, `total_row_count=0`, and an empty file list.
 - Aggregate Label records also include all configured Labels, including zero-count Labels when no contract contains data for them.
 - Empty Label directories may exist for layout compatibility, but empty Feather or NumPy files must not be created.
-- Slice Manifest calibration data records fit scope, participating and skipped contracts, final segment count, `dynamic_number`, `labeling_method`, shared thresholds, and descriptive statistics for the pooled percentage slopes.
+- Slice Manifest calibration data records fit scope, participating and skipped contracts, final segment count, `dynamic_number`, `labeling_method`, threshold method, threshold weighting, quantile levels, shared thresholds, and descriptive statistics for the pooled percentage slopes.
 - Slice Manifest output accounting must reconcile input rows, contract output rows, Label output rows, and segment file rows.
 - Limit-price and near-limit-price observations remain ordinary input rows. The build creates exactly `dynamic_number` final Labels and no dedicated directional or price-limit Labels.
 - Unsemantic Dynamic Labels carry no trading-control contract. Agent selection, routing, and action guards must not infer direction or allowed actions from Label number.
@@ -105,8 +106,8 @@ FineFT 当前对 valid 阶段的每个合约分别运行市场动态分片，并
 - A limit-price scenario should assert that no extra Label indices are created and that all limit-related rows remain in the ordinary output set.
 - A State Feature preservation scenario should compare every selected State Feature value before and after slicing and assert exact equality, while allowing Label/output metadata to differ.
 - A manifest-accounting scenario should reconcile contract totals, Label totals, file counts, row counts, empty Labels, and skipped contracts against actual outputs.
-- Focused calibration tests should cover the existing slope threshold formula, including the low-index offset, high-index choice, interval denominator, duplicate thresholds, and one-to-four-segment fallback.
-- Unsupported final `quantile` and `DTW` production requests should fail before staging publication.
+- Focused calibration tests should cover global Segment Quantile thresholds, equal segment weighting, duplicate thresholds, shared cross-contract application, and small segment pools.
+- Unsupported `labeling_method="quantile"` and final `DTW` production requests should fail before staging publication.
 - Good tests should verify externally meaningful behavior rather than implementation calls, private helper structure, or exact internal object decomposition.
 - Existing Valid Dynamic Slice tests provide prior art for contract-scoped outputs, row preservation, final-segment writing, insufficient-row skipping, and small slope segment counts.
 - Existing commodity dataset tests provide prior art for directory layout, production-script wiring, manifest accounting, and State Feature copying.
@@ -116,11 +117,10 @@ FineFT 当前对 valid 阶段的每个合约分别运行市场动态分片，并
 ## Out of Scope
 
 - Replacing Butterworth filtering, turning-point detection, slice-and-merge, DTW neighbor distance, or merge-round behavior.
-- Correcting or redesigning the current slope threshold formula, including its low-index offset and interval denominator.
-- Balancing Label proportions within a contract or across the complete valid set.
-- Equal-contract weighting, segment-length weighting, or row weighting during final threshold fitting.
+- Row-weighted, contract-weighted, or contract-local final Label quantiles.
+- Forcing equal Label proportions within each contract.
 - Per-contract volatility, IQR, MAD, standard-deviation, or rank normalization.
-- Final production support for `quantile` or `DTW` labeling.
+- Final production support for `labeling_method="quantile"` or `DTW` labeling.
 - Re-scaling State Features in the sliced Feather outputs.
 - Changing Feature Selection, Scale Save, Scale Manifest, or train/valid/test split behavior.
 - Adding a calibration ID or enforcing compatibility across VAE, Selection Manifest, Potential Model, or runtime artifacts.

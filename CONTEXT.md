@@ -252,7 +252,7 @@ _Avoid_: 数据切分、数据分割
 _Avoid_: 数据集清单、数据集描述
 
 **Slice Manifest**:
-描述 Valid 动态切片的合约视角、无语义动态 Label 视角和全合约 Label 定标事实的 JSON 文件；定标事实包含参与合约、最终片段数、统一阈值、动态数量、标注方法和百分比斜率统计。
+描述 Valid 动态切片的合约视角、无语义动态 Label 视角和全合约 Label 定标事实的 JSON 文件；定标事实包含参与合约、最终片段数、统一阈值、动态数量、斜率评分方法、阈值方法和百分比斜率统计。
 _Avoid_: 切片清单、切片描述
 
 **Skipped Contract**:
@@ -272,8 +272,12 @@ Valid 动态切片产生的无语义编号；它不表示方向、幅度或涨�
 _Avoid_: 动态簇、Label 方向语义、上涨/下跌 Label、涨跌停 Label
 
 **全合约 Label 定标 (Cross-contract Label Calibration)**:
-从同一 valid 集合的全部合约片段共同拟合一套无语义动态 Label slope 阈值，并将该阈值应用到每个合约；每个最终市场动态片段贡献一个等权分数，不按片段长度或合约重新加权，也不要求各合约或各 Label 的样本比例一致。
+从同一 valid 集合的全部合约片段共同拟合一套无语义动态 Label slope 阈值，并将该阈值应用到每个合约；每个最终市场动态片段贡献一个等权分数，不按片段长度或合约重新加权，也不要求各合约的 Label 样本比例一致。
 _Avoid_: 逐合约 Label 定标、按合约强制 Label 均衡
+
+**全局 Segment Quantile (Global Segment Quantile)**:
+在全合约 Label 定标中，对汇总后的最终市场动态片段带符号百分比斜率按 `i / dynamic_number` 分位点拟合共享阈值；每个片段权重为一，同一阈值应用于全部合约。
+_Avoid_: 合约内 Quantile、行数加权 Quantile、逐合约 Quantile
 
 **合约内临时合并 Label (Contract-local Merge Label)**:
 单个合约在每轮 slice-and-merge 中按当前片段分位排名生成、仅用于限制相邻片段合并的临时编号；它不参与全合约 Label 定标，也不是最终输出的无语义动态 Label。

@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0010
 ---
 
 # Use Shared Cross-Contract Dynamic Label Thresholds
