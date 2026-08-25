@@ -14,6 +14,12 @@ FineFT 当前对 valid 阶段的每个合约分别运行市场动态分片，并
 
 系统不平衡合约或 Label 样本比例，不按片段长度或合约重新加权，也不按各合约波动率再次标准化。涨跌停及接近涨跌停行情与普通行情共同进入既有 `dynamic_number` 个无语义动态 Label。构建通过临时位置完成并原子发布；可跳过行数不足的合约，其他数据或分片错误使整个构建失败并保留上一代完整产物。
 
+### Volatility Labeling Extension
+
+生产构建同时支持 `labeling_method="volatility"`。该模式保留与 slope 模式相同的合约内 turning-point 与 slice-and-merge 边界，但将每个最终片段的 score 定义为片段内 `bid1_price` 对数收益率的非年化总体标准差（`ddof=0`），并乘以 100 表示为百分比。所有合约的 volatility score 以每个片段一票的方式，在 `i / dynamic_number` 全局 Segment Quantile 位置拟合共享阈值。
+
+两种方法原子发布到独立目录 `valid/slope/` 与 `valid/volatility/`，各自包含 processed 文件、合约 Label 目录和 `slice_manifest.json`；重建一种方法不得删除或覆盖另一种方法。volatility 模式的 Label 按 segment volatility 从低到高排序。`labeling_method="quantile"` 与 `DTW` 仍不是生产 final labeling method。
+
 ## User Stories
 
 1. As a FineFT 数据工程师, I want all valid contracts to share one final slope threshold set, so that identically numbered Labels use one calibration rule.
@@ -56,6 +62,10 @@ FineFT 当前对 valid 阶段的每个合约分别运行市场动态分片，并
 38. As a maintainer, I want contract-local temporary `quantile` retained only for the merge constraint and global Segment Quantile used only for final shared slope thresholds, so that the two calibration scopes remain distinct.
 39. As a maintainer, I want stale contract and Label outputs removed only during successful atomic publication, so that deleted inputs do not leave misleading artifacts and failed builds do not destroy the previous generation.
 40. As a reviewer, I want all input rows from non-skipped contracts accounted for exactly once across output segments, so that no Label boundary drops or duplicates market data.
+41. As a quantitative researcher, I want an optional volatility segment score based on non-annualized population standard deviation of log returns, so that the same turning-point slices can be grouped by realized variability.
+42. As a quantitative researcher, I want volatility scores to remain invariant under multiplicative price-unit changes, so that differently priced contracts share one calibration scale.
+43. As a pipeline operator, I want slope and volatility outputs stored under method-specific directories, so that both generations can coexist in one dataset.
+44. As a VAE data operator, I want to select which method-specific valid directory to consume, so that downstream arrays are built from the intended Label definition.
 
 ## Implementation Decisions
 
@@ -63,23 +73,26 @@ FineFT 当前对 valid 阶段的每个合约分别运行市场动态分片，并
 - The production workflow is two-phase: first discover final market dynamic segments independently for every contract; then fit and apply one shared final Label calibration.
 - Butterworth filtering, turning-point detection, minimum-length handling, DTW-based neighbor distance, merge rounds, and the contract-local temporary quantile merge constraint retain their current behavior.
 - Temporary merge Labels are not persisted, are not written to the Slice Manifest, and are never reused as final Labels.
-- The final segment score remains the signed percentage slope: segment price slope divided by segment start price and multiplied by 100.
-- Price-unit normalization is part of the Label score. Per-contract return-volatility, IQR, MAD, standard-deviation, or rank normalization is not added.
+- In slope mode, the final segment score remains the signed percentage slope: segment price slope divided by segment start price and multiplied by 100.
+- In volatility mode, the final segment score is `100 * std(diff(log(bid1_price)), ddof=0)` within each existing final segment; it is not annualized.
+- Both score definitions are price-unit invariant. Per-contract volatility, IQR, MAD, standard-deviation, or rank normalization is not added.
 - Each final segment contributes one score with weight one. Segment length, row count, and contract identity do not change calibration weight.
-- Production final labeling continues to use signed percentage `slope` scores only. `labeling_method="quantile"` and final `DTW` modes fail before official outputs are mutated.
+- Production final labeling supports `slope` and `volatility`. `labeling_method="quantile"` and final `DTW` modes fail before official outputs are mutated.
 - Production shared thresholds support an explicit `global_segment_quantile` threshold method using `i / dynamic_number` pooled-segment quantiles. Every final segment has weight one; row count and contract identity do not change the quantiles.
 - The legacy equal-width slope threshold method remains available for pipelines that have not explicitly migrated.
+- Volatility labeling defaults to `global_segment_quantile`; slope labeling retains the legacy equal-width default unless explicitly configured otherwise.
 - The small-sample fallback remains valid when at least one final segment exists. A build with no final segments fails.
 - The same algorithm applies when the valid set contains one contract or many; no single-contract production special case is introduced.
 - The official build discovers all contract-level Valid Feature files before processing and deterministically identifies each contract from the dataset contract record or file identity.
 - Contracts that cannot satisfy filtering because of insufficient rows become Skipped Contracts and are excluded from calibration.
 - Missing required columns, non-finite required inputs, merge/label exceptions, invalid final labels, and output-accounting mismatches abort the complete build.
-- Official outputs are first written beneath a staging location. The Slice Manifest and all contract Label directories are published together only after validation succeeds.
+- Official outputs are first written beneath a staging location. The method-specific Slice Manifest and all contract Label directories are published together only after validation succeeds.
+- Published generations are isolated under `valid/<labeling_method>/`; publishing one method leaves other method directories unchanged.
 - A successful build replaces the complete previous Label generation, including stale contract directories. A failed build leaves the previous generation unchanged.
 - Every configured Label appears in each non-skipped contract manifest record. Contract-empty Labels use `file_count=0`, `total_row_count=0`, and an empty file list.
 - Aggregate Label records also include all configured Labels, including zero-count Labels when no contract contains data for them.
 - Empty Label directories may exist for layout compatibility, but empty Feather or NumPy files must not be created.
-- Slice Manifest calibration data records fit scope, participating and skipped contracts, final segment count, `dynamic_number`, `labeling_method`, threshold method, threshold weighting, quantile levels, shared thresholds, and descriptive statistics for the pooled percentage slopes.
+- Slice Manifest calibration data records fit scope, participating and skipped contracts, final segment count, `dynamic_number`, `labeling_method`, segmentation and score methods, threshold method, threshold weighting, quantile levels, shared thresholds, and descriptive statistics for the pooled segment scores.
 - Slice Manifest output accounting must reconcile input rows, contract output rows, Label output rows, and segment file rows.
 - Limit-price and near-limit-price observations remain ordinary input rows. The build creates exactly `dynamic_number` final Labels and no dedicated directional or price-limit Labels.
 - Unsemantic Dynamic Labels carry no trading-control contract. Agent selection, routing, and action guards must not infer direction or allowed actions from Label number.
@@ -97,6 +110,7 @@ FineFT 当前对 valid 阶段的每个合约分别运行市场动态分片，并
 - The primary test seam is the directory-level production build. Tests should invoke the same interface used by commodity data-handler orchestration and assert only published files, manifest data, exit status, and preservation/replacement behavior.
 - One integration fixture should contain at least two contracts with deliberately different price levels and slope distributions. It should prove that the manifest contains one threshold set and that every contract is labeled using that set.
 - A multiplicative price-scale scenario should run equivalent paths whose prices differ by a constant factor and assert identical segment boundaries, percentage slopes within tolerance, and final Labels.
+- A volatility scenario should verify non-negative, multiplicative-price-scale-invariant segment scores, global Segment Quantile thresholds, and method-specific publication coexistence.
 - A row-conservation scenario should assert that every row from each non-skipped input appears exactly once across its output segment files, including limit-price and near-limit-price rows.
 - A Contract-empty Label scenario should assert explicit zero-count manifest records and the absence of empty downstream arrays.
 - A Skipped Contract scenario should include a contract shorter than the filtering requirement and assert that it is excluded from calibration while other contracts publish successfully.
@@ -126,12 +140,13 @@ FineFT 当前对 valid 阶段的每个合约分别运行市场动态分片，并
 - Adding a calibration ID or enforcing compatibility across VAE, Selection Manifest, Potential Model, or runtime artifacts.
 - Redesigning VAE architecture, OOD scoring, Meta Router scoring, PnL memory, or circuit-breaker behavior.
 - Guaranteeing that every contract or every Label contains data.
-- Assigning human-readable direction, magnitude, volatility, or price-limit semantics to Label numbers.
+- Assigning direction, price-limit, or cross-method semantics to Label numbers. Volatility mode only guarantees its documented low-to-high volatility ordering within that method's calibration.
 - Publishing or updating a GitHub Issue; this Spec is stored locally at the user's request.
 
 ## Further Notes
 
 - ADR-0008 establishes that Dynamic Labels are semantic-free identifiers and supersedes the earlier Label-direction semantic-guard decision.
 - ADR-0009 establishes shared cross-contract slope thresholds, contract-local temporary quantile Labels, equal segment weighting, atomic valid-dataset rebuilds, manifest audit requirements, and the absence of downstream calibration-ID enforcement.
+- ADR-0011 extends production final labeling with method-isolated volatility outputs and supersedes ADR-0009/0010 only where they restricted production final scores to slope.
 - Existing datasets containing dedicated limit-up or limit-down Label directories are stale relative to this Spec and must be fully rebuilt before evaluation.
 - The highest-value regression signal is the directory-level production build because it covers contract discovery, per-contract segmentation, pooled calibration, output publication, Slice Manifest accounting, and downstream layout in one seam.

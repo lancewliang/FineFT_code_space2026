@@ -135,7 +135,7 @@ dataset/BTCUSDT/valid.feather
 - `--key_indicator`：用于建模的核心价格列名，默认 `mark_price`，但实际运行时会被覆盖为 `bid1_price`。
 - `--timestamp`：时间戳列名，默认 `index`，实际由 DataFrame index 生成。
 - `--tic`：资产标识列名，默认 `symbol`。
-- `--labeling_method`：动态标签方法，支持 `slope`、`quantile`、`DTW`，默认 `slope`。
+- `--labeling_method`：生产 valid 目录的动态标签方法，支持 `slope`、`volatility`，默认 `slope`。
 - `--min_length_limit`：初始片段最小长度，默认 `288`。
 - `--merging_metric`：合并距离度量，默认 `DTW_distance`。
 - `--merging_threshold`：距离低于该阈值时允许合并，默认 `0.0003`。
@@ -753,23 +753,26 @@ dataset/{target_freq}/{symbol}/test.feather
 
 训练实际读取 `train/slice/df_*.feather`。这些 slice 连续编号，且单个 slice 不跨合约、不跨 train 日期边界。合约 train 数据少于 `chunk_length`，或完整切片后剩余尾部少于 `chunk_length` 时，也会写出短 slice 参与训练；manifest 的 `slice_outputs[]` 会记录每个 slice 的 `output_row_count`。
 
-`commodity_contract_dataset.py` 不调用 `slice_model.py`，也不直接生成 valid 动态切片。商品入口脚本 `commodity_data_handler_fu.sh` 和 `commodity_data_handler_al.sh` 在阶段数据生成后，通过 shell 循环逐个调用：
+`commodity_contract_dataset.py` 不直接生成 valid 动态切片。商品入口脚本在阶段数据生成后，对完整 valid 目录调用一次跨合约校准：
 
 ```bash
-python FineFT/datahandler/slice_model.py --data_path "dataset/${TARGET_FREQ}/${SYMBOL}/valid/df_<contract>.feather" --timestamp timestamp
+python FineFT/datahandler/valid_cross_contract_label_calibration.py \
+  --valid_dir "dataset/${TARGET_FREQ}/${SYMBOL}/valid" \
+  --labeling_method slope \
+  --timestamp timestamp
 ```
 
-这样验证动态切片仍逐合约执行，不会把多个合约拼接后再切片。`slice_model.py` 会写出合约隔离的 processed 和 label 文件：
+每个合约仍独立执行 turning-point 与 slice-and-merge，不会跨合约切片；只在最终 segment score 阈值拟合时池化所有合约。输出按 `labeling_method` 隔离，因此 slope 与 volatility 可同时存在：
 
 ```text
-dataset/{target_freq}/{symbol}/valid/processed/valid_processed_<contract>.feather
-dataset/{target_freq}/{symbol}/valid/<contract>/label_<k>/df_*.feather
-dataset/{target_freq}/{symbol}/valid/slice_manifest.json
+dataset/{target_freq}/{symbol}/valid/<labeling_method>/processed/valid_processed_<contract>.feather
+dataset/{target_freq}/{symbol}/valid/<labeling_method>/<contract>/label_<k>/df_*.feather
+dataset/{target_freq}/{symbol}/valid/<labeling_method>/slice_manifest.json
 ```
 
-`valid/slice_manifest.json` 会记录两个视角：`contracts` 描述每个合约下非空 label 的文件、文件数、文件行数和合约总行数；`labels` 描述每个非空 label 跨合约的文件、文件数、文件行数和 label 总行数。没有生成文件的空 label 不会写入 manifest。若某个 valid 合约行数不足以执行动态切片，`slice_model.py` 会跳过该合约并写入 `skipped_contracts`，不会为了凑长度跨合约拼接。
+`valid/<labeling_method>/slice_manifest.json` 会记录两个视角：`contracts` 描述每个合约下各 label 的文件、文件数、文件行数和合约总行数；`labels` 描述每个 label 跨合约的汇总。若某个 valid 合约行数不足以执行动态切片，构建会跳过该合约并写入 `skipped_contracts`，不会为了凑长度跨合约拼接。
 
-`vae_data_creation.py` 会递归读取 `valid/<contract>/label_*/df_*.feather`，并按合约写入对应动态类别数组：
+`vae_data_creation.py --labeling_method <method>` 会递归读取 `valid/<method>/<contract>/label_*/df_*.feather`，并按合约写入对应动态类别数组；默认读取 `slope`，并兼容旧的未分方法目录：
 
 ```text
 dataset/{target_freq}/{symbol}/VAE_data/<contract>/label_<k>.npy

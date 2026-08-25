@@ -70,7 +70,7 @@ parser.add_argument(
     "--labeling_method",
     type=str,
     default="slope",
-    help="The method that is used for dynamic labeling:quantile/slope/DTW",
+    help="Production valid-directory labeling method: slope/volatility",
 )
 parser.add_argument(
     "--min_length_limit",

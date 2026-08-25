@@ -3,11 +3,11 @@
 验证集跨合约动态标签校准模块 (Valid Dynamic Labels Calibration)。
 
 【模块功能与整体脉络】
-1. 目的：针对验证集目录中的所有合约数据，执行统一的全局斜率（slope）动态标签校准与 Feather 切片导出。
+1. 目的：针对验证集目录中的所有合约数据，执行统一的跨合约动态标签校准与 Feather 切片导出。
 2. 代码脉络/执行步骤：
    - 输入校验与准备 (_validate_input, _prepare_raw_data): 校验关键列及数值有效性，生成 key_indicator。
-   - 单合约转折点拟合 (_fit_contract): 使用 util.Worker (slice_and_merge 算法) 对单合约价格曲线切割合并，提取拐点与斜率。
-   - 跨合约斜率池化与分位数校准 (build_valid_dataset): 汇总所有参与合约的拟合斜率，统一计算全局斜率分类阈值。
+   - 单合约转折点拟合 (_fit_contract): 使用 util.Worker (slice_and_merge 算法) 对单合约价格曲线切割合并，提取拐点与 segment score。
+   - 跨合约 score 池化与校准 (build_valid_dataset): 汇总所有参与合约的 score，统一计算全局分类阈值。
    - 标签映射与切片构建 (_build_contract_outputs): 结合全局阈值确定段落标签，按连续相同标签导出 Feather 切片。
    - 原子化发布与容错回滚 (_publish, _backup_published_outputs): 暂存目录生成 -> 移入备份 -> 覆盖发布 -> 清理暂存，确保中途失败可无缝回滚。
 """
@@ -47,14 +47,14 @@ except ImportError:
 
 @dataclass
 class _ContractFit:
-    """保存单个合约转折点拟合与斜率提取的中间结果。"""
+    """保存单个合约转折点拟合与 segment score 的中间结果。"""
 
     contract: str  # 合约标识名称（如 fu2305）
     source_path: Path  # 原始数据文件路径
     processed_path: Path  # 预处理数据保存路径
     prepared: pd.DataFrame  # 预处理后的基础数据 DataFrame
-    groups: list[tuple[Any, list[int], list[float], np.ndarray]]  # 拐点分组信息列表 (tic, points, group_slopes, row_positions)
-    slopes: list[float]  # 该合约包含的所有段落斜率集合
+    groups: list[tuple[Any, list[int], list[float], np.ndarray]]
+    scores: list[float]
 
 
 def _contract_name(path: Path) -> str:
@@ -131,6 +131,17 @@ def _finite_slopes(values: Any, path: Path) -> list[float]:
     return slopes
 
 
+def _segment_log_return_volatility(prices: np.ndarray, path: Path) -> float:
+    """Return non-annualized population volatility of segment log returns (%)."""
+    if (prices <= 0).any():
+        raise ValueError(
+            f"{path} contains non-positive prices required by volatility labeling"
+        )
+    if len(prices) < 2:
+        return 0.0
+    return float(np.std(np.diff(np.log(prices)), ddof=0) * 100.0)
+
+
 def _fit_contract(
     source_path: Path,
     prepared: pd.DataFrame,
@@ -147,15 +158,16 @@ def _fit_contract(
     merging_dynamic_constraint: int,
     max_length_expectation: int,
     dynamic_number: int,
+    labeling_method: str,
 ) -> _ContractFit:
-    """对单合约进行转折点拟合与斜率提取。
+    """对单合约进行转折点拟合与 segment score 提取。
     
     代码逻辑：
     1. 保存归一化前的预处理 Feather 文件到 processed 路径。
     2. 按 tic 分组，将各 tic 的 key_indicator 相对于首个价格进行首日归一化处理（计算相对涨跌）。
     3. 写入 worker 临时数据，并实例化 util.Worker 运行 slice_and_merge 算法拟合转折点。
-    4. 提取各 tic 的转折点 (points) 与各段落斜率 (slopes)，并严格校验边界完整性与段落连续性。
-    5. 返回包含拟合参数与斜率池的 _ContractFit 对象。
+    4. 提取各 tic 的转折点，并按 labeling_method 计算各段落 score。
+    5. 返回包含拟合参数与 score 池的 _ContractFit 对象。
     """
     contract = _contract_name(source_path)
     processed_path.parent.mkdir(parents=True, exist_ok=True)
@@ -190,7 +202,7 @@ def _fit_contract(
     worker.fit(dynamic_number, max_length_expectation, min_length_limit)
 
     groups: list[tuple[Any, list[int], list[float], np.ndarray]] = []
-    slopes: list[float] = []
+    scores: list[float] = []
     # 遍历每个 tic，校验并整理拟合结果
     for worker_tic in worker.tics:
         points = [_point(value) for value in worker.turning_points_dict[worker_tic]]
@@ -204,29 +216,41 @@ def _fit_contract(
         # 首尾转折点必须完全覆盖该 tic 的起始与终点索引
         if points[0] != 0 or points[-1] != len(row_positions):
             raise ValueError(f"{source_path} has invalid segment boundaries")
-        groups.append((worker_tic, points, group_slopes, row_positions))
-        slopes.extend(group_slopes)
+        if labeling_method == "slope":
+            group_scores = group_slopes
+        else:
+            group_scores = [
+                _segment_log_return_volatility(
+                    prepared.iloc[row_positions[start:end]][key_indicator].to_numpy(
+                        dtype=float
+                    ),
+                    source_path,
+                )
+                for start, end in zip(points[:-1], points[1:])
+            ]
+        groups.append((worker_tic, points, group_scores, row_positions))
+        scores.extend(group_scores)
     return _ContractFit(
         contract=contract,
         source_path=source_path,
         processed_path=processed_path,
         prepared=prepared,
         groups=groups,
-        slopes=slopes,
+        scores=scores,
     )
 
 
-def _label_for_slope(slope: float, thresholds: list[float]) -> int:
-    """根据全局斜率阈值列表，将连续斜率映射为离散的标签类别索引 (0 到 N-1)。"""
+def _label_for_score(score: float, thresholds: list[float]) -> int:
+    """Map a continuous segment score to a discrete Label index."""
     for index, threshold in enumerate(thresholds):
-        if slope <= threshold:
+        if score <= threshold:
             return index
     return len(thresholds)
 
 
-def _slope_statistics(slopes: list[float]) -> dict[str, float | int]:
-    """计算斜率样本池的各项描述性统计量（数量、最小值、最大值、均值、标准差、中位数）。"""
-    values = np.asarray(slopes, dtype=float)
+def _score_statistics(scores: list[float]) -> dict[str, float | int]:
+    """Return descriptive statistics for the pooled segment scores."""
+    values = np.asarray(scores, dtype=float)
     return {
         "count": int(len(values)),
         "min": float(values.min()),
@@ -248,9 +272,9 @@ def _calibration_label_statistics(
     contracts_by_label = {label: set() for label in label_names}
 
     for fit in fits:
-        for _, points, slopes, _ in fit.groups:
-            for start, end, slope in zip(points[:-1], points[1:], slopes):
-                label = f"label_{_label_for_slope(slope, thresholds)}"
+        for _, points, scores, _ in fit.groups:
+            for start, end, score in zip(points[:-1], points[1:], scores):
+                label = f"label_{_label_for_score(score, thresholds)}"
                 segment_counts[label] += 1
                 row_counts[label] += end - start
                 contracts_by_label[label].add(fit.contract)
@@ -267,15 +291,15 @@ def _calibration_label_statistics(
 def _build_contract_outputs(
     fit: _ContractFit,
     stage_root: Path,
-    valid_root: Path,
+    output_root: Path,
     *,
     dynamic_number: int,
     thresholds: list[float],
 ) -> SliceContractManifest:
-    """根据全局斜率阈值，为单合约生成各标签类别的 Feather 切片文件，并构建 SliceContractManifest。
+    """根据全局 score 阈值生成单合约 Feather 切片与 manifest。
     
     代码逻辑：
-    1. 为输入数据的每一行赋予由全局斜率阈值映射得出的离散 label。
+    1. 为输入数据的每一行赋予由全局 score 阈值映射得出的离散 label。
     2. 校验所有行均已被成功归类（禁止出现 -1 未标记行）。
     3. 按连续相同 label 将数据拆分为独立的趋势段落切片并写入暂存路径 (df_{index}.feather)。
     4. 汇总各 label 对应的文件数与总行数，返回合约级别的清单对象。
@@ -285,10 +309,10 @@ def _build_contract_outputs(
         for label in range(dynamic_number)
     }
     row_labels = np.full(len(fit.prepared), -1, dtype=int)
-    # 根据转折点与全局斜率阈值将斜率转换为行级别 label
-    for _, points, slopes, row_positions in fit.groups:
-        for start, end, slope in zip(points[:-1], points[1:], slopes):
-            label = _label_for_slope(slope, thresholds)
+    # 根据转折点与全局 score 阈值转换为行级别 label
+    for _, points, scores, row_positions in fit.groups:
+        for start, end, score in zip(points[:-1], points[1:], scores):
+            label = _label_for_score(score, thresholds)
             row_labels[row_positions[start:end]] = label
     if (row_labels < 0).any():
         raise ValueError(f"{fit.source_path} has unaccounted input rows")
@@ -306,7 +330,7 @@ def _build_contract_outputs(
         stage_path = contract_root / label_name / f"df_{counters[label]}.feather"
         stage_path.parent.mkdir(parents=True, exist_ok=True)
         fit.prepared.iloc[start:end].reset_index(drop=True).to_feather(stage_path)
-        final_path = valid_root / fit.contract / label_name / stage_path.name
+        final_path = output_root / fit.contract / label_name / stage_path.name
         output_rows = int(end - start)
         labels[label_name].file_count += 1
         labels[label_name].total_row_count += output_rows
@@ -325,7 +349,7 @@ def _build_contract_outputs(
     write_segment(previous_start, len(row_labels), previous_label)
     return SliceContractManifest(
         contract=fit.contract,
-        processed_path=str(valid_root / "processed" / fit.processed_path.name),
+        processed_path=str(output_root / "processed" / fit.processed_path.name),
         input_row_count=int(len(fit.prepared)),
         labels=labels,
     )
@@ -356,7 +380,7 @@ def build_valid_dataset(
     *,
     dynamic_number: int = 5,
     labeling_method: str = "slope",
-    threshold_method: str = "legacy_equal_width",
+    threshold_method: str | None = None,
     key_indicator: str = "mark_price",
     timestamp: str = "timestamp",
     tic: str = "symbol",
@@ -368,7 +392,7 @@ def build_valid_dataset(
     max_length_expectation: int = 864,
     filter_padlen: int = 15,
 ) -> SliceManifest:
-    """拟合并原子化发布所有验证集合约的最终斜率校准与动态标签切片。
+    """拟合并原子化发布所有验证集合约的最终动态标签切片。
     
     【主要工作流程】
     1. 校验入参规范，确保目录存在并扫描所有 *.feather 合约文件。
@@ -376,20 +400,26 @@ def build_valid_dataset(
     3. 逐个读取并预处理合约数据：
        - 数据不足 filter_padlen 的合约，作为 skipped 记录跳过拟合。
        - 正常合约调用 _fit_contract 提取拟合转折点与斜率。
-    4. 【全局跨合约校准核心】：池化所有参与合约的拟合斜率 (pooled_slopes)，
-       按 threshold_method 统一计算全局跨合约共享斜率阈值 (thresholds)。
+    4. 【全局跨合约校准核心】：池化所有参与合约的 segment score，
+       按 threshold_method 统一计算全局跨合约共享阈值 (thresholds)。
     5. 使用计算得到的全局阈值调用 _build_contract_outputs 生成各合约切片与描述 Manifest。
     6. 校验输出行数与输入行数的守恒关系。
     7. 构造完整的 SliceManifest，重建并排序标签，调用 _publish 实施原子化目录替换与清单写出。
     8. 异常防护：任何环节失败则自动清理暂存目录并抛出异常。
     """
-    if labeling_method != "slope":
+    if labeling_method not in {"slope", "volatility"}:
         raise ValueError(
             "production valid cross-contract calibration supports final slope "
-            "labeling only"
+            "or volatility labeling only"
         )
     if dynamic_number < 1:
         raise ValueError("dynamic_number must be positive")
+    if threshold_method is None:
+        threshold_method = (
+            "global_segment_quantile"
+            if labeling_method == "volatility"
+            else "legacy_equal_width"
+        )
     if threshold_method not in {
         "legacy_equal_width",
         "global_segment_quantile",
@@ -405,13 +435,16 @@ def build_valid_dataset(
     if len(set(contract_names)) != len(contract_names):
         raise ValueError("valid directory contains duplicate contract identities")
 
-    stage_root = valid_root / f".valid-cross-contract-staging-{uuid.uuid4().hex}"
-    stage_root.mkdir()
-    manifest_path = valid_root / "slice_manifest.json"
+    output_root = valid_root / labeling_method
+    output_root_existed = output_root.exists()
+    output_root.mkdir(exist_ok=True)
+    stage_root = output_root / f".valid-cross-contract-staging-{uuid.uuid4().hex}"
+    manifest_path = output_root / "slice_manifest.json"
     fits: list[_ContractFit] = []
     skipped: dict[str, SkippedContractManifest] = {}
     try:
-        # 第一阶段：遍历所有合约数据进行独立拟合与斜率提取
+        stage_root.mkdir()
+        # 第一阶段：遍历所有合约数据进行独立拟合与 score 提取
         for source_path in source_paths:
             contract = _contract_name(source_path)
             raw_data = pd.read_feather(source_path)
@@ -431,7 +464,9 @@ def build_valid_dataset(
                 prepared.to_feather(processed_path)
                 skipped[contract] = SkippedContractManifest(
                     contract=contract,
-                    processed_path=str(valid_root / "processed" / processed_path.name),
+                    processed_path=str(
+                        output_root / "processed" / processed_path.name
+                    ),
                     reason=(
                         "insufficient rows for dynamic slicing: "
                         f"{len(prepared)} <= filter padlen {filter_padlen}"
@@ -456,34 +491,35 @@ def build_valid_dataset(
                     merging_dynamic_constraint=merging_dynamic_constraint,
                     max_length_expectation=max_length_expectation,
                     dynamic_number=dynamic_number,
+                    labeling_method=labeling_method,
                 )
             )
 
         # 清理 worker 计算过程中产生的临时文件
         shutil.rmtree(stage_root / "worker", ignore_errors=True)
-        
-        # 第二阶段：汇总跨合约斜率池，计算全局统一分类阈值
-        pooled_slopes = [slope for fit in fits for slope in fit.slopes]
-        if not pooled_slopes:
+
+        # 第二阶段：汇总跨合约 score 池，计算全局统一分类阈值
+        pooled_scores = [score for fit in fits for score in fit.scores]
+        if not pooled_scores:
             raise ValueError("valid dataset produced zero final segments")
         threshold_quantiles: list[float] = []
         if threshold_method == "global_segment_quantile":
             threshold_quantiles = [
                 index / dynamic_number for index in range(1, dynamic_number)
             ]
-            threshold_values = np.quantile(pooled_slopes, threshold_quantiles)
+            threshold_values = np.quantile(pooled_scores, threshold_quantiles)
         else:
             threshold_values = util.calculate_slope_thresholds(
-                pooled_slopes, dynamic_number, risk_bond=0.1
+                pooled_scores, dynamic_number, risk_bond=0.1
             )
         thresholds = [float(value) for value in threshold_values]
-        
+
         # 第三阶段：根据全局阈值生成各合约的切片与 Manifest 结构
         contracts = {
             fit.contract: _build_contract_outputs(
                 fit,
                 stage_root,
-                valid_root,
+                output_root,
                 dynamic_number=dynamic_number,
                 thresholds=thresholds,
             )
@@ -497,7 +533,7 @@ def build_valid_dataset(
 
         # 第四阶段：构建完整的 SliceManifest 对象并规格化
         manifest = SliceManifest(
-            valid_path=str(valid_root),
+            valid_path=str(output_root),
             contracts=contracts,
             skipped_contracts=skipped,
             calibration={
@@ -507,15 +543,31 @@ def build_valid_dataset(
                 "skipped_contract_details": [
                     skipped[contract].to_dict() for contract in sorted(skipped)
                 ],
-                "final_segment_count": len(pooled_slopes),
+                "final_segment_count": len(pooled_scores),
                 "dynamic_number": dynamic_number,
-                "labeling_method": "slope",
+                "labeling_method": labeling_method,
+                "segmentation_method": "turning_point_slice_and_merge",
+                "score_method": (
+                    "signed_percentage_slope"
+                    if labeling_method == "slope"
+                    else "segment_log_return_volatility"
+                ),
                 "threshold_method": threshold_method,
                 "threshold_weighting": "equal_segment",
                 "threshold_quantiles": threshold_quantiles,
                 "shared_thresholds": thresholds,
                 "thresholds": thresholds,
-                "slope_statistics": _slope_statistics(pooled_slopes),
+                f"{labeling_method}_statistics": _score_statistics(pooled_scores),
+                **(
+                    {
+                        "volatility_return_type": "log",
+                        "volatility_annualized": False,
+                        "volatility_ddof": 0,
+                        "volatility_unit": "percent",
+                    }
+                    if labeling_method == "volatility"
+                    else {}
+                ),
                 **_calibration_label_statistics(
                     fits,
                     thresholds,
@@ -529,12 +581,17 @@ def build_valid_dataset(
                 f"label_{label}", SliceLabelManifest(label=f"label_{label}")
             )
         manifest.sort()
-        
+
         # 第五阶段：原子化替换与发布结果
-        _publish(valid_root, stage_root, manifest_path, manifest)
+        _publish(output_root, stage_root, manifest_path, manifest)
         return manifest
     except Exception:
         shutil.rmtree(stage_root, ignore_errors=True)
+        if not output_root_existed:
+            try:
+                output_root.rmdir()
+            except OSError:
+                pass
         raise
 
 
@@ -594,11 +651,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--valid_dir", "--data_dir", dest="valid_dir", type=Path, required=True
     )
     parser.add_argument("--dynamic_number", type=int, default=5)
-    parser.add_argument("--labeling_method", default="slope")
+    parser.add_argument(
+        "--labeling_method",
+        choices=("slope", "volatility"),
+        default="slope",
+    )
     parser.add_argument(
         "--threshold_method",
         choices=("legacy_equal_width", "global_segment_quantile"),
-        default="legacy_equal_width",
+        default=None,
     )
     parser.add_argument("--timestamp", default="timestamp")
     parser.add_argument("--tic", default="symbol")

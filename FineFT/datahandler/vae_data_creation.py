@@ -30,6 +30,12 @@ parser.add_argument(
     default="dataset",
     help="the number of transcation we store in one memory",
 )
+parser.add_argument(
+    "--labeling_method",
+    choices=("slope", "volatility"),
+    default="slope",
+    help="valid dynamic-label directory to consume",
+)
 
 
 def _collect_valid_label_files(valid_path):
@@ -79,7 +85,15 @@ def _save_label_array(df_paths, state_features, output_path):
 
 
 def make_data(args):
-    valid_path = os.path.join(args.base_path, args.dataset_name, "valid")
+    valid_root = os.path.join(args.base_path, args.dataset_name, "valid")
+    labeling_method = getattr(args, "labeling_method", "slope")
+    method_path = os.path.join(valid_root, labeling_method)
+    if os.path.isdir(method_path):
+        valid_path = method_path
+    elif labeling_method == "slope":
+        valid_path = valid_root
+    else:
+        valid_path = method_path
     state_name_path = os.path.join(
         args.base_path, args.dataset_name, "state_features.npy"
     )
