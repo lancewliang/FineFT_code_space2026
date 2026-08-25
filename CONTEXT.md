@@ -252,11 +252,11 @@ _Avoid_: 数据切分、数据分割
 _Avoid_: 数据集清单、数据集描述
 
 **Slice Manifest**:
-描述 valid 阶段动态标签切片的合约视角和 label 视角聚合信息的 JSON 文件。
+描述 Valid 动态切片的合约视角、无语义动态 Label 视角和全合约 Label 定标事实的 JSON 文件；定标事实包含参与合约、最终片段数、统一阈值、动态数量、标注方法和百分比斜率统计。
 _Avoid_: 切片清单、切片描述
 
 **Skipped Contract**:
-在某个集合（如 valid）中没有命中交易日或数据不足的合约，manifest 中记录跳过原因。
+在某个集合（如 valid）中没有命中交易日或数据不足的合约，manifest 中记录跳过原因；valid 合约因滤波所需行数不足被跳过时不参与全合约 Label 定标，其余合约仍可继续构建。
 _Avoid_: 跳过合约、缺失合约
 
 **Train Slice**:
@@ -264,8 +264,28 @@ _Avoid_: 跳过合约、缺失合约
 _Avoid_: 训练切片、训练分块
 
 **Valid 动态切片 (Valid Dynamic Slice)**:
-对 valid 阶段数据逐合约执行市场动态标签切片，输出 `valid/<contract>/label_*/df_*.feather`。
-_Avoid_: 验证切片、验证分块
+对 valid 集合的全部合约执行市场动态分片和全合约 Label 定标，并原子发布 `valid/<contract>/label_*/df_*.feather`；valid 合约集合变化时必须重建全部产物。
+_Avoid_: 验证切片、验证分块、逐合约增量 Label 更新
+
+**无语义动态 Label (Semantic-free Dynamic Label)**:
+Valid 动态切片产生的无语义编号；它不表示方向、幅度或涨跌停状态，同一编号允许包含方向相反的市场动态片段，涨跌停及接近涨跌停行情与普通行情共同进入既有 `dynamic_number` 个编号。
+_Avoid_: 动态簇、Label 方向语义、上涨/下跌 Label、涨跌停 Label
+
+**全合约 Label 定标 (Cross-contract Label Calibration)**:
+从同一 valid 集合的全部合约片段共同拟合一套无语义动态 Label slope 阈值，并将该阈值应用到每个合约；每个最终市场动态片段贡献一个等权分数，不按片段长度或合约重新加权，也不要求各合约或各 Label 的样本比例一致。
+_Avoid_: 逐合约 Label 定标、按合约强制 Label 均衡
+
+**合约内临时合并 Label (Contract-local Merge Label)**:
+单个合约在每轮 slice-and-merge 中按当前片段分位排名生成、仅用于限制相邻片段合并的临时编号；它不参与全合约 Label 定标，也不是最终输出的无语义动态 Label。
+_Avoid_: 最终 Label、全合约 Label、持久化 Label
+
+**合约内空 Label (Contract-empty Label)**:
+全合约 Label 定标后，某个合约没有任何市场动态片段命中某个无语义动态 Label 的合法状态；Slice Manifest 以零文件、零行和空文件列表显式记录，下游不生成空数组，它不表示该合约被跳过或数据生成失败。
+_Avoid_: Skipped Contract、缺失 Label、切片失败
+
+**统一百分比斜率口径 (Shared Percentage-slope Scale)**:
+以带符号的片段价格斜率除以片段起始价格，表示每 Bar 百分比变化，使不同价格单位的合约可比较，但不按各合约自身波动率或分位排名再次标准化。
+_Avoid_: 绝对值收益率、合约波动率口径、合约内分位排名
 
 **合约级 Valid Feature (Contract-level Valid Feature)**:
 valid 阶段按合约保存的完整特征文件，路径格式为 `valid/<contract>.feather`，用于合约级回测或路由评估。
@@ -340,16 +360,8 @@ _Avoid_: Agent 档案、策略池
 _Avoid_: 收益追踪器、Agent 记忆
 
 **候选池生成器 (Candidate Generator)**:
-接收门控 Label 智囊团 Agents 的拟执行动作，应用 Label 固有动作语义一致性校验 (Semantic Guard) 与 20% 近端 PnL 回撤硬隔离后生成安全候选集。
+接收门控 Label 智囊团 Agents 的拟执行动作，应用 20% 近端 PnL 回撤硬隔离后生成安全候选集。
 _Avoid_: 候选集筛选器、动作过滤器
-
-**Label 方向语义 (Label Direction Semantics)**:
-由市场动态切片规则赋予每个 Label 的方向、幅度与涨跌停状态。低层测试运行必须显式声明这些语义，不根据 Label 编号或外部 JSON 隐式推断。
-_Avoid_: Label 含义、标签语义、label direction
-
-**语义硬隔离 (Semantic Guard)**:
-强制校验 Agent 动作是否符合所属 Label 的原生动作语义范围（如 Label 4 上涨方向禁止做空）；违者不再一票否决，改为按软惩罚计入 Meta Router 得分。原生动作范围由 Label 方向语义表决定。
-_Avoid_: 动作语义防错、语义检查
 
 **Meta Router**:
 在安全候选集中计算 VAE 似然与 PnL 记忆多因子加权得分，并结合单合约累计回撤熔断门槛决定最终调度的 Agent 索引与动作。
@@ -411,10 +423,6 @@ _Avoid_: 多标签策略形态、K 线形态
 **方向回合平均利润 (Directional Episode Average Profit)**:
 同一 Agent 情景和回合策略风格中，按持仓方向分别计算的回合利润算术平均值；做多平均利润只包含多头回合，做空平均利润只包含空头回合。
 
-**Label 语义对齐 Agent 选择 (Label-aligned Agent Selection)**:
-上涨 Label 只从做多平均利润为正的 Agent 情景中选择，下降 Label 只从做空平均利润为正的 Agent 情景中选择，并以对应方向的平均利润排序；震荡 Label 使用整体回合平均利润。
-_Avoid_: 总利润排序、忽略 Label 方向的 Agent 排名
-
 **Execution Metrics**:
 环境每步暴露的真实手续费、已实现利润和滑点指标，供测试明细和诊断使用。
 _Avoid_: 执行指标、交易指标
@@ -469,33 +477,9 @@ _Avoid_: 单合约遴选、test 集合遴选
 由 max_holding_number 和 position_choices 启动参数按交易环境公式生成的完整有序 signed position 集合，负值为空头、0 为空仓、正值为多头。
 _Avoid_: 固定五档、观测到的仓位集合、仓位数量（不明确是档位还是持仓量时）
 
-**Session 边界方向收敛 (Session-boundary Directional Convergence)**:
-逐步 Label 动作守卫在 Session 首端或末端 Bar 上应用的规则：先完成常规配额与降级判断，再将结果收敛为空仓或其方向的最小非零仓位。
-_Avoid_: 日末强平、按模型原始动作收仓、交易日末收仓
-
 **同向加仓 (Same-direction Position Increase)**:
 执行前后仓位同号且在仓位档位集合中向更大绝对风险暴露移动的调仓；多头和空头按绝对仓位对称判定。从 0 到非 0 是开仓，仓位变号是反手，均不属于同向加仓。
 _Avoid_: 仓位数值增加、开仓（不明确时）、加多仓
-
-**逆 Label 动作 (Label-opposed Action)**:
-目标仓位为非零且方向与 Label 方向相反的调仓，包括逆向开仓、加仓以及调减后仍保持逆向仓位。保持现有逆向仓位和完全平仓不是逆 Label 动作；震荡 Label 不定义逆 Label 动作。
-_Avoid_: 反向动作（不明确是否相对 Label 时）、逆势仓位
-
-**滚动逆 Label 动作配额 (Rolling Label-opposed Action Quota)**:
-行为轨迹的最近固定数量决策步中，逆 Label 动作允许占用的最大比例。每个时间步记录一个最终交给环境的动作，配额为 `floor(窗口大小 × 配置比例)`；小幅 Label 默认为 40%，大幅 Label 默认为 20%，涨跌停 Label 为 0。
-_Avoid_: 仓位比例、固定分组配额、累计全程比例
-
-**逐步 Label 动作守卫 (Per-step Label Action Guard)**:
-在模型产生原始动作后，依据 Label 方向语义、滚动逆 Label 动作配额和 Session 边界方向收敛规则将其保留或修正为最终动作的环境外部硬约束。它不修改环境提供的可用动作集，与 Meta Router 的语义软惩罚不同。
-_Avoid_: Semantic Guard、Label 语义对齐 Agent 选择
-
-**最终动作 (Final Action)**:
-逐步 Label 动作守卫校验或修正后实际交给环境执行的动作。滚动配额只记录最终动作，不记录被拦截的模型原始动作。
-_Avoid_: 模型原始动作、候选动作
-
-**逆向持仓不利变动 (Opposed Holding Adverse Move)**:
-当前持仓方向与 Label 相反时，相对开仓价沿持仓亏损方向发生的价格变动；多头对应价格下跌，空头对应价格上涨。当被配额拦截的原始动作达到或超过止损阈值时，最终动作降级为平仓；若涨跌停成交约束使平仓不可执行，环境保持原仓位。
-_Avoid_: step reward 为负、账户累计亏损
 
 **涨跌停成交约束 (Price-limit Execution Constraint)**:
 由当前行情的 `is_limit_down` / `is_limit_up` 状态决定的硬成交限制。跌停时不能卖出，因而不能减平多头或开加空头；涨停时不能买入，因而不能减平空头或开加多头。不可成交动作既不属于可用动作集，也在直接交给环境时被拒绝并保持实际仓位。

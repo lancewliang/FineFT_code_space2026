@@ -486,13 +486,13 @@ def test_commodity_data_handler_scripts_use_contract_dataset_tool():
         assert "--state_features_path" in text
         assert "FEATURE_SELECTION" in text
         assert "train/state_features.npy" in text
-        assert "slice_model.py" in text
+        assert "valid_cross_contract_label_calibration.py" in text
         assert '--valid_dir "dataset/${TARGET_FREQ}/${SYMBOL}/valid"' in text
         assert "--data_path" not in text
         assert "--summary_path" not in text
         assert "--feature_union_path" not in text
         assert "preprocess_data.py --trading_pair" not in text
-        assert "slice_model.py --data_path dataset/" not in text
+        assert "valid_cross_contract_label_calibration.py --data_path dataset/" not in text
 
 
 def test_run_dataset_generation_writes_manifest_stage_files_and_train_slices(tmp_path):

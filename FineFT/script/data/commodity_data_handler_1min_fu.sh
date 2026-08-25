@@ -21,7 +21,7 @@ python FineFT/datahandler/commodity_contract_dataset.py \
   --chunk_length "${CHUNK_LENGTH}" \
   --early_stop "${EARLY_STOP}"
 
-python FineFT/datahandler/slice_model.py \
+python FineFT/datahandler/valid_cross_contract_label_calibration.py \
   --valid_dir "dataset/${TARGET_FREQ}/${SYMBOL}/valid" \
   --timestamp timestamp
 
