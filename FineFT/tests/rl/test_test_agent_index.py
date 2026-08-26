@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -117,11 +118,11 @@ class FakeEnsemble:
 
 
 def _write_valid_slice(
-    tmp_path, contract, label, filename="df_0.feather", mark_prices=None
+    tmp_path, contract, label, filename="df_0.feather", mark_prices=None, label_type="slope"
 ):
     if mark_prices is None:
         mark_prices = [100.0]
-    valid_dir = tmp_path / "valid" / contract / label
+    valid_dir = tmp_path / "valid" / label_type / contract / label
     valid_dir.mkdir(parents=True, exist_ok=True)
     df_path = valid_dir / filename
     if not df_path.exists():
@@ -129,12 +130,13 @@ def _write_valid_slice(
     return df_path
 
 
-def _make_test_trader(tai, tmp_path, save_trading_detail_csv=False):
-    _write_valid_slice(tmp_path, "fu2507", "label_0")
+def _make_test_trader(tai, tmp_path, save_trading_detail_csv=False, label_type="slope"):
+    _write_valid_slice(tmp_path, "fu2507", "label_0", label_type=label_type)
 
     trader = tai.weighted_trader.__new__(tai.weighted_trader)
     trader.eval_net = FakeNet()
-    trader.valid_data_path = str(tmp_path / "valid")
+    trader.label_type = label_type
+    trader.valid_data_path = str(tmp_path / "valid" / label_type)
     trader.initial_action_list = [0]
     trader.N = 1
     trader.leverage_choices = [1]
@@ -255,8 +257,8 @@ def test_weighted_trader_passes_order_book_depth_to_base_env(monkeypatch, tmp_pa
     trader.test()
 
     assert captured_kwargs["order_book_depth"] == 5
-    npy_path = tmp_path / "analysis_result.npy"
-    csv_path = tmp_path / "analysis_result.csv"
+    npy_path = tmp_path / "slope" / "analysis_result.npy"
+    csv_path = tmp_path / "slope" / "analysis_result.csv"
 
     assert npy_path.exists()
     assert csv_path.exists()
@@ -313,7 +315,7 @@ def test_trading_detail_csv_is_disabled_by_default(monkeypatch, tmp_path):
     trader = _make_test_trader(tai, tmp_path, save_trading_detail_csv=False)
     trader.test()
 
-    assert not (tmp_path / "trading_action_detail_epoch_1.csv").exists()
+    assert not (tmp_path / "slope" / "trading_action_detail_epoch_1.csv").exists()
 
 
 def test_trading_detail_csv_is_written_when_enabled(monkeypatch, tmp_path):
@@ -325,7 +327,7 @@ def test_trading_detail_csv_is_written_when_enabled(monkeypatch, tmp_path):
     trader = _make_test_trader(tai, tmp_path, save_trading_detail_csv=True)
     trader.test()
 
-    assert (tmp_path / "trading_action_detail_epoch_1.csv").exists()
+    assert (tmp_path / "slope" / "trading_action_detail_epoch_1.csv").exists()
 
 
 def test_trading_detail_csv_records_actions_trades_and_execution_metrics(
@@ -333,7 +335,7 @@ def test_trading_detail_csv_records_actions_trades_and_execution_metrics(
 ):
     from RL.DiHFT.low_level import test_agent_index as tai
 
-    valid_dir = tmp_path / "valid" / "fu2507" / "label_0"
+    valid_dir = tmp_path / "valid" / "slope" / "fu2507" / "label_0"
     valid_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(
         {
@@ -360,7 +362,7 @@ def test_trading_detail_csv_records_actions_trades_and_execution_metrics(
     trader.act_test = lambda state, info, bin_index: 1
     trader.test()
 
-    detail_df = pd.read_csv(tmp_path / "trading_action_detail_epoch_1.csv")
+    detail_df = pd.read_csv(tmp_path / "slope" / "trading_action_detail_epoch_1.csv")
     assert len(detail_df) == 2
     for column in [
         "标签",
@@ -417,7 +419,7 @@ def test_weighted_trader_handles_nested_contract_label_directories(
     trader = _make_test_trader(tai, tmp_path)
     trader.test()
 
-    result = np.load(tmp_path / "analysis_result.npy", allow_pickle=True).tolist()
+    result = np.load(tmp_path / "slope" / "analysis_result.npy", allow_pickle=True).tolist()
     assert result[0]["label"] == "label_0"
     assert result[0]["contract"] == ["fu2507"]
     assert result[0]["df_path"] == ["fu2507/label_0/df_0.feather"]
@@ -430,11 +432,57 @@ def test_weighted_trader_handles_nested_contract_label_directories(
 def test_parser_allow_reverse_position_default_and_flag():
     from RL.DiHFT.low_level import test_agent_index as tai
 
-    args_default = tai.parser.parse_args([])
+    args_default = tai.parser.parse_args(["--label_type", "slope"])
     assert args_default.allow_reverse_position is False
 
-    args_flag = tai.parser.parse_args(["--allow_reverse_position"])
+    args_flag = tai.parser.parse_args(["--allow_reverse_position", "--label_type", "slope"])
     assert args_flag.allow_reverse_position is True
+
+
+def test_parser_label_type_required():
+    from RL.DiHFT.low_level import test_agent_index as tai
+    import pytest
+
+    with pytest.raises(SystemExit):
+        tai.parser.parse_args(["--allow_reverse_position"])
+
+    args_slope = tai.parser.parse_args(["--label_type", "slope"])
+    assert args_slope.label_type == "slope"
+
+    args_vol = tai.parser.parse_args(["--label_type", "volatility"])
+    assert args_vol.label_type == "volatility"
+
+
+def test_weighted_trader_init_constructs_valid_data_path_with_label_type(monkeypatch):
+    from RL.DiHFT.low_level import test_agent_index as tai
+
+    monkeypatch.setattr(tai, "build_serial_model_path", lambda *args: "/fake/model/path")
+    monkeypatch.setattr(np, "load", lambda path, **kwargs: (
+        type("DummyDict", (), {"item": lambda self: {}})()
+        if "maintenance_margin" in str(path)
+        else np.array([])
+    ))
+    monkeypatch.setattr(torch, "load", lambda *args, **kwargs: {})
+    monkeypatch.setattr(tai.ensemble_Qnet, "load_state_dict", lambda self, sd: None)
+    monkeypatch.setattr(tai.ensemble_Qnet, "eval", lambda self: None)
+
+    args_slope = tai.parser.parse_args([
+        "--base_path", "dataset/10min",
+        "--dataset_name", "fu",
+        "--label_type", "slope",
+    ])
+    trader = tai.weighted_trader(args_slope)
+    assert trader.label_type == "slope"
+    assert trader.valid_data_path == os.path.join("dataset/10min", "fu", "valid", "slope")
+
+    args_vol = tai.parser.parse_args([
+        "--base_path", "dataset/10min",
+        "--dataset_name", "fu",
+        "--label_type", "volatility",
+    ])
+    trader_vol = tai.weighted_trader(args_vol)
+    assert trader_vol.label_type == "volatility"
+    assert trader_vol.valid_data_path == os.path.join("dataset/10min", "fu", "valid", "volatility")
 
 
 def test_analysis_result_includes_directional_and_limit_behavior_metrics(monkeypatch, tmp_path):
@@ -451,7 +499,7 @@ def test_analysis_result_includes_directional_and_limit_behavior_metrics(monkeyp
     trader.act_test = lambda state, info, bin_index: 1
     trader.test()
 
-    result = np.load(tmp_path / "analysis_result.npy", allow_pickle=True).tolist()
+    result = np.load(tmp_path / "slope" / "analysis_result.npy", allow_pickle=True).tolist()
     record = result[0]
     expected_fields = [
         "mean_position",
@@ -474,7 +522,7 @@ def test_analysis_result_includes_directional_and_limit_behavior_metrics(monkeyp
         assert field in record, f"missing field {field} in npy output"
         assert len(record[field]) == len(record["contract"])
 
-    df = pd.read_csv(tmp_path / "analysis_result.csv")
+    df = pd.read_csv(tmp_path / "slope" / "analysis_result.csv")
     for field in expected_fields:
         col = tai.CSV_HEADER_LABELS.get(field, field)
         assert col in df.columns, f"missing column {col} in csv output"

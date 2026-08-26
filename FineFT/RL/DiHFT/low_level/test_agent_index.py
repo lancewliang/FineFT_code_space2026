@@ -187,6 +187,12 @@ parser.add_argument(
     action="store_true",
     help="allow direct position reversal from long to short or vice versa",
 )
+parser.add_argument(
+    "--label_type",
+    type=str,
+    required=True,
+    help="label type, e.g. slope or volatility",
+)
 
 def build_serial_model_path(result_path, dataset_name, experiment_name):
     return os.path.join(
@@ -349,7 +355,11 @@ def write_analysis_csv(overall_result, csv_path):
     _bilingual_csv_columns(analysis_df).to_csv(csv_path, index=False)
 
 
-def trading_detail_csv_path(epoch_path, epoch_num):
+def trading_detail_csv_path(epoch_path, epoch_num, label_type=None):
+    if label_type:
+        return os.path.join(
+            epoch_path, label_type, f"trading_action_detail_epoch_{epoch_num}.csv"
+        )
     return os.path.join(epoch_path, f"trading_action_detail_epoch_{epoch_num}.csv")
 
 
@@ -504,7 +514,12 @@ class weighted_trader:
         # trading environment setting
         self.base_path = args.base_path
         self.dataset_name = args.dataset_name
-        self.valid_data_path = os.path.join(self.base_path, self.dataset_name, "valid")
+        self.label_type = getattr(args, "label_type", "")
+        if not self.label_type:
+            raise ValueError("label_type must be specified")
+        self.valid_data_path = os.path.join(
+            self.base_path, self.dataset_name, "valid", self.label_type
+        )
         self.tech_indicator_list = np.load(
             os.path.join(self.base_path, self.dataset_name, "state_features.npy")
         )
@@ -983,15 +998,20 @@ class weighted_trader:
                         _overall_result
                     )
         
-        np.save(os.path.join(self.epoch_path, "analysis_result.npy"), overall_result)
+        save_dir = os.path.join(self.epoch_path, self.label_type)
+        os.makedirs(save_dir, exist_ok=True)
+
+        np.save(os.path.join(save_dir, "analysis_result.npy"), overall_result)
         write_analysis_csv(
             overall_result,
-            os.path.join(self.epoch_path, "analysis_result.csv"),
+            os.path.join(save_dir, "analysis_result.csv"),
         )
         if self.save_trading_detail_csv:
             write_trading_detail_csv(
                 trading_detail_rows,
-                trading_detail_csv_path(self.epoch_path, self.epoch_num),
+                trading_detail_csv_path(
+                    self.epoch_path, self.epoch_num, self.label_type
+                ),
             )
 
 

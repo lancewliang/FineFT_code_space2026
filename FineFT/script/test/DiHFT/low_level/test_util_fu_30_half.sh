@@ -7,57 +7,66 @@ function run_test_agent_index {
     local base_path=$5
     local experiment_name=$6
     local ensemble_number=${ENSEMBLE_NUMBER:-7}
+    local label_types=("slope" "volatility")
+    if [ -n "$LABEL_TYPE" ]; then
+        label_types=("$LABEL_TYPE")
+    fi
     local result_path=${RESULT_PATH:-result/DiHFT/low_level}
     local max_parallel=${MAX_PARALLEL:-1}
     ROOTPATH=${ROOTPATH:-$(pwd)}
     cd "$ROOTPATH"
-    # 检查并创建日志目录
-    log_dir="log/DiHFT/${dataset_name}/low_level/test/${experiment_name}"
-    mkdir -p "${log_dir}"
     export PYTHONPATH="${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
-    # 保存PID的数组
-    pids=()
+
     local failed=0
 
-    # 循环执行Epoch 1到50
-    for epoch in $(seq $epoch_start $epoch_end); do
+    for label_type in "${label_types[@]}"; do
+        # 检查并创建日志目录
+        log_dir="log/DiHFT/${dataset_name}/low_level/test/${experiment_name}/${label_type}"
+        mkdir -p "${log_dir}"
+        # 保存PID的数组
+        pids=()
 
-        local gpu_index=$(((epoch - 1) % 4))
-        nohup python FineFT/RL/DiHFT/low_level/test_agent_index.py \
-            --base_path "${base_path}" \
-            --dataset_name "${dataset_name}" --experiment_name "${experiment_name}" \
-            --result_path "${result_path}" \
-            --max_holding_number "${max_holding_number}" --initial_wallet_balance 25000 --order_book_depth 5 \
-            --epoch_num "${epoch}" --position_choices 11 --N "${ensemble_number}" --transcation_cost 0.0001 --short_estimated_rate 0 --long_estimated_rate 0 \
-            --allow_reverse_position \
-            --save_trading_detail_csv \
-            >"${log_dir}/epoch_${epoch}.log" 2>&1 &
-        pids+=($!) # 将每个后台进程的PID添加到数组中
+        # 循环执行Epoch 1到50
+        for epoch in $(seq $epoch_start $epoch_end); do
 
-        echo "${dataset_name} ${experiment_name} ${max_holding_number} epoch ${epoch} started."
+            local gpu_index=$(((epoch - 1) % 4))
+            nohup python FineFT/RL/DiHFT/low_level/test_agent_index.py \
+                --base_path "${base_path}" \
+                --dataset_name "${dataset_name}" --experiment_name "${experiment_name}" \
+                --result_path "${result_path}" \
+                --max_holding_number "${max_holding_number}" --initial_wallet_balance 10000 --order_book_depth 5 \
+                --epoch_num "${epoch}" --position_choices 5 --N "${ensemble_number}" --transcation_cost 0.0004 --short_estimated_rate 0 --long_estimated_rate 0 \
+                --allow_reverse_position \
+                --label_type "${label_type}" \
+                --save_trading_detail_csv \
+                >"${log_dir}/epoch_${epoch}.log" 2>&1 &
+            pids+=($!) # 将每个后台进程的PID添加到数组中
 
-        if ((${#pids[@]} >= max_parallel)); then
-            for pid in "${pids[@]}"; do
-                wait "$pid" || failed=1
-            done
-            pids=()
-            if ((failed)); then
-                echo "Failed to generate one or more epoch detail CSVs. See ${log_dir}." >&2
-                return 1
+            echo "${dataset_name} ${experiment_name} ${max_holding_number} label_type ${label_type} epoch ${epoch} started."
+
+            if ((${#pids[@]} >= max_parallel)); then
+                for pid in "${pids[@]}"; do
+                    wait "$pid" || failed=1
+                done
+                pids=()
+                if ((failed)); then
+                    echo "Failed to generate one or more epoch detail CSVs for ${label_type}. See ${log_dir}." >&2
+                    return 1
+                fi
             fi
+        done
+
+        # 等待最后一批不足 max_parallel 的进程
+        for pid in "${pids[@]}"; do
+            wait "$pid" || failed=1
+        done
+        if ((failed)); then
+            echo "Failed to generate one or more epoch detail CSVs for ${label_type}. See ${log_dir}." >&2
+            return 1
         fi
-    done
 
-    # 等待最后一批不足 max_parallel 的进程
-    for pid in "${pids[@]}"; do
-        wait "$pid" || failed=1
+        echo "${dataset_name} ${experiment_name} ${max_holding_number} label_type ${label_type} testing completed successfully."
     done
-    if ((failed)); then
-        echo "Failed to generate one or more epoch detail CSVs. See ${log_dir}." >&2
-        return 1
-    fi
-
-    echo "${dataset_name} ${experiment_name} ${max_holding_number} testing completed successfully."
 }
 
 function run_ddqn_context {
@@ -113,7 +122,7 @@ function run_ddqn_average {
 DATASET_NAME=${DATASET_NAME:-fu}
 MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-2}
 EPOCH_START=${EPOCH_START:-60}
-EPOCH_END=${EPOCH_END:-110}
+EPOCH_END=${EPOCH_END:-100}
 BASE_PATH=${BASE_PATH:-dataset/30min}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-30min_multi}
 

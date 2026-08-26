@@ -24,6 +24,14 @@ python FineFT/datahandler/commodity_contract_dataset.py \
 python FineFT/datahandler/valid_cross_contract_label_calibration.py \
   --valid_dir "dataset/${TARGET_FREQ}/${SYMBOL}/valid" \
   --dynamic_number 4 \
+  --labeling_method "slope" \
+  --threshold_method global_segment_quantile \
+  --timestamp timestamp
+
+python FineFT/datahandler/valid_cross_contract_label_calibration.py \
+  --valid_dir "dataset/${TARGET_FREQ}/${SYMBOL}/valid" \
+  --dynamic_number 4 \
+  --labeling_method "volatility" \
   --threshold_method global_segment_quantile \
   --timestamp timestamp
 
