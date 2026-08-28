@@ -11,7 +11,7 @@ mkdir -p "log/DiHFT/fu/low_level/train/30min/${EXPERIMENT_NAME}"
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate finetf
-export PYTHONPATH="${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
+export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
 
 python -u FineFT/RL/DiHFT/low_level/parallel_weight_advantage_pretrain.py \
     --base_path dataset/30min \

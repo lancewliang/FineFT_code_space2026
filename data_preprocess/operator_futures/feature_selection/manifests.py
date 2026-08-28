@@ -94,6 +94,9 @@ class FeatureSelectionManifest:
     evaluated_feature_count: int | None = None
     evaluated_features: list[str] | None = None
     report_only: bool | None = None
+    regime_quantiles: dict[str, list[float]] | None = None
+    regime_audit_path: str | None = None
+    conditional_anchors_retained: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -139,6 +142,12 @@ class FeatureSelectionManifest:
             ]
         if self.report_only is not None:
             payload["report_only"] = self.report_only
+        if self.regime_quantiles is not None:
+            payload["regime_quantiles"] = self.regime_quantiles
+        if self.regime_audit_path is not None:
+            payload["regime_audit_path"] = self.regime_audit_path
+        if self.conditional_anchors_retained is not None:
+            payload["conditional_anchors_retained"] = self.conditional_anchors_retained
         return payload
 
     def write_json(self, path: Path) -> None:

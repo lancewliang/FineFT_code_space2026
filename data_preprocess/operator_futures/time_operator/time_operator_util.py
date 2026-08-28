@@ -5,6 +5,98 @@ import polars as pl
 import time
 
 
+_MARKET_STATE_ANCHOR_EPSILON = 1e-8
+
+
+def _rolling_log_price_anchors(
+    close_values: np.ndarray,
+) -> dict[str, np.ndarray]:
+    invalid_close = (~np.isfinite(close_values)) | (close_values <= 0.0)
+    if invalid_close.any():
+        first_invalid_index = int(np.flatnonzero(invalid_close)[0])
+        raise ValueError(
+            "close must contain only finite, strictly positive prices: "
+            f"row={first_invalid_index} value={close_values[first_invalid_index]}"
+        )
+
+    log_prices = np.log(close_values)
+    row_count = len(log_prices)
+    anchors = {
+        "log_price_slope_48": np.zeros(row_count, dtype=float),
+        "log_price_slope_96": np.zeros(row_count, dtype=float),
+        "trend_to_noise_48": np.zeros(row_count, dtype=float),
+        "trend_to_noise_96": np.zeros(row_count, dtype=float),
+        "signed_efficiency_48": np.zeros(row_count, dtype=float),
+        "trend_r2_48": np.zeros(row_count, dtype=float),
+        "log_return_vol_quantile_192": np.zeros(row_count, dtype=float),
+    }
+    log_returns = np.diff(log_prices)
+    volatility_by_window: dict[int, np.ndarray] = {}
+
+    for window in (48, 96):
+        if row_count < window:
+            continue
+
+        centered_steps = np.arange(window, dtype=float) - (window - 1) / 2.0
+        centered_step_sum_squares = float(np.square(centered_steps).sum())
+        rolling_log_prices = np.lib.stride_tricks.sliding_window_view(
+            log_prices, window
+        )
+        slopes = rolling_log_prices @ centered_steps / centered_step_sum_squares
+
+        rolling_returns = np.lib.stride_tricks.sliding_window_view(
+            log_returns, window - 1
+        )
+        constant_windows = np.all(rolling_returns == 0.0, axis=1)
+        slopes[constant_windows] = 0.0
+        return_volatility = rolling_returns.std(axis=1, ddof=0)
+        volatility_by_window[window] = return_volatility
+
+        slope_column = anchors[f"log_price_slope_{window}"]
+        slope_column[window - 1 :] = slopes
+        trend_to_noise = anchors[f"trend_to_noise_{window}"]
+        trend_to_noise[window - 1 :] = slopes / np.maximum(
+            return_volatility, _MARKET_STATE_ANCHOR_EPSILON
+        )
+
+        if window == 48:
+            absolute_return_sum = np.abs(rolling_returns).sum(axis=1)
+            efficiency = (rolling_log_prices[:, -1] - rolling_log_prices[:, 0]) / np.maximum(
+                absolute_return_sum, _MARKET_STATE_ANCHOR_EPSILON
+            )
+            anchors["signed_efficiency_48"][window - 1 :] = np.clip(
+                efficiency, -1.0, 1.0
+            )
+
+            centered_log_prices = rolling_log_prices - rolling_log_prices.mean(
+                axis=1, keepdims=True
+            )
+            total_sum_squares = np.square(centered_log_prices).sum(axis=1)
+            r_squared = np.zeros_like(slopes)
+            non_constant = ~constant_windows
+            r_squared[non_constant] = (
+                np.square(slopes[non_constant]) * centered_step_sum_squares
+            ) / total_sum_squares[non_constant]
+            anchors["trend_r2_48"][window - 1 :] = np.clip(
+                r_squared, 0.0, 1.0
+            )
+
+    volatility_48 = volatility_by_window.get(48)
+    rank_window = 192
+    if volatility_48 is not None and len(volatility_48) >= rank_window:
+        quantiles = anchors["log_return_vol_quantile_192"]
+        for end_index in range(rank_window - 1, len(volatility_48)):
+            history = volatility_48[end_index - rank_window + 1 : end_index + 1]
+            current = history[-1]
+            less_count = float(np.count_nonzero(history < current))
+            equal_count = float(np.count_nonzero(history == current))
+            average_rank = less_count + (equal_count + 1.0) / 2.0
+            price_index = 47 + end_index
+            quantiles[price_index] = average_rank / rank_window
+
+    return anchors
+
+
 # 程序开始前的时间
 def my_rank(x):
     return pd.Series(x).rank(pct=True).iloc[-1]
@@ -339,7 +431,7 @@ if __name__ == "__main__":
 def process_enhanced_state_features(df: pl.DataFrame) -> pl.DataFrame:
     if not isinstance(df, pl.DataFrame):
         raise ValueError("df must be a polars DataFrame")
-    
+
     frame = df.sort("timestamp")
     exprs = []
 
@@ -365,6 +457,28 @@ def process_enhanced_state_features(df: pl.DataFrame) -> pl.DataFrame:
 
     # Ticket 04: Trend Acceleration & Volatility Regime
     if "close" in frame.columns:
+        close_values = frame.get_column("close").cast(pl.Float64).to_numpy()
+        if "contract" in frame.columns:
+            contracts = frame.get_column("contract").to_numpy()
+            anchors = None
+            for contract in dict.fromkeys(contracts.tolist()):
+                contract_rows = contracts == contract
+                contract_anchors = _rolling_log_price_anchors(
+                    close_values[contract_rows]
+                )
+                if anchors is None:
+                    anchors = {
+                        name: np.zeros(frame.height, dtype=float)
+                        for name in contract_anchors
+                    }
+                for name, values in contract_anchors.items():
+                    anchors[name][contract_rows] = values
+            if anchors is None:
+                anchors = _rolling_log_price_anchors(close_values)
+        else:
+            anchors = _rolling_log_price_anchors(close_values)
+        exprs.extend(pl.Series(name, values) for name, values in anchors.items())
+
         close = pl.col("close")
         v10_raw = close.ewm_mean(span=10) - close.ewm_mean(span=20)
         v10 = v10_raw / close

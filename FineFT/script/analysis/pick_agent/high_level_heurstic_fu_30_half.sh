@@ -7,7 +7,7 @@ cd "$ROOTPATH"
 
 source "$(conda info --base)/etc/profile.d/conda.sh" 2>/dev/null || true
 conda activate finetf 2>/dev/null || true
-export PYTHONPATH="${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
+export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
 
 BASE_PATH=${BASE_PATH:-dataset/30min}
 DATASET_NAME=${DATASET_NAME:-fu}

@@ -26,6 +26,73 @@ def _write_contract(valid_dir, contract, base_price, rows=96, price_scale=1.0):
     ).to_feather(valid_dir / f"{contract}.feather")
 
 
+def _labels_by_timestamp(valid_dir, labeling_method, contract):
+    labels = {}
+    for label_dir in sorted(
+        (valid_dir / labeling_method / contract).glob("label_*")
+    ):
+        label = int(label_dir.name.split("_")[1])
+        for path in label_dir.glob("*.feather"):
+            for timestamp in pd.read_feather(path)["timestamp"]:
+                labels[timestamp] = label
+    return labels
+
+
+def test_slope_labels_force_limit_up_and_down_bars_to_extreme_labels(tmp_path):
+    from datahandler import valid_cross_contract_label_calibration as calibration
+
+    valid_dir = tmp_path / "valid"
+    valid_dir.mkdir()
+    _write_contract(valid_dir, "fu2501", 100.0)
+    source_path = valid_dir / "fu2501.feather"
+    source = pd.read_feather(source_path)
+    source["limit_up_single_sided_ratio"] = 0.0
+    source["limit_down_single_sided_ratio"] = 0.0
+    source.loc[10, "limit_up_single_sided_ratio"] = 0.25
+    source.loc[20, "limit_down_single_sided_ratio"] = 0.5
+    source.to_feather(source_path)
+
+    calibration.build_valid_dataset(
+        valid_dir,
+        dynamic_number=4,
+        timestamp="timestamp",
+        min_length_limit=4,
+        merging_threshold=-1,
+    )
+
+    labels = _labels_by_timestamp(valid_dir, "slope", "fu2501")
+    assert labels[source.loc[10, "timestamp"]] == 3
+    assert labels[source.loc[20, "timestamp"]] == 0
+
+
+def test_volatility_labels_force_limit_up_and_down_bars_to_maximum_label(tmp_path):
+    from datahandler import valid_cross_contract_label_calibration as calibration
+
+    valid_dir = tmp_path / "valid"
+    valid_dir.mkdir()
+    _write_contract(valid_dir, "fu2501", 100.0)
+    source_path = valid_dir / "fu2501.feather"
+    source = pd.read_feather(source_path)
+    source["limit_up_single_sided_ratio"] = 0.0
+    source["limit_down_single_sided_ratio"] = 0.0
+    source.loc[10, "limit_up_single_sided_ratio"] = 0.25
+    source.loc[20, "limit_down_single_sided_ratio"] = 0.5
+    source.to_feather(source_path)
+
+    calibration.build_valid_dataset(
+        valid_dir,
+        dynamic_number=4,
+        labeling_method="volatility",
+        timestamp="timestamp",
+        min_length_limit=4,
+        merging_threshold=-1,
+    )
+
+    labels = _labels_by_timestamp(valid_dir, "volatility", "fu2501")
+    assert labels[source.loc[10, "timestamp"]] == 3
+    assert labels[source.loc[20, "timestamp"]] == 3
+
+
 def test_build_valid_dataset_publishes_one_shared_threshold_set(tmp_path):
     from datahandler import valid_cross_contract_label_calibration as calibration
 

@@ -31,7 +31,7 @@ mkdir -p "log/DiHFT/${DATASET_NAME}/high_level/final_result/${EXPERIMENT_NAME}"
 
 source "$(conda info --base)/etc/profile.d/conda.sh" 2>/dev/null || true
 conda activate finetf 2>/dev/null || true
-export PYTHONPATH="${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
+export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
 
 python -u FineFT/RL/DiHFT/high_level/vae_routing_final_result_macro_action.py \
     --base_path "${BASE_PATH}" \

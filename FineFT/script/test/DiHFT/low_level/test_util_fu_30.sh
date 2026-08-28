@@ -13,7 +13,7 @@ function run_ddqn_context {
     fi
     ROOTPATH=${ROOTPATH:-$(pwd)}
     cd "$ROOTPATH"
-    export PYTHONPATH="${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
+    export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
     local max_parallel=4
 
     for label_type in "${label_types[@]}"; do

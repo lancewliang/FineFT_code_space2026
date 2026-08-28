@@ -14,7 +14,7 @@ mkdir -p "log/DiHFT/fu/high_level/optuna/${EXPERIMENT_NAME}"
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate finetf
-export PYTHONPATH="${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
+export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
 
 python -u FineFT/RL/DiHFT/high_level/vae_routing_optuna.py \
     --base_path "${BASE_PATH}" \

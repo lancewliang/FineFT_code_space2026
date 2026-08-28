@@ -18,7 +18,7 @@ fi
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate finetf
-export PYTHONPATH="${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
+export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
 
 log_dir="log/DiHFT/${DATASET_NAME}/VAE/${EXPERIMENT_NAME}"
 mkdir -p "${log_dir}"

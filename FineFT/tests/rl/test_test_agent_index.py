@@ -528,3 +528,42 @@ def test_analysis_result_includes_directional_and_limit_behavior_metrics(monkeyp
         assert col in df.columns, f"missing column {col} in csv output"
         val = json.loads(df.loc[0, col])
         assert isinstance(val, list)
+
+
+def test_seed_torch_enables_float32_matmul_precision_and_allow_tf32():
+    from RL.DiHFT.low_level import test_agent_index as tai
+
+    tai.seed_torch(42)
+    if hasattr(torch, "get_float32_matmul_precision"):
+        assert torch.get_float32_matmul_precision() == "high"
+    if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
+        assert torch.backends.cuda.matmul.allow_tf32 is True
+    if hasattr(torch.backends, "cudnn"):
+        assert torch.backends.cudnn.allow_tf32 is True
+
+
+def test_weighted_trader_init_enables_matmul_precision_and_allow_tf32(monkeypatch):
+    from RL.DiHFT.low_level import test_agent_index as tai
+
+    monkeypatch.setattr(tai, "build_serial_model_path", lambda *args: "/fake/model/path")
+    monkeypatch.setattr(np, "load", lambda path, **kwargs: (
+        type("DummyDict", (), {"item": lambda self: {}})()
+        if "maintenance_margin" in str(path)
+        else np.array([])
+    ))
+    monkeypatch.setattr(torch, "load", lambda *args, **kwargs: {})
+    monkeypatch.setattr(tai.ensemble_Qnet, "load_state_dict", lambda self, sd: None)
+    monkeypatch.setattr(tai.ensemble_Qnet, "eval", lambda self: None)
+
+    args = tai.parser.parse_args([
+        "--base_path", "dataset/10min",
+        "--dataset_name", "fu",
+        "--label_type", "slope",
+    ])
+    trader = tai.weighted_trader(args)
+    if trader.device == "cuda":
+        if hasattr(torch, "get_float32_matmul_precision"):
+            assert torch.get_float32_matmul_precision() == "high"
+        if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
+            assert torch.backends.cuda.matmul.allow_tf32 is True
+

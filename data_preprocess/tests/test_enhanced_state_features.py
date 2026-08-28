@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import json
 import numpy as np
 import polars as pl
 import pytest
@@ -12,6 +13,24 @@ from operator_futures.time_operator.time_operator_util import (
 )
 from operator_futures.data_quality import DataQualityValidator
 from operator_futures.feature_validation.expected_columns import ENHANCED_FEATURE_COLUMNS
+from operator_futures.feature_selection.ic_correlation import (
+    select_reward_state_features,
+)
+from operator_futures.scale_describe_save.muti_contract_scale_save import (
+    main as scale_save_main,
+    parser as scale_save_parser,
+)
+
+
+MARKET_STATE_ANCHOR_COLUMNS = [
+    "log_price_slope_48",
+    "log_price_slope_96",
+    "trend_to_noise_48",
+    "trend_to_noise_96",
+    "signed_efficiency_48",
+    "trend_r2_48",
+    "log_return_vol_quantile_192",
+]
 
 
 def _sample_quote_snapshots(n: int = 50) -> pl.DataFrame:
@@ -48,6 +67,217 @@ def _sample_quote_snapshots(n: int = 50) -> pl.DataFrame:
             }
         )
     return pl.DataFrame(rows)
+
+
+@pytest.mark.parametrize("direction", [-1.0, 1.0])
+def test_market_state_anchors_preserve_smooth_trend_direction(direction):
+    expected_log_slope = direction * 0.002
+    steps = np.arange(260, dtype=float)
+    frame = pl.DataFrame(
+        {
+            "timestamp": steps.astype(int),
+            "close": 100.0 * np.exp(expected_log_slope * steps),
+        }
+    )
+
+    result = process_enhanced_state_features(frame)
+    last = result.row(-1, named=True)
+
+    assert set(MARKET_STATE_ANCHOR_COLUMNS).issubset(result.columns)
+    assert last["log_price_slope_48"] == pytest.approx(expected_log_slope)
+    assert last["log_price_slope_96"] == pytest.approx(expected_log_slope)
+    assert np.sign(last["trend_to_noise_48"]) == direction
+    assert np.sign(last["trend_to_noise_96"]) == direction
+    assert last["signed_efficiency_48"] == pytest.approx(direction)
+    assert last["trend_r2_48"] == pytest.approx(1.0)
+    assert 0.0 <= last["log_return_vol_quantile_192"] <= 1.0
+    assert np.isfinite(
+        result.select(MARKET_STATE_ANCHOR_COLUMNS).to_numpy()
+    ).all()
+
+
+def test_market_state_anchor_r2_preserves_small_smooth_trend():
+    steps = np.arange(48, dtype=float)
+    frame = pl.DataFrame(
+        {
+            "timestamp": steps.astype(int),
+            "close": 100.0 * np.exp(1e-7 * steps),
+        }
+    )
+
+    result = process_enhanced_state_features(frame)
+
+    assert result.row(-1, named=True)["trend_r2_48"] == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("invalid_close", [0.0, -1.0, np.nan, np.inf])
+def test_market_state_anchors_reject_invalid_close(invalid_close):
+    close = np.full(48, 100.0)
+    close[-1] = invalid_close
+    frame = pl.DataFrame({"timestamp": np.arange(48), "close": close})
+
+    with pytest.raises(ValueError, match="close"):
+        process_enhanced_state_features(frame)
+
+
+def test_market_state_anchor_windows_reset_at_contract_boundary():
+    first_steps = np.arange(96, dtype=float)
+    second_steps = np.arange(48, dtype=float)
+    frame = pl.DataFrame(
+        {
+            "timestamp": np.arange(144),
+            "contract": ["fu2601"] * 96 + ["fu2605"] * 48,
+            "close": np.concatenate(
+                [100.0 * np.exp(0.002 * first_steps), np.full(48, 100.0)]
+            ),
+        }
+    )
+
+    result = process_enhanced_state_features(frame)
+    second_contract = result.filter(pl.col("contract") == "fu2605")
+
+    assert second_contract.row(0, named=True)["log_price_slope_48"] == 0.0
+    assert second_contract.row(46, named=True)["log_price_slope_48"] == 0.0
+    assert second_contract.row(47, named=True)["log_price_slope_48"] == 0.0
+    assert second_contract.row(47, named=True)["trend_r2_48"] == 0.0
+
+
+def test_market_state_anchors_are_neutral_for_constant_prices_and_warmup():
+    frame = pl.DataFrame(
+        {"timestamp": np.arange(260), "close": np.full(260, 100.0)}
+    )
+
+    result = process_enhanced_state_features(frame)
+    directional_columns = [
+        "log_price_slope_48",
+        "log_price_slope_96",
+        "trend_to_noise_48",
+        "trend_to_noise_96",
+        "signed_efficiency_48",
+        "trend_r2_48",
+    ]
+
+    assert (result.select(directional_columns).to_numpy() == 0.0).all()
+    assert (
+        result.head(47).select(MARKET_STATE_ANCHOR_COLUMNS).to_numpy() == 0.0
+    ).all()
+    assert np.isfinite(
+        result.select(MARKET_STATE_ANCHOR_COLUMNS).to_numpy()
+    ).all()
+
+
+def test_market_state_anchors_are_registered_enhanced_feature_candidates():
+    steps = np.arange(260, dtype=float)
+    result = process_enhanced_state_features(
+        pl.DataFrame(
+            {
+                "timestamp": steps.astype(int),
+                "close": 100.0 * np.exp(0.001 * steps),
+            }
+        )
+    )
+    _, candidate_state_features = select_reward_state_features(
+        result,
+        market_type="commodity_futures",
+        orderbook_depth=5,
+    )
+
+    assert set(MARKET_STATE_ANCHOR_COLUMNS).issubset(ENHANCED_FEATURE_COLUMNS)
+    assert set(MARKET_STATE_ANCHOR_COLUMNS).issubset(candidate_state_features)
+
+
+def test_market_state_anchors_are_causal_and_scale_invariant_for_noisy_trend():
+    steps = np.arange(320, dtype=float)
+    close = 100.0 * np.exp(0.001 * steps + 0.01 * np.sin(steps / 7.0))
+    prefix = pl.DataFrame({"timestamp": np.arange(260), "close": close[:260]})
+    full = pl.DataFrame({"timestamp": np.arange(320), "close": close})
+    scaled = full.with_columns((pl.col("close") * 37.5).alias("close"))
+
+    prefix_result = process_enhanced_state_features(prefix)
+    full_result = process_enhanced_state_features(full)
+    scaled_result = process_enhanced_state_features(scaled)
+
+    np.testing.assert_allclose(
+        prefix_result.select(MARKET_STATE_ANCHOR_COLUMNS).to_numpy(),
+        full_result.head(260).select(MARKET_STATE_ANCHOR_COLUMNS).to_numpy(),
+        rtol=0.0,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        full_result.select(MARKET_STATE_ANCHOR_COLUMNS).to_numpy(),
+        scaled_result.select(MARKET_STATE_ANCHOR_COLUMNS).to_numpy(),
+        rtol=1e-9,
+        atol=1e-9,
+    )
+    last = full_result.row(-1, named=True)
+    assert last["log_price_slope_48"] > 0.0
+    assert last["trend_to_noise_48"] > 0.0
+    assert -1.0 <= last["signed_efficiency_48"] <= 1.0
+    assert 0.0 <= last["trend_r2_48"] <= 1.0
+    assert 0.0 <= last["log_return_vol_quantile_192"] <= 1.0
+
+
+def test_market_state_anchors_pass_nan_validation_and_scale_save(tmp_path):
+    steps = np.arange(260, dtype=float)
+    generated = process_enhanced_state_features(
+        pl.DataFrame(
+            {
+                "timestamp": steps.astype(int),
+                "contract": ["fu2601"] * len(steps),
+                "close": 100.0
+                * np.exp(0.001 * steps + 0.01 * np.sin(steps / 7.0)),
+            }
+        )
+    )
+    DataQualityValidator.validate_no_illegal_values(
+        generated,
+        stage="enhanced_feature",
+        contract="fu2601",
+        trading_day="fixture",
+        columns=MARKET_STATE_ANCHOR_COLUMNS,
+    )
+
+    feature_list_path = tmp_path / "state_features.npy"
+    np.save(feature_list_path, np.array(MARKET_STATE_ANCHOR_COLUMNS))
+    input_dir = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST"
+        / "30min"
+        / "fu"
+        / "train"
+    )
+    input_dir.mkdir(parents=True)
+    generated.select(
+        ["timestamp", "contract", *MARKET_STATE_ANCHOR_COLUMNS]
+    ).write_ipc(input_dir / "fu2601.feather")
+
+    args = scale_save_parser.parse_args(
+        [
+            "--root_path",
+            str(tmp_path),
+            "--symbols",
+            "fu",
+            "--target_freq",
+            "30min",
+            "--feature_list_path",
+            str(feature_list_path),
+        ]
+    )
+    scale_save_main(args)
+
+    output_root = (
+        tmp_path / "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/30min"
+    )
+    manifest = json.loads(
+        (output_root / "scaler_manifest.json").read_text(encoding="utf-8")
+    )
+    scaled = pl.read_ipc(output_root / "train/fu2601.feather")
+
+    assert [item["feature"] for item in manifest["features"]] == (
+        MARKET_STATE_ANCHOR_COLUMNS
+    )
+    assert manifest["passthrough_state_features"] == []
+    assert np.isfinite(scaled.select(MARKET_STATE_ANCHOR_COLUMNS).to_numpy()).all()
 
 
 def test_level5_ofi_and_spread_features():

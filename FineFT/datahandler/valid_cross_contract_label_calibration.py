@@ -248,6 +248,44 @@ def _label_for_score(score: float, thresholds: list[float]) -> int:
     return len(thresholds)
 
 
+def _limit_state_masks(
+    prepared: pd.DataFrame, key_indicator: str
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return row-level limit-up and limit-down masks using project conventions."""
+    limit_up = np.zeros(len(prepared), dtype=bool)
+    limit_down = np.zeros(len(prepared), dtype=bool)
+
+    if "limit_up_single_sided_ratio" in prepared.columns:
+        limit_up |= prepared["limit_up_single_sided_ratio"].to_numpy() > 0
+    if "limit_down_single_sided_ratio" in prepared.columns:
+        limit_down |= prepared["limit_down_single_sided_ratio"].to_numpy() > 0
+    if "is_limit_up" in prepared.columns:
+        limit_up |= prepared["is_limit_up"].fillna(False).to_numpy(dtype=bool)
+    if "is_limit_down" in prepared.columns:
+        limit_down |= prepared["is_limit_down"].fillna(False).to_numpy(dtype=bool)
+
+    prices = prepared[key_indicator].to_numpy(dtype=float)
+    if "UpperLimitPrice" in prepared.columns:
+        upper_limits = pd.to_numeric(
+            prepared["UpperLimitPrice"], errors="coerce"
+        ).to_numpy(dtype=float)
+        limit_up |= (
+            np.isfinite(upper_limits)
+            & (upper_limits > 0)
+            & (prices >= upper_limits)
+        )
+    if "LowerLimitPrice" in prepared.columns:
+        lower_limits = pd.to_numeric(
+            prepared["LowerLimitPrice"], errors="coerce"
+        ).to_numpy(dtype=float)
+        limit_down |= (
+            np.isfinite(lower_limits)
+            & (lower_limits > 0)
+            & (prices <= lower_limits)
+        )
+    return limit_up, limit_down
+
+
 def _score_statistics(scores: list[float]) -> dict[str, float | int]:
     """Return descriptive statistics for the pooled segment scores."""
     values = np.asarray(scores, dtype=float)
@@ -294,6 +332,8 @@ def _build_contract_outputs(
     output_root: Path,
     *,
     dynamic_number: int,
+    key_indicator: str,
+    labeling_method: str,
     thresholds: list[float],
 ) -> SliceContractManifest:
     """根据全局 score 阈值生成单合约 Feather 切片与 manifest。
@@ -314,6 +354,12 @@ def _build_contract_outputs(
         for start, end, score in zip(points[:-1], points[1:], scores):
             label = _label_for_score(score, thresholds)
             row_labels[row_positions[start:end]] = label
+    limit_up, limit_down = _limit_state_masks(fit.prepared, key_indicator)
+    if labeling_method == "slope":
+        row_labels[limit_up] = dynamic_number - 1
+        row_labels[limit_down] = 0
+    else:
+        row_labels[limit_up | limit_down] = dynamic_number - 1
     if (row_labels < 0).any():
         raise ValueError(f"{fit.source_path} has unaccounted input rows")
 
@@ -521,6 +567,8 @@ def build_valid_dataset(
                 stage_root,
                 output_root,
                 dynamic_number=dynamic_number,
+                key_indicator=key_indicator,
+                labeling_method=labeling_method,
                 thresholds=thresholds,
             )
             for fit in fits

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from operator_futures.feature_selection.muti_contract.regime_audit import compute_regime_quantiles, audit_16_regimes
 
 import argparse
 import math
@@ -439,6 +440,7 @@ def run_feature_selection(
     min_half_life_bars: float = 0.0,
     persistence_filter_pattern: str = DEFAULT_PERSISTENCE_FILTER_PATTERN,
     rank_ic_mode: str = "absolute",
+    enable_conditional_anchors: bool = True,
 ) -> FeatureSelectionResult:
     if stage not in {"train", "valid"}:
         raise ValueError("stage must be 'train' or 'valid'")
@@ -524,6 +526,33 @@ def run_feature_selection(
     aggregate = aggregate_metric_frames(metric_frames)
     aggregate_path = output_dir / "aggregate_metrics.csv"
     aggregate.write_csv(aggregate_path)
+
+    train_manifest_path = _stage_output_dir(root_path, save_path, target_freq, symbol, "train") / "feature_selection_manifest.json"
+    if stage == "train":
+        regime_quantiles = compute_regime_quantiles(frames)
+    else:
+        regime_quantiles = None
+        if train_manifest_path.exists():
+            try:
+                train_manifest_data = json.loads(train_manifest_path.read_text(encoding="utf-8"))
+                regime_quantiles = train_manifest_data.get("regime_quantiles")
+            except Exception:
+                pass
+        if regime_quantiles is None:
+            regime_quantiles = compute_regime_quantiles(frames)
+
+    candidate_universe = [f for f in feature_universe if f not in mandatory_features]
+    regime_audit_df, retained_anchors, retention_details = audit_16_regimes(
+        frames,
+        candidate_universe,
+        regime_quantiles,
+        windows_list,
+        min_abs_ic=min_abs_ic,
+        enable_conditional_anchors=enable_conditional_anchors,
+    )
+    regime_audit_path = output_dir / "regime_audit_metrics.csv"
+    regime_audit_df.write_csv(regime_audit_path)
+
     if stage == "valid":
         manifest = FeatureSelectionManifest(
             symbol=symbol,
@@ -539,6 +568,9 @@ def run_feature_selection(
             feature_ablation_patterns=list(feature_ablation_patterns),
             rank_ic_mode=rank_ic_mode,
             report_only=True,
+            regime_quantiles=regime_quantiles,
+            regime_audit_path=str(regime_audit_path),
+            conditional_anchors_retained=retention_details if retention_details else None,
         )
         manifest_path = output_dir / "feature_selection_manifest.json"
         manifest.write_json(manifest_path)
@@ -583,6 +615,11 @@ def run_feature_selection(
             "Feature Blacklist Dropped": blacklisted_features,
         }
     normal_selected = [f for f in selected_features if f not in mandatory_features]
+    if enable_conditional_anchors and retained_anchors:
+        newly_retained = [a for a in retained_anchors if a in candidate_universe and a not in normal_selected]
+        if newly_retained:
+            normal_selected.extend(newly_retained)
+            filter_results["Conditional Anchor Retention"] = newly_retained
     selected_features = normal_selected + mandatory_features
 
     selected_file = output_dir / "state_features.npy"
@@ -623,6 +660,9 @@ def run_feature_selection(
         filter_results=filter_results,
         contracts=per_contract,
         filtered_outputs=filtered_outputs,
+        regime_quantiles=regime_quantiles,
+        regime_audit_path=str(regime_audit_path),
+        conditional_anchors_retained=retention_details if retention_details else None,
     )
     manifest_path = output_dir / "feature_selection_manifest.json"
     manifest.write_json(manifest_path)

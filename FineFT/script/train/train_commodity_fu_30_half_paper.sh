@@ -5,22 +5,23 @@ set -euo pipefail
 ROOTPATH=${ROOTPATH:-$(pwd)}
 cd "$ROOTPATH"
 
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-10min_multi}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-30min_multi_paper_formula3}
 
-mkdir -p "log/fu/low_level/train/10min/${EXPERIMENT_NAME}"
+mkdir -p "log/fu/low_level/train/30min/${EXPERIMENT_NAME}"
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate finetf
 export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
 
-python -u FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py \
-    --base_path dataset/10min \
+python -u FineFT/RL/DiHFT/low_level/weight_advantage_pretrain_paper.py \
+    --base_path dataset/30min \
     --dataset_name fu --experiment_name "${EXPERIMENT_NAME}" \
-    --initial_wallet_balance 10000 --batch_size 8192 --update_times=30 \
+    --initial_wallet_balance 10000 --batch_size 2048 --update_times=30 \
     --max_holding_number 2 --short_estimated_rate 0 --long_estimated_rate 0 \
-    --position_choices 5 --transcation_cost 0.0004 --n_step 12 --gamma 0.9999 \
+    --position_choices 5 --transcation_cost 0.0006 --n_step 12 --gamma 0.9999 \
     --order_book_depth 5 --early_stop 2 \
     --pretrain_epoch 80 --lr_init 0.0005 --epsilon_min 0.05 \
     --ada_min 0.01 --ada_step 8000000 \
+    --neighbor_size 1 \
     --allow_reverse_position \
-    >"log/fu/low_level/train/10min/${EXPERIMENT_NAME}/advantage-10min_multi.log"
+    >"log/fu/low_level/train/30min/${EXPERIMENT_NAME}/advantage-paper-formula3-30min.log"

@@ -16,7 +16,7 @@ function run_test_agent_index {
     local max_parallel=${MAX_PARALLEL:-1}
     ROOTPATH=${ROOTPATH:-$(pwd)}
     cd "$ROOTPATH"
-    export PYTHONPATH="${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
+    export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
 
     local failed=0
 
