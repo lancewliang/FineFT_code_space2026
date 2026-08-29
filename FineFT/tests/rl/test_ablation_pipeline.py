@@ -1,13 +1,30 @@
+import sys
+from pathlib import Path
 import numpy as np
 import polars as pl
 import pytest
 
-from FineFT.analysis.ablation_pipeline import (
-    AblationGroupResult,
-    RegimePerformanceRecord,
-    compute_paired_bootstrap_ci,
-    evaluate_regimes_from_detail_df,
-)
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+FINEFT_ROOT = ROOT / "FineFT"
+if str(FINEFT_ROOT) not in sys.path:
+    sys.path.insert(0, str(FINEFT_ROOT))
+
+try:
+    from analysis.ablation_pipeline import (
+        AblationGroupResult,
+        RegimePerformanceRecord,
+        compute_paired_bootstrap_ci,
+        evaluate_regimes_from_detail_df,
+    )
+except ImportError:
+    from FineFT.analysis.ablation_pipeline import (
+        AblationGroupResult,
+        RegimePerformanceRecord,
+        compute_paired_bootstrap_ci,
+        evaluate_regimes_from_detail_df,
+    )
 
 
 def test_compute_paired_bootstrap_ci_returns_valid_bounds():
@@ -47,3 +64,41 @@ def test_evaluate_regimes_from_detail_df_conserves_16_bins():
     total_step_count = sum(r.step_count for r in result.regime_records)
     assert total_step_count == n_rows
     assert pytest.approx(sum(r.step_ratio for r in result.regime_records)) == 1.0
+
+
+def test_evaluate_regimes_from_detail_df_conserves_3x3_bins():
+    n_rows = 100
+    steps = np.arange(n_rows)
+    df = pl.DataFrame(
+        {
+            "timestamp": steps,
+            "close": 100.0 * np.exp(0.001 * steps),
+            "log_price_slope_48": np.linspace(-0.002, 0.002, n_rows),
+            "step_reward": np.random.default_rng(42).normal(0.01, 0.05, n_rows),
+            "trade_count_step": np.random.default_rng(42).choice([0, 1], size=n_rows),
+            "commission_fee_step": np.full(n_rows, 0.0004),
+            "slippage_step": np.zeros(n_rows),
+            "margin_balance": 1e5 + np.cumsum(np.random.default_rng(42).normal(1.0, 10.0, n_rows)),
+        }
+    )
+
+    quantiles_3x3 = {
+        "slope": [-0.0005, 0.0005],
+        "volatility": [0.00015, 0.00025],
+    }
+
+    result = evaluate_regimes_from_detail_df(
+        df,
+        quantiles_3x3,
+        config_name="B_3x3",
+        stage="valid",
+        target_regime_bins=[(0, 0), (2, 0)],
+    )
+
+    assert len(result.regime_records) == 9
+    total_step_count = sum(r.step_count for r in result.regime_records)
+    assert total_step_count == n_rows
+    assert pytest.approx(sum(r.step_ratio for r in result.regime_records)) == 1.0
+    target_records = [r for r in result.regime_records if r.is_target_regime]
+    assert len(target_records) == 2
+    assert {(r.slope_bin, r.vol_bin) for r in target_records} == {(0, 0), (2, 0)}

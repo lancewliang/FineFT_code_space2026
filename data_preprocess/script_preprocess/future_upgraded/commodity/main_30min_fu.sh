@@ -8,6 +8,7 @@ TARGET_FREQ=${TARGET_FREQ:-30min}
 SYMBOL=${SYMBOL:-fu}
 COMMODITY_NAME=${COMMODITY_NAME:-燃料油}
 MAX_PROCESSES=${MAX_PROCESSES:-4}
+REGIME_BINS=${REGIME_BINS:-3}
 echo "ROOTPATH: ${ROOTPATH}"
 source "${ROOTPATH}/data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
 
@@ -22,4 +23,5 @@ run_commodity_full_process \
     "${SYMBOL}" \
     "${COMMODITY_NAME}" \
     "${MAX_PROCESSES}" \
+    "${REGIME_BINS}" \
     >"${LOG_DIR}/${SYMBOL}_${TARGET_FREQ}_${START_DATE}_${END_DATE}.log" 2>&1

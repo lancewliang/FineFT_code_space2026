@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
@@ -8,9 +9,15 @@ import numpy as np
 import polars as pl
 from scipy.stats import t as student_t
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT / "data_preprocess") not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT / "data_preprocess"))
+
 from operator_futures.feature_selection.muti_contract.regime_audit import (
     MARKET_STATE_ANCHOR_COLUMNS,
     TARGET_REGIME_BINS,
+    assign_regime_bin,
+    default_target_regime_bins,
 )
 
 
@@ -121,9 +128,10 @@ def evaluate_regimes_from_detail_df(
     *,
     config_name: str = "A",
     stage: str = "valid",
+    target_regime_bins: Sequence[tuple[int, int]] | None = None,
 ) -> AblationGroupResult:
     """
-    Analyze step-by-step trading detail dataframe and compute 16-regime performance breakdown.
+    Analyze step-by-step trading detail dataframe and compute regime performance breakdown.
     """
     if detail_df.height == 0:
         return AblationGroupResult(
@@ -144,6 +152,8 @@ def evaluate_regimes_from_detail_df(
     # Bin assignment using slope and volatility quantiles
     slope_th = regime_quantiles["slope"]
     vol_th = regime_quantiles["volatility"]
+    num_slope_bins = len(slope_th) + 1
+    num_vol_bins = len(vol_th) + 1
 
     slopes = detail_df.get_column("log_price_slope_48").to_numpy().astype(float) if "log_price_slope_48" in detail_df.columns else np.zeros(detail_df.height)
     close = detail_df.get_column("close").to_numpy().astype(float) if "close" in detail_df.columns else np.full(detail_df.height, 100.0)
@@ -160,8 +170,8 @@ def evaluate_regimes_from_detail_df(
     for i in range(detail_df.height):
         s_val = slopes[i]
         v_val = vols[i]
-        slope_bins[i] = 0 if s_val < slope_th[0] else (1 if s_val < slope_th[1] else (2 if s_val < slope_th[2] else 3))
-        vol_bins[i] = 0 if v_val < vol_th[0] else (1 if v_val < vol_th[1] else (2 if v_val < vol_th[2] else 3))
+        slope_bins[i] = assign_regime_bin(s_val, slope_th)
+        vol_bins[i] = assign_regime_bin(v_val, vol_th)
 
     detail_df = detail_df.with_columns([
         pl.Series("slope_bin", slope_bins),
@@ -169,11 +179,15 @@ def evaluate_regimes_from_detail_df(
     ])
 
     regime_records: list[RegimePerformanceRecord] = []
-    target_set = set(TARGET_REGIME_BINS)
+    target_set = set(
+        target_regime_bins
+        if target_regime_bins is not None
+        else default_target_regime_bins(num_slope_bins, num_vol_bins)
+    )
     total_steps = detail_df.height
 
-    for s_bin in range(4):
-        for v_bin in range(4):
+    for s_bin in range(num_slope_bins):
+        for v_bin in range(num_vol_bins):
             sub = detail_df.filter((pl.col("slope_bin") == s_bin) & (pl.col("vol_bin") == v_bin))
             cnt = sub.height
             is_target = (s_bin, v_bin) in target_set

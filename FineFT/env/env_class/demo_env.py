@@ -48,6 +48,17 @@ class Demo_Env(Base_Env):
         gamma=1,
         allow_reverse_position=False,
         holding_duration_norm_steps=180,
+        is_limit_up_array=None,
+        is_limit_down_array=None,
+        limit_up_ask_depth_ratio_5_array=None,
+        limit_down_bid_depth_ratio_5_array=None,
+        upper_limit_prices_array=None,
+        lower_limit_prices_array=None,
+        enable_limit_reward=False,
+        limit_hold_bonus=1.0,
+        limit_stay_bonus=0.5,
+        limit_reverse_penalty=1.5,
+        near_limit_threshold=0.003,
     ):
 
         super(Demo_Env, self).__init__(
@@ -75,6 +86,17 @@ class Demo_Env(Base_Env):
             initial_state=initial_state,
             allow_reverse_position=allow_reverse_position,
             holding_duration_norm_steps=holding_duration_norm_steps,
+            is_limit_up_array=is_limit_up_array,
+            is_limit_down_array=is_limit_down_array,
+            limit_up_ask_depth_ratio_5_array=limit_up_ask_depth_ratio_5_array,
+            limit_down_bid_depth_ratio_5_array=limit_down_bid_depth_ratio_5_array,
+            upper_limit_prices_array=upper_limit_prices_array,
+            lower_limit_prices_array=lower_limit_prices_array,
+            enable_limit_reward=enable_limit_reward,
+            limit_hold_bonus=limit_hold_bonus,
+            limit_stay_bonus=limit_stay_bonus,
+            limit_reverse_penalty=limit_reverse_penalty,
+            near_limit_threshold=near_limit_threshold,
         )
         self.q_table = create_optimal_q_table(
             ask_prices_array,
@@ -96,6 +118,17 @@ class Demo_Env(Base_Env):
             max_punishment=max_punishment,
             gamma=gamma,
             allow_reverse_position=allow_reverse_position,
+            is_limit_up_array=is_limit_up_array,
+            is_limit_down_array=is_limit_down_array,
+            limit_up_ask_depth_ratio_5_array=limit_up_ask_depth_ratio_5_array,
+            limit_down_bid_depth_ratio_5_array=limit_down_bid_depth_ratio_5_array,
+            upper_limit_prices_array=upper_limit_prices_array,
+            lower_limit_prices_array=lower_limit_prices_array,
+            enable_limit_reward=enable_limit_reward,
+            limit_hold_bonus=limit_hold_bonus,
+            limit_stay_bonus=limit_stay_bonus,
+            limit_reverse_penalty=limit_reverse_penalty,
+            near_limit_threshold=near_limit_threshold,
         )
 
     def reset(self):

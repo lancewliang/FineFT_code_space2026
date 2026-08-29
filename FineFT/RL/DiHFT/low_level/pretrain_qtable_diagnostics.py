@@ -349,6 +349,11 @@ def build_initial_state(
 
 
 def create_demo_env(train_df, env_kwargs, initial_state):
+    has_limit_cols = (
+        "UpperLimitPrice" in train_df.columns
+        and "limit_up_single_sided_ratio" in train_df.columns
+    )
+    enable_limit = env_kwargs.get("enable_limit_reward", False) and has_limit_cols
     return initiate_demo_env(
         df=train_df,
         feature_list=env_kwargs["feature_list"],
@@ -365,6 +370,11 @@ def create_demo_env(train_df, env_kwargs, initial_state):
         gamma=env_kwargs["gamma"],
         max_punishment=1e10,
         allow_reverse_position=env_kwargs.get("allow_reverse_position", False),
+        enable_limit_reward=enable_limit,
+        limit_hold_bonus=env_kwargs.get("limit_hold_bonus", 1.0),
+        limit_stay_bonus=env_kwargs.get("limit_stay_bonus", 0.5),
+        limit_reverse_penalty=env_kwargs.get("limit_reverse_penalty", 1.5),
+        near_limit_threshold=env_kwargs.get("near_limit_threshold", 0.003),
     )
 
 

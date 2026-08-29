@@ -4,12 +4,18 @@ import numpy as np
 import polars as pl
 import pytest
 
-from operator_futures.feature_selection.muti_contract.pipeline import run_feature_selection
+from operator_futures.feature_selection.muti_contract.pipeline import (
+    _parse_target_regime_bins,
+    run_feature_selection,
+)
 from operator_futures.feature_selection.muti_contract.regime_audit import (
     MARKET_STATE_ANCHOR_COLUMNS,
     TARGET_REGIME_BINS,
-    compute_regime_quantiles,
+    assign_regime_bin,
     audit_16_regimes,
+    audit_regimes,
+    compute_regime_quantiles,
+    default_target_regime_bins,
 )
 
 
@@ -128,3 +134,100 @@ def test_conditional_anchor_retention_and_regular_candidate_exclusion(tmp_path):
         retained_names = {item["feature"] for item in manifest.conditional_anchors_retained}
         assert retained_names.issubset(set(MARKET_STATE_ANCHOR_COLUMNS))
         assert not retained_names.intersection({"feature_a", "feature_b"})
+
+
+def test_compute_regime_quantiles_and_assign_bin_unit():
+    # Unit tests for quantile computation and bin assignment with different bin sizes
+    frames = {
+        "c1": pl.DataFrame({
+            "close": np.linspace(100.0, 110.0, 60),
+            "log_price_slope_48": np.linspace(-0.01, 0.01, 60),
+        }),
+    }
+
+    # Test default 4 bins (3 quantiles)
+    q4 = compute_regime_quantiles(frames, num_bins=4)
+    assert len(q4["slope"]) == 3
+    assert len(q4["volatility"]) == 3
+    assert q4["slope"][0] < q4["slope"][1] < q4["slope"][2]
+
+    # Test 3 bins (2 quantiles)
+    q3 = compute_regime_quantiles(frames, num_bins=3)
+    assert len(q3["slope"]) == 2
+    assert len(q3["volatility"]) == 2
+    assert q3["slope"][0] < q3["slope"][1]
+
+    # Test custom quantiles
+    q_custom = compute_regime_quantiles(frames, quantiles=[0.2, 0.4, 0.6, 0.8])
+    assert len(q_custom["slope"]) == 4
+
+    # Test assign_regime_bin for 3 bins (2 thresholds)
+    th_3 = [0.0, 10.0]
+    assert assign_regime_bin(-1.0, th_3) == 0
+    assert assign_regime_bin(0.0, th_3) == 1
+    assert assign_regime_bin(5.0, th_3) == 1
+    assert assign_regime_bin(10.0, th_3) == 2
+    assert assign_regime_bin(15.0, th_3) == 2
+
+    # Test default_target_regime_bins
+    assert default_target_regime_bins(4, 4) == [(0, 0), (3, 0), (0, 1), (3, 1)]
+    assert default_target_regime_bins(3, 3) == [(0, 0), (2, 0)]
+    assert default_target_regime_bins(5, 5) == [(0, 0), (4, 0)]
+
+    # Test _parse_target_regime_bins helper
+    assert _parse_target_regime_bins(["0,0", "2,0"]) == [(0, 0), (2, 0)]
+    assert _parse_target_regime_bins(["(0,0)", "(3,1)"]) == [(0, 0), (3, 1)]
+    assert _parse_target_regime_bins([(0, 0), (2, 0)]) == [(0, 0), (2, 0)]
+
+
+def test_regime_audit_3x3_bins_configurable(tmp_path: Path):
+    _create_mock_split_dataset(tmp_path, num_contracts=4, num_rows=100)
+
+    res_train = run_feature_selection(
+        root_path=tmp_path,
+        symbol="fu",
+        target_freq="30min",
+        stage="train",
+        regime_bins=3,
+        enable_conditional_anchors=True,
+    )
+
+    train_manifest = res_train.manifest
+    assert train_manifest.regime_bins == 3
+    assert train_manifest.regime_quantiles is not None
+    assert len(train_manifest.regime_quantiles["slope"]) == 2
+    assert len(train_manifest.regime_quantiles["volatility"]) == 2
+
+    # Check 3x3 (9-bin) audit CSV
+    audit_path = Path(train_manifest.regime_audit_path)
+    assert audit_path.exists()
+
+    audit_df = pl.read_csv(audit_path)
+    bins_present = set(zip(audit_df["slope_bin"].to_list(), audit_df["vol_bin"].to_list()))
+    expected_9_bins = {(s, v) for s in range(3) for v in range(3)}
+    assert bins_present == expected_9_bins
+
+    # Total mature steps conservation
+    unique_bin_steps = (
+        audit_df.select(["slope_bin", "vol_bin", "step_count"])
+        .unique()
+        ["step_count"]
+        .sum()
+    )
+    expected_mature_steps = 4 * (100 - 47)
+    assert unique_bin_steps == expected_mature_steps
+
+    # Valid run: should inherit 3x3 quantiles & regime_bins from train
+    res_valid = run_feature_selection(
+        root_path=tmp_path,
+        symbol="fu",
+        target_freq="30min",
+        stage="valid",
+        enable_conditional_anchors=True,
+    )
+    valid_manifest = res_valid.manifest
+    assert valid_manifest.regime_bins == 3
+    assert valid_manifest.regime_quantiles == train_manifest.regime_quantiles
+    valid_audit_df = pl.read_csv(valid_manifest.regime_audit_path)
+    valid_bins_present = set(zip(valid_audit_df["slope_bin"].to_list(), valid_audit_df["vol_bin"].to_list()))
+    assert valid_bins_present == expected_9_bins

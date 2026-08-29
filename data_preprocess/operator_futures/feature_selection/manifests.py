@@ -94,6 +94,8 @@ class FeatureSelectionManifest:
     evaluated_feature_count: int | None = None
     evaluated_features: list[str] | None = None
     report_only: bool | None = None
+    regime_bins: int | None = None
+    target_regime_bins: list[list[int]] | list[tuple[int, int]] | None = None
     regime_quantiles: dict[str, list[float]] | None = None
     regime_audit_path: str | None = None
     conditional_anchors_retained: list[dict[str, Any]] | None = None
@@ -142,6 +144,10 @@ class FeatureSelectionManifest:
             ]
         if self.report_only is not None:
             payload["report_only"] = self.report_only
+        if self.regime_bins is not None:
+            payload["regime_bins"] = self.regime_bins
+        if self.target_regime_bins is not None:
+            payload["target_regime_bins"] = [list(b) for b in self.target_regime_bins]
         if self.regime_quantiles is not None:
             payload["regime_quantiles"] = self.regime_quantiles
         if self.regime_audit_path is not None:

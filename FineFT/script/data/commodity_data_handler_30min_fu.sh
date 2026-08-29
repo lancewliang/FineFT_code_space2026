@@ -23,14 +23,14 @@ python FineFT/datahandler/commodity_contract_dataset.py \
 
 python FineFT/datahandler/valid_cross_contract_label_calibration.py \
   --valid_dir "dataset/${TARGET_FREQ}/${SYMBOL}/valid" \
-  --dynamic_number 4 \
+  --dynamic_number 3 \
   --labeling_method "slope" \
   --threshold_method global_segment_quantile \
   --timestamp timestamp
 
 python FineFT/datahandler/valid_cross_contract_label_calibration.py \
   --valid_dir "dataset/${TARGET_FREQ}/${SYMBOL}/valid" \
-  --dynamic_number 4 \
+  --dynamic_number 3 \
   --labeling_method "volatility" \
   --threshold_method global_segment_quantile \
   --timestamp timestamp
@@ -38,4 +38,11 @@ python FineFT/datahandler/valid_cross_contract_label_calibration.py \
 python FineFT/datahandler/vae_data_creation.py \
   --base_path "dataset/${TARGET_FREQ}" \
   --dataset_name "${SYMBOL}" \
-  --save_path "dataset/${TARGET_FREQ}"
+  --save_path "dataset/${TARGET_FREQ}" \
+  --labeling_method "slope"
+
+python FineFT/datahandler/vae_data_creation.py \
+  --base_path "dataset/${TARGET_FREQ}" \
+  --dataset_name "${SYMBOL}" \
+  --save_path "dataset/${TARGET_FREQ}" \
+  --labeling_method "volatility"

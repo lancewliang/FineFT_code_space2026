@@ -25,6 +25,18 @@ TARGET_REGIME_BINS = [
 ]
 
 
+def default_target_regime_bins(
+    num_slope_bins: int = 4, num_vol_bins: int = 4
+) -> list[tuple[int, int]]:
+    """Return default target extreme bins (low volatility, strong directional slopes)."""
+    if num_slope_bins == 4 and num_vol_bins == 4:
+        return list(TARGET_REGIME_BINS)
+    elif num_slope_bins == 3 and num_vol_bins == 3:
+        return [(0, 0), (2, 0)]
+    else:
+        return [(0, 0), (num_slope_bins - 1, 0)]
+
+
 def extract_slope_and_volatility(df: pl.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     """Extract 48-bar slope and 48-bar return volatility from contract frame."""
     close = df["close"].to_numpy().astype(float)
@@ -51,8 +63,20 @@ def extract_slope_and_volatility(df: pl.DataFrame) -> tuple[np.ndarray, np.ndarr
     return slope, volatility
 
 
-def compute_regime_quantiles(frames: dict[str, pl.DataFrame]) -> dict[str, list[float]]:
-    """Compute 25%, 50%, 75% quartiles for slope and volatility on mature rows (step >= 47)."""
+def compute_regime_quantiles(
+    frames: dict[str, pl.DataFrame],
+    num_bins: int = 4,
+    quantiles: Sequence[float] | None = None,
+) -> dict[str, list[float]]:
+    """Compute quantile thresholds for slope and volatility on mature rows (step >= 47)."""
+    if num_bins < 2 and quantiles is None:
+        raise ValueError(f"num_bins must be >= 2, got {num_bins}")
+
+    if quantiles is None:
+        q_points = [float(i / num_bins) for i in range(1, num_bins)]
+    else:
+        q_points = [float(q) for q in quantiles]
+
     all_slopes = []
     all_vols = []
 
@@ -65,15 +89,15 @@ def compute_regime_quantiles(frames: dict[str, pl.DataFrame]) -> dict[str, list[
 
     if not all_slopes:
         return {
-            "slope": [0.0, 0.0, 0.0],
-            "volatility": [0.0, 0.0, 0.0],
+            "slope": [0.0] * len(q_points),
+            "volatility": [0.0] * len(q_points),
         }
 
     cat_slopes = np.concatenate(all_slopes)
     cat_vols = np.concatenate(all_vols)
 
-    q_slope = np.quantile(cat_slopes, [0.25, 0.50, 0.75]).tolist()
-    q_vol = np.quantile(cat_vols, [0.25, 0.50, 0.75]).tolist()
+    q_slope = np.quantile(cat_slopes, q_points).tolist()
+    q_vol = np.quantile(cat_vols, q_points).tolist()
 
     return {
         "slope": [float(x) for x in q_slope],
@@ -81,34 +105,43 @@ def compute_regime_quantiles(frames: dict[str, pl.DataFrame]) -> dict[str, list[
     }
 
 
-def assign_regime_bin(val: float, thresholds: list[float]) -> int:
-    """Map value to bin index 0..3 given 3 quantile thresholds."""
-    if val < thresholds[0]:
-        return 0
-    elif val < thresholds[1]:
-        return 1
-    elif val < thresholds[2]:
-        return 2
-    else:
-        return 3
+def assign_regime_bin(val: float, thresholds: Sequence[float]) -> int:
+    """Map value to bin index 0..len(thresholds) given quantile thresholds."""
+    for i, th in enumerate(thresholds):
+        if val < th:
+            return i
+    return len(thresholds)
 
 
-def audit_16_regimes(
+def audit_regimes(
     frames: dict[str, pl.DataFrame],
     feature_universe: list[str],
     quantiles: dict[str, list[float]],
     windows_list: list[int],
     *,
+    num_slope_bins: int | None = None,
+    num_vol_bins: int | None = None,
+    target_regime_bins: Sequence[tuple[int, int]] | None = None,
     min_abs_ic: float = 0.01,
     enable_conditional_anchors: bool = True,
 ) -> tuple[pl.DataFrame, list[str], list[dict[str, Any]]]:
     """
-    Perform 16-bin (slope 0..3 x vol 0..3) market state audit.
+    Perform multi-bin (slope 0..N-1 x vol 0..M-1) market state audit.
     Evaluates conditional retention for market state anchors in target bins.
     Returns (audit_dataframe, conditionally_retained_anchors, retention_details).
     """
     slope_th = quantiles["slope"]
     vol_th = quantiles["volatility"]
+
+    if num_slope_bins is None:
+        num_slope_bins = len(slope_th) + 1
+    if num_vol_bins is None:
+        num_vol_bins = len(vol_th) + 1
+
+    if target_regime_bins is None:
+        target_bins = default_target_regime_bins(num_slope_bins, num_vol_bins)
+    else:
+        target_bins = list(target_regime_bins)
 
     # Pre-segment contracts by mature rows & bin assignment
     contract_bin_masks: dict[str, dict[tuple[int, int], np.ndarray]] = {}
@@ -127,8 +160,8 @@ def audit_16_regimes(
         total_mature_steps += mature_count
 
         masks: dict[tuple[int, int], np.ndarray] = {}
-        for s_bin in range(4):
-            for v_bin in range(4):
+        for s_bin in range(num_slope_bins):
+            for v_bin in range(num_vol_bins):
                 # Mature row condition
                 mask = np.zeros(frame.height, dtype=bool)
                 for i in range(47, frame.height):
@@ -145,8 +178,8 @@ def audit_16_regimes(
     # key: (feature, window, s_bin, v_bin) -> list of (contract, step_count, rank_ic)
     bin_contract_rank_ics: dict[tuple[str, int, int, int], list[tuple[str, int, float]]] = {}
 
-    for s_bin in range(4):
-        for v_bin in range(4):
+    for s_bin in range(num_slope_bins):
+        for v_bin in range(num_vol_bins):
             bin_key = (s_bin, v_bin)
 
             # Step count across contracts in this bin
@@ -276,7 +309,7 @@ def audit_16_regimes(
             passed = False
             passing_bins: list[str] = []
 
-            for (s_bin, v_bin) in TARGET_REGIME_BINS:
+            for (s_bin, v_bin) in target_bins:
                 # Check for any window length
                 for window in windows_list:
                     key = (anchor, window, s_bin, v_bin)
@@ -325,3 +358,7 @@ def audit_16_regimes(
                 retained_anchors.append(anchor)
 
     return audit_df, retained_anchors, retention_details
+
+
+# Alias for backward compatibility
+audit_16_regimes = audit_regimes

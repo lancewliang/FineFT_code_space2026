@@ -625,9 +625,15 @@ run_commodity_feature_selection() {
     local target_freq=$3
     local symbol=$4
     local root_path=$5
+    local regime_bins=${6:-${REGIME_BINS:-3}}
     local feature_blacklist_args=()
     if [ "${#COMMODITY_FU_FEATURE_BLACKLIST[@]}" -gt 0 ]; then
         feature_blacklist_args=(--feature_blacklist "${COMMODITY_FU_FEATURE_BLACKLIST[@]}")
+    fi
+
+    local target_regime_bins_args=()
+    if [ -n "${TARGET_REGIME_BINS:-}" ]; then
+        target_regime_bins_args=(--target_regime_bins ${TARGET_REGIME_BINS})
     fi
 
     PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" python -u -m operator_futures.feature_selection.muti_contract \
@@ -638,6 +644,8 @@ run_commodity_feature_selection() {
         --target_freq "${target_freq}" \
         --stage "${stage}" \
         --orderbook_depth 5 \
+        --regime_bins "${regime_bins}" \
+        "${target_regime_bins_args[@]}" \
         --mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" "${CROSS_MONTH_FEATURE_COLUMNS[@]}" "${PRICE_LIMIT_RATIO_FEATURE_COLUMNS[@]}" \
         "${feature_blacklist_args[@]}"
 }
@@ -660,6 +668,7 @@ run_commodity_full_process() {
     local symbol=${5:-fu}
     local commodity_name=${6:-燃料油}
     local max_processes=${7:-4}
+    local regime_bins=${8:-${REGIME_BINS:-3}}
 
     local log_dir="${LOG_DIR:-${root_path}/log_futures/ticker_result/commodity}"
 
@@ -734,12 +743,12 @@ run_commodity_full_process() {
     run_commodity_logged_step \
         "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
         "feature_selection_train" \
-        run_commodity_feature_selection "train" "${root_path}/PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/${target_freq}" "$target_freq" "$symbol" "$root_path"
+        run_commodity_feature_selection "train" "${root_path}/PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/${target_freq}" "$target_freq" "$symbol" "$root_path" "$regime_bins"
 
     run_commodity_logged_step \
         "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
         "feature_selection_valid" \
-        run_commodity_feature_selection "valid" "${root_path}/PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/${target_freq}" "$target_freq" "$symbol" "$root_path"
+        run_commodity_feature_selection "valid" "${root_path}/PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/${target_freq}" "$target_freq" "$symbol" "$root_path" "$regime_bins"
 
     run_commodity_logged_step \
         "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \

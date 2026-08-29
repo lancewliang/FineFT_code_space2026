@@ -1,7 +1,13 @@
 from __future__ import annotations
-from operator_futures.feature_selection.muti_contract.regime_audit import compute_regime_quantiles, audit_16_regimes
+from operator_futures.feature_selection.muti_contract.regime_audit import (
+    compute_regime_quantiles,
+    audit_regimes,
+    audit_16_regimes,
+    default_target_regime_bins,
+)
 
 import argparse
+import json
 import math
 import re
 from pathlib import Path
@@ -43,6 +49,30 @@ def _parse_windows_list(value: list[int | str] | str | None) -> list[int] | None
                 if part:
                     result.append(int(part))
     return result if result else None
+
+
+def _parse_target_regime_bins(
+    value: list[tuple[int, int]] | list[str] | str | None,
+) -> list[tuple[int, int]] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = [value]
+    result: list[tuple[int, int]] = []
+    for item in value:
+        if isinstance(item, (tuple, list)) and len(item) == 2:
+            result.append((int(item[0]), int(item[1])))
+        elif isinstance(item, str):
+            cleaned = item.strip("()[] ")
+            for part in cleaned.split():
+                part = part.strip("()[] ,")
+                if not part:
+                    continue
+                if "," in part:
+                    s, v = part.split(",", 1)
+                    result.append((int(s.strip()), int(v.strip())))
+    return result if result else None
+
 
 NON_STATE_COLUMNS = {"timestamp", "trading_day", "TradingDay", "symbol", "contract"}
 DEFAULT_PERSISTENCE_FILTER_PATTERN = r"_log_return_(1|2)$"
@@ -441,6 +471,8 @@ def run_feature_selection(
     persistence_filter_pattern: str = DEFAULT_PERSISTENCE_FILTER_PATTERN,
     rank_ic_mode: str = "absolute",
     enable_conditional_anchors: bool = True,
+    regime_bins: int = 4,
+    target_regime_bins: Sequence[tuple[int, int]] | None = None,
 ) -> FeatureSelectionResult:
     if stage not in {"train", "valid"}:
         raise ValueError("stage must be 'train' or 'valid'")
@@ -529,24 +561,46 @@ def run_feature_selection(
 
     train_manifest_path = _stage_output_dir(root_path, save_path, target_freq, symbol, "train") / "feature_selection_manifest.json"
     if stage == "train":
-        regime_quantiles = compute_regime_quantiles(frames)
+        regime_quantiles = compute_regime_quantiles(frames, num_bins=regime_bins)
+        effective_target_bins = (
+            list(target_regime_bins)
+            if target_regime_bins is not None
+            else default_target_regime_bins(regime_bins, regime_bins)
+        )
     else:
         regime_quantiles = None
+        effective_target_bins = list(target_regime_bins) if target_regime_bins is not None else None
         if train_manifest_path.exists():
             try:
                 train_manifest_data = json.loads(train_manifest_path.read_text(encoding="utf-8"))
                 regime_quantiles = train_manifest_data.get("regime_quantiles")
+                if "regime_bins" in train_manifest_data and train_manifest_data["regime_bins"] is not None:
+                    regime_bins = int(train_manifest_data["regime_bins"])
+                if (
+                    effective_target_bins is None
+                    and "target_regime_bins" in train_manifest_data
+                    and train_manifest_data["target_regime_bins"] is not None
+                ):
+                    effective_target_bins = [
+                        (int(item[0]), int(item[1]))
+                        for item in train_manifest_data["target_regime_bins"]
+                    ]
             except Exception:
                 pass
         if regime_quantiles is None:
-            regime_quantiles = compute_regime_quantiles(frames)
+            regime_quantiles = compute_regime_quantiles(frames, num_bins=regime_bins)
+        if effective_target_bins is None:
+            num_s = len(regime_quantiles["slope"]) + 1
+            num_v = len(regime_quantiles["volatility"]) + 1
+            effective_target_bins = default_target_regime_bins(num_s, num_v)
 
     candidate_universe = [f for f in feature_universe if f not in mandatory_features]
-    regime_audit_df, retained_anchors, retention_details = audit_16_regimes(
+    regime_audit_df, retained_anchors, retention_details = audit_regimes(
         frames,
         candidate_universe,
         regime_quantiles,
         windows_list,
+        target_regime_bins=effective_target_bins,
         min_abs_ic=min_abs_ic,
         enable_conditional_anchors=enable_conditional_anchors,
     )
@@ -568,6 +622,8 @@ def run_feature_selection(
             feature_ablation_patterns=list(feature_ablation_patterns),
             rank_ic_mode=rank_ic_mode,
             report_only=True,
+            regime_bins=regime_bins,
+            target_regime_bins=effective_target_bins,
             regime_quantiles=regime_quantiles,
             regime_audit_path=str(regime_audit_path),
             conditional_anchors_retained=retention_details if retention_details else None,
@@ -660,6 +716,8 @@ def run_feature_selection(
         filter_results=filter_results,
         contracts=per_contract,
         filtered_outputs=filtered_outputs,
+        regime_bins=regime_bins,
+        target_regime_bins=effective_target_bins,
         regime_quantiles=regime_quantiles,
         regime_audit_path=str(regime_audit_path),
         conditional_anchors_retained=retention_details if retention_details else None,
@@ -722,6 +780,20 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="*",
         default=None,
     )
+    parser.add_argument(
+        "--regime_bins",
+        "--num_regime_bins",
+        dest="regime_bins",
+        type=int,
+        default=4,
+        help="Number of bins per dimension for market state regime audit (e.g. 4 for 4x4, 3 for 3x3)",
+    )
+    parser.add_argument(
+        "--target_regime_bins",
+        nargs="*",
+        default=None,
+        help="Target regime bins for conditional anchor retention (e.g. '0,0' '2,0' or '0,0 3,0 0,1 3,1')",
+    )
     return parser
 
 
@@ -747,4 +819,6 @@ def main(argv=None):
         min_half_life_bars=args.min_half_life_bars,
         persistence_filter_pattern=args.persistence_filter_pattern,
         rank_ic_mode=args.rank_ic_mode,
+        regime_bins=args.regime_bins,
+        target_regime_bins=_parse_target_regime_bins(args.target_regime_bins),
     )

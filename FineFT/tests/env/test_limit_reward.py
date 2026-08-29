@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 from env.env_initiate.base_initiate import initiate_base_env
 from env.env_initiate.commodity_initiate import initiate_commodity_env
+from env.env_initiate.demo_initiate import initiate_demo_env
 
 
 def _make_dummy_df(num_rows=10, include_limit_cols=True):
@@ -37,6 +38,9 @@ def test_missing_limit_columns_raises_error():
 
     with pytest.raises(ValueError, match="DataFrame 缺少必须的涨跌停列"):
         initiate_commodity_env(df, feature_list=["feat1"], depth=5, enable_limit_reward=True)
+
+    with pytest.raises(ValueError, match="DataFrame 缺少必须的涨跌停列"):
+        initiate_demo_env(df, feature_list=["feat1"], enable_limit_reward=True)
 
 
 def test_disabled_by_default():
@@ -121,3 +125,25 @@ def test_depth_ratio_scaling():
     _, _, _, info2 = env2.step(action_long)
 
     assert info2["limit_reward"] > info1["limit_reward"]
+
+
+def test_demo_env_with_limit_reward():
+    df = _make_dummy_df(num_rows=5, include_limit_cols=True)
+    df["limit_up_ask_depth_ratio_5"] = 1.0
+
+    env = initiate_demo_env(
+        df,
+        feature_list=["feat1"],
+        enable_limit_reward=True,
+        limit_hold_bonus=1.0,
+        limit_stay_bonus=0.5,
+        limit_reverse_penalty=1.5,
+        position_choices=5,
+        max_holding_number=4,
+        allow_reverse_position=True,
+    )
+    env.reset()
+    action_long = env.env_map_position_leverage_to_action(4, 5)
+    _, _, _, info = env.step(action_long)
+    assert info["limit_reward"] > 0.0
+    assert "q_value" in info

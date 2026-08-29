@@ -316,6 +316,42 @@ parser.add_argument(
     action="store_true",
     help="allow reverse position in single step",
 )
+parser.add_argument(
+    "--enable_limit_reward",
+    action="store_true",
+    default=True,
+    help="enable limit up/down reward shaping in DP teacher and environment",
+)
+parser.add_argument(
+    "--no_enable_limit_reward",
+    dest="enable_limit_reward",
+    action="store_false",
+    help="disable limit up/down reward shaping",
+)
+parser.add_argument(
+    "--limit_hold_bonus",
+    type=float,
+    default=1.0,
+    help="bonus for holding position in limit direction",
+)
+parser.add_argument(
+    "--limit_stay_bonus",
+    type=float,
+    default=0.5,
+    help="bonus for maintaining unchanged position during limit",
+)
+parser.add_argument(
+    "--limit_reverse_penalty",
+    type=float,
+    default=1.5,
+    help="penalty for taking position opposite to limit direction",
+)
+parser.add_argument(
+    "--near_limit_threshold",
+    type=float,
+    default=0.003,
+    help="relative threshold for near-limit shaping",
+)
 
 # network setting
 parser.add_argument(
@@ -655,6 +691,11 @@ class Weighted_Contexts_DQN:
             self.initial_leverage,
         )
         self.allow_reverse_position = getattr(args, "allow_reverse_position", False)
+        self.enable_limit_reward = getattr(args, "enable_limit_reward", True)
+        self.limit_hold_bonus = getattr(args, "limit_hold_bonus", 1.0)
+        self.limit_stay_bonus = getattr(args, "limit_stay_bonus", 0.5)
+        self.limit_reverse_penalty = getattr(args, "limit_reverse_penalty", 1.5)
+        self.near_limit_threshold = getattr(args, "near_limit_threshold", 0.003)
 
         # network
         self.time_info_dim = args.time_info_dim
@@ -1279,6 +1320,11 @@ class Weighted_Contexts_DQN:
             commission_rate=self.transcation_cost,
             gamma=self.gamma,
             allow_reverse_position=self.allow_reverse_position,
+            enable_limit_reward=self.enable_limit_reward,
+            limit_hold_bonus=self.limit_hold_bonus,
+            limit_stay_bonus=self.limit_stay_bonus,
+            limit_reverse_penalty=self.limit_reverse_penalty,
+            near_limit_threshold=self.near_limit_threshold,
         )
         env_kwargs = {
             "feature_list": self.tech_indicator_list,
@@ -1296,6 +1342,11 @@ class Weighted_Contexts_DQN:
             "initial_wallet_balance": self.initial_wallet_balance,
             "initial_unrealized_pnl": self.initial_unrealized_pnL,
             "allow_reverse_position": self.allow_reverse_position,
+            "enable_limit_reward": self.enable_limit_reward,
+            "limit_hold_bonus": self.limit_hold_bonus,
+            "limit_stay_bonus": self.limit_stay_bonus,
+            "limit_reverse_penalty": self.limit_reverse_penalty,
+            "near_limit_threshold": self.near_limit_threshold,
         }
         diagnostics_result = prepare_pretrain_qtable_diagnostics(
             total_df_index_length=self.total_df_index_length,

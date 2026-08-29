@@ -13,6 +13,11 @@ def build_optimal_qtable_kwargs(
     gamma: float,
     allow_reverse_position: bool,
     max_punishment: float = 1e10,
+    enable_limit_reward: bool = True,
+    limit_hold_bonus: float = 1.0,
+    limit_stay_bonus: float = 0.5,
+    limit_reverse_penalty: float = 1.5,
+    near_limit_threshold: float = 0.003,
 ) -> dict[str, object]:
     """Build the DP teacher configuration from the active training config."""
 
@@ -27,4 +32,9 @@ def build_optimal_qtable_kwargs(
         "max_punishment": max_punishment,
         "gamma": gamma,
         "allow_reverse_position": allow_reverse_position,
+        "enable_limit_reward": enable_limit_reward,
+        "limit_hold_bonus": limit_hold_bonus,
+        "limit_stay_bonus": limit_stay_bonus,
+        "limit_reverse_penalty": limit_reverse_penalty,
+        "near_limit_threshold": near_limit_threshold,
     }

@@ -188,6 +188,42 @@ parser.add_argument(
     help="allow direct position reversal from long to short or vice versa",
 )
 parser.add_argument(
+    "--enable_limit_reward",
+    default=True,
+    action="store_true",
+    help="enable limit up/down reward shaping during test environment evaluation",
+)
+parser.add_argument(
+    "--no_enable_limit_reward",
+    dest="enable_limit_reward",
+    action="store_false",
+    help="disable limit up/down reward shaping during test environment evaluation",
+)
+parser.add_argument(
+    "--limit_hold_bonus",
+    type=float,
+    default=1.0,
+    help="bonus for holding position in limit direction",
+)
+parser.add_argument(
+    "--limit_stay_bonus",
+    type=float,
+    default=0.5,
+    help="bonus for maintaining unchanged position during limit",
+)
+parser.add_argument(
+    "--limit_reverse_penalty",
+    type=float,
+    default=1.5,
+    help="penalty for taking position opposite to limit direction",
+)
+parser.add_argument(
+    "--near_limit_threshold",
+    type=float,
+    default=0.003,
+    help="relative threshold for near-limit shaping",
+)
+parser.add_argument(
     "--label_type",
     type=str,
     required=True,
@@ -562,6 +598,11 @@ class weighted_trader:
         self.short_estimated_rate = args.short_estimated_rate
         self.transcation_cost = args.transcation_cost
         self.allow_reverse_position = getattr(args, "allow_reverse_position", False)
+        self.enable_limit_reward = getattr(args, "enable_limit_reward", True)
+        self.limit_hold_bonus = getattr(args, "limit_hold_bonus", 1.0)
+        self.limit_stay_bonus = getattr(args, "limit_stay_bonus", 0.5)
+        self.limit_reverse_penalty = getattr(args, "limit_reverse_penalty", 1.5)
+        self.near_limit_threshold = getattr(args, "near_limit_threshold", 0.003)
         self.early_stop = args.early_stop
         self.initial_wallet_balance = args.initial_wallet_balance
         self.initial_margin = args.initial_margin
@@ -705,6 +746,11 @@ class weighted_trader:
                             initial_position,
                             initial_leverage,
                         )
+                        enable_limit = (
+                            getattr(self, "enable_limit_reward", True)
+                            and "UpperLimitPrice" in self.test_df.columns
+                            and "limit_up_single_sided_ratio" in self.test_df.columns
+                        )
                         test_env = initiate_base_env(
                             df=self.test_df,
                             feature_list=self.tech_indicator_list,
@@ -723,6 +769,11 @@ class weighted_trader:
                             # initial_personal_state
                             initial_state=self.initial_state,
                             allow_reverse_position=getattr(self, "allow_reverse_position", False),
+                            enable_limit_reward=enable_limit,
+                            limit_hold_bonus=getattr(self, "limit_hold_bonus", 1.0),
+                            limit_stay_bonus=getattr(self, "limit_stay_bonus", 0.5),
+                            limit_reverse_penalty=getattr(self, "limit_reverse_penalty", 1.5),
+                            near_limit_threshold=getattr(self, "near_limit_threshold", 0.003),
                         )
                         position_after_list = []
                         limit_up_list = []
