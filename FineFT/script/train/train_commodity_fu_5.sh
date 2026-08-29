@@ -13,7 +13,7 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate finetf
 export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
 
-python -u FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py \
+numactl --cpunodebind=0 --membind=0 python -u FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py \
     --base_path dataset/5min \
     --dataset_name fu --experiment_name "${EXPERIMENT_NAME}" \
     --initial_wallet_balance 25000 --batch_size 8192 --update_times=25 \
