@@ -12,7 +12,7 @@ function run_test_agent_index {
         label_types=("$LABEL_TYPE")
     fi
     local result_path=${RESULT_PATH:-result/DiHFT/low_level}
-    local max_parallel=${MAX_PARALLEL:-2}
+    local max_parallel=${MAX_PARALLEL:-1}
     ROOTPATH=${ROOTPATH:-$(pwd)}
     cd "$ROOTPATH"
     export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
@@ -123,7 +123,7 @@ MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-2}
 EPOCH_START=${EPOCH_START:-50}
 EPOCH_END=${EPOCH_END:-100}
 BASE_PATH=${BASE_PATH:-dataset/30min}
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-30min_multi}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-30min_multi_persistence}
 
 run_ddqn_context "${DATASET_NAME}" "${MAX_HOLDING_NUMBER}" "${EPOCH_START}" "${EPOCH_END}" "${BASE_PATH}" "${EXPERIMENT_NAME}"
 
