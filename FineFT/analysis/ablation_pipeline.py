@@ -28,10 +28,6 @@ class RegimePerformanceRecord:
     total_commission: float
     total_slippage: float
     max_drawdown: float
-    candidate_switch_count: int = 0
-    executed_switch_count: int = 0
-    suppressed_switch_count: int = 0
-    estimated_avoided_cost: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -47,10 +43,6 @@ class RegimePerformanceRecord:
             "total_commission": self.total_commission,
             "total_slippage": self.total_slippage,
             "max_drawdown": self.max_drawdown,
-            "candidate_switch_count": self.candidate_switch_count,
-            "executed_switch_count": self.executed_switch_count,
-            "suppressed_switch_count": self.suppressed_switch_count,
-            "estimated_avoided_cost": self.estimated_avoided_cost,
         }
 
 
@@ -213,29 +205,6 @@ def evaluate_regimes_from_detail_df(
             drawdowns = np.where(cum_max > 0, (cum_max - margin_bal) / cum_max, 0.0)
             max_dd = float(np.max(drawdowns)) if len(drawdowns) > 0 else 0.0
 
-            cand_switches = 0
-            exec_switches = 0
-            supp_switches = 0
-            avoided_cost = 0.0
-
-            if "decision_reason" in sub.columns:
-                reasons = sub.get_column("decision_reason").to_list()
-                cand_acts = sub.get_column("candidate_action").to_list() if "candidate_action" in sub.columns else []
-                curr_acts = sub.get_column("current_action").to_list() if "current_action" in sub.columns else []
-                est_costs = sub.get_column("estimated_cost").to_numpy().astype(float) if "estimated_cost" in sub.columns else np.zeros(cnt)
-
-                for idx in range(cnt):
-                    r_reason = reasons[idx]
-                    if r_reason != "random_exploration":
-                        if cand_acts and curr_acts and cand_acts[idx] != curr_acts[idx]:
-                            cand_switches += 1
-                        if r_reason in ("q_argmax", "hysteresis_switched"):
-                            if cand_acts and curr_acts and cand_acts[idx] != curr_acts[idx]:
-                                exec_switches += 1
-                        elif r_reason == "hysteresis_maintained":
-                            supp_switches += 1
-                            avoided_cost += est_costs[idx]
-
             regime_records.append(RegimePerformanceRecord(
                 slope_bin=s_bin,
                 vol_bin=v_bin,
@@ -249,10 +218,6 @@ def evaluate_regimes_from_detail_df(
                 total_commission=float(np.sum(fees)),
                 total_slippage=float(np.sum(slips)),
                 max_drawdown=max_dd,
-                candidate_switch_count=cand_switches,
-                executed_switch_count=exec_switches,
-                suppressed_switch_count=supp_switches,
-                estimated_avoided_cost=avoided_cost,
             ))
 
     macro_net_return = float(sum(r.total_reward for r in regime_records))

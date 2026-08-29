@@ -1,4 +1,3 @@
-from FineFT.RL.DiHFT.low_level.action_selection_seam import select_greedy_action
 # Code reference: https://github.com/Lizhi-sjtu/DRL-code-pytorch/tree/main/3.Rainbow_DQN
 
 import copy
@@ -165,7 +164,6 @@ from RL.util.update import (
     disable_gradients,
     update_params,
     soft_copy_params,
-    calculate_partial_loss,
     recalculate_q_demonstration,
     evaluate_quantile_at_action,
 )
@@ -458,22 +456,90 @@ parser.add_argument(
     help="disable full df warmup before sample loop",
 )
 parser.add_argument(
-    "--enable_action_persistence",
-    action="store_true",
-    help="enable cost-aware action persistence hysteresis",
+    "--neighbor_size",
+    type=int,
+    default=1,
+    help="fixed learner neighbor count from FineFT Algorithm 2",
 )
-parser.add_argument(
-    "--action_persistence_cost_multiplier",
-    type=float,
-    default=1.0,
-    help="cost multiplier for action persistence hysteresis",
-)
-parser.add_argument(
-    "--action_persistence_safety_margin",
-    type=float,
-    default=0.0,
-    help="safety margin for action persistence hysteresis",
-)
+
+
+def calculate_paper_supervisor_kl_loss(
+    learner_action_values: torch.Tensor,
+    expert_action_values: torch.Tensor,
+    learner_weights: torch.Tensor,
+) -> torch.Tensor:
+    """Return the batch mean of the paper's weighted per-learner KL loss."""
+
+    learner_log_probabilities = F.log_softmax(learner_action_values, dim=-1)
+    expert_log_probabilities = F.log_softmax(expert_action_values, dim=-1)
+    learner_probabilities = learner_log_probabilities.exp()
+    per_learner_kl = (
+        learner_probabilities
+        * (learner_log_probabilities - expert_log_probabilities.unsqueeze(1))
+    ).sum(dim=-1)
+    return (per_learner_kl * learner_weights).sum(dim=1).mean()
+
+
+def construct_paper_weight_matrix(
+    etd_losses: torch.Tensor,
+    neighbor_size: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Construct Algorithm 2 weights with a fixed index neighborhood."""
+
+    if etd_losses.ndim != 3 or etd_losses.shape[1] != etd_losses.shape[2]:
+        raise ValueError("etd_losses must have shape (batch_size, N, N)")
+    if neighbor_size < 0:
+        raise ValueError("neighbor_size must be non-negative")
+
+    batch_size, ensemble_size, _ = etd_losses.shape
+    device = etd_losses.device
+    chosen_indices = torch.diagonal(etd_losses, dim1=1, dim2=2).argmin(dim=1)
+    minimum_indices = (chosen_indices - neighbor_size).clamp(min=0)
+    maximum_indices = (chosen_indices + neighbor_size).clamp(
+        max=ensemble_size - 1
+    )
+    spans = maximum_indices - minimum_indices
+    safe_spans = spans.clamp_min(1)
+
+    indices = torch.arange(ensemble_size, device=device).expand(batch_size, -1)
+    in_range = (indices >= minimum_indices.unsqueeze(1)) & (
+        indices <= maximum_indices.unsqueeze(1)
+    )
+    diagonal_weights = (
+        1
+        - (indices - chosen_indices.unsqueeze(1)).abs().float()
+        / safe_spans.unsqueeze(1)
+    ) * in_range
+
+    index_distances = (
+        indices.unsqueeze(2) - indices.unsqueeze(1)
+    ).abs().float()
+    off_diagonal_decay = (
+        1 - index_distances / safe_spans.view(batch_size, 1, 1)
+    ).clamp_min(0)
+    weight_matrix = torch.minimum(
+        diagonal_weights.unsqueeze(2),
+        diagonal_weights.unsqueeze(1),
+    ) * off_diagonal_decay
+
+    return diagonal_weights.detach(), weight_matrix.detach()
+
+
+def calculate_paper_partial_loss(
+    etd_losses: torch.Tensor,
+    neighbor_size: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Apply Algorithm 2 weights while preserving the baseline TD reduction."""
+
+    learner_weights, weight_matrix = construct_paper_weight_matrix(
+        etd_losses,
+        neighbor_size,
+    )
+    batch_loss = (etd_losses * weight_matrix).sum(dim=1).mean(
+        dim=1,
+        keepdim=True,
+    )
+    return learner_weights, batch_loss.mean()
 
 
 def seed_torch(seed):
@@ -589,10 +655,6 @@ class Weighted_Contexts_DQN:
             self.initial_leverage,
         )
         self.allow_reverse_position = getattr(args, "allow_reverse_position", False)
-        # cost-aware action persistence (hysteresis); old configs default to disabled
-        self.enable_action_persistence = getattr(args, "enable_action_persistence", False)
-        self.action_persistence_cost_multiplier = getattr(args, "action_persistence_cost_multiplier", 1.0)
-        self.action_persistence_safety_margin = getattr(args, "action_persistence_safety_margin", 0.0)
 
         # network
         self.time_info_dim = args.time_info_dim
@@ -624,6 +686,9 @@ class Weighted_Contexts_DQN:
         # pretrain
         self.pretrain_epoch = args.pretrain_epoch
         self.full_df_warmup = args.full_df_warmup
+        self.neighbor_size = args.neighbor_size
+        if self.neighbor_size < 0:
+            raise ValueError("neighbor_size must be non-negative")
         self._log_internal_parameters("init_end")
 
     def _format_internal_parameter_value(self, value):
@@ -716,10 +781,9 @@ class Weighted_Contexts_DQN:
         assert td_errors.shape == (self.batch_size, self.N, self.N)
         if self.if_use_hubber_loss:
             td_errors = calculate_huber_loss(td_errors)
-        batch_weights, partial_td_error_loss = calculate_partial_loss(
-            td_errors=td_errors,
-            outer_bond=self.outer_bond,
-            reach_out_index=self.reachout_index,
+        batch_weights, partial_td_error_loss = calculate_paper_partial_loss(
+            td_errors,
+            self.neighbor_size,
         )
         predict_action_distrbution = self.eval_net(
             state=states,
@@ -735,14 +799,14 @@ class Weighted_Contexts_DQN:
         )
         assert batch_weights.shape == (self.batch_size, self.N)
 
-        weighted_action_distribution = torch.einsum(
-            "ijk,ij->ik", predict_action_distrbution, batch_weights
+        q_value = recalculate_q_demonstration(
+            info["q_value"],
+            info["avaliable_action"],
         )
-        q_value = recalculate_q_demonstration(info["q_value"], info["avaliable_action"])
-        KL_div = F.kl_div(
-            (weighted_action_distribution.softmax(dim=-1) + 1e-8).log(),
-            (q_value.softmax(dim=-1) + 1e-8),
-            reduction="batchmean",
+        KL_div = calculate_paper_supervisor_kl_loss(
+            predict_action_distrbution,
+            q_value,
+            batch_weights,
         )
         loss = partial_td_error_loss + KL_div * self.ada
         update_params(
@@ -824,7 +888,11 @@ class Weighted_Contexts_DQN:
         td_loss = td_loss.sum(dim=1)
         td_loss = td_loss.mean()
 
-        batch_weights = torch.ones(self.batch_size, self.N).to(self.device)
+        batch_weights = torch.ones(
+            self.batch_size,
+            self.N,
+            device=self.device,
+        )
         predict_action_distrbution = self.eval_net(
             state=states,
             time=time_input,
@@ -839,14 +907,14 @@ class Weighted_Contexts_DQN:
         )
         assert batch_weights.shape == (self.batch_size, self.N)
 
-        weighted_action_distribution = torch.einsum(
-            "ijk,ij->ik", predict_action_distrbution, batch_weights
+        q_value = recalculate_q_demonstration(
+            info["q_value"],
+            info["avaliable_action"],
         )
-        q_value = recalculate_q_demonstration(info["q_value"], info["avaliable_action"])
-        KL_div = F.kl_div(
-            (weighted_action_distribution.softmax(dim=-1) + 1e-8).log(),
-            (q_value.softmax(dim=-1) + 1e-8),
-            reduction="batchmean",
+        KL_div = calculate_paper_supervisor_kl_loss(
+            predict_action_distrbution,
+            q_value,
+            batch_weights,
         )
         loss = td_loss + KL_div * self.ada
         update_params(
@@ -879,7 +947,6 @@ class Weighted_Contexts_DQN:
                     "current_sa_quantiles": current_sa_quantiles,
                     "target_sa_quantiles": target_sa_quantiles,
                     "predict_action_distrbution": predict_action_distrbution,
-                    "weighted_action_distribution": weighted_action_distribution,
                     "q_value": q_value,
                     "batch_weights": batch_weights,
                 },
@@ -922,22 +989,10 @@ class Weighted_Contexts_DQN:
                 trading_info=trading_info,
             )
             action_value_chosen_index = actions_value[:, context_index, :]
-            current_action = int(info.get("previous_action", 0))
-            available_action = info.get("avaliable_action")
-            estimated_costs = info.get("estimated_costs")
-            action, diag = select_greedy_action(
-                action_value_chosen_index,
-                current_action=current_action,
-                available_actions=available_action,
-                estimated_costs=estimated_costs,
-                cost_multiplier=getattr(self, "action_persistence_cost_multiplier", 1.0),
-                safety_margin=getattr(self, "action_persistence_safety_margin", 0.0),
-                enabled=getattr(self, "enable_action_persistence", False),
-            )
-            self.last_greedy_diag = diag
+            action = torch.max(action_value_chosen_index, 1)[1].data.cpu().numpy()
+            action = action[0]
         else:
             action = np.random.choice(info["avaiable_action_list"])
-            self.last_greedy_diag = {"decision_reason": "random_exploration"}
 
         return action
 

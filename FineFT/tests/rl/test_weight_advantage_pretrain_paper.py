@@ -5,7 +5,7 @@ import torch
 
 
 def test_paper_supervisor_kl_weights_each_learner_before_reduction():
-    from RL.DiHFT.low_level.weight_advantage_pretrain_paper import (
+    from RL.DiHFT.low_level.weight_advantage_pretrain import (
         calculate_paper_supervisor_kl_loss,
     )
 
@@ -33,7 +33,7 @@ def test_paper_supervisor_kl_weights_each_learner_before_reduction():
 
 
 def test_paper_weight_matrix_uses_fixed_neighbors_and_paper_decay():
-    from RL.DiHFT.low_level.weight_advantage_pretrain_paper import (
+    from RL.DiHFT.low_level.weight_advantage_pretrain import (
         construct_paper_weight_matrix,
     )
 
@@ -59,7 +59,7 @@ def test_paper_weight_matrix_uses_fixed_neighbors_and_paper_decay():
 
 
 def test_paper_partial_loss_uses_the_paper_weight_matrix():
-    from RL.DiHFT.low_level.weight_advantage_pretrain_paper import (
+    from RL.DiHFT.low_level.weight_advantage_pretrain import (
         calculate_paper_partial_loss,
     )
 
@@ -81,7 +81,7 @@ def test_paper_partial_loss_uses_the_paper_weight_matrix():
 
 
 def test_paper_training_parser_exposes_fixed_neighbor_size():
-    from RL.DiHFT.low_level import weight_advantage_pretrain_paper as paper
+    from RL.DiHFT.low_level import weight_advantage_pretrain as paper
 
     args = paper.parser.parse_args([])
 

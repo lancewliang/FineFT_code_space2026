@@ -33,10 +33,6 @@ def test_evaluate_regimes_from_detail_df_conserves_16_bins():
             "commission_fee_step": np.full(n_rows, 0.0004),
             "slippage_step": np.zeros(n_rows),
             "margin_balance": 1e5 + np.cumsum(np.random.default_rng(42).normal(1.0, 10.0, n_rows)),
-            "decision_reason": ["q_argmax"] * n_rows,
-            "candidate_action": [1] * n_rows,
-            "current_action": [0] * n_rows,
-            "estimated_cost": [0.0004] * n_rows,
         }
     )
 

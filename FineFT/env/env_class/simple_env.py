@@ -159,43 +159,6 @@ class Simple_Env(gym.Env):
             position, leverage, self.leverage_choices, self.position_list
         )
 
-
-    def estimate_action_transaction_costs(self) -> np.ndarray:
-        num_actions = self.action_space.n
-        costs = np.zeros(num_actions, dtype=np.float64)
-        current_act = self.env_map_position_leverage_to_action(self.position, self.leverage)
-        for a in range(num_actions):
-            if a == current_act:
-                costs[a] = 0.0
-                continue
-            target_pos, target_lev = self.env_map_action_to_position_leverage(a)
-            res = change_of_wallet(
-                markprice=self.current_markprice,
-                ask_prices=self.ask_prices,
-                ask_qtys=self.ask_qtys,
-                bid_prices=self.bid_prices,
-                bid_qtys=self.bid_qtys,
-                long_estimated_rate=self.long_estimated_rate,
-                short_estimated_rate=self.short_estimated_rate,
-                commission_rate=self.commission_rate,
-                previous_leverage=self.leverage,
-                previous_position=self.position,
-                previous_initial_margine=self.initial_margin,
-                previous_unrealized_pnL=self.unrealized_pnl,
-                previous_wallet_balance=self.wallet_balance,
-                current_leverage=target_lev,
-                current_position=target_pos,
-                silent=True,
-                buy_fee_rate=self.buy_fee_rate,
-                sell_fee_rate=self.sell_fee_rate,
-                allow_reverse_position=self.allow_reverse_position,
-                position_list=self.position_list,
-            )
-            fee = max(0.0, float(res.commission_fee_step))
-            slp = max(0.0, float(res.slippage_step))
-            costs[a] = fee + slp
-        return costs
-
     def reset(self):
         self.terminal = False
         self.day = 0

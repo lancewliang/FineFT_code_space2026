@@ -1,4 +1,3 @@
-from FineFT.RL.DiHFT.low_level.action_selection_seam import select_greedy_action
 # the frequency of the high level agent is the same as the low level agent
 # based on a sequency of high levelimport pandas as pd
 import numpy as np
@@ -232,23 +231,6 @@ parser.add_argument(
     default=0,
     help="the transcation cost of not holding the same action as before",
 )
-parser.add_argument(
-    "--enable_action_persistence",
-    action="store_true",
-    help="enable cost-aware action persistence hysteresis",
-)
-parser.add_argument(
-    "--action_persistence_cost_multiplier",
-    type=float,
-    default=1.0,
-    help="cost multiplier for action persistence hysteresis",
-)
-parser.add_argument(
-    "--action_persistence_safety_margin",
-    type=float,
-    default=0.0,
-    help="safety margin for action persistence hysteresis",
-)
 
 
 def seed_torch(seed):
@@ -300,10 +282,6 @@ class vae_risk_aware_routing:
         self.base_path = args.base_path
         self.dataset_name = args.dataset_name
         self.allow_reverse_position = getattr(args, "allow_reverse_position", False)
-        # cost-aware action persistence (hysteresis); old configs default to disabled
-        self.enable_action_persistence = getattr(args, "enable_action_persistence", False)
-        self.action_persistence_cost_multiplier = getattr(args, "action_persistence_cost_multiplier", 1.0)
-        self.action_persistence_safety_margin = getattr(args, "action_persistence_safety_margin", 0.0)
         self.valid_data_path = os.path.join(self.base_path, self.dataset_name, "valid")
         self.test_data_path = os.path.join(
             self.base_path, self.dataset_name, "valid.feather"
@@ -532,19 +510,8 @@ class vae_risk_aware_routing:
             trading_info=trading_info,
         )
         action_value_chosen_index = actions_value[:, self.selected_agent_index, :]
-        current_action = int(info.get("previous_action", 0))
-        avail_act = info.get("avaliable_action")
-        est_costs = info.get("estimated_costs")
-        action, diag = select_greedy_action(
-            action_value_chosen_index,
-            current_action=current_action,
-            available_actions=avail_act,
-            estimated_costs=est_costs,
-            cost_multiplier=getattr(self, "action_persistence_cost_multiplier", 1.0),
-            safety_margin=getattr(self, "action_persistence_safety_margin", 0.0),
-            enabled=getattr(self, "enable_action_persistence", False),
-        )
-        self.last_greedy_diag = diag
+        action = torch.max(action_value_chosen_index, 1)[1].data.cpu().numpy()
+        action = action[0]
 
         return action
 

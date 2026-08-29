@@ -1,4 +1,3 @@
-from FineFT.RL.DiHFT.low_level.action_selection_seam import select_greedy_action
 # Code reference: https://github.com/Lizhi-sjtu/DRL-code-pytorch/tree/main/3.Rainbow_DQN
 
 import copy
@@ -187,23 +186,6 @@ parser.add_argument(
     "--allow_reverse_position",
     action="store_true",
     help="allow direct position reversal from long to short or vice versa",
-)
-parser.add_argument(
-    "--enable_action_persistence",
-    action="store_true",
-    help="enable cost-aware action persistence hysteresis",
-)
-parser.add_argument(
-    "--action_persistence_cost_multiplier",
-    type=float,
-    default=1.0,
-    help="cost multiplier for action persistence hysteresis",
-)
-parser.add_argument(
-    "--action_persistence_safety_margin",
-    type=float,
-    default=0.0,
-    help="safety margin for action persistence hysteresis",
 )
 parser.add_argument(
     "--label_type",
@@ -460,7 +442,6 @@ def build_trading_detail_row(
     trade_count_step,
     cumulative_action_change_count,
     cumulative_trade_count,
-    greedy_diag=None,
 ):
     state_after = _personal_state_from_env(test_env)
     market_fields = _market_fields(test_df, timestep)
@@ -500,13 +481,6 @@ def build_trading_detail_row(
         "notional_asset_value": mark_price * position_after,
         "cash_balance": wallet_balance,
         "total_value": margin_balance,
-        "current_action": greedy_diag.get("current_action", action) if greedy_diag else action,
-        "candidate_action": greedy_diag.get("candidate_action", action) if greedy_diag else action,
-        "final_action": action,
-        "q_advantage": greedy_diag.get("q_advantage", 0.0) if greedy_diag else 0.0,
-        "estimated_cost": greedy_diag.get("estimated_cost", 0.0) if greedy_diag else 0.0,
-        "threshold": greedy_diag.get("threshold", 0.0) if greedy_diag else 0.0,
-        "decision_reason": greedy_diag.get("decision_reason", "q_argmax") if greedy_diag else "q_argmax",
     }
     return row
 
@@ -569,9 +543,6 @@ class weighted_trader:
         ).item()
         self.max_holding_number = args.max_holding_number
         self.order_book_depth = args.order_book_depth
-        self.enable_action_persistence = getattr(args, "enable_action_persistence", False)
-        self.action_persistence_cost_multiplier = getattr(args, "action_persistence_cost_multiplier", 1.0)
-        self.action_persistence_safety_margin = getattr(args, "action_persistence_safety_margin", 0.0)
         self.position_choices = args.position_choices
         self.single_side_action_num = int((self.position_choices - 1) / 2)
         self.position_list = (
@@ -668,19 +639,8 @@ class weighted_trader:
                 avaliable_action=avaliable_action,
                 trading_info=trading_info,
             )
-            current_action = int(info.get("previous_action", 0))
-            avail_act = info.get("avaliable_action")
-            est_costs = info.get("estimated_costs")
-            action, diag = select_greedy_action(
-                action_value_chosen_index,
-                current_action=current_action,
-                available_actions=avail_act,
-                estimated_costs=est_costs,
-                cost_multiplier=getattr(self, "action_persistence_cost_multiplier", 1.0),
-                safety_margin=getattr(self, "action_persistence_safety_margin", 0.0),
-                enabled=getattr(self, "enable_action_persistence", False),
-            )
-            self.last_greedy_diag = diag
+            action = torch.max(action_value_chosen_index, 1)[1].data.cpu().numpy()
+        action = action[0]
 
         return action
 
@@ -828,7 +788,6 @@ class weighted_trader:
                                         trade_count_step=trade_count_step,
                                         cumulative_action_change_count=cumulative_action_change_count,
                                         cumulative_trade_count=cumulative_trade_count,
-                                        greedy_diag=getattr(self, "last_greedy_diag", None),
                                     )
                                 )
                             action_list.append(a)
