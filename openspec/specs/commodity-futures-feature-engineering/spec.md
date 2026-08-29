@@ -291,7 +291,46 @@
 
 ---
 
-### 3.11 FineFT RL 交易过程状态特征 (Trading Process Features)
+### 3.11 增强状态特征与多尺度趋势/动量相对水平特征 (Enhanced State & Relative Trend Features)
+
+由 `time_operator_util.py:process_enhanced_state_features` 派生，包含微观订单流压力、因果无量纲市场状态锚点及尺度无关的趋势相对水平特征：
+
+1. `log_price_slope_48` / `log_price_slope_96`: 48/96 根 Bar 对数价格 OLS 线性斜率。
+2. `trend_to_noise_48` / `trend_to_noise_96`: 对数价格斜率相对对数收益率波动率的比值。
+3. `signed_efficiency_48`: 窗口净价格位移与累积绝对位移之比（Kaufman 方向效率，$[-1, 1]$）。
+4. `trend_r2_48`: 线性趋势拟合优度 $R^2$（$[0, 1]$）。
+5. `log_return_vol_quantile_192`: 48 周期对数波动率在过去 192 步历史中的经验分位数（$[0, 1]$）。
+6. `log_price_slope_quantile_192`: 48 周期对数价格斜率在过去 192 步历史中的经验分位数（$[0, 1]$）。
+7. `ema_divergence_20_60` / `ema_divergence_60_120` / `ema_divergence_20_120`: 多跨度 EMA 相对扩散比率。
+   $$\text{ema\_divergence}_{i, j} = \frac{\text{EMA}_i - \text{EMA}_j}{\text{EMA}_j}$$
+8. `macd_histogram_norm`: 归一化无量纲 MACD 柱状图动能特征。
+   $$\text{DIF}_{norm} = \frac{\text{EMA}_{12}(\text{Close}) - \text{EMA}_{26}(\text{Close})}{\text{Close}}$$
+   $$\text{DEA}_{norm} = \text{EMA}_9(\text{DIF}_{norm})$$
+   $$\text{macd\_histogram\_norm} = \text{DIF}_{norm} - \text{DEA}_{norm}$$
+9. `price_velocity_10m`: 快慢 EMA（10/20）相对价差比率。
+10. `price_acceleration_10m_norm`: 价格速度一阶差分经滚动波动率标准化后的加速度。
+11. `ema_slope_96` / `ema_slope_192`: 长周期 EMA 的时间斜率。
+12. `plus_di_14` / `minus_di_14` / `adx_14`: 14 周期趋向指标系列。
+13. `vwap_slope_96` / `vwap_slope_192`: VWAP 时间斜率。
+14. `price_to_vwap_zscore_48` / `price_to_vwap_zscore_96`: 价格相对 VWAP 偏离度的 48/96 周期滚动 Z-score。
+    $$\text{dev}_t = \frac{\text{Close}_t - \text{VWAP}_t}{\text{Close}_t}, \quad \text{price\_to\_vwap\_zscore}_w = \frac{\text{dev}_t - \text{Mean}(\text{dev}, w)}{\text{Std}(\text{dev}, w) + \epsilon}$$
+15. `rsi_14_norm`: 14 周期 Wilder RSI 归一化中心化振荡器（$[-1, 1]$）。
+    $$\text{rsi\_14\_norm} = \frac{\text{RSI}_{14} - 50}{50}$$
+16. `stoch_k_14_norm` / `stoch_d_14_norm`: 14 周期随机振荡器 K/D 归一化指标（$[-1, 1]$）。
+    $$\text{stoch\_k\_norm} = \frac{K_{14} - 50}{50}, \quad \text{stoch\_d\_norm} = \frac{D_{14} - 50}{50}$$
+17. `cci_14_norm`: 14 周期顺势指标归一化截断值（$[-3, 3]$）。
+    $$\text{CCI}_{14} = \frac{\text{TP} - \text{SMA}_{14}(\text{TP})}{0.015 \cdot \text{MeanDeviation}_{14}}, \quad \text{cci\_14\_norm} = \text{clip}\left(\frac{\text{CCI}_{14}}{100}, -3, 3\right)$$
+18. `realized_vol_zscore_192`: 12 周期已实现波动率相对 192 步历史的滚动 Z-score。
+19. `realized_vol_term_ratio_12_48`: 12 周期对 48 周期已实现波动率期限结构比率（度量短中期波动率扩张/收缩）。
+    $$\text{realized\_vol\_term\_ratio}_{12, 48} = \frac{\text{RV}_{12}}{\text{RV}_{48} + \epsilon}$$
+20. `imbalance_1_zscore_48` / `imbalance_5_zscore_48`: 1 档与 5 档盘口不平衡度的 48 周期滚动 Z-score。
+21. `imbalance_1_persistence_20m`: 1 档盘口不平衡度的 20 步指数平滑持久性特征。
+22. `ofi_norm_zscore_48` / `ofi_persistence_20m`: 归一化订单流不平衡量 (OFI) 的 48 周期 Z-score 与 20 步平滑持久性。
+23. `cvd_slope_96` / `cvd_slope_192`: 累积成交量差 (CVD) 相对斜率。
+
+---
+
+### 3.12 FineFT RL 交易过程状态特征 (Trading Process Features)
 
 作为强化学习环境 `reset()` 与 `step()` 中 `info["trading_info"]` 返回给 Q 网络的 4 维连续输入：
 

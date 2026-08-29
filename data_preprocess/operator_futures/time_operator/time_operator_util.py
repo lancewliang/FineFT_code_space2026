@@ -29,6 +29,7 @@ def _rolling_log_price_anchors(
         "signed_efficiency_48": np.zeros(row_count, dtype=float),
         "trend_r2_48": np.zeros(row_count, dtype=float),
         "log_return_vol_quantile_192": np.zeros(row_count, dtype=float),
+        "log_price_slope_quantile_192": np.zeros(row_count, dtype=float),
     }
     log_returns = np.diff(log_prices)
     volatility_by_window: dict[int, np.ndarray] = {}
@@ -93,6 +94,19 @@ def _rolling_log_price_anchors(
             average_rank = less_count + (equal_count + 1.0) / 2.0
             price_index = 47 + end_index
             quantiles[price_index] = average_rank / rank_window
+
+    slope_48 = anchors["log_price_slope_48"]
+    if len(slope_48) >= 47 + rank_window:
+        slope_48_mature = slope_48[47:]
+        slope_quantiles = anchors["log_price_slope_quantile_192"]
+        for end_index in range(rank_window - 1, len(slope_48_mature)):
+            history = slope_48_mature[end_index - rank_window + 1 : end_index + 1]
+            current = history[-1]
+            less_count = float(np.count_nonzero(history < current))
+            equal_count = float(np.count_nonzero(history == current))
+            average_rank = less_count + (equal_count + 1.0) / 2.0
+            price_index = 47 + end_index
+            slope_quantiles[price_index] = average_rank / rank_window
 
     return anchors
 
@@ -455,6 +469,36 @@ def process_enhanced_state_features(df: pl.DataFrame) -> pl.DataFrame:
         zscore = pl.when(spread_std > 1e-8).then((spread - spread_mean) / spread_std).otherwise(0.0)
         exprs.append(zscore.fill_null(0.0).fill_nan(0.0).alias("spread_widening_zscore_48"))
 
+    # Microstructure: Imbalance & OFI Z-Score & Persistence
+    if "imbalance_1" in frame.columns:
+        imb1 = pl.col("imbalance_1")
+        imb1_mean = imb1.rolling_mean(48)
+        imb1_std = imb1.rolling_std(48).fill_null(0.0)
+        imb1_z = pl.when(imb1_std > 1e-8).then((imb1 - imb1_mean) / imb1_std).otherwise(0.0)
+        exprs.append(imb1_z.fill_null(0.0).fill_nan(0.0).alias("imbalance_1_zscore_48"))
+        exprs.append(imb1.ewm_mean(span=20).fill_null(0.0).alias("imbalance_1_persistence_20m"))
+
+    if "imbalance_5" in frame.columns:
+        imb5 = pl.col("imbalance_5")
+        imb5_mean = imb5.rolling_mean(48)
+        imb5_std = imb5.rolling_std(48).fill_null(0.0)
+        imb5_z = pl.when(imb5_std > 1e-8).then((imb5 - imb5_mean) / imb5_std).otherwise(0.0)
+        exprs.append(imb5_z.fill_null(0.0).fill_nan(0.0).alias("imbalance_5_zscore_48"))
+
+    ofi_col = None
+    if "level5_ofi_weighted_norm" in frame.columns:
+        ofi_col = pl.col("level5_ofi_weighted_norm")
+    elif "ofi_5m_norm" in frame.columns:
+        ofi_col = pl.col("ofi_5m_norm")
+    elif "ofi_norm" in frame.columns:
+        ofi_col = pl.col("ofi_norm")
+    if ofi_col is not None:
+        ofi_mean = ofi_col.rolling_mean(48)
+        ofi_std = ofi_col.rolling_std(48).fill_null(0.0)
+        ofi_z = pl.when(ofi_std > 1e-8).then((ofi_col - ofi_mean) / ofi_std).otherwise(0.0)
+        exprs.append(ofi_z.fill_null(0.0).fill_nan(0.0).alias("ofi_norm_zscore_48"))
+        exprs.append(ofi_col.ewm_mean(span=20).fill_null(0.0).alias("ofi_persistence_20m"))
+
     # Ticket 04: Trend Acceleration & Volatility Regime
     if "close" in frame.columns:
         close_values = frame.get_column("close").cast(pl.Float64).to_numpy()
@@ -486,6 +530,40 @@ def process_enhanced_state_features(df: pl.DataFrame) -> pl.DataFrame:
         acc10 = pl.when(close_std10 > 1e-8).then((v10 - v10.shift(1)) / close_std10).otherwise(0.0)
         exprs.append(v10.fill_null(0.0).alias("price_velocity_10m"))
         exprs.append(acc10.fill_null(0.0).fill_nan(0.0).alias("price_acceleration_10m_norm"))
+
+        # Multi-span EMA divergence ratios (20 / 60 / 120)
+        ema20 = close.ewm_mean(span=20)
+        ema60 = close.ewm_mean(span=60)
+        ema120 = close.ewm_mean(span=120)
+        div_20_60 = pl.when(ema60.abs() > 1e-8).then((ema20 - ema60) / ema60).otherwise(0.0)
+        div_60_120 = pl.when(ema120.abs() > 1e-8).then((ema60 - ema120) / ema120).otherwise(0.0)
+        div_20_120 = pl.when(ema120.abs() > 1e-8).then((ema20 - ema120) / ema120).otherwise(0.0)
+        exprs.append(div_20_60.fill_null(0.0).fill_nan(0.0).alias("ema_divergence_20_60"))
+        exprs.append(div_60_120.fill_null(0.0).fill_nan(0.0).alias("ema_divergence_60_120"))
+        exprs.append(div_20_120.fill_null(0.0).fill_nan(0.0).alias("ema_divergence_20_120"))
+
+        # MACD Histogram normalized (12, 26, 9)
+        ema12 = close.ewm_mean(span=12)
+        ema26 = close.ewm_mean(span=26)
+        macd_dif = pl.when(close.abs() > 1e-8).then((ema12 - ema26) / close).otherwise(0.0).fill_null(0.0)
+        macd_dea = macd_dif.ewm_mean(span=9).fill_null(0.0)
+        macd_hist = macd_dif - macd_dea
+        exprs.append(macd_hist.fill_null(0.0).fill_nan(0.0).alias("macd_histogram_norm"))
+
+        # Normalized RSI (14)
+        ret_diff = close.diff()
+        up_gain = pl.when(ret_diff > 0.0).then(ret_diff).otherwise(0.0)
+        down_loss = pl.when(ret_diff < 0.0).then(-ret_diff).otherwise(0.0)
+        wilder_alpha_14 = 1.0 / 14.0
+        avg_gain_14 = up_gain.ewm_mean(alpha=wilder_alpha_14, adjust=False, min_samples=14)
+        avg_loss_14 = down_loss.ewm_mean(alpha=wilder_alpha_14, adjust=False, min_samples=14)
+        rsi_14 = (
+            pl.when((avg_gain_14 + avg_loss_14) > 1e-8)
+            .then(100.0 * avg_gain_14 / (avg_gain_14 + avg_loss_14))
+            .otherwise(50.0)
+        )
+        rsi_14_norm = (rsi_14 - 50.0) / 50.0
+        exprs.append(rsi_14_norm.fill_null(0.0).fill_nan(0.0).alias("rsi_14_norm"))
 
         ema_base = close.ewm_mean(span=20)
         for window in (96, 192):
@@ -562,6 +640,30 @@ def process_enhanced_state_features(df: pl.DataFrame) -> pl.DataFrame:
             .alias("adx_14")
         )
 
+        # Short-cycle Oscillators: Stochastic K/D (14, 3) & CCI (14)
+        low_14 = low.rolling_min(14)
+        high_14 = high.rolling_max(14)
+        rsv_14 = (
+            pl.when((high_14 - low_14) > 1e-8)
+            .then(100.0 * (close - low_14) / (high_14 - low_14))
+            .otherwise(50.0)
+        )
+        stoch_k_14 = rsv_14.ewm_mean(alpha=1.0 / 3.0, adjust=False, min_samples=14).fill_null(50.0)
+        stoch_d_14 = stoch_k_14.ewm_mean(alpha=1.0 / 3.0, adjust=False, min_samples=14).fill_null(50.0)
+        exprs.append(((stoch_k_14 - 50.0) / 50.0).fill_null(0.0).fill_nan(0.0).alias("stoch_k_14_norm"))
+        exprs.append(((stoch_d_14 - 50.0) / 50.0).fill_null(0.0).fill_nan(0.0).alias("stoch_d_14_norm"))
+
+        tp = (high + low + close) / 3.0
+        tp_mean_14 = tp.rolling_mean(14)
+        tp_dev_14 = (tp - tp_mean_14).abs().rolling_mean(14)
+        cci_14 = (
+            pl.when(tp_dev_14 > 1e-8)
+            .then((tp - tp_mean_14) / (0.015 * tp_dev_14))
+            .otherwise(0.0)
+        )
+        cci_14_norm = (cci_14 / 100.0).clip(-3.0, 3.0)
+        exprs.append(cci_14_norm.fill_null(0.0).fill_nan(0.0).alias("cci_14_norm"))
+
     vwap = None
     if "vwap" in frame.columns:
         vwap = pl.col("vwap")
@@ -582,6 +684,17 @@ def process_enhanced_state_features(df: pl.DataFrame) -> pl.DataFrame:
             exprs.append(
                 vwap_slope.fill_null(0.0).fill_nan(0.0).alias(f"vwap_slope_{window}")
             )
+
+        if "close" in frame.columns:
+            close = pl.col("close")
+            vwap_dev = pl.when(close.abs() > 1e-8).then((close - vwap) / close).otherwise(0.0)
+            for window in (48, 96):
+                dev_mean = vwap_dev.rolling_mean(window)
+                dev_std = vwap_dev.rolling_std(window).fill_null(0.0)
+                dev_z = pl.when(dev_std > 1e-8).then((vwap_dev - dev_mean) / dev_std).otherwise(0.0)
+                exprs.append(
+                    dev_z.fill_null(0.0).fill_nan(0.0).alias(f"price_to_vwap_zscore_{window}")
+                )
 
     if {"volume", "ntrade_up_estimated", "ntrade_down_estimated"}.issubset(frame.columns):
         up = pl.col("ntrade_up_estimated")
@@ -620,6 +733,35 @@ def process_enhanced_state_features(df: pl.DataFrame) -> pl.DataFrame:
         pv_std = pv_vol.rolling_std(192).fill_null(0.0)
         pv_z = pl.when(pv_std > 1e-8).then((pv_vol - pv_mean) / pv_std).otherwise(0.0)
         exprs.append(pv_z.fill_null(0.0).fill_nan(0.0).alias("parkinson_vol_zscore_192"))
+
+    # Realized Volatility Regime & Term Structure
+    rv12 = None
+    if "realized_volatility_12" in frame.columns:
+        rv12 = pl.col("realized_volatility_12")
+    elif "realized_volatility" in frame.columns:
+        rv12 = pl.col("realized_volatility")
+    elif "close" in frame.columns:
+        close = pl.col("close")
+        log_ret = (close / close.shift(1)).log().fill_null(0.0)
+        rv12 = (log_ret ** 2).rolling_sum(12).sqrt().fill_null(0.0)
+
+    rv48 = None
+    if "realized_volatility_48" in frame.columns:
+        rv48 = pl.col("realized_volatility_48")
+    elif "close" in frame.columns:
+        close = pl.col("close")
+        log_ret = (close / close.shift(1)).log().fill_null(0.0)
+        rv48 = (log_ret ** 2).rolling_sum(48).sqrt().fill_null(0.0)
+
+    if rv12 is not None:
+        rv12_mean = rv12.rolling_mean(192)
+        rv12_std = rv12.rolling_std(192).fill_null(0.0)
+        rv12_z = pl.when(rv12_std > 1e-8).then((rv12 - rv12_mean) / rv12_std).otherwise(0.0)
+        exprs.append(rv12_z.fill_null(0.0).fill_nan(0.0).alias("realized_vol_zscore_192"))
+
+    if rv12 is not None and rv48 is not None:
+        term_ratio = pl.when(rv48 > 1e-8).then(rv12 / rv48).otherwise(1.0)
+        exprs.append(term_ratio.fill_null(1.0).fill_nan(1.0).alias("realized_vol_term_ratio_12_48"))
 
     # Ticket 05: Volume / OI Regime & Cross-Month Dynamics
     if "close" in frame.columns and "open_interest" in frame.columns and "volume" in frame.columns:

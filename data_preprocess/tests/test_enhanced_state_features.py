@@ -324,6 +324,10 @@ def test_enhanced_time_operator_features():
                 "relative_bid_ask_spread": 0.001 + (i % 3) * 0.0002,
                 "garman_klass_volatility_12": 0.01 + (i % 5) * 0.001,
                 "parkinson_volatility_12": 0.01 + (i % 4) * 0.001,
+                "realized_volatility_12": 0.01 + (i % 3) * 0.001,
+                "imbalance_1": 0.1 * ((i % 5) - 2),
+                "imbalance_5": 0.08 * ((i % 5) - 2),
+                "level5_ofi_weighted_norm": 0.05 * ((i % 7) - 3),
                 "cm_main_sub_log_price_ratio": 0.015 + i * 0.0005,
                 "cm_main_sub_open_interest_share_sub": 0.25 + i * 0.001,
             }
@@ -335,16 +339,33 @@ def test_enhanced_time_operator_features():
         "trade_direction_net_ratio_5m",
         "trade_direction_persistence_20m",
         "spread_widening_zscore_48",
+        "imbalance_1_zscore_48",
+        "imbalance_1_persistence_20m",
+        "imbalance_5_zscore_48",
+        "ofi_norm_zscore_48",
+        "ofi_persistence_20m",
         "price_velocity_10m",
         "price_acceleration_10m_norm",
+        "ema_divergence_20_60",
+        "ema_divergence_60_120",
+        "ema_divergence_20_120",
+        "macd_histogram_norm",
+        "rsi_14_norm",
+        "stoch_k_14_norm",
+        "stoch_d_14_norm",
+        "cci_14_norm",
         "garman_klass_vol_quantile_192",
         "parkinson_vol_zscore_192",
+        "realized_vol_zscore_192",
+        "realized_vol_term_ratio_12_48",
         "price_oi_vol_interaction_10m",
         "oi_change_rate_norm_10m",
         "cm_main_sub_log_price_spread_velocity_10m",
         "cm_open_interest_shift_speed_10m",
         "vwap_slope_96",
         "vwap_slope_192",
+        "price_to_vwap_zscore_48",
+        "price_to_vwap_zscore_96",
         "ema_slope_96",
         "ema_slope_192",
         "plus_di_14",
@@ -388,3 +409,152 @@ def test_data_quality_validator_passes_enhanced_features():
         trading_day="2026-02-02",
         columns=cols,
     )
+
+
+def test_ema_divergence_and_macd_histogram_properties():
+    steps = np.arange(260, dtype=float)
+    # Upward trend
+    up_prices = 100.0 * np.exp(0.002 * steps)
+    up_df = pl.DataFrame({"timestamp": steps.astype(int), "close": up_prices})
+    up_res = process_enhanced_state_features(up_df)
+
+    assert "ema_divergence_20_60" in up_res.columns
+    assert "ema_divergence_60_120" in up_res.columns
+    assert "ema_divergence_20_120" in up_res.columns
+    assert "macd_histogram_norm" in up_res.columns
+
+    # For upward trend after warmup, faster EMA is above slower EMA
+    last_up = up_res.row(-1, named=True)
+    assert last_up["ema_divergence_20_60"] > 0.0
+    assert last_up["ema_divergence_60_120"] > 0.0
+    assert last_up["ema_divergence_20_120"] > 0.0
+    assert np.isfinite(up_res.select(["ema_divergence_20_60", "ema_divergence_60_120", "ema_divergence_20_120", "macd_histogram_norm"]).to_numpy()).all()
+
+    # Downward trend
+    down_prices = 100.0 * np.exp(-0.002 * steps)
+    down_df = pl.DataFrame({"timestamp": steps.astype(int), "close": down_prices})
+    down_res = process_enhanced_state_features(down_df)
+    last_down = down_res.row(-1, named=True)
+    assert last_down["ema_divergence_20_60"] < 0.0
+    assert last_down["ema_divergence_60_120"] < 0.0
+    assert last_down["ema_divergence_20_120"] < 0.0
+
+    # Scale invariance test
+    scaled_df = pl.DataFrame({"timestamp": steps.astype(int), "close": up_prices * 42.0})
+    scaled_res = process_enhanced_state_features(scaled_df)
+    target_cols = ["ema_divergence_20_60", "ema_divergence_60_120", "ema_divergence_20_120", "macd_histogram_norm"]
+    np.testing.assert_allclose(
+        up_res.select(target_cols).to_numpy(),
+        scaled_res.select(target_cols).to_numpy(),
+        rtol=1e-8,
+        atol=1e-8,
+    )
+
+
+def test_log_price_slope_quantile_properties():
+    steps = np.arange(320, dtype=float)
+    # Sinusoidal slope variations
+    close = 100.0 * np.exp(0.001 * steps + 0.01 * np.sin(steps / 10.0))
+    df = pl.DataFrame({"timestamp": steps.astype(int), "close": close})
+    res = process_enhanced_state_features(df)
+
+    assert "log_price_slope_quantile_192" in res.columns
+    quantile_vals = res["log_price_slope_quantile_192"].to_numpy()
+
+    # Warmup values before mature step are 0.0
+    assert (quantile_vals[:47] == 0.0).all()
+    # Mature quantile values are strictly bounded in [0, 1]
+    assert (quantile_vals >= 0.0).all()
+    assert (quantile_vals <= 1.0).all()
+
+    # Scale invariance
+    scaled_df = pl.DataFrame({"timestamp": steps.astype(int), "close": close * 100.0})
+    scaled_res = process_enhanced_state_features(scaled_df)
+    np.testing.assert_allclose(
+        res["log_price_slope_quantile_192"].to_numpy(),
+        scaled_res["log_price_slope_quantile_192"].to_numpy(),
+        rtol=1e-9,
+        atol=1e-9,
+    )
+
+
+def test_microstructure_zscore_and_persistence():
+    steps = np.arange(100)
+    df = pl.DataFrame(
+        {
+            "timestamp": steps,
+            "imbalance_1": np.sin(steps / 5.0),
+            "imbalance_5": np.cos(steps / 5.0),
+            "level5_ofi_weighted_norm": np.sin(steps / 7.0),
+        }
+    )
+    res = process_enhanced_state_features(df)
+    for col in (
+        "imbalance_1_zscore_48",
+        "imbalance_1_persistence_20m",
+        "imbalance_5_zscore_48",
+        "ofi_norm_zscore_48",
+        "ofi_persistence_20m",
+    ):
+        assert col in res.columns
+        assert np.isfinite(res[col].to_numpy()).all()
+
+
+def test_price_to_vwap_zscore_and_oscillators():
+    steps = np.arange(150, dtype=float)
+    close = 100.0 + steps * 0.1 + np.sin(steps / 4.0) * 0.5
+    high = close + 0.5
+    low = close - 0.5
+    volume = np.full(150, 100.0)
+    tradeval = close * volume
+    df = pl.DataFrame(
+        {
+            "timestamp": steps.astype(int),
+            "open": close,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+            "tradeval": tradeval,
+        }
+    )
+    res = process_enhanced_state_features(df)
+
+    for col in (
+        "price_to_vwap_zscore_48",
+        "price_to_vwap_zscore_96",
+        "rsi_14_norm",
+        "stoch_k_14_norm",
+        "stoch_d_14_norm",
+        "cci_14_norm",
+    ):
+        assert col in res.columns
+        assert np.isfinite(res[col].to_numpy()).all()
+
+    # RSI & Stoch normalized should be strictly bounded in [-1, 1]
+    assert (res["rsi_14_norm"].to_numpy() >= -1.0).all()
+    assert (res["rsi_14_norm"].to_numpy() <= 1.0).all()
+    assert (res["stoch_k_14_norm"].to_numpy() >= -1.0).all()
+    assert (res["stoch_k_14_norm"].to_numpy() <= 1.0).all()
+    assert (res["stoch_d_14_norm"].to_numpy() >= -1.0).all()
+    assert (res["stoch_d_14_norm"].to_numpy() <= 1.0).all()
+
+
+def test_realized_volatility_features():
+    steps = np.arange(220, dtype=float)
+    close = 100.0 * np.exp(0.001 * steps + 0.01 * np.sin(steps / 5.0))
+    df = pl.DataFrame(
+        {
+            "timestamp": steps.astype(int),
+            "close": close,
+        }
+    )
+    res = process_enhanced_state_features(df)
+
+    assert "realized_vol_zscore_192" in res.columns
+    assert "realized_vol_term_ratio_12_48" in res.columns
+    assert np.isfinite(res["realized_vol_zscore_192"].to_numpy()).all()
+    assert np.isfinite(res["realized_vol_term_ratio_12_48"].to_numpy()).all()
+    assert (res["realized_vol_term_ratio_12_48"].to_numpy() >= 0.0).all()
+
+
