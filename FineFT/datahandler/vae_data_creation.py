@@ -98,17 +98,17 @@ def make_data(args):
         args.base_path, args.dataset_name, "state_features.npy"
     )
     state_features = np.load(state_name_path)
-    save_path = os.path.join(args.save_path, args.dataset_name, "VAE_data")
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)
+    vae_data_root = os.path.join(args.save_path, args.dataset_name, "VAE_data")
+    method_save_path = os.path.join(vae_data_root, labeling_method)
+    os.makedirs(method_save_path, exist_ok=True)
     valid_files = _collect_valid_label_files(valid_path)
     for label, df_paths in valid_files["legacy_labels"].items():
         if not _save_label_array(
-            df_paths, state_features, os.path.join(save_path, "{}.npy".format(label))
+            df_paths, state_features, os.path.join(method_save_path, "{}.npy".format(label))
         ):
             print(f"skip empty label: {label}")
     for contract, labels in valid_files["contracts"].items():
-        contract_save_path = os.path.join(save_path, contract)
+        contract_save_path = os.path.join(method_save_path, contract)
         os.makedirs(contract_save_path, exist_ok=True)
         for label, df_paths in labels.items():
             if not _save_label_array(
@@ -124,7 +124,7 @@ def make_data(args):
             [df[state_features].values for df in test_frames],
             axis=0,
         )
-        np.save(os.path.join(save_path, "test.npy"), test_data)
+        np.save(os.path.join(vae_data_root, "test.npy"), test_data)
     else:
         test_dir = os.path.join(args.base_path, args.dataset_name, "test")
         test_files = [
@@ -136,7 +136,7 @@ def make_data(args):
             raise FileNotFoundError(
                 f"missing test.feather and no test/df_<contract>.feather files under {test_dir}"
             )
-        test_save_path = os.path.join(save_path, "test")
+        test_save_path = os.path.join(vae_data_root, "test")
         os.makedirs(test_save_path, exist_ok=True)
         for file_name in test_files:
             df = pd.read_feather(os.path.join(test_dir, file_name))

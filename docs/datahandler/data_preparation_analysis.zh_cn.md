@@ -772,10 +772,17 @@ dataset/{target_freq}/{symbol}/valid/<labeling_method>/slice_manifest.json
 
 `valid/<labeling_method>/slice_manifest.json` 会记录两个视角：`contracts` 描述每个合约下各 label 的文件、文件数、文件行数和合约总行数；`labels` 描述每个 label 跨合约的汇总。若某个 valid 合约行数不足以执行动态切片，构建会跳过该合约并写入 `skipped_contracts`，不会为了凑长度跨合约拼接。
 
-`vae_data_creation.py --labeling_method <method>` 会递归读取 `valid/<method>/<contract>/label_*/df_*.feather`，并按合约写入对应动态类别数组；默认读取 `slope`，并兼容旧的未分方法目录：
+`vae_data_creation.py --labeling_method <method>` 会递归读取 `valid/<method>/<contract>/label_*/df_*.feather`，并按 labeling_method 和合约写入对应动态类别数组：
 
 ```text
-dataset/{target_freq}/{symbol}/VAE_data/<contract>/label_<k>.npy
+dataset/{target_freq}/{symbol}/VAE_data/<labeling_method>/<contract>/label_<k>.npy
+```
+
+随后 `merge_vae_train.py` 扫描 `VAE_data/<labeling_method>/<contract>/label_<k>.npy`，并物化合并后的训练数组与 manifest：
+
+```text
+dataset/{target_freq}/{symbol}/VAE_data/train/<labeling_method>/label_<k>.npy
+dataset/{target_freq}/{symbol}/VAE_data/train/<labeling_method>/label_<k>_manifest.json
 ```
 
 商品多合约 test 数据不会合并成一个 `VAE_data/test.npy`，而是按合约写入：

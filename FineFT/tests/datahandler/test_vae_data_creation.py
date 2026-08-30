@@ -33,9 +33,9 @@ def test_make_data_skips_empty_label_directory(tmp_path, capsys):
     )
 
     assert "skip empty label: label_empty" in capsys.readouterr().out
-    assert not (dataset_path / "VAE_data" / "label_empty.npy").exists()
+    assert not (dataset_path / "VAE_data" / "slope" / "label_empty.npy").exists()
     np.testing.assert_array_equal(
-        np.load(dataset_path / "VAE_data" / "label_full.npy"),
+        np.load(dataset_path / "VAE_data" / "slope" / "label_full.npy"),
         np.array([[1.0, 2.0]]),
     )
 
@@ -104,16 +104,17 @@ def test_make_data_writes_contract_scoped_valid_label_arrays(tmp_path):
     )
 
     assert not (dataset_path / "VAE_data" / "label_0.npy").exists()
+    assert not (dataset_path / "VAE_data" / "fu2505" / "label_0.npy").exists()
     np.testing.assert_array_equal(
-        np.load(dataset_path / "VAE_data" / "fu2505" / "label_0.npy"),
+        np.load(dataset_path / "VAE_data" / "slope" / "fu2505" / "label_0.npy"),
         np.array([[1.0, 2.0]]),
     )
     np.testing.assert_array_equal(
-        np.load(dataset_path / "VAE_data" / "fu2509" / "label_0.npy"),
+        np.load(dataset_path / "VAE_data" / "slope" / "fu2509" / "label_0.npy"),
         np.array([[3.0, 4.0]]),
     )
     np.testing.assert_array_equal(
-        np.load(dataset_path / "VAE_data" / "fu2505" / "label_1.npy"),
+        np.load(dataset_path / "VAE_data" / "slope" / "fu2505" / "label_1.npy"),
         np.array([[5.0, 6.0]]),
     )
 
@@ -141,6 +142,6 @@ def test_make_data_reads_selected_labeling_method_directory(tmp_path):
     )
 
     np.testing.assert_array_equal(
-        np.load(dataset_path / "VAE_data" / "fu2505" / "label_0.npy"),
+        np.load(dataset_path / "VAE_data" / "volatility" / "fu2505" / "label_0.npy"),
         np.array([[1.0, 2.0]]),
     )

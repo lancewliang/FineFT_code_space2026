@@ -10,6 +10,7 @@ DATA_BASE_PATH=${DATA_BASE_PATH:-dataset/30min}
 LABEL_COUNT=${LABEL_COUNT:-4}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-30min}
 MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS:-2}
+LABELING_METHOD=${LABELING_METHOD:-slope}
 
 if ! [[ "${MAX_PARALLEL_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
     echo "MAX_PARALLEL_JOBS must be a positive integer." >&2
@@ -54,6 +55,7 @@ for label_index in $(seq 0 $((LABEL_COUNT - 1))); do
         --label_index "${label_index}" \
         --total_label_number "${LABEL_COUNT}" \
         --experiment_name "${EXPERIMENT_NAME}" \
+        --labeling_method "${LABELING_METHOD}" \
         --train \
         >"${log_dir}/train_label_${label_index}.log" 2>&1 &
     pids+=("$!")

@@ -41,12 +41,15 @@ def load_2d_array(path, contract):
     return data
 
 
-def discover_label_sources(data_base_path, dataset_name, label_index):
+def discover_label_sources(
+    data_base_path, dataset_name, label_index, labeling_method="slope"
+):
     root = vae_data_dir(data_base_path, dataset_name)
+    method_dir = root / labeling_method
     label_name = label_name_from_index(label_index)
     included = []
     missing = []
-    for contract_dir in contract_dirs(root):
+    for contract_dir in contract_dirs(method_dir):
         source_file = contract_dir / f"{label_name}.npy"
         if source_file.exists():
             included.append(
@@ -59,16 +62,21 @@ def discover_label_sources(data_base_path, dataset_name, label_index):
             missing.append(contract_dir.name)
     if not included:
         raise FileNotFoundError(
-            f"no arrays found for {label_name} under {root}/<contract>/{label_name}.npy"
+            f"no arrays found for {label_name} under {method_dir}/<contract>/{label_name}.npy"
         )
     return included, missing
 
 
-def materialize_label_training_data(data_base_path, dataset_name, label_index):
+def materialize_label_training_data(
+    data_base_path, dataset_name, label_index, labeling_method="slope"
+):
     root = vae_data_dir(data_base_path, dataset_name)
     label_name = label_name_from_index(label_index)
     included_sources, missing_contracts = discover_label_sources(
-        data_base_path, dataset_name, label_index
+        data_base_path,
+        dataset_name,
+        label_index,
+        labeling_method=labeling_method,
     )
     arrays = []
     included_contracts = []
@@ -96,7 +104,7 @@ def materialize_label_training_data(data_base_path, dataset_name, label_index):
     if merged.shape[0] == 0:
         raise ValueError(f"merged training set for {label_name} has no samples")
 
-    train_dir = root / "train"
+    train_dir = root / "train" / labeling_method
     train_dir.mkdir(parents=True, exist_ok=True)
     merged_path = train_dir / f"{label_name}.npy"
     manifest_path = train_dir / f"{label_name}_manifest.json"

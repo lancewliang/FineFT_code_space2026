@@ -6,13 +6,13 @@ function run_test_agent_index {
     local epoch_end=$4
     local base_path=$5
     local experiment_name=$6
-    local ensemble_number=${ENSEMBLE_NUMBER:-7}
+    local ensemble_number=${ENSEMBLE_NUMBER:-13}
     local label_types=("slope" "volatility")
     if [ -n "$LABEL_TYPE" ]; then
         label_types=("$LABEL_TYPE")
     fi
     local result_path=${RESULT_PATH:-result/DiHFT/low_level}
-    local max_parallel=${MAX_PARALLEL:-2}
+    local max_parallel=${MAX_PARALLEL:-4}
     ROOTPATH=${ROOTPATH:-$(pwd)}
     cd "$ROOTPATH"
     export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
@@ -120,8 +120,8 @@ function run_ddqn_average {
 
 DATASET_NAME=${DATASET_NAME:-fu}
 MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-2}
-EPOCH_START=${EPOCH_START:-50}
-EPOCH_END=${EPOCH_END:-100}
+EPOCH_START=${EPOCH_START:-45}
+EPOCH_END=${EPOCH_END:-55}
 BASE_PATH=${BASE_PATH:-dataset/30min}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-30min_multi}
 

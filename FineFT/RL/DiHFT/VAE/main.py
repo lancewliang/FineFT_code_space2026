@@ -63,6 +63,12 @@ parser.add_argument(
     default=5,
     help="where to load the id data",
 )
+parser.add_argument(
+    "--labeling_method",
+    type=str,
+    default="slope",
+    help="dynamic labeling method to consume for training data (default: slope)",
+)
 # log
 parser.add_argument(
     "--base_model_path",
@@ -193,16 +199,19 @@ class Piplineruner:
             label_name,
         )
         self.args.single_label_save_path = self.single_label_save_path
+        labeling_method = getattr(self.args, "labeling_method", "slope")
         if self.args.train:
             train_manifest = materialize_label_training_data(
                 self.args.data_base_path,
                 self.args.dataset_name,
                 self.args.label_index,
+                labeling_method=labeling_method,
             )
         else:
             train_path = (
                 vae_data_dir(self.args.data_base_path, self.args.dataset_name)
                 / "train"
+                / labeling_method
                 / f"{label_name}.npy"
             )
             if not train_path.exists():

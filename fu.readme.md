@@ -87,7 +87,7 @@
     - `dataset/30min/fu/train/*.feather`、`dataset/30min/fu/train/slice/df_*.feather`（训练合约数据及分块切片）
     - `dataset/30min/fu/valid/*.feather`、`valid/processed/valid_processed_*.feather`、`valid/<contract>/label_*/`（验证集切片与标签划分数据）
     - `dataset/30min/fu/test/*.feather`（测试集数据）
-    - `dataset/30min/fu/VAE_data/<contract>/label_*.npy`、`dataset/30min/fu/VAE_data/test/test_*.npy`（VAE 训练/测试特征向量）
+    - `dataset/30min/fu/VAE_data/<labeling_method>/<contract>/label_*.npy`、`dataset/30min/fu/VAE_data/test/test_*.npy`（VAE 训练/测试特征向量）
 - **位置**：承接 30min 预处理结果，是进入 FineFT 训练、回测和 VAE 的数据准备入口。
 
 ## 3. 低层 agent 训练
@@ -190,7 +190,7 @@
 
 - **作用**：按 `label_0 ~ label_4` 批量训练 30min VAE 模型，分析测试合约在各 Label 下的 Out-of-Distribution (OOD) 概率密度分布，并生成跨 Label 的路由对比摘要。
 - **依赖输入物**（由步骤 2 & 步骤 5 产出）：
-  - **VAE 向量数据集**（由步骤 2 产出）：`dataset/30min/fu/VAE_data/<contract>/label_*.npy` 及 `dataset/30min/fu/VAE_data/test/test_*.npy`
+  - **VAE 向量数据集**（由步骤 2 产出）：`dataset/30min/fu/VAE_data/<labeling_method>/<contract>/label_*.npy` 及 `dataset/30min/fu/VAE_data/test/test_*.npy`
   - **Label 标注分布**（由步骤 2 & 步骤 5 确定）：`dataset/30min/fu/valid/` 下各个 label 的样本切片
   - **VAE 训练 Python 脚本**：`FineFT/RL/DiHFT/VAE/main.py`
 - **默认参数**：
@@ -280,6 +280,6 @@
 | **3. 低层 Agent 训练** | `train_commodity_fu_30.sh` | 步骤 2 产出的 `dataset/30min/fu/train/`, `state_features.npy`, `margin_dict.npy` | `result/DiHFT/low_level/fu/30min/weights_advantage_pretrain/`<br>(`epoch_1/`~`epoch_100/trained_model.pkl`, `log/`, `qtable_diagnostics/`) |
 | **4. 低层 Agent 测试** | `test_util_fu_30.sh` | 步骤 3 产出的 `trained_model.pkl` + 步骤 2 产出的 `valid/` 数据 | `result/DiHFT/low_level/fu/30min/weights_advantage_pretrain/epoch_{epoch}/`<br>(`analysis_result.csv`, `trading_action_detail_*.csv`, `analysis_result.npy`) |
 | **5. 低层 Agent 筛选** | `low_level_fu_30.sh` | 步骤 4 产出的 `analysis_result.csv` + 步骤 2 产出的 `valid/` 数据 | `analysis_result/DiHFT/low_level/fu/30min/`<br>(`result.csv`, `result_all.csv`, `selection_manifest.json`) |
-| **6. VAE 训练与评估** | `VAE_util_fu_30.sh` | 步骤 2 产出的 `VAE_data/<contract>/label_*.npy` + 步骤 5 的 Label 划分 | `result/DiHFT/vae_results/fu/30min/`<br>(`label_*/model_latest.pth`, `summary.json`, `ood_logpx_*.csv`, `routing_summary.json`) |
+| **6. VAE 训练与评估** | `VAE_util_fu_30.sh` | 步骤 2 产出的 `VAE_data/<labeling_method>/<contract>/label_*.npy` + 步骤 5 的 Label 划分 | `result/DiHFT/vae_results/fu/30min/`<br>(`label_*/model_latest.pth`, `summary.json`, `ood_logpx_*.csv`, `routing_summary.json`) |
 | **7. 高层 Optuna 寻优** | `vae_optuna_fu_30.sh` | 步骤 3/5 筛选的 Agent 模型 + 步骤 6 的 VAE 模型 + 步骤 2 的 `valid/` 数据 | `result/DiHFT/high_level/fu/30min/`<br>(`vae_risk_aware_routing_optuna/optuna_results.csv`, `vae_risk_aware_routing/.../contract_results.csv`, `trading_info.npy`, `macro_action.npy`) |
 | **8. 高层路由筛选与可视化** | `high_level_heurstic_fu_30_half.sh` | 步骤 7 产出的 `vae_risk_aware_routing/` 诊断数据 + 步骤 2 的 `valid/*.feather` | `analysis_result/DiHFT/high_level_heurstic/fu/30min_multi/`<br>(`result.csv`, `best_result.csv`, `best_result_*.png/pdf`)<br>`result/DiHFT/final_result/fu/30min_multi/`<br>(`high_level_agent_para.txt`, 最终路由诊断向量 `.npy`/`.csv`) |

@@ -47,9 +47,9 @@ def _save(path, data):
 
 def test_materialize_label_training_data_merges_contract_arrays_and_writes_manifest(tmp_path):
     vae_dir = _vae_dir(tmp_path)
-    _save(vae_dir / "fu2505" / "label_0.npy", [[1.0, 2.0], [3.0, 4.0]])
-    _save(vae_dir / "fu2509" / "label_0.npy", [[5.0, 6.0]])
-    (vae_dir / "fu2510").mkdir(parents=True)
+    _save(vae_dir / "slope" / "fu2505" / "label_0.npy", [[1.0, 2.0], [3.0, 4.0]])
+    _save(vae_dir / "slope" / "fu2509" / "label_0.npy", [[5.0, 6.0]])
+    (vae_dir / "slope" / "fu2510").mkdir(parents=True)
     (vae_dir / "test").mkdir()
 
     result = merge_vae_train.materialize_label_training_data(
@@ -58,13 +58,13 @@ def test_materialize_label_training_data_merges_contract_arrays_and_writes_manif
         label_index=0,
     )
 
-    merged = np.load(vae_dir / "train" / "label_0.npy")
+    merged = np.load(vae_dir / "train" / "slope" / "label_0.npy")
     np.testing.assert_array_equal(
         merged,
         np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]),
     )
     assert isinstance(result, LabelTrainingManifest)
-    assert result.merged_path == str(vae_dir / "train" / "label_0.npy")
+    assert result.merged_path == str(vae_dir / "train" / "slope" / "label_0.npy")
     assert result.total_samples == 3
     assert result.feature_dim == 2
     assert [item.contract for item in result.included_contracts] == [
@@ -75,7 +75,7 @@ def test_materialize_label_training_data_merges_contract_arrays_and_writes_manif
     assert result.included_contracts[1].sample_count == 1
     assert result.missing_contracts == ["fu2510"]
 
-    manifest = json.loads((vae_dir / "train" / "label_0_manifest.json").read_text())
+    manifest = json.loads((vae_dir / "train" / "slope" / "label_0_manifest.json").read_text())
     assert manifest == result.to_dict()
     assert manifest["dataset_name"] == "fu"
     assert manifest["label"] == "label_0"
@@ -86,7 +86,7 @@ def test_materialize_label_training_data_merges_contract_arrays_and_writes_manif
 
 def test_materialize_label_training_data_fails_when_no_contract_has_label(tmp_path):
     vae_dir = _vae_dir(tmp_path)
-    (vae_dir / "fu2505").mkdir(parents=True)
+    (vae_dir / "slope" / "fu2505").mkdir(parents=True)
 
     with pytest.raises(FileNotFoundError, match="label_4"):
         merge_vae_train.materialize_label_training_data(
@@ -95,12 +95,12 @@ def test_materialize_label_training_data_fails_when_no_contract_has_label(tmp_pa
             label_index=4,
         )
 
-    assert not (vae_dir / "train" / "label_4.npy").exists()
+    assert not (vae_dir / "train" / "slope" / "label_4.npy").exists()
 
 
 def test_materialize_label_training_data_rejects_non_2d_arrays(tmp_path):
     vae_dir = _vae_dir(tmp_path)
-    _save(vae_dir / "fu2505" / "label_0.npy", [1.0, 2.0, 3.0])
+    _save(vae_dir / "slope" / "fu2505" / "label_0.npy", [1.0, 2.0, 3.0])
 
     with pytest.raises(ValueError, match="two-dimensional"):
         merge_vae_train.materialize_label_training_data(
@@ -112,8 +112,8 @@ def test_materialize_label_training_data_rejects_non_2d_arrays(tmp_path):
 
 def test_materialize_label_training_data_rejects_feature_dim_mismatch(tmp_path):
     vae_dir = _vae_dir(tmp_path)
-    _save(vae_dir / "fu2505" / "label_0.npy", [[1.0, 2.0]])
-    _save(vae_dir / "fu2509" / "label_0.npy", [[3.0, 4.0, 5.0]])
+    _save(vae_dir / "slope" / "fu2505" / "label_0.npy", [[1.0, 2.0]])
+    _save(vae_dir / "slope" / "fu2509" / "label_0.npy", [[3.0, 4.0, 5.0]])
 
     with pytest.raises(ValueError, match="feature dimension"):
         merge_vae_train.materialize_label_training_data(
@@ -125,9 +125,9 @@ def test_materialize_label_training_data_rejects_feature_dim_mismatch(tmp_path):
 
 def test_discover_label_sources_reads_contract_label_arrays_as_objects(tmp_path):
     vae_dir = _vae_dir(tmp_path)
-    _save(vae_dir / "fu2505" / "label_0.npy", [[1.0, 2.0]])
-    _save(vae_dir / "fu2509" / "label_0.npy", [[3.0, 4.0]])
-    (vae_dir / "fu2510").mkdir(parents=True)
+    _save(vae_dir / "slope" / "fu2505" / "label_0.npy", [[1.0, 2.0]])
+    _save(vae_dir / "slope" / "fu2509" / "label_0.npy", [[3.0, 4.0]])
+    (vae_dir / "slope" / "fu2510").mkdir(parents=True)
 
     sources, missing_contracts = merge_vae_train.discover_label_sources(
         data_base_path=str(_dataset_root(tmp_path)),
@@ -257,7 +257,7 @@ def test_write_contract_logpx_outputs_writes_per_contract_and_aggregate_files(tm
 def test_write_contract_logpx_outputs_includes_enhanced_summary_metrics(tmp_path):
     save_path = tmp_path / "result" / "DiHFT" / "vae_results" / "fu" / "label_0"
     train_baseline = TrainBaselineLogpx(
-        source_file="dataset/10min/fu/VAE_data/train/label_0.npy",
+        source_file="dataset/10min/fu/VAE_data/train/slope/label_0.npy",
         input_samples=4,
         analyzed_samples=4,
         logpx=np.array([-10.0, -8.0, -6.0, -4.0]),
@@ -323,6 +323,44 @@ def test_write_contract_logpx_outputs_includes_enhanced_summary_metrics(tmp_path
     assert summary.test.all.integrity.analyzed_samples == 4
     assert "roc_auc" not in json.dumps(summary_file).lower()
     assert "accuracy" not in json.dumps(summary_file).lower()
+
+
+def test_materialize_label_training_data_with_volatility_method(tmp_path):
+    vae_dir = _vae_dir(tmp_path)
+    _save(vae_dir / "volatility" / "fu2505" / "label_1.npy", [[10.0, 20.0]])
+    _save(vae_dir / "volatility" / "fu2509" / "label_1.npy", [[30.0, 40.0]])
+
+    result = merge_vae_train.materialize_label_training_data(
+        data_base_path=str(_dataset_root(tmp_path)),
+        dataset_name="fu",
+        label_index=1,
+        labeling_method="volatility",
+    )
+
+    merged = np.load(vae_dir / "train" / "volatility" / "label_1.npy")
+    np.testing.assert_array_equal(
+        merged,
+        np.array([[10.0, 20.0], [30.0, 40.0]]),
+    )
+    assert result.merged_path == str(vae_dir / "train" / "volatility" / "label_1.npy")
+    assert (vae_dir / "train" / "volatility" / "label_1_manifest.json").exists()
+
+
+def test_parser_accepts_labeling_method_flag():
+    args = vae_main.parser.parse_args(
+        [
+            "--dataset_name",
+            "fu",
+            "--data_base_path",
+            "dataset/10min",
+            "--label_index",
+            "0",
+            "--labeling_method",
+            "volatility",
+            "--train",
+        ]
+    )
+    assert args.labeling_method == "volatility"
 
 
 def test_parser_accepts_explicit_train_and_analyze_only_flags():
@@ -636,3 +674,65 @@ def test_fu_vae_shell_returns_failure_when_any_training_job_fails(tmp_path):
 
     assert result.returncode == 1
     assert "finished with failures" in result.stdout
+
+
+def test_fu_vae_half_shell_trains_both_slope_and_volatility(tmp_path):
+    script_path = (
+        FINEFT_ROOT
+        / "script"
+        / "train"
+        / "DiHFT"
+        / "low_level"
+        / "VAE_util_fu_30_half.sh"
+    )
+    bin_dir = tmp_path / "bin"
+    conda_base = tmp_path / "conda"
+    state_dir = tmp_path / "state"
+    bin_dir.mkdir()
+    (conda_base / "etc" / "profile.d").mkdir(parents=True)
+    state_dir.mkdir()
+    (conda_base / "etc" / "profile.d" / "conda.sh").write_text(
+        "conda() { :; }\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "conda").write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1\" == \"info\" && \"$2\" == \"--base\" ]]; then\n"
+        f"  echo \"{conda_base}\"\n"
+        "else\n"
+        "  exit 0\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "python").write_text(
+        "#!/usr/bin/env bash\n"
+        "state_dir=${FAKE_VAE_STATE_DIR:?}\n"
+        "echo \"$@\" >> \"${state_dir}/invocations.txt\"\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    os.chmod(bin_dir / "conda", 0o755)
+    os.chmod(bin_dir / "python", 0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["ROOTPATH"] = str(FINEFT_ROOT.parent)
+    env["LABEL_COUNT"] = "2"
+    env["MAX_PARALLEL_JOBS"] = "2"
+    env["FAKE_VAE_STATE_DIR"] = str(state_dir)
+
+    result = subprocess.run(
+        ["bash", str(script_path)],
+        cwd=FINEFT_ROOT.parent,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    invocations = (state_dir / "invocations.txt").read_text().strip().splitlines()
+    assert len(invocations) == 4
+    assert any("--labeling_method slope" in inv and "--experiment_name 30min_multi/slope" in inv for inv in invocations)
+    assert any("--labeling_method volatility" in inv and "--experiment_name 30min_multi/volatility" in inv for inv in invocations)
+

@@ -7,9 +7,13 @@ cd "$ROOTPATH"
 
 DATASET_NAME=${DATASET_NAME:-fu}
 DATA_BASE_PATH=${DATA_BASE_PATH:-dataset/30min}
-LABEL_COUNT=${LABEL_COUNT:-4}
+LABEL_COUNT=${LABEL_COUNT:-3}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-30min_multi}
 MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS:-2}
+LABELING_METHODS=("slope" "volatility")
+if [ -n "${LABELING_METHOD:-}" ]; then
+    LABELING_METHODS=("${LABELING_METHOD}")
+fi
 
 if ! [[ "${MAX_PARALLEL_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
     echo "MAX_PARALLEL_JOBS must be a positive integer." >&2
@@ -19,9 +23,6 @@ fi
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate finetf
 export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
-
-log_dir="log/DiHFT/${DATASET_NAME}/VAE/${EXPERIMENT_NAME}"
-mkdir -p "${log_dir}"
 
 pids=()
 failed=0
@@ -46,17 +47,24 @@ prune_finished_jobs() {
     pids=("${active_pids[@]}")
 }
 
-for label_index in $(seq 0 $((LABEL_COUNT - 1))); do
-    wait_for_available_slot
-    nohup python -u FineFT/RL/DiHFT/VAE/main.py \
-        --dataset_name "${DATASET_NAME}" \
-        --data_base_path "${DATA_BASE_PATH}" \
-        --label_index "${label_index}" \
-        --total_label_number "${LABEL_COUNT}" \
-        --experiment_name "${EXPERIMENT_NAME}" \
-        --train \
-        >"${log_dir}/train_label_${label_index}.log" 2>&1 &
-    pids+=("$!")
+for method in "${LABELING_METHODS[@]}"; do
+    method_exp_name="${EXPERIMENT_NAME}/${method}"
+    log_dir="log/DiHFT/${DATASET_NAME}/VAE/${EXPERIMENT_NAME}/${method}"
+    mkdir -p "${log_dir}"
+
+    for label_index in $(seq 0 $((LABEL_COUNT - 1))); do
+        wait_for_available_slot
+        nohup python -u FineFT/RL/DiHFT/VAE/main.py \
+            --dataset_name "${DATASET_NAME}" \
+            --data_base_path "${DATA_BASE_PATH}" \
+            --label_index "${label_index}" \
+            --total_label_number "${LABEL_COUNT}" \
+            --experiment_name "${method_exp_name}" \
+            --labeling_method "${method}" \
+            --train \
+            >"${log_dir}/train_label_${label_index}.log" 2>&1 &
+        pids+=("$!")
+    done
 done
 
 while ((${#pids[@]} > 0)); do
@@ -67,8 +75,8 @@ while ((${#pids[@]} > 0)); do
 done
 
 if ((failed != 0)); then
-    echo "${DATASET_NAME} VAE labels 0 to $((LABEL_COUNT - 1)) finished with failures."
+    echo "${DATASET_NAME} VAE (${LABELING_METHODS[*]}) labels 0 to $((LABEL_COUNT - 1)) finished with failures."
     exit 1
 fi
 
-echo "${DATASET_NAME} VAE labels 0 to $((LABEL_COUNT - 1)) finished."
+echo "${DATASET_NAME} VAE (${LABELING_METHODS[*]}) labels 0 to $((LABEL_COUNT - 1)) finished."
