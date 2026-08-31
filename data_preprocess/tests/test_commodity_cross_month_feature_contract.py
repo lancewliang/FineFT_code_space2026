@@ -33,15 +33,13 @@ def test_cross_month_feature_contract_exposes_stable_columns_and_pairing_modes()
         "cm_main_sub_relative_price_spread",
         "cm_main_sub_volume_share_sub",
         "cm_main_sub_open_interest_share_sub",
-        "cm_m1_m2_log_price_ratio",
-        "cm_m2_m3_log_price_ratio",
-        "cm_m1_m2_relative_price_spread",
-        "cm_m2_m3_relative_price_spread",
-        "cm_m1_m2_m3_butterfly_ratio",
         "cm_m1_m2_open_interest_share_m2",
         "cm_m2_m3_open_interest_share_m3",
         "cm_main_sub_log_price_spread_velocity_10m",
         "cm_open_interest_shift_speed_10m",
+        "cm_m1_m2_log_price_spread_velocity_10m",
+        "cm_m2_m3_log_price_spread_velocity_10m",
+        "cm_m1_m2_m3_butterfly_spread_velocity_10m",
     ]
     assert validate_cross_month_feature_columns(CROSS_MONTH_FEATURE_COLUMNS) == list(
         CROSS_MONTH_FEATURE_COLUMNS
@@ -54,7 +52,7 @@ def test_cross_month_feature_contract_rejects_absolute_price_columns():
             [
                 "cm_main_price",
                 "cm_main_sub_price_spread",
-                "cm_m1_m2_log_price_ratio",
+                "cm_m1_m2_log_price_spread_velocity_10m",
             ]
         )
 
@@ -186,37 +184,38 @@ def test_resolve_previous_main_sub_role_returns_none_without_prior_roles():
 
 
 def test_generate_delivery_month_sequence_features_sorts_by_delivery_month():
+    row_count = 15
     current = pl.DataFrame(
         {
-            "timestamp": [1, 2],
-            "close": [100.0, 101.0],
-            "volume": [10.0, 10.0],
-            "open_interest": [100.0, 100.0],
+            "timestamp": list(range(row_count)),
+            "close": [100.0 + i for i in range(row_count)],
+            "volume": [10.0] * row_count,
+            "open_interest": [100.0] * row_count,
         }
     )
     contract_bars = {
         "fu2612": pl.DataFrame(
             {
-                "timestamp": [1, 2],
-                "close": [130.0, 131.0],
-                "volume": [30.0, 30.0],
-                "open_interest": [300.0, 300.0],
+                "timestamp": list(range(row_count)),
+                "close": [130.0 + 1.2 * i for i in range(row_count)],
+                "volume": [30.0] * row_count,
+                "open_interest": [300.0] * row_count,
             }
         ),
         "fu2605": pl.DataFrame(
             {
-                "timestamp": [1, 2],
-                "close": [110.0, 111.0],
-                "volume": [20.0, 20.0],
-                "open_interest": [200.0, 200.0],
+                "timestamp": list(range(row_count)),
+                "close": [110.0 + 1.1 * i for i in range(row_count)],
+                "volume": [20.0] * row_count,
+                "open_interest": [200.0] * row_count,
             }
         ),
         "fu2601": pl.DataFrame(
             {
-                "timestamp": [1, 2],
-                "close": [100.0, 101.0],
-                "volume": [10.0, 10.0],
-                "open_interest": [100.0, 100.0],
+                "timestamp": list(range(row_count)),
+                "close": [100.0 + i for i in range(row_count)],
+                "volume": [10.0] * row_count,
+                "open_interest": [100.0] * row_count,
             }
         ),
     }
@@ -227,20 +226,10 @@ def test_generate_delivery_month_sequence_features_sorts_by_delivery_month():
     )
 
     assert features.columns == ["timestamp"] + CROSS_MONTH_FEATURE_COLUMNS
-    assert np.isclose(features["cm_m1_m2_log_price_ratio"][0], np.log(100.0 / 110.0))
-    assert np.isclose(features["cm_m2_m3_log_price_ratio"][0], np.log(110.0 / 130.0))
-    assert np.isclose(
-        features["cm_m1_m2_relative_price_spread"][0],
-        (100.0 - 110.0) / 100.0,
-    )
-    assert np.isclose(
-        features["cm_m2_m3_relative_price_spread"][0],
-        (110.0 - 130.0) / 110.0,
-    )
-    assert np.isclose(
-        features["cm_m1_m2_m3_butterfly_ratio"][0],
-        (2.0 * 110.0 - 100.0 - 130.0) / 110.0,
-    )
+    assert "cm_m1_m2_log_price_ratio" not in features.columns
+    assert "cm_m1_m2_log_price_spread_velocity_10m" in features.columns
+    assert "cm_m2_m3_log_price_spread_velocity_10m" in features.columns
+    assert "cm_m1_m2_m3_butterfly_spread_velocity_10m" in features.columns
     assert np.isclose(
         features["cm_m1_m2_open_interest_share_m2"][0],
         200.0 / (100.0 + 200.0),
@@ -249,6 +238,11 @@ def test_generate_delivery_month_sequence_features_sorts_by_delivery_month():
         features["cm_m2_m3_open_interest_share_m3"][0],
         300.0 / (200.0 + 300.0),
     )
+    # Check 10m velocity at index 10
+    m1_0, m2_0 = 100.0, 110.0
+    m1_10, m2_10 = 110.0, 121.0
+    expected_v10 = np.log(m1_10 / m2_10) - np.log(m1_0 / m2_0)
+    assert np.isclose(features["cm_m1_m2_log_price_spread_velocity_10m"][10], expected_v10)
 
 
 def test_generate_delivery_month_sequence_features_fills_aligned_gaps():
@@ -285,8 +279,8 @@ def test_generate_delivery_month_sequence_features_fills_aligned_gaps():
         contract_bars=contract_bars,
     )
 
-    assert features["cm_m1_m2_log_price_ratio"][1] == 0.0
-    assert features["cm_m2_m3_log_price_ratio"][1] == 0.0
+    assert features["cm_m1_m2_log_price_spread_velocity_10m"][1] == 0.0
+    assert features["cm_m2_m3_log_price_spread_velocity_10m"][1] == 0.0
     assert features["cm_m1_m2_open_interest_share_m2"][1] == 0.0
     assert features["cm_m2_m3_open_interest_share_m3"][1] == 0.0
 
@@ -394,7 +388,7 @@ def test_write_cross_month_feature_for_day_uses_previous_roles_and_writes_file(t
     assert out["cm_contract_role_other"].to_list() == [1.0, 1.0]
     assert np.isclose(out["cm_current_main_log_price_ratio"][0], np.log(130.0 / 100.0))
     assert np.isclose(out["cm_current_sub_log_price_ratio"][0], np.log(130.0 / 110.0))
-    assert np.isclose(out["cm_m1_m2_log_price_ratio"][0], np.log(100.0 / 110.0))
+    assert "cm_m1_m2_log_price_spread_velocity_10m" in out.columns
 
 
 def test_write_cross_month_feature_for_day_fallback_when_no_prior_roles(tmp_path):

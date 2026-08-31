@@ -234,13 +234,13 @@ CROSS_MONTH_FEATURE_COLUMNS=(
     cm_main_sub_relative_price_spread
     cm_main_sub_volume_share_sub
     cm_main_sub_open_interest_share_sub
-    cm_m1_m2_log_price_ratio
-    cm_m2_m3_log_price_ratio
-    cm_m1_m2_relative_price_spread
-    cm_m2_m3_relative_price_spread
-    cm_m1_m2_m3_butterfly_ratio
     cm_m1_m2_open_interest_share_m2
     cm_m2_m3_open_interest_share_m3
+    cm_main_sub_log_price_spread_velocity_10m
+    cm_open_interest_shift_speed_10m
+    cm_m1_m2_log_price_spread_velocity_10m
+    cm_m2_m3_log_price_spread_velocity_10m
+    cm_m1_m2_m3_butterfly_spread_velocity_10m
 )
 
 PRICE_LIMIT_RATIO_FEATURE_COLUMNS=(

@@ -32,15 +32,13 @@ CROSS_MONTH_FEATURE_COLUMNS: list[str] = [
     "cm_main_sub_relative_price_spread",
     "cm_main_sub_volume_share_sub",
     "cm_main_sub_open_interest_share_sub",
-    "cm_m1_m2_log_price_ratio",
-    "cm_m2_m3_log_price_ratio",
-    "cm_m1_m2_relative_price_spread",
-    "cm_m2_m3_relative_price_spread",
-    "cm_m1_m2_m3_butterfly_ratio",
     "cm_m1_m2_open_interest_share_m2",
     "cm_m2_m3_open_interest_share_m3",
     "cm_main_sub_log_price_spread_velocity_10m",
     "cm_open_interest_shift_speed_10m",
+    "cm_m1_m2_log_price_spread_velocity_10m",
+    "cm_m2_m3_log_price_spread_velocity_10m",
+    "cm_m1_m2_m3_butterfly_spread_velocity_10m",
 ]
 
 _ALLOWED_PRICE_PATTERNS: tuple[str, ...] = (
@@ -189,8 +187,14 @@ def generate_delivery_month_sequence_features(
     rows = []
     for current_row in current_bars.iter_rows(named=True):
         timestamp = current_row["timestamp"]
-        row = {feature: 0.0 for feature in CROSS_MONTH_FEATURE_COLUMNS}
-        row["timestamp"] = timestamp
+        row = {
+            "timestamp": timestamp,
+            "cm_m1_m2_open_interest_share_m2": 0.0,
+            "cm_m2_m3_open_interest_share_m3": 0.0,
+            "_m1_m2_log_price_ratio": 0.0,
+            "_m2_m3_log_price_ratio": 0.0,
+            "_butterfly_ratio": 0.0,
+        }
         m1_row = m1_by_timestamp.get(timestamp)
         m2_row = m2_by_timestamp.get(timestamp)
         m3_row = m3_by_timestamp.get(timestamp)
@@ -212,9 +216,36 @@ def generate_delivery_month_sequence_features(
             share_name="m3",
         )
         _add_butterfly_feature(row, m1_row=m1_row, m2_row=m2_row, m3_row=m3_row)
+
+        if "cm_m1_m2_log_price_ratio" in row:
+            row["_m1_m2_log_price_ratio"] = row.pop("cm_m1_m2_log_price_ratio")
+        if "cm_m1_m2_relative_price_spread" in row:
+            row.pop("cm_m1_m2_relative_price_spread")
+        if "cm_m2_m3_log_price_ratio" in row:
+            row["_m2_m3_log_price_ratio"] = row.pop("cm_m2_m3_log_price_ratio")
+        if "cm_m2_m3_relative_price_spread" in row:
+            row.pop("cm_m2_m3_relative_price_spread")
+        if "cm_m1_m2_m3_butterfly_ratio" in row:
+            row["_butterfly_ratio"] = row.pop("cm_m1_m2_m3_butterfly_ratio")
+        if "cm_m1_m2_volume_share_m2" in row:
+            row.pop("cm_m1_m2_volume_share_m2")
+        if "cm_m2_m3_volume_share_m3" in row:
+            row.pop("cm_m2_m3_volume_share_m3")
+
         rows.append(row)
 
-    return pl.DataFrame(rows).select(["timestamp"] + CROSS_MONTH_FEATURE_COLUMNS)
+    frame = pl.DataFrame(rows)
+    delivery_df = frame.with_columns(
+        pl.col("_m1_m2_log_price_ratio").diff(10).fill_null(0.0).alias("cm_m1_m2_log_price_spread_velocity_10m"),
+        pl.col("_m2_m3_log_price_ratio").diff(10).fill_null(0.0).alias("cm_m2_m3_log_price_spread_velocity_10m"),
+        pl.col("_butterfly_ratio").diff(10).fill_null(0.0).alias("cm_m1_m2_m3_butterfly_spread_velocity_10m"),
+    ).drop(["_m1_m2_log_price_ratio", "_m2_m3_log_price_ratio", "_butterfly_ratio"])
+
+    for col in CROSS_MONTH_FEATURE_COLUMNS:
+        if col not in delivery_df.columns:
+            delivery_df = delivery_df.with_columns(pl.lit(0.0).alias(col))
+
+    return delivery_df.select(["timestamp"] + CROSS_MONTH_FEATURE_COLUMNS)
 
 
 def generate_empty_cross_month_features(current_bars: pl.DataFrame) -> pl.DataFrame:

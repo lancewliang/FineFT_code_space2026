@@ -105,8 +105,9 @@ def test_snapshot_features_reject_both_sides_empty():
 def test_manifest_replaces_first_106_reward_columns():
     reward_columns = get_reward_execution_columns(depth=5)
 
-    assert len(reward_columns) == 31
+    assert len(reward_columns) == 32
     assert "contract" in reward_columns
+    assert "close" in reward_columns
     assert "volume" in reward_columns
     assert "tradeval" in reward_columns
     assert "ask5_price" in reward_columns

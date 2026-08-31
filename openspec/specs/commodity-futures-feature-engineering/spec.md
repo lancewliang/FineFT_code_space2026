@@ -221,7 +221,7 @@
 
 ### 3.8 跨月合约状态特征 (Cross-Month Contract State Features)
 
-当前实现输出 `CROSS_MONTH_FEATURE_COLUMNS` 中的 22 个 `cm_*` 特征，分为角色标记、当前合约对主力/次主力的关系特征，以及主力/次主力和三合约序列的跨月结构特征。
+当前实现输出 `CROSS_MONTH_FEATURE_COLUMNS` 中的 22 个 `cm_*` 特征，分为角色标记、当前合约对主力/次主力的关系特征，以及主力/次主力和三合约序列的跨月结构特征。为防止宏观基差绝对价格水平漂移，相邻月度序列特征统一采用差分变率（Spread Velocity）表达。
 
 #### 特征列表与含义
 - `cm_contract_role_main` / `cm_contract_role_sub` / `cm_contract_role_other`: 当前合约在主力/次主力/其他中的角色标记。
@@ -233,12 +233,17 @@
 - `cm_main_sub_relative_price_spread`: 主力与次主力相对价差。
 - `cm_main_sub_volume_share_sub`: 主力与次主力成交量份额中的次主力占比。
 - `cm_main_sub_open_interest_share_sub`: 主力与次主力持仓份额中的次主力占比。
-- `cm_m1_m2_log_price_ratio` / `cm_m2_m3_log_price_ratio`: 相邻月度合约对数价比。
-- `cm_m1_m2_relative_price_spread` / `cm_m2_m3_relative_price_spread`: 相邻月度合约相对价差。
-- `cm_m1_m2_m3_butterfly_ratio`: 三腿蝶式结构比例。
 - `cm_m1_m2_open_interest_share_m2` / `cm_m2_m3_open_interest_share_m3`: 相邻远月合约的持仓份额。
+- `cm_main_sub_log_price_spread_velocity_10m`: 主力次主力对数价差 10 步变率。
+- `cm_open_interest_shift_speed_10m`: 持仓份额向次主力转移速度。
+- `cm_m1_m2_log_price_spread_velocity_10m` / `cm_m2_m3_log_price_spread_velocity_10m`: 近远月度序列对数价差 10 步变率（相对收益率动量差）。
+- `cm_m1_m2_m3_butterfly_spread_velocity_10m`: 三腿蝶式价差 10 步变率。
 
 #### 数学公式
+- **跨月价差变率 / 收益率动量差 (Spread Velocity)**:
+  $$\Delta S_{t, 10} = \ln\left(\frac{P_{m1, t}}{P_{m2, t}}\right) - \ln\left(\frac{P_{m1, t-10}}{P_{m2, t-10}}\right) = r_{m1, (t-10, t)} - r_{m2, (t-10, t)}$$
+- **三腿蝶式价差变率 (Butterfly Spread Velocity)**:
+  $$\Delta B_{t, 10} = \left(\frac{2P_{m2, t} - P_{m1, t} - P_{m3, t}}{P_{m2, t}}\right) - \left(\frac{2P_{m2, t-10} - P_{m1, t-10} - P_{m3, t-10}}{P_{m2, t-10}}\right)$$
 - **相对跨月价差**:
   $$\text{spread\_pct\_main\_next} = \frac{\text{LastPrice}_{main} - \text{LastPrice}_{next}}{\text{LastPrice}_{main} + \epsilon}$$
 - **成交量份额**:

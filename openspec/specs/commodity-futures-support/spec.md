@@ -734,16 +734,16 @@
 - **AND** 两列 SHALL 使用与 orderbook 深度列相同的目标频率窗口取值语义
 - **AND** 两列 SHALL 随 snapshot 输入进入 `CONCURRENT_FEATURE`
 
-#### Scenario: reward manifest 包含涨跌停价
+#### Scenario: reward manifest 包含涨跌停价与收盘价
 - **WHEN** 商品期货使用 `get_reward_execution_columns(depth=5)` 获取 reward/execution 列
-- **THEN** 返回列 SHALL 包含 `LowerLimitPrice` 和 `UpperLimitPrice`
-- **AND** 两列 SHALL 位于 depth-aware orderbook columns 之后、derivative reference columns 之前
-- **AND** depth=5 商品 reward/execution 列总数 SHALL 为 29
+- **THEN** 返回列 SHALL 包含 `close`、`LowerLimitPrice` 和 `UpperLimitPrice`
+- **AND** `LowerLimitPrice` 与 `UpperLimitPrice` 两列 SHALL 位于 depth-aware orderbook columns 之后、derivative reference columns 之前
+- **AND** depth=5 商品 reward/execution 列总数 SHALL 为 32
 
-#### Scenario: 涨跌停价不进入 state candidate
+#### Scenario: 涨跌停价与收盘价不进入 state candidate
 - **WHEN** 商品期货 feature selection 或 scale save 以 `market_type=commodity_futures` 和 `orderbook_depth=5` 运行
-- **THEN** `LowerLimitPrice` 和 `UpperLimitPrice` SHALL 被识别为 reward/execution 列
-- **AND** 两列 SHALL NOT 被作为 state candidate 特征参与选择或缩放
+- **THEN** `close`、`LowerLimitPrice` 和 `UpperLimitPrice` SHALL 被识别为 reward/execution 列
+- **AND** 这些列 SHALL NOT 被作为 state candidate 特征参与选择或缩放
 
 ### Requirement: 商品期货单边盘口 snapshot 特征增强
 系统 SHALL 为合法单边盘口生成有限且语义明确的 snapshot 截面特征。
@@ -1409,7 +1409,7 @@
 - **AND** 输出 SHALL 包含当前合约相对主力合约的 4 个特征：`cm_current_main_log_price_ratio`、`cm_current_main_relative_price_spread`、`cm_current_main_volume_share_current`、`cm_current_main_open_interest_share_current`
 - **AND** 输出 SHALL 包含当前合约相对次主力合约的 4 个特征：`cm_current_sub_log_price_ratio`、`cm_current_sub_relative_price_spread`、`cm_current_sub_volume_share_current`、`cm_current_sub_open_interest_share_current`
 - **AND** 输出 SHALL 包含市场主力/次主力结构的 4 个特征：`cm_main_sub_log_price_ratio`、`cm_main_sub_relative_price_spread`、`cm_main_sub_volume_share_sub`、`cm_main_sub_open_interest_share_sub`
-- **AND** 输出 SHALL 包含到期月份序列结构的 7 个特征：`cm_m1_m2_log_price_ratio`、`cm_m2_m3_log_price_ratio`、`cm_m1_m2_relative_price_spread`、`cm_m2_m3_relative_price_spread`、`cm_m1_m2_m3_butterfly_ratio`、`cm_m1_m2_open_interest_share_m2`、`cm_m2_m3_open_interest_share_m3`
+- **AND** 输出 SHALL 包含到期月份序列结构的 5 个特征：`cm_m1_m2_open_interest_share_m2`、`cm_m2_m3_open_interest_share_m3`、`cm_m1_m2_log_price_spread_velocity_10m`、`cm_m2_m3_log_price_spread_velocity_10m`、`cm_m1_m2_m3_butterfly_spread_velocity_10m`
 - **AND** 当当前合约与参照合约相同时，对应价格关系 SHALL 使用中性值 `0.0`
 - **AND** 当当前合约与参照合约相同时，对应成交量或持仓量 share SHALL 使用同一分母公式计算；若分母小于等于 `0` 则输出 `0.0`
 

@@ -408,7 +408,6 @@ def test_state_features_keep_price_levels_and_price_named_derived_features():
         "open",
         "high",
         "low",
-        "close",
         "wap_1",
         "vwap",
         "buy_wap",
@@ -419,6 +418,26 @@ def test_state_features_keep_price_levels_and_price_named_derived_features():
         "close_log_return_1",
         "relative_strength",
     ]
+
+
+def test_state_features_excludes_close_and_treats_as_reward_column():
+    frame = pl.DataFrame(
+        {
+            "close": [10.0, 11.0],
+            "volume": [100.0, 200.0],
+            "tradeval": [1000.0, 2000.0],
+            "mark_price": [10.0, 11.0],
+            "close_log_return_1": [0.0, 0.1],
+            "feature_alpha": [1.0, 2.0],
+        }
+    )
+    result = _state_features(frame, orderbook_depth=5)
+    assert "close" not in result
+    assert "volume" not in result
+    assert "tradeval" not in result
+    assert "mark_price" not in result
+    assert "close_log_return_1" in result
+    assert "feature_alpha" in result
 
 
 def test_parser_restores_legacy_feature_selection_defaults():

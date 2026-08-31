@@ -104,6 +104,7 @@ def test_reward_execution_manifest_for_depth_five():
     orderbook_columns = build_orderbook_columns(5)
 
     assert columns[0] == "timestamp"
+    assert "close" in columns
     assert "mark_price" in columns
     assert "funding_rate" in columns
     assert "contract" in columns
@@ -119,6 +120,7 @@ def test_reward_execution_manifest_for_depth_five():
     assert columns == [
         "timestamp",
         "contract",
+        "close",
         "volume",
         "tradeval",
         *orderbook_columns,
@@ -130,7 +132,7 @@ def test_reward_execution_manifest_for_depth_five():
         "index_price",
         "mark_price",
     ]
-    assert len(columns) == 1 + 1 + 2 + 20 + 2 + 5
+    assert len(columns) == 1 + 1 + 1 + 2 + 20 + 2 + 5
 
 
 def test_resample_kwargs_are_right_closed_and_right_labeled():

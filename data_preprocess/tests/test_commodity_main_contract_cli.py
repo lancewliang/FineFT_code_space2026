@@ -1412,7 +1412,8 @@ def test_commodity_full_process_shell_preserves_cross_month_features():
     assert "cm_current_main_log_price_ratio" in text
     assert "cm_current_sub_log_price_ratio" in text
     assert "cm_main_sub_log_price_ratio" in text
-    assert "cm_m1_m2_m3_butterfly_ratio" in text
+    assert "cm_m1_m2_log_price_spread_velocity_10m" in text
+    assert "cm_m1_m2_m3_butterfly_spread_velocity_10m" in text
     assert "PRICE_LIMIT_RATIO_FEATURE_COLUMNS=(" in text
     assert "limit_up_single_sided_ratio" in text
     assert "limit_down_single_sided_ratio" in text
