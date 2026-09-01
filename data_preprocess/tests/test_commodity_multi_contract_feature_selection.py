@@ -382,12 +382,13 @@ def test_absolute_rank_ic_keeps_negative_direction_features_by_default():
     assert set(filter_results["Hard Filter"]) == set(features)
 
 
-def test_state_features_keep_price_levels_and_price_named_derived_features():
+def test_state_features_exclude_raw_price_and_oi_levels_and_keep_derived_features():
     frame = pl.DataFrame(
         {
             "open": [1.0, 2.0],
             "high": [1.0, 2.0],
             "low": [1.0, 2.0],
+            "open_interest": [100.0, 200.0],
             "close": [1.0, 2.0],
             "mark_price": [1.0, 2.0],
             "wap_1": [1.0, 2.0],
@@ -404,10 +405,13 @@ def test_state_features_keep_price_levels_and_price_named_derived_features():
 
     result = _state_features(frame, orderbook_depth=5)
 
+    assert "open" not in result
+    assert "high" not in result
+    assert "low" not in result
+    assert "open_interest" not in result
+    assert "close" not in result
+    assert "mark_price" not in result
     assert result == [
-        "open",
-        "high",
-        "low",
         "wap_1",
         "vwap",
         "buy_wap",

@@ -1391,6 +1391,10 @@ def test_commodity_full_process_shell_passes_feature_blacklist():
     text = script.read_text(encoding="utf-8")
 
     assert "--feature_blacklist" in text
+    assert "open" in text
+    assert "high" in text
+    assert "low" in text
+    assert "open_interest" in text
     assert "wap_1" in text
     assert "midprice" in text
     assert "buy_volume_oe" in text

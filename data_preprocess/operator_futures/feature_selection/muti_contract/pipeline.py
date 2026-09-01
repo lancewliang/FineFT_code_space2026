@@ -74,7 +74,17 @@ def _parse_target_regime_bins(
     return result if result else None
 
 
-NON_STATE_COLUMNS = {"timestamp", "trading_day", "TradingDay", "symbol", "contract"}
+NON_STATE_COLUMNS = {
+    "timestamp",
+    "trading_day",
+    "TradingDay",
+    "symbol",
+    "contract",
+    "open",
+    "high",
+    "low",
+    "open_interest",
+}
 DEFAULT_PERSISTENCE_FILTER_PATTERN = r"_log_return_(1|2)$"
 
 

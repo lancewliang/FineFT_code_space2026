@@ -1,6 +1,10 @@
 source data_preprocess/script_preprocess/future_upgraded/commodity/commodity_process.sh
 
 COMMODITY_FU_FEATURE_BLACKLIST=(
+    open
+    high
+    low
+    open_interest
     vwap
     awap
     twap
