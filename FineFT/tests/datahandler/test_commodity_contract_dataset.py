@@ -495,7 +495,7 @@ def test_commodity_data_handler_scripts_use_contract_dataset_tool():
         assert "valid_cross_contract_label_calibration.py --data_path dataset/" not in text
 
 
-def test_fu_30min_data_handler_uses_four_global_segment_quantile_labels():
+def test_fu_30min_data_handler_uses_three_global_segment_quantile_labels():
     root = Path(__file__).resolve().parents[3]
     script = (
         root
@@ -507,29 +507,22 @@ def test_fu_30min_data_handler_uses_four_global_segment_quantile_labels():
 
     text = script.read_text(encoding="utf-8")
 
-    assert "--dynamic_number 4" in text
+    assert "--dynamic_number 3" in text
     assert "--threshold_method global_segment_quantile" in text
 
 
-def test_fu_30min_training_scripts_use_four_labels():
+def test_fu_30min_training_scripts_use_three_labels():
     root = Path(__file__).resolve().parents[3]
     scripts = {
-        "FineFT/script/train/DiHFT/low_level/VAE_util_fu_30.sh": [
-            "LABEL_COUNT=${LABEL_COUNT:-4}",
-            '--total_label_number "${LABEL_COUNT}"',
-        ],
         "FineFT/script/train/DiHFT/low_level/VAE_util_fu_30_half.sh": [
-            "LABEL_COUNT=${LABEL_COUNT:-4}",
+            "LABEL_COUNT=${LABEL_COUNT:-3}",
             '--total_label_number "${LABEL_COUNT}"',
-        ],
-        "FineFT/script/test/DiHFT/high_level/vae_optuna_fu_30.sh": [
-            "--label_number 4",
         ],
         "FineFT/script/test/DiHFT/high_level/vae_optuna_fu_30_half.sh": [
-            "--label_number 4",
+            "--selection_manifest",
         ],
         "FineFT/script/test/DiHFT/high_level/final_result_fu_30_half.sh": [
-            "--label_number 4",
+            "--selection_manifest",
         ],
     }
 

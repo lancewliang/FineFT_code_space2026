@@ -676,68 +676,68 @@ run_commodity_full_process() {
 
     local log_dir="${LOG_DIR:-${root_path}/log_futures/ticker_result/commodity}"
 
-    run_commodity_logged_step \
-        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-        "stitch_main_contract" \
-        run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$start_date" "$end_date" "$symbol"
+    # run_commodity_logged_step \
+    #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+    #     "stitch_main_contract" \
+    #     run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$start_date" "$end_date" "$symbol"
     local summary_path="${root_path}/PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/${symbol}/main_contract_summary.json"
-    run_commodity_logged_step \
-        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-        "downscale_continuous_by_trading_day" \
-        run_commodity_downscale_continuous_by_trading_day "$root_path" "$summary_path" "$target_freq" "$symbol"
+    # run_commodity_logged_step \
+    #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+    #     "downscale_continuous_by_trading_day" \
+    #     run_commodity_downscale_continuous_by_trading_day "$root_path" "$summary_path" "$target_freq" "$symbol"
 
     local contract
-    while IFS= read -r contract; do
-        [ -n "$contract" ] || continue
-        run_commodity_logged_step \
-            "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-            "cross_section" \
-            run_commodity_cross_section_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
-    done < <(run_commodity_summary_contracts "$summary_path")
+    # while IFS= read -r contract; do
+    #     [ -n "$contract" ] || continue
+    #     run_commodity_logged_step \
+    #         "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #         "cross_section" \
+    #         run_commodity_cross_section_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
+    # done < <(run_commodity_summary_contracts "$summary_path")
 
-    while IFS= read -r contract; do
-        [ -n "$contract" ] || continue
-        run_commodity_logged_step \
-            "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-            "daily_base_feature" \
-            run_commodity_daily_base_feature_process "$start_date" "$end_date" "$target_freq" "$symbol" "$root_path" "$contract"
-        run_commodity_logged_step \
-            "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-            "weekly_base_feature" \
-            run_commodity_weekly_base_feature_process "$start_date" "$end_date" "$target_freq" "$symbol" "$root_path" "$contract"
-        run_commodity_logged_step \
-            "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-            "cross_month_feature" \
-            run_commodity_cross_month_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$summary_path" "$contract"
-        run_commodity_logged_step \
-            "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-            "daily_mixed_frequency_feature" \
-            run_commodity_daily_mixed_frequency_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
-        run_commodity_logged_step \
-            "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-            "weekly_mixed_frequency_feature" \
-            run_commodity_weekly_mixed_frequency_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
-        run_commodity_logged_step \
-            "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-            "mixed_frequency_feature" \
-            run_commodity_mixed_frequency_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
-        run_commodity_logged_step \
-            "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-            "merge" \
-            run_commodity_merge_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
-        run_commodity_logged_step \
-            "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-            "concat" \
-            run_commodity_concat_process "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
-        run_commodity_logged_step \
-            "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-            "time_feature" \
-            run_commodity_time_feature "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
-        run_commodity_logged_step \
-            "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-            "merge_clean" \
-            run_commodity_merge_and_clean "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
-    done < <(run_commodity_summary_contracts "$summary_path")
+    # while IFS= read -r contract; do
+    #     [ -n "$contract" ] || continue
+    #     run_commodity_logged_step \
+    #         "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #         "daily_base_feature" \
+    #         run_commodity_daily_base_feature_process "$start_date" "$end_date" "$target_freq" "$symbol" "$root_path" "$contract"
+    #     run_commodity_logged_step \
+    #         "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #         "weekly_base_feature" \
+    #         run_commodity_weekly_base_feature_process "$start_date" "$end_date" "$target_freq" "$symbol" "$root_path" "$contract"
+    #     run_commodity_logged_step \
+    #         "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #         "cross_month_feature" \
+    #         run_commodity_cross_month_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$summary_path" "$contract"
+    #     run_commodity_logged_step \
+    #         "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #         "daily_mixed_frequency_feature" \
+    #         run_commodity_daily_mixed_frequency_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
+    #     run_commodity_logged_step \
+    #         "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #         "weekly_mixed_frequency_feature" \
+    #         run_commodity_weekly_mixed_frequency_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
+    #     run_commodity_logged_step \
+    #         "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #         "mixed_frequency_feature" \
+    #         run_commodity_mixed_frequency_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
+    #     run_commodity_logged_step \
+    #         "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #         "merge" \
+    #         run_commodity_merge_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
+    #     run_commodity_logged_step \
+    #         "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #         "concat" \
+    #         run_commodity_concat_process "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
+    #     run_commodity_logged_step \
+    #         "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #         "time_feature" \
+    #         run_commodity_time_feature "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
+    #     run_commodity_logged_step \
+    #         "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #         "merge_clean" \
+    #         run_commodity_merge_and_clean "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
+    # done < <(run_commodity_summary_contracts "$summary_path")
 
     run_commodity_logged_step \
         "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \

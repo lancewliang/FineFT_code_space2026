@@ -472,6 +472,7 @@ def _make_parallel_update_trainer(pwap):
     trainer.N_ACTIONS = 3
     trainer.gamma = 0.99
     trainer.if_use_hubber_loss = False
+    trainer.neighbor_size = 1
     trainer.outer_bond = 4
     trainer.reachout_index = 1
     trainer.ada = 0.0
@@ -596,3 +597,810 @@ def test_select_pretrain_action_clamps_unavailable_perfection_action():
 
     assert action in info["avaiable_action_list"]
     assert action == 5
+
+
+def test_parallel_parser_exposes_fixed_neighbor_size():
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+
+    args = pwap.parser.parse_args([])
+    assert args.neighbor_size == 1
+
+    args_custom = pwap.parser.parse_args(["--neighbor_size", "2"])
+    assert args_custom.neighbor_size == 2
+
+
+def test_parallel_diverse_update_matches_paper_loss_computation():
+    import math
+    import pytest
+    import torch
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+    from RL.DiHFT.low_level.weight_advantage_pretrain import (
+        calculate_paper_partial_loss,
+        calculate_paper_supervisor_kl_loss,
+    )
+
+    trainer = _make_parallel_update_trainer(pwap)
+    trainer.ada = 1.0
+    trainer.neighbor_size = 1
+    batch = _sample_parallel_update_batch()
+
+    losses = pdt.update(trainer, *batch)
+    assert len(losses) == 3
+    total_loss, kl_loss, td_loss = losses
+    assert total_loss == pytest.approx(td_loss + kl_loss, abs=1e-6)
+
+
+def test_run_exhaustive_warmup_collects_all_episodes_before_training_and_updates_model(
+    monkeypatch,
+):
+    import queue
+    from unittest.mock import MagicMock
+    from RL.DiHFT.low_level import parallel_pretrain as pp
+
+    events = []
+
+    class DummyInputQueue:
+        def __init__(self, df_index, result_queue):
+            self.df_index = df_index
+            self.result_queue = result_queue
+            self.received = []
+
+        def put(self, message):
+            self.received.append(message)
+            events.append(
+                (
+                    "dispatch_task",
+                    self.df_index,
+                    message.initial_action,
+                    message.rollout_index,
+                )
+            )
+            transitions = [
+                ("s1", {}, 0, 1.0, "s2", {}, False),
+                ("s2", {}, 0, 0.5, "s3", {}, True),
+            ]
+            self.result_queue.put(
+                pp.PretrainCollectResult(
+                    df_index=self.df_index,
+                    initial_action=message.initial_action,
+                    rollout_index=message.rollout_index,
+                    transitions=transitions,
+                    reward_sum=1.5,
+                    final_balance=10150.0,
+                    transition_count=len(transitions),
+                )
+            )
+
+    trainer = MagicMock()
+    trainer.total_df_index_length = 2
+    trainer.position_choices = 1
+    trainer.initial_wallet_balance = 10000.0
+    trainer.pretrain_epoch = 2
+    trainer.update_times = 3
+    trainer.batch_size = 2
+    trainer.update_counter = 0
+
+    def fake_shutdown():
+        events.append("shutdown_workers")
+
+    trainer._shutdown_parallel_workers.side_effect = fake_shutdown
+
+    def mock_start_workers(tr, train_df_cache, env_kwargs, q_table_cache):
+        events.append("start_workers")
+        tr.worker_result_queue = queue.Queue()
+        tr.worker_input_queues = {
+            0: DummyInputQueue(0, tr.worker_result_queue),
+            1: DummyInputQueue(1, tr.worker_result_queue),
+        }
+
+    monkeypatch.setattr(pp, "start_pretrain_collect_workers", mock_start_workers)
+
+    added_transitions = []
+
+    class DummyBuffer:
+        def __len__(self):
+            return len(added_transitions)
+
+        def add(self, *transition):
+            added_transitions.append(transition)
+            events.append(("buffer_add", len(added_transitions)))
+
+        def sample(self):
+            events.append("buffer_sample")
+            return ("states", {}, "actions", "rewards", "next_states", {}, "dones")
+
+    def mock_update_pretrain(tr, *batch):
+        events.append("update_pretrain")
+        return (1.0, 0.2, 0.8)
+
+    monkeypatch.setattr(pp, "update_pretrain", mock_update_pretrain)
+    monkeypatch.setattr(
+        pp,
+        "write_pretrain_loss_scalars",
+        lambda tr, *losses: events.append("write_loss"),
+    )
+
+    buffer_pretrain = DummyBuffer()
+    summary, final_steps = pp.run_exhaustive_warmup(
+        trainer=trainer,
+        q_table_cache={0: None, 1: None},
+        train_df_cache={0: None, 1: None},
+        env_kwargs={},
+        buffer_pretrain=buffer_pretrain,
+        step_counter_pretrain=10,
+    )
+
+    assert summary["episodes"] == 8
+    assert summary["transitions"] == 26
+    assert final_steps == 26
+    assert summary["update_count"] == 6
+
+    last_add_idx = max(
+        i
+        for i, ev in enumerate(events)
+        if isinstance(ev, tuple) and ev[0] == "buffer_add"
+    )
+    shutdown_idx = events.index("shutdown_workers")
+    first_sample_idx = events.index("buffer_sample")
+    first_update_idx = events.index("update_pretrain")
+
+    assert last_add_idx < shutdown_idx
+    assert shutdown_idx < first_sample_idx
+    assert shutdown_idx < first_update_idx
+
+    assert sum(1 for ev in events if ev == "update_pretrain") == 6
+    assert sum(1 for ev in events if ev == "write_loss") == 6
+
+
+def test_run_exhaustive_warmup_skips_training_when_pretrain_epoch_zero(monkeypatch):
+    import queue
+    from unittest.mock import MagicMock
+    from RL.DiHFT.low_level import parallel_pretrain as pp
+
+    events = []
+
+    class DummyInputQueue:
+        def __init__(self, df_index, result_queue):
+            self.df_index = df_index
+            self.result_queue = result_queue
+
+        def put(self, message):
+            self.result_queue.put(
+                pp.PretrainCollectResult(
+                    df_index=self.df_index,
+                    initial_action=message.initial_action,
+                    rollout_index=message.rollout_index,
+                    transitions=[("s", {}, 0, 1.0, "s_", {}, True)],
+                    reward_sum=1.0,
+                    final_balance=10000.0,
+                    transition_count=1,
+                )
+            )
+
+    trainer = MagicMock()
+    trainer.total_df_index_length = 1
+    trainer.position_choices = 1
+    trainer.initial_wallet_balance = 10000.0
+    trainer.pretrain_epoch = 0
+    trainer.update_times = 10
+    trainer.batch_size = 2
+    trainer.update_counter = 0
+
+    def fake_shutdown():
+        events.append("shutdown_workers")
+
+    trainer._shutdown_parallel_workers.side_effect = fake_shutdown
+
+    def mock_start_workers(tr, train_df_cache, env_kwargs, q_table_cache):
+        tr.worker_result_queue = queue.Queue()
+        tr.worker_input_queues = {0: DummyInputQueue(0, tr.worker_result_queue)}
+
+    monkeypatch.setattr(pp, "start_pretrain_collect_workers", mock_start_workers)
+
+    class DummyBuffer:
+        def __init__(self):
+            self.items = []
+
+        def __len__(self):
+            return len(self.items)
+
+        def add(self, *transition):
+            self.items.append(transition)
+
+        def sample(self):
+            raise AssertionError("sample() should not be called when pretrain_epoch=0")
+
+    monkeypatch.setattr(
+        pp,
+        "update_pretrain",
+        MagicMock(side_effect=AssertionError("update_pretrain called")),
+    )
+
+    buffer_pretrain = DummyBuffer()
+    summary, final_steps = pp.run_exhaustive_warmup(
+        trainer=trainer,
+        q_table_cache={0: None},
+        train_df_cache={0: None},
+        env_kwargs={},
+        buffer_pretrain=buffer_pretrain,
+        step_counter_pretrain=0,
+    )
+
+    assert summary["episodes"] == 4
+    assert summary["transitions"] == 4
+    assert summary["update_count"] == 0
+    assert final_steps == 4
+    assert "shutdown_workers" in events
+
+
+def test_run_exhaustive_warmup_rejects_negative_pretrain_epoch():
+    import pytest
+    from unittest.mock import MagicMock
+    from RL.DiHFT.low_level import parallel_pretrain as pp
+
+    trainer = MagicMock()
+    trainer.total_df_index_length = 1
+    trainer.position_choices = 1
+    trainer.pretrain_epoch = -1
+
+    with pytest.raises(ValueError, match="pretrain_epoch must be non-negative"):
+        pp.run_exhaustive_warmup(
+            trainer=trainer,
+            q_table_cache={0: None},
+            train_df_cache={0: None},
+            env_kwargs={},
+            buffer_pretrain=MagicMock(),
+            step_counter_pretrain=0,
+        )
+
+
+def test_run_exhaustive_warmup_rejects_non_positive_update_times_when_pretrain_epoch_positive(
+    monkeypatch,
+):
+    import queue
+    import pytest
+    from unittest.mock import MagicMock
+    from RL.DiHFT.low_level import parallel_pretrain as pp
+
+    class DummyInputQueue:
+        def __init__(self, result_queue):
+            self.result_queue = result_queue
+
+        def put(self, message):
+            self.result_queue.put(
+                pp.PretrainCollectResult(
+                    df_index=0,
+                    initial_action=message.initial_action,
+                    rollout_index=message.rollout_index,
+                    transitions=[("s", {}, 0, 1.0, "s_", {}, True)],
+                    reward_sum=1.0,
+                    final_balance=10000.0,
+                    transition_count=1,
+                )
+            )
+
+    trainer = MagicMock()
+    trainer.total_df_index_length = 1
+    trainer.position_choices = 1
+    trainer.initial_wallet_balance = 10000.0
+    trainer.pretrain_epoch = 1
+    trainer.update_times = 0
+    trainer.batch_size = 1
+
+    def mock_start_workers(tr, train_df_cache, env_kwargs, q_table_cache):
+        tr.worker_result_queue = queue.Queue()
+        tr.worker_input_queues = {0: DummyInputQueue(tr.worker_result_queue)}
+
+    monkeypatch.setattr(pp, "start_pretrain_collect_workers", mock_start_workers)
+
+    class DummyBuffer:
+        def __init__(self):
+            self.items = []
+
+        def __len__(self):
+            return len(self.items)
+
+        def add(self, *transition):
+            self.items.append(transition)
+
+    with pytest.raises(
+        ValueError, match="update_times must be positive when pretrain_epoch > 0"
+    ):
+        pp.run_exhaustive_warmup(
+            trainer=trainer,
+            q_table_cache={0: None},
+            train_df_cache={0: None},
+            env_kwargs={},
+            buffer_pretrain=DummyBuffer(),
+            step_counter_pretrain=0,
+        )
+
+
+def test_run_parallel_pretrain_evaluation_dispatches_sync_and_eval_tasks(monkeypatch):
+    import queue
+    from unittest.mock import MagicMock
+    from RL.DiHFT.low_level import parallel_pretrain as pp
+
+    events = []
+
+    class DummyWorkerQueue:
+        def __init__(self, q_id, result_queue):
+            self.q_id = q_id
+            self.result_queue = result_queue
+
+        def put(self, message):
+            if type(message).__name__ == "SyncPretrainModel":
+                events.append(("sync_model", self.q_id))
+            elif type(message).__name__ == "EvaluatePretrainEpisode":
+                events.append(
+                    (
+                        "eval_episode",
+                        self.q_id,
+                        message.context_index,
+                        message.df_index,
+                        message.initial_action,
+                    )
+                )
+                self.result_queue.put(
+                    pp.PretrainEvalResult(
+                        df_index=message.df_index,
+                        context_index=message.context_index,
+                        initial_action=message.initial_action,
+                        reward_sum=5.0,
+                        final_balance=10050.0,
+                        return_rate=0.005,
+                    )
+                )
+
+    result_queue = queue.Queue()
+    q0 = DummyWorkerQueue(0, result_queue)
+    q1 = DummyWorkerQueue(1, result_queue)
+
+    trainer = MagicMock()
+    trainer.N = 2
+    trainer.total_df_index_length = 3
+    # 3 dfs sharded over 2 queues
+    trainer.worker_input_queues = {0: q0, 1: q1, 2: q0}
+    trainer.worker_result_queue = result_queue
+    trainer.writer = MagicMock()
+
+    eval_net_mock = MagicMock()
+    eval_net_mock.state_dict.return_value = {}
+    trainer.eval_net = eval_net_mock
+
+    monkeypatch.setattr(
+        "RL.DiHFT.low_level.parallel_diverse_train.make_cpu_state_dict",
+        lambda m: {"dummy_weight": 1},
+    )
+
+    metrics = pp.run_parallel_pretrain_evaluation(
+        trainer=trainer,
+        train_df_cache={0: "df0", 1: "df1", 2: "df2"},
+        env_kwargs={},
+    )
+
+    # 2 contexts * 3 dfs = 6 results
+    assert len(metrics) == 6
+    for m in metrics:
+        assert m.initial_action == 0
+        assert m.reward_sum == 5.0
+        assert m.final_balance == 10050.0
+
+    # Sync model was sent exactly once to each unique queue (q0, q1)
+    sync_events = [ev for ev in events if ev[0] == "sync_model"]
+    assert len(sync_events) == 2
+    assert {ev[1] for ev in sync_events} == {0, 1}
+
+    # All 6 evaluation tasks were dispatched
+    eval_events = [ev for ev in events if ev[0] == "eval_episode"]
+    assert len(eval_events) == 6
+    assert all(ev[4] == 0 for ev in eval_events)  # initial_action is 0
+    assert {(ev[2], ev[3]) for ev in eval_events} == {
+        (0, 0),
+        (0, 1),
+        (0, 2),
+        (1, 0),
+        (1, 1),
+        (1, 2),
+    }
+
+
+def test_evaluate_warmup_sub_agents_iterates_all_contexts_and_dfs_with_action_zero(
+    monkeypatch,
+):
+    import pytest
+    from unittest.mock import MagicMock
+    import torch
+    import numpy as np
+    from RL.DiHFT.low_level import parallel_pretrain as pp
+
+    built_states = []
+    created_envs = []
+
+    class DummyEnv:
+        def __init__(self, df_name):
+            self.df_name = df_name
+            self.step_count = 0
+            self.unrealized_pnl = 50.0
+            self.wallet_balance = 10100.0
+
+        def reset(self):
+            self.step_count = 0
+            return np.zeros(4), {
+                "previous_action": 0,
+                "avaliable_action": [1, 1, 1],
+                "avaiable_action_list": [0, 1, 2],
+                "funding_count_down_hour": 0,
+                "funding_count_down_minute": 0,
+                "trading_info": np.zeros(4),
+            }
+
+        def step(self, action):
+            self.step_count += 1
+            done = self.step_count >= 2
+            return (
+                np.zeros(4),
+                10.0,
+                done,
+                {
+                    "previous_action": action,
+                    "avaliable_action": [1, 1, 1],
+                    "avaiable_action_list": [0, 1, 2],
+                    "funding_count_down_hour": 0,
+                    "funding_count_down_minute": 0,
+                    "trading_info": np.zeros(4),
+                },
+            )
+
+    def mock_build_initial_state(train_df, initial_action, *args, **kwargs):
+        built_states.append((train_df, initial_action))
+        return None, None, None, f"init_{train_df}_{initial_action}"
+
+    def mock_create_demo_env(train_df, env_kwargs, initial_state):
+        env = DummyEnv(train_df)
+        created_envs.append(env)
+        return env
+
+    monkeypatch.setattr(pp, "build_initial_state", mock_build_initial_state)
+    monkeypatch.setattr(pp, "create_demo_env", mock_create_demo_env)
+
+    trainer = MagicMock()
+    trainer.N = 2
+    trainer.total_df_index_length = 3
+    trainer.device = "cpu"
+    trainer.leverage_choices = [1]
+    trainer.position_list = [0]
+    trainer.initial_wallet_balance = 10000.0
+    trainer.initial_unrealized_pnL = 0.0
+
+    def mock_eval_net(**kwargs):
+        return torch.tensor([[[1.0, 5.0, 2.0], [1.0, 2.0, 6.0]]], dtype=torch.float32)
+
+    trainer.eval_net = mock_eval_net
+
+    train_df_cache = {0: "df0", 1: "df1", 2: "df2"}
+    metrics = pp.evaluate_warmup_sub_agents(
+        trainer=trainer,
+        train_df_cache=train_df_cache,
+        env_kwargs={},
+    )
+
+    assert len(metrics) == 6
+    for m in metrics:
+        assert m.initial_action == 0
+        assert m.reward_sum == 20.0
+        assert m.final_balance == 10150.0
+        assert m.return_rate == pytest.approx(0.015, abs=1e-6)
+
+    assert all(init_a == 0 for _, init_a in built_states)
+    assert {(m.context_index, m.df_index) for m in metrics} == {
+        (0, 0),
+        (0, 1),
+        (0, 2),
+        (1, 0),
+        (1, 1),
+        (1, 2),
+    }
+
+
+def test_run_exhaustive_warmup_calls_evaluation_and_returns_eval_metrics(monkeypatch):
+    import queue
+    from unittest.mock import MagicMock
+    from RL.DiHFT.low_level import parallel_pretrain as pp
+
+    trainer = MagicMock()
+    trainer.total_df_index_length = 1
+    trainer.position_choices = 1
+    trainer.initial_wallet_balance = 10000.0
+    trainer.pretrain_epoch = 0
+    trainer.update_times = 0
+    trainer.batch_size = 1
+
+    class DummyInputQueue:
+        def __init__(self, result_queue):
+            self.result_queue = result_queue
+
+        def put(self, message):
+            self.result_queue.put(
+                pp.PretrainCollectResult(
+                    df_index=0,
+                    initial_action=message.initial_action,
+                    rollout_index=message.rollout_index,
+                    transitions=[("s", {}, 0, 1.0, "s_", {}, True)],
+                    reward_sum=1.0,
+                    final_balance=10000.0,
+                    transition_count=1,
+                )
+            )
+
+    def mock_start_workers(tr, train_df_cache, env_kwargs, q_table_cache):
+        tr.worker_result_queue = queue.Queue()
+        tr.worker_input_queues = {0: DummyInputQueue(tr.worker_result_queue)}
+
+    monkeypatch.setattr(pp, "start_pretrain_collect_workers", mock_start_workers)
+
+    expected_eval_metric = pp.WarmupEvalMetric(
+        context_index=0,
+        df_index=0,
+        initial_action=0,
+        reward_sum=10.0,
+        final_balance=10100.0,
+        return_rate=0.01,
+    )
+    monkeypatch.setattr(
+        pp,
+        "evaluate_warmup_sub_agents",
+        lambda trainer, train_df_cache, env_kwargs: [expected_eval_metric],
+    )
+
+    class DummyBuffer:
+        def __len__(self):
+            return 4
+
+        def add(self, *transition):
+            pass
+
+    summary, _ = pp.run_exhaustive_warmup(
+        trainer=trainer,
+        q_table_cache={0: None},
+        train_df_cache={0: None},
+        env_kwargs={},
+        buffer_pretrain=DummyBuffer(),
+        step_counter_pretrain=0,
+    )
+
+    assert "eval_metrics" in summary
+    assert summary["eval_metrics"] == [expected_eval_metric]
+
+
+
+def test_parallel_parser_pretrain_num_workers_default_and_flags():
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+
+    args_default = pwap.parser.parse_args([])
+    assert args_default.pretrain_num_workers == 150
+    assert args_default.eval_num_workers == 150
+
+    args_custom = pwap.parser.parse_args(["--pretrain_num_workers", "80", "--eval_num_workers", "90"])
+    assert args_custom.pretrain_num_workers == 80
+    assert args_custom.eval_num_workers == 90
+
+    args_alias = pwap.parser.parse_args(["--pretrain_workers", "64", "--pretrain_eval_workers", "48"])
+    assert args_alias.pretrain_num_workers == 64
+    assert args_alias.eval_num_workers == 48
+
+
+def test_trainer_validates_pretrain_num_workers():
+    import pytest
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+
+    trainer = pwap.Weighted_Contexts_DQN.__new__(pwap.Weighted_Contexts_DQN)
+    args = pwap.parser.parse_args([])
+    args.pretrain_num_workers = 0
+    with pytest.raises(ValueError, match="pretrain_num_workers must be positive"):
+        if args.pretrain_num_workers <= 0:
+            raise ValueError("pretrain_num_workers must be positive")
+
+    args.pretrain_num_workers = 150
+    args.eval_num_workers = 0
+    with pytest.raises(ValueError, match="eval_num_workers must be positive"):
+        if args.eval_num_workers <= 0:
+            raise ValueError("eval_num_workers must be positive")
+
+
+def test_start_pretrain_collect_workers_respects_worker_count_and_shards_dfs(
+    monkeypatch,
+):
+    import queue
+    from unittest.mock import MagicMock
+    from RL.DiHFT.low_level import parallel_pretrain as pp
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+
+    spawned_processes = []
+    created_configs = []
+
+    class DummyProcess:
+        def __init__(self, target, args):
+            self.target = target
+            self.args = args
+            created_configs.append(args[0])
+            spawned_processes.append(self)
+
+        def start(self):
+            pass
+
+    class DummyContext:
+        def Queue(self):
+            return queue.Queue()
+
+        def Process(self, target, args):
+            return DummyProcess(target, args)
+
+    monkeypatch.setattr(pwap, "create_worker_context", lambda: DummyContext())
+
+    trainer = MagicMock()
+    trainer.total_df_index_length = 5
+    trainer.pretrain_num_workers = 2
+    trainer.leverage_choices = [1]
+    trainer.position_list = [0]
+    trainer.position_choices = 1
+    trainer.initial_wallet_balance = 10000.0
+    trainer.initial_unrealized_pnL = 0.0
+
+    train_df_cache = {i: f"df_{i}" for i in range(5)}
+    q_table_cache = {i: f"qtable_{i}" for i in range(5)}
+
+    pp.start_pretrain_collect_workers(
+        trainer=trainer,
+        train_df_cache=train_df_cache,
+        env_kwargs={},
+        q_table_cache=q_table_cache,
+    )
+
+    assert len(trainer.worker_processes) == 2
+    assert len(spawned_processes) == 2
+
+    assert set(trainer.worker_input_queues.keys()) == {0, 1, 2, 3, 4}
+    assert trainer.worker_input_queues[0] is trainer.worker_input_queues[2]
+    assert trainer.worker_input_queues[0] is trainer.worker_input_queues[4]
+    assert trainer.worker_input_queues[1] is trainer.worker_input_queues[3]
+    assert trainer.worker_input_queues[0] is not trainer.worker_input_queues[1]
+
+    worker_0_config = created_configs[0]
+    worker_1_config = created_configs[1]
+    assert worker_0_config["df_indices"] == [0, 2, 4]
+    assert worker_1_config["df_indices"] == [1, 3]
+    assert worker_0_config["train_df_by_df"] == {0: "df_0", 2: "df_2", 4: "df_4"}
+    assert worker_1_config["train_df_by_df"] == {1: "df_1", 3: "df_3"}
+
+
+def test_pretrain_collect_runner_handles_multi_df_tasks(monkeypatch):
+    from unittest.mock import MagicMock
+    from RL.DiHFT.low_level import parallel_pretrain as pp
+
+    env_mock = MagicMock()
+    env_mock.reset.return_value = ("state", {"avaiable_action_list": [0]})
+    env_mock.step.return_value = (
+        "next_state",
+        1.0,
+        True,
+        {"avaiable_action_list": [0]},
+    )
+    env_mock.unrealized_pnl = 0.0
+    env_mock.wallet_balance = 10000.0
+
+    monkeypatch.setattr(
+        pp,
+        "build_initial_state",
+        lambda *args, **kwargs: (None, None, None, "init_state"),
+    )
+    monkeypatch.setattr(pp, "create_demo_env", lambda df, kwargs, init_s: env_mock)
+    monkeypatch.setattr(pp, "get_dp_action_from_qtable", lambda qtable, init_a: [0])
+
+    worker_config = {
+        "df_indices": [0, 1],
+        "train_df_by_df": {0: "df0", 1: "df1"},
+        "q_table_by_df": {0: "q0", 1: "q1"},
+        "env_kwargs": {},
+        "leverage_choices": [1],
+        "position_list": [0],
+        "position_choices": 1,
+        "initial_wallet_balance": 10000.0,
+        "initial_unrealized_pnL": 0.0,
+    }
+    runner = pp.PretrainCollectRunner(worker_config)
+
+    res0 = runner.collect_episode(
+        pp.CollectPretrainEpisode(initial_action=0, rollout_index=0, df_index=0)
+    )
+    assert res0.df_index == 0
+
+    res1 = runner.collect_episode(
+        pp.CollectPretrainEpisode(initial_action=0, rollout_index=0, df_index=1)
+    )
+    assert res1.df_index == 1
+
+
+def test_shutdown_workers_deduplicates_shared_queues():
+    import queue
+    from unittest.mock import MagicMock
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+
+    q1 = queue.Queue()
+    q2 = queue.Queue()
+    input_queues = [q1, q2, q1, q2]
+
+    p1 = MagicMock()
+    p1.is_alive.return_value = False
+    p2 = MagicMock()
+    p2.is_alive.return_value = False
+
+    pwap.shutdown_workers(input_queues, [p1, p2])
+
+    assert q1.qsize() == 1
+    assert q2.qsize() == 1
+
+
+
+def test_run_exhaustive_warmup_rejects_insufficient_buffer_for_batch_size(monkeypatch):
+    import queue
+    import pytest
+    from unittest.mock import MagicMock
+    from RL.DiHFT.low_level import parallel_pretrain as pp
+
+    class DummyInputQueue:
+        def __init__(self, result_queue):
+            self.result_queue = result_queue
+
+        def put(self, message):
+            self.result_queue.put(
+                pp.PretrainCollectResult(
+                    df_index=0,
+                    initial_action=message.initial_action,
+                    rollout_index=message.rollout_index,
+                    transitions=[],  # 0 transitions collected
+                    reward_sum=0.0,
+                    final_balance=10000.0,
+                    transition_count=0,
+                )
+            )
+
+    trainer = MagicMock()
+    trainer.total_df_index_length = 1
+    trainer.position_choices = 1
+    trainer.initial_wallet_balance = 10000.0
+    trainer.pretrain_epoch = 1
+    trainer.update_times = 5
+    trainer.batch_size = 32
+
+    def mock_start_workers(tr, train_df_cache, env_kwargs, q_table_cache):
+        tr.worker_result_queue = queue.Queue()
+        tr.worker_input_queues = {0: DummyInputQueue(tr.worker_result_queue)}
+
+    monkeypatch.setattr(pp, "start_pretrain_collect_workers", mock_start_workers)
+
+    class DummyBuffer:
+        def __init__(self):
+            self.items = []
+
+        def __len__(self):
+            return len(self.items)
+
+        def add(self, *transition):
+            self.items.append(transition)
+
+    with pytest.raises(
+        ValueError, match="buffer_pretrain size .* is smaller than batch_size"
+    ):
+        pp.run_exhaustive_warmup(
+            trainer=trainer,
+            q_table_cache={0: None},
+            train_df_cache={0: None},
+            env_kwargs={},
+            buffer_pretrain=DummyBuffer(),
+            step_counter_pretrain=0,
+        )
+
+
+

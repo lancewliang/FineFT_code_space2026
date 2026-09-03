@@ -22,10 +22,13 @@ from RL.DiHFT.low_level.pretrain_qtable_diagnostics import (
 from RL.util.update import (
     evaluate_quantile_at_action,
     calculate_huber_loss,
-    calculate_partial_loss,
     recalculate_q_demonstration,
     update_params,
     soft_copy_params,
+)
+from RL.DiHFT.low_level.weight_advantage_pretrain import (
+    calculate_paper_partial_loss,
+    calculate_paper_supervisor_kl_loss,
 )
 
 # Reuse the orchestrator's configured logger so all log output flows through
@@ -938,10 +941,9 @@ def update(
     assert td_errors.shape == (trainer.batch_size, trainer.N, trainer.N)
     if trainer.if_use_hubber_loss:
         td_errors = calculate_huber_loss(td_errors)
-    batch_weights, partial_td_error_loss = calculate_partial_loss(
-        td_errors=td_errors,
-        outer_bond=trainer.outer_bond,
-        reach_out_index=trainer.reachout_index,
+    batch_weights, partial_td_error_loss = calculate_paper_partial_loss(
+        td_errors,
+        trainer.neighbor_size,
     )
     predict_action_distrbution = trainer.eval_net(
         state=states,
@@ -957,14 +959,14 @@ def update(
     )
     assert batch_weights.shape == (trainer.batch_size, trainer.N)
 
-    weighted_action_distribution = torch.einsum(
-        "ijk,ij->ik", predict_action_distrbution, batch_weights
+    q_value = recalculate_q_demonstration(
+        info["q_value"],
+        info["avaliable_action"],
     )
-    q_value = recalculate_q_demonstration(info["q_value"], info["avaliable_action"])
-    KL_div = F.kl_div(
-        (weighted_action_distribution.softmax(dim=-1) + 1e-8).log(),
-        (q_value.softmax(dim=-1) + 1e-8),
-        reduction="batchmean",
+    KL_div = calculate_paper_supervisor_kl_loss(
+        predict_action_distrbution,
+        q_value,
+        batch_weights,
     )
     loss = partial_td_error_loss + KL_div * trainer.ada
     update_params(

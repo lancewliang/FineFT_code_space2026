@@ -8,6 +8,7 @@
 # the functions that need it.
 
 import logging
+import sys
 import torch
 import numpy as np
 from dataclasses import dataclass
@@ -26,6 +27,9 @@ from RL.util.update import (
     soft_copy_params,
 )
 from RL.DiHFT.low_level.loss_nan_diagnostics import log_loss_nan_diagnostics
+from RL.DiHFT.low_level.weight_advantage_pretrain import (
+    calculate_paper_supervisor_kl_loss,
+)
 
 # Reuse the orchestrator's configured logger so all log output flows through
 # the same file handler set up by configure_logger() in
@@ -39,6 +43,7 @@ logger = logging.getLogger(
 class CollectPretrainEpisode:
     initial_action: int
     rollout_index: int
+    df_index: int = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +55,21 @@ class PretrainCollectResult:
     reward_sum: float
     final_balance: float
     transition_count: int
+
+
+from RL.DiHFT.low_level.evaluate_sub_agents import (
+    DEFAULT_EVAL_NUM_WORKERS,
+    DEFAULT_PRETRAIN_EVAL_NUM_WORKERS,
+    SubAgentEvalMetric,
+    SubAgentEvalTask,
+    WarmupEvalMetric,
+    WarmupEvalTask,
+    act_test,
+    evaluate_single_sub_agent_df,
+    evaluate_sub_agents,
+    evaluate_warmup_sub_agents,
+    select_greedy_model_action,
+)
 
 
 def select_pretrain_action(
@@ -78,37 +98,51 @@ def select_pretrain_action(
 
 class PretrainCollectRunner:
     def __init__(self, worker_config):
-        self.df_index = worker_config["df_index"]
-        self.train_df = worker_config["train_df"]
+        self.df_index = worker_config.get("df_index")
+        self.df_indices = worker_config.get(
+            "df_indices",
+            [self.df_index] if self.df_index is not None else [],
+        )
+        if "train_df_by_df" in worker_config:
+            self.train_df_by_df = worker_config["train_df_by_df"]
+            self.q_table_by_df = worker_config["q_table_by_df"]
+        else:
+            self.train_df_by_df = {self.df_index: worker_config.get("train_df")}
+            self.q_table_by_df = {self.df_index: worker_config.get("q_table")}
         self.env_kwargs = worker_config["env_kwargs"]
         self.leverage_choices = worker_config["leverage_choices"]
         self.position_list = worker_config["position_list"]
         self.position_choices = worker_config["position_choices"]
         self.initial_wallet_balance = worker_config["initial_wallet_balance"]
         self.initial_unrealized_pnL = worker_config["initial_unrealized_pnL"]
-        self.q_table = worker_config["q_table"]
         self._env_cache = {}
         self._perfection_cache = {}
 
     def collect_episode(self, message):
+        df_index = getattr(message, "df_index", None)
+        if df_index is None:
+            df_index = self.df_index
+        train_df = self.train_df_by_df[df_index]
+        q_table = self.q_table_by_df[df_index]
         initial_action = message.initial_action
-        if initial_action not in self._env_cache:
+        cache_key = (df_index, initial_action)
+        if cache_key not in self._env_cache:
             _, _, _, initial_state = build_initial_state(
-                self.train_df,
+                train_df,
                 initial_action,
                 self.leverage_choices,
                 self.position_list,
                 self.initial_wallet_balance,
                 self.initial_unrealized_pnL,
             )
-            self._env_cache[initial_action] = create_demo_env(
-                self.train_df, self.env_kwargs, initial_state
+            self._env_cache[cache_key] = create_demo_env(
+                train_df, self.env_kwargs, initial_state
             )
-            self._perfection_cache[initial_action] = get_dp_action_from_qtable(
-                self.q_table, initial_action
+            self._perfection_cache[cache_key] = get_dp_action_from_qtable(
+                q_table, initial_action
             )
-        env = self._env_cache[initial_action]
-        perfection_action_list = self._perfection_cache[initial_action]
+        env = self._env_cache[cache_key]
+        perfection_action_list = self._perfection_cache[cache_key]
         state, info = env.reset()
         optimal_step_counter = 0
         transitions = []
@@ -133,7 +167,7 @@ class PretrainCollectRunner:
                 break
         final_balance = env.unrealized_pnl + env.wallet_balance
         return PretrainCollectResult(
-            df_index=self.df_index,
+            df_index=df_index,
             initial_action=initial_action,
             rollout_index=message.rollout_index,
             transitions=transitions,
@@ -175,18 +209,33 @@ def start_pretrain_collect_workers(trainer, train_df_cache, env_kwargs, q_table_
     trainer.worker_result_queue = worker_context.Queue()
     trainer.worker_input_queues = {}
     trainer.worker_processes = []
-    for df_index in build_effective_df_indices(trainer.total_df_index_length):
+    effective_df_indices = build_effective_df_indices(trainer.total_df_index_length)
+    max_workers = getattr(trainer, "pretrain_num_workers", 150)
+    if max_workers <= 0:
+        raise ValueError("pretrain_num_workers must be positive")
+    num_workers = min(len(effective_df_indices), max_workers)
+
+    for worker_id in range(num_workers):
+        assigned_df_indices = [
+            df_index
+            for i, df_index in enumerate(effective_df_indices)
+            if i % num_workers == worker_id
+        ]
         input_queue = worker_context.Queue()
         worker_config = {
-            "df_index": df_index,
-            "train_df": train_df_cache[df_index],
+            "worker_id": worker_id,
+            "df_indices": assigned_df_indices,
+            "df_index": assigned_df_indices[0] if assigned_df_indices else None,
+            "train_df": train_df_cache[assigned_df_indices[0]] if len(assigned_df_indices) == 1 else None,
+            "train_df_by_df": {df: train_df_cache[df] for df in assigned_df_indices},
             "env_kwargs": env_kwargs,
             "leverage_choices": trainer.leverage_choices,
             "position_list": trainer.position_list,
             "position_choices": trainer.position_choices,
             "initial_wallet_balance": trainer.initial_wallet_balance,
             "initial_unrealized_pnL": trainer.initial_unrealized_pnL,
-            "q_table": q_table_cache[df_index],
+            "q_table": q_table_cache[assigned_df_indices[0]] if len(assigned_df_indices) == 1 else None,
+            "q_table_by_df": {df: q_table_cache[df] for df in assigned_df_indices},
             "runner_factory": PretrainCollectRunner,
         }
         process = worker_context.Process(
@@ -194,7 +243,8 @@ def start_pretrain_collect_workers(trainer, train_df_cache, env_kwargs, q_table_
             args=(worker_config, input_queue, trainer.worker_result_queue),
         )
         process.start()
-        trainer.worker_input_queues[df_index] = input_queue
+        for df_index in assigned_df_indices:
+            trainer.worker_input_queues[df_index] = input_queue
         trainer.worker_processes.append(process)
 
 
@@ -213,6 +263,10 @@ def run_exhaustive_warmup(
 
     if trainer.total_df_index_length <= 0:
         raise ValueError("exhaustive warmup requires total_df_index_length > 0")
+    if getattr(trainer, "pretrain_epoch", 0) < 0:
+        raise ValueError("pretrain_epoch must be non-negative")
+    if trainer.pretrain_epoch > 0 and getattr(trainer, "update_times", 0) <= 0:
+        raise ValueError("update_times must be positive when pretrain_epoch > 0")
     total_episodes = trainer.total_df_index_length * trainer.position_choices * 4
     logger.info(
         "exhaustive warmup collect start | df_count=%d | position_choices=%d | "
@@ -226,7 +280,11 @@ def run_exhaustive_warmup(
         for initial_action in range(trainer.position_choices):
             for rollout_index in range(4):
                 trainer.worker_input_queues[df_index].put(
-                    CollectPretrainEpisode(initial_action, rollout_index)
+                    CollectPretrainEpisode(
+                        initial_action=initial_action,
+                        rollout_index=rollout_index,
+                        df_index=df_index,
+                    )
                 )
     collected = 0
     progress_log_every = max(1, total_episodes // 20)
@@ -273,7 +331,18 @@ def run_exhaustive_warmup(
     )
 
     update_count = 0
+    eval_metrics = []
+    raw_interval = getattr(trainer, "eval_every_rounds", None)
+    eval_interval = (
+        raw_interval if isinstance(raw_interval, int) and raw_interval > 0 else 30
+    )
     if trainer.pretrain_epoch > 0:
+        if len(buffer_pretrain) < trainer.batch_size:
+            raise ValueError(
+                "buffer_pretrain size ({}) is smaller than batch_size ({})".format(
+                    len(buffer_pretrain), trainer.batch_size
+                )
+            )
         logger.info(
             "exhaustive warmup train start | rounds=%d | updates_per_round=%d",
             trainer.pretrain_epoch,
@@ -313,13 +382,98 @@ def run_exhaustive_warmup(
                 last_losses[2],
                 update_count,
             )
+            if (epoch + 1) % eval_interval == 0:                
+                eval_metrics = evaluate_warmup_sub_agents(
+                    trainer=trainer,
+                    train_df_cache=train_df_cache,
+                    env_kwargs=env_kwargs,
+                )
     else:
-        logger.info("exhaustive warmup train skipped (pretrain_epoch=0)")
+        logger.info("exhaustive warmup train skipped (pretrain_epoch=0)") 
+        eval_metrics = evaluate_warmup_sub_agents(
+            trainer=trainer,
+            train_df_cache=train_df_cache,
+            env_kwargs=env_kwargs,
+        )
+
     return {
         "episodes": total_episodes,
         "transitions": step_counter_pretrain,
         "update_count": update_count,
+        "eval_metrics": eval_metrics,
     }, step_counter_pretrain
+
+
+@dataclass(frozen=True)
+class SyncPretrainModel:
+    state_dict: dict
+
+
+@dataclass(frozen=True)
+class EvaluatePretrainEpisode:
+    context_index: int
+    df_index: int
+    initial_action: int
+
+
+@dataclass(frozen=True)
+class PretrainEvalResult:
+    df_index: int
+    context_index: int
+    initial_action: int
+    reward_sum: float
+    final_balance: float
+    return_rate: float
+
+
+def run_parallel_pretrain_evaluation(trainer, train_df_cache, env_kwargs):
+    from RL.DiHFT.low_level.parallel_diverse_train import make_cpu_state_dict
+
+    state_dict = make_cpu_state_dict(trainer.eval_net)
+    seen_queues = set()
+    for df_index in range(trainer.total_df_index_length):
+        q = trainer.worker_input_queues[df_index]
+        if id(q) not in seen_queues:
+            seen_queues.add(id(q))
+            q.put(SyncPretrainModel(state_dict=state_dict))
+
+    total_tasks = trainer.N * trainer.total_df_index_length
+    for context_index in range(trainer.N):
+        for df_index in range(trainer.total_df_index_length):
+            trainer.worker_input_queues[df_index].put(
+                EvaluatePretrainEpisode(
+                    context_index=context_index,
+                    df_index=df_index,
+                    initial_action=0,
+                )
+            )
+
+    eval_metrics = []
+    for _ in range(total_tasks):
+        result = trainer.worker_result_queue.get()
+        metric = WarmupEvalMetric(
+            context_index=result.context_index,
+            df_index=result.df_index,
+            initial_action=result.initial_action,
+            reward_sum=result.reward_sum,
+            final_balance=result.final_balance,
+            return_rate=result.return_rate,
+        )
+        eval_metrics.append(metric)
+        if getattr(trainer, "writer", None) is not None:
+            trainer.writer.add_scalar(
+                tag="pretrain_eval_return_rate_context_{}".format(metric.context_index),
+                scalar_value=metric.return_rate,
+                global_step=metric.df_index,
+                walltime=None,
+            )
+            trainer.writer.add_scalar(
+                tag="pretrain_eval_reward_sum_context_{}".format(metric.context_index),
+                scalar_value=metric.reward_sum,
+                global_step=metric.df_index,
+                walltime=None,
+            )
+    return eval_metrics
 
 
 def update_pretrain(
@@ -390,7 +544,11 @@ def update_pretrain(
     td_loss = td_loss.sum(dim=1)
     td_loss = td_loss.mean()
 
-    batch_weights = torch.ones(trainer.batch_size, trainer.N).to(trainer.device)
+    batch_weights = torch.ones(
+        trainer.batch_size,
+        trainer.N,
+        device=trainer.device,
+    )
     predict_action_distrbution = trainer.eval_net(
         state=states,
         time=time_input,
@@ -405,14 +563,14 @@ def update_pretrain(
     )
     assert batch_weights.shape == (trainer.batch_size, trainer.N)
 
-    weighted_action_distribution = torch.einsum(
-        "ijk,ij->ik", predict_action_distrbution, batch_weights
+    q_value = recalculate_q_demonstration(
+        info["q_value"],
+        info["avaliable_action"],
     )
-    q_value = recalculate_q_demonstration(info["q_value"], info["avaliable_action"])
-    KL_div = F.kl_div(
-        (weighted_action_distribution.softmax(dim=-1) + 1e-8).log(),
-        (q_value.softmax(dim=-1) + 1e-8),
-        reduction="batchmean",
+    KL_div = calculate_paper_supervisor_kl_loss(
+        predict_action_distrbution,
+        q_value,
+        batch_weights,
     )
     loss = td_loss + KL_div * trainer.ada
     update_params(
@@ -445,7 +603,6 @@ def update_pretrain(
                 "current_sa_quantiles": current_sa_quantiles,
                 "target_sa_quantiles": target_sa_quantiles,
                 "predict_action_distrbution": predict_action_distrbution,
-                "weighted_action_distribution": weighted_action_distribution,
                 "q_value": q_value,
                 "batch_weights": batch_weights,
             },

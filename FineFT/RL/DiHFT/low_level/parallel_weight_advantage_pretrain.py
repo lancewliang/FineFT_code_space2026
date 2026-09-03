@@ -415,6 +415,30 @@ parser.add_argument(
     default=0,
     help="number of exhaustive-warmup training rounds over the collected pretrain buffer",
 )
+parser.add_argument(
+    "--neighbor_size",
+    type=int,
+    default=1,
+    help="fixed learner neighbor count from FineFT Algorithm 2",
+)
+parser.add_argument(
+    "--pretrain_num_workers",
+    "--pretrain_workers",
+    dest="pretrain_num_workers",
+    type=int,
+    default=150,
+    help="number of parallel worker processes for pretrain exploration/collection",
+)
+parser.add_argument(
+    "--eval_num_workers",
+    "--eval_workers",
+    "--pretrain_eval_num_workers",
+    "--pretrain_eval_workers",
+    dest="eval_num_workers",
+    type=int,
+    default=150,
+    help="number of parallel worker processes for sub-agent evaluation process pool",
+)
 
 
 def seed_torch(seed):
@@ -494,7 +518,13 @@ def create_worker_context():
 
 
 def shutdown_workers(input_queues, processes):
+    seen = set()
+    unique_queues = []
     for queue in input_queues:
+        if id(queue) not in seen:
+            seen.add(id(queue))
+            unique_queues.append(queue)
+    for queue in unique_queues:
         queue.put(ShutdownWorker())
     for process in processes:
         process.join(timeout=10)
@@ -628,6 +658,16 @@ class Weighted_Contexts_DQN:
         self.loss_func_pretrain = nn.SmoothL1Loss(reduction="none")
         # pretrain
         self.pretrain_epoch = args.pretrain_epoch
+        self.neighbor_size = args.neighbor_size
+        if self.neighbor_size < 0:
+            raise ValueError("neighbor_size must be non-negative")
+        self.pretrain_num_workers = getattr(args, "pretrain_num_workers", 150)
+        if self.pretrain_num_workers <= 0:
+            raise ValueError("pretrain_num_workers must be positive")
+        self.eval_num_workers = getattr(args, "eval_num_workers", 150)
+        self.pretrain_eval_num_workers = self.eval_num_workers
+        if self.eval_num_workers <= 0:
+            raise ValueError("eval_num_workers must be positive")
         self.allow_reverse_position = getattr(args, "allow_reverse_position", False)
         self.enable_limit_reward = getattr(args, "enable_limit_reward", True)
         self.limit_hold_bonus = getattr(args, "limit_hold_bonus", 1.0)
@@ -767,14 +807,14 @@ class Weighted_Contexts_DQN:
             buffer_pretrain=buffer_pretrain,
             step_counter_pretrain=step_counter_pretrain,
         )
-        step_counter_diverse = run_parallel_diverse_training(
-            trainer=self,
-            train_df_cache=train_df_cache,
-            env_kwargs=env_kwargs,
-            buffer_diverse=buffer_diverse,
-            step_counter_diverse=step_counter_diverse,
-            diverse_rollout_latest_metrics_by_df=diverse_rollout_latest_metrics_by_df,
-        )
+        # step_counter_diverse = run_parallel_diverse_training(
+        #     trainer=self,
+        #     train_df_cache=train_df_cache,
+        #     env_kwargs=env_kwargs,
+        #     buffer_diverse=buffer_diverse,
+        #     step_counter_diverse=step_counter_diverse,
+        #     diverse_rollout_latest_metrics_by_df=diverse_rollout_latest_metrics_by_df,
+        # )
 
 
 if __name__ == "__main__":
