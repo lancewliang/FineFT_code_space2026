@@ -1403,4 +1403,271 @@ def test_run_exhaustive_warmup_rejects_insufficient_buffer_for_batch_size(monkey
         )
 
 
+def test_parallel_parser_load_pretrain_model_flags():
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+
+    args_default = pwap.parser.parse_args([])
+    assert args_default.load_pretrain_model is False
+
+    args_flag = pwap.parser.parse_args(["--load_pretrain_model"])
+    assert args_flag.load_pretrain_model is True
+
+    args_alias = pwap.parser.parse_args(["--load_pretrained_model"])
+    assert args_alias.load_pretrain_model is True
+
+
+def test_run_exhaustive_warmup_saves_buffer_and_loads_to_skip_exploration(tmp_path, monkeypatch):
+    import os
+    import queue
+    from unittest.mock import MagicMock
+    import torch
+    from RL.DiHFT.low_level import parallel_pretrain as pp
+
+    buffer_path = str(tmp_path / "pretrain_buffer.pt")
+    worker_started = []
+
+    class DummyInputQueue:
+        def __init__(self, result_queue):
+            self.result_queue = result_queue
+
+        def put(self, message):
+            self.result_queue.put(
+                pp.PretrainCollectResult(
+                    df_index=0,
+                    initial_action=message.initial_action,
+                    rollout_index=message.rollout_index,
+                    transitions=[("s", {"trading_info": [0]}, 0, 1.0, "s_", {"trading_info": [0]}, True)],
+                    reward_sum=1.0,
+                    final_balance=10000.0,
+                    transition_count=1,
+                )
+            )
+
+    def mock_start_workers(tr, train_df_cache, env_kwargs, q_table_cache):
+        worker_started.append(True)
+        tr.worker_result_queue = queue.Queue()
+        tr.worker_input_queues = {0: DummyInputQueue(tr.worker_result_queue)}
+
+    monkeypatch.setattr(pp, "start_pretrain_collect_workers", mock_start_workers)
+    monkeypatch.setattr(pp, "evaluate_warmup_sub_agents", lambda *args, **kwargs: [])
+
+    class SimpleBuffer:
+        def __init__(self):
+            self.items = []
+
+        def __len__(self):
+            return len(self.items)
+
+        def add(self, *transition):
+            self.items.append(transition)
+
+    trainer = MagicMock()
+    trainer.model_path = str(tmp_path)
+    trainer.pretrain_buffer_path = buffer_path
+    trainer.total_df_index_length = 1
+    trainer.position_choices = 1
+    trainer.initial_wallet_balance = 10000.0
+    trainer.pretrain_epoch = 0
+    trainer.update_times = 0
+    trainer.batch_size = 1
+
+    # Run 1: Buffer does not exist -> runs worker collection and saves buffer file
+    buf1 = SimpleBuffer()
+    assert not os.path.exists(buffer_path)
+    summary1, steps1 = pp.run_exhaustive_warmup(
+        trainer=trainer,
+        q_table_cache={0: None},
+        train_df_cache={0: None},
+        env_kwargs={},
+        buffer_pretrain=buf1,
+        step_counter_pretrain=0,
+    )
+    assert len(worker_started) == 1
+    assert os.path.exists(buffer_path)
+    assert len(buf1) == 4
+    assert steps1 == 4
+
+    # Run 2: Buffer exists -> loads buffer and skips worker collection entirely
+    worker_started.clear()
+    buf2 = SimpleBuffer()
+    summary2, steps2 = pp.run_exhaustive_warmup(
+        trainer=trainer,
+        q_table_cache={0: None},
+        train_df_cache={0: None},
+        env_kwargs={},
+        buffer_pretrain=buf2,
+        step_counter_pretrain=0,
+    )
+    # Exploration was skipped!
+    assert len(worker_started) == 0
+    assert len(buf2) == 4
+    assert steps2 == 4
+
+
+def test_run_exhaustive_warmup_saves_model_after_learning(tmp_path, monkeypatch):
+    import os
+    from unittest.mock import MagicMock
+    import torch
+    from RL.DiHFT.low_level import parallel_pretrain as pp
+
+    model_path = str(tmp_path)
+    expected_model_file = str(tmp_path / "pretrain_model.pkl")
+
+    class SimpleLinear(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = torch.nn.Linear(2, 2)
+
+    net = SimpleLinear()
+    trainer = MagicMock()
+    trainer.model_path = model_path
+    trainer.eval_net = net
+    trainer.total_df_index_length = 1
+    trainer.position_choices = 1
+    trainer.initial_wallet_balance = 10000.0
+    trainer.pretrain_epoch = 1
+    trainer.update_times = 1
+    trainer.batch_size = 1
+
+    monkeypatch.setattr(pp, "update_pretrain", lambda *args, **kwargs: (0.1, 0.05, 0.05))
+    monkeypatch.setattr(pp, "evaluate_warmup_sub_agents", lambda *args, **kwargs: [])
+
+    class DummyBuffer:
+        def __len__(self):
+            return 2
+
+        def sample(self):
+            return ("s", {}, "a", "r", "s_", {}, "d")
+
+        def add(self, *transition):
+            pass
+
+    # Fake pretrain buffer already existing to skip collect
+    buffer_file = str(tmp_path / "pretrain_buffer.pt")
+    torch.save({"transitions": [("s", {}, 0, 1.0, "s_", {}, True)] * 2, "step_counter": 2}, buffer_file)
+    trainer.pretrain_buffer_path = buffer_file
+
+    assert not os.path.exists(expected_model_file)
+    pp.run_exhaustive_warmup(
+        trainer=trainer,
+        q_table_cache={0: None},
+        train_df_cache={0: None},
+        env_kwargs={},
+        buffer_pretrain=DummyBuffer(),
+        step_counter_pretrain=0,
+    )
+
+    # Model was saved after training
+    assert os.path.exists(expected_model_file)
+    loaded_state = torch.load(expected_model_file, map_location="cpu")
+    assert set(loaded_state.keys()) == set(net.state_dict().keys())
+
+
+def test_run_exhaustive_warmup_skips_pretrain_when_load_pretrain_model_is_true(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock
+    import torch
+    from RL.DiHFT.low_level import parallel_pretrain as pp
+
+    model_file = str(tmp_path / "pretrain_model.pkl")
+    linear = torch.nn.Linear(2, 2)
+    torch.save(linear.state_dict(), model_file)
+
+    trainer = MagicMock()
+    trainer.model_path = str(tmp_path)
+    trainer.pretrain_model_path = model_file
+    trainer.load_pretrain_model = True
+    trainer.eval_net = torch.nn.Linear(2, 2)
+    trainer.device = "cpu"
+
+    monkeypatch.setattr(pp, "evaluate_warmup_sub_agents", lambda *args, **kwargs: ["mock_metric"])
+
+    summary, steps = pp.run_exhaustive_warmup(
+        trainer=trainer,
+        q_table_cache={},
+        train_df_cache={},
+        env_kwargs={},
+        buffer_pretrain=None,
+        step_counter_pretrain=5,
+    )
+
+    assert summary["episodes"] == 0
+    assert summary["update_count"] == 0
+    assert summary["eval_metrics"] == ["mock_metric"]
+    assert steps == 5
+
+
+def test_trainer_train_skips_warmup_when_load_pretrain_model_is_true(tmp_path, monkeypatch):
+    import os
+    from unittest.mock import MagicMock
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+    import torch
+
+    model_file = str(tmp_path / "pretrain_model.pkl")
+    linear = torch.nn.Linear(2, 2)
+    torch.save(linear.state_dict(), model_file)
+
+    trainer = pwap.Weighted_Contexts_DQN.__new__(pwap.Weighted_Contexts_DQN)
+    trainer.load_pretrain_model = True
+    trainer.pretrain_model_path = model_file
+    trainer.model_path = str(tmp_path)
+    trainer.device = "cpu"
+    trainer.eval_net = torch.nn.Linear(2, 2)
+    trainer.target_net = torch.nn.Linear(2, 2)
+    trainer._log_internal_parameters = lambda *args: None
+    trainer.dataset_name = "fu"
+    trainer.num_sample = 1
+    trainer.pretrain_epoch = 10
+    trainer.N = 1
+    trainer.buffer_size = 100
+    trainer.batch_size = 10
+    trainer.seed = 42
+    trainer.gamma = 0.99
+    trainer.n_step = 1
+
+    warmup_called = []
+    monkeypatch.setattr(
+        pwap,
+        "run_exhaustive_warmup",
+        lambda *args, **kwargs: warmup_called.append(True),
+    )
+    monkeypatch.setattr(
+        pwap,
+        "prepare_pretrain_qtable_diagnostics",
+        lambda *args, **kwargs: MagicMock(q_table_cache={}, train_df_cache={}),
+    )
+    monkeypatch.setattr(
+        pwap,
+        "extend_q_table_cache",
+        lambda *args, **kwargs: ({}, {}),
+    )
+
+    trainer.max_holding_number = 1
+    trainer.order_book_depth = 5
+    trainer.position_choices = 3
+    trainer.leverage_choices = [1]
+    trainer.long_estimated_rate = 0
+    trainer.short_estimated_rate = 0
+    trainer.transcation_cost = 0
+    trainer.allow_reverse_position = False
+    trainer.enable_limit_reward = True
+    trainer.limit_hold_bonus = 1.0
+    trainer.limit_stay_bonus = 0.5
+    trainer.limit_reverse_penalty = 1.5
+    trainer.near_limit_threshold = 0.003
+    trainer.tech_indicator_list = []
+    trainer.position_list = [0]
+    trainer.maintenance_margin_ratio_dict = {}
+    trainer.early_stop = 0
+    trainer.initial_wallet_balance = 10000
+    trainer.initial_unrealized_pnL = 0
+    trainer.total_df_index_length = 0
+    trainer.train_data_path = ""
+
+    trainer.train()
+
+    assert len(warmup_called) == 0
+
+
+
+
 

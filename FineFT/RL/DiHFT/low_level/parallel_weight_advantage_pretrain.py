@@ -421,24 +421,28 @@ parser.add_argument(
     default=1,
     help="fixed learner neighbor count from FineFT Algorithm 2",
 )
-parser.add_argument(
+parser.add_argument(    
     "--pretrain_num_workers",
-    "--pretrain_workers",
     dest="pretrain_num_workers",
     type=int,
-    default=150,
+    default=20,
     help="number of parallel worker processes for pretrain exploration/collection",
 )
-parser.add_argument(
+parser.add_argument(    
     "--eval_num_workers",
-    "--eval_workers",
-    "--pretrain_eval_num_workers",
-    "--pretrain_eval_workers",
     dest="eval_num_workers",
     type=int,
-    default=150,
+    default=20,
     help="number of parallel worker processes for sub-agent evaluation process pool",
 )
+parser.add_argument(
+    "--load_pretrain_model",
+    "--load_pretrained_model",
+    dest="load_pretrain_model",
+    action="store_true",
+    help="whether to read pre-trained model and skip pretraining",
+)
+
 
 
 def seed_torch(seed):
@@ -668,6 +672,7 @@ class Weighted_Contexts_DQN:
         self.pretrain_eval_num_workers = self.eval_num_workers
         if self.eval_num_workers <= 0:
             raise ValueError("eval_num_workers must be positive")
+        self.load_pretrain_model = getattr(args, "load_pretrain_model", False)
         self.allow_reverse_position = getattr(args, "allow_reverse_position", False)
         self.enable_limit_reward = getattr(args, "enable_limit_reward", True)
         self.limit_hold_bonus = getattr(args, "limit_hold_bonus", 1.0)
@@ -799,14 +804,26 @@ class Weighted_Contexts_DQN:
             q_table_cache=q_table_cache,
             train_df_cache=train_df_cache,
         )
-        _, step_counter_pretrain = run_exhaustive_warmup(
-            trainer=self,
-            q_table_cache=q_table_cache,
-            train_df_cache=train_df_cache,
-            env_kwargs=env_kwargs,
-            buffer_pretrain=buffer_pretrain,
-            step_counter_pretrain=step_counter_pretrain,
-        )
+        if self.load_pretrain_model:
+            model_file = os.path.join(
+                self.model_path, "pretrain_model.pkl"
+            )
+            if not os.path.exists(model_file):
+                raise FileNotFoundError(f"pretrain model file not found: {model_file}")
+            state_dict = torch.load(model_file, map_location=self.device)
+            self.eval_net.load_state_dict(state_dict)
+            if hasattr(self, "target_net") and self.target_net is not None:
+                self.target_net.load_state_dict(state_dict)
+            logger.info("已读取已训练的预先训练模型并跳过预先训练 | 模型路径=%s", model_file)
+        else:
+            _, step_counter_pretrain = run_exhaustive_warmup(
+                trainer=self,
+                q_table_cache=q_table_cache,
+                train_df_cache=train_df_cache,
+                env_kwargs=env_kwargs,
+                buffer_pretrain=buffer_pretrain,
+                step_counter_pretrain=step_counter_pretrain,
+            )
         # step_counter_diverse = run_parallel_diverse_training(
         #     trainer=self,
         #     train_df_cache=train_df_cache,

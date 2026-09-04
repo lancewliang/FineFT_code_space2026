@@ -8,6 +8,7 @@
 # the functions that need it.
 
 import logging
+import os
 import sys
 import torch
 import numpy as np
@@ -248,6 +249,68 @@ def start_pretrain_collect_workers(trainer, train_df_cache, env_kwargs, q_table_
         trainer.worker_processes.append(process)
 
 
+def extract_buffer_transitions(buffer_pretrain):
+    if hasattr(buffer_pretrain, "memory"):
+        return [tuple(e) for e in buffer_pretrain.memory]
+    if hasattr(buffer_pretrain, "items"):
+        return list(buffer_pretrain.items)
+    return list(buffer_pretrain)
+
+
+def populate_buffer_transitions(buffer_pretrain, transitions):
+    if hasattr(buffer_pretrain, "memory") and hasattr(buffer_pretrain, "experience"):
+        for item in transitions:
+            buffer_pretrain.memory.append(buffer_pretrain.experience(*item))
+    elif hasattr(buffer_pretrain, "add"):
+        for item in transitions:
+            buffer_pretrain.add(*item)
+    elif hasattr(buffer_pretrain, "items"):
+        buffer_pretrain.items.extend(transitions)
+
+
+def save_pretrain_buffer_file(buffer_pretrain, buffer_path, step_counter):
+    transitions = extract_buffer_transitions(buffer_pretrain)
+    payload = {
+        "transitions": transitions,
+        "step_counter": step_counter,
+        "buffer_size": len(buffer_pretrain),
+    }
+    dir_name = os.path.dirname(os.path.abspath(buffer_path))
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+    torch.save(payload, buffer_path)
+
+
+def load_pretrain_buffer_file(buffer_pretrain, buffer_path, current_step_counter=0):
+    payload = torch.load(buffer_path, map_location="cpu")
+    if isinstance(payload, dict) and "transitions" in payload:
+        transitions = payload["transitions"]
+        step_counter = payload.get(
+            "step_counter", current_step_counter + len(transitions)
+        )
+    elif isinstance(payload, list):
+        transitions = payload
+        step_counter = current_step_counter + len(transitions)
+    else:
+        transitions = []
+        step_counter = current_step_counter
+    populate_buffer_transitions(buffer_pretrain, transitions)
+    return step_counter
+
+
+def resolve_pretrain_paths(trainer):
+    model_path = getattr(trainer, "model_path", None)
+    if not isinstance(model_path, str):
+        model_path = None
+
+    pretrain_buffer_path = None
+    pretrain_model_path = None
+    if model_path is not None:
+        pretrain_buffer_path = os.path.join(model_path, "pretrain_buffer.pt")
+        pretrain_model_path = os.path.join(model_path, "pretrain_model.pkl")
+    return pretrain_buffer_path, pretrain_model_path
+
+
 def run_exhaustive_warmup(
     trainer,
     q_table_cache,
@@ -261,6 +324,43 @@ def run_exhaustive_warmup(
         raise_for_worker_error,
     )
 
+    pretrain_buffer_path, pretrain_model_path = resolve_pretrain_paths(trainer)
+
+    load_model = getattr(trainer, "load_pretrain_model", False)
+    if isinstance(load_model, bool) and load_model:
+        if pretrain_model_path is not None and os.path.exists(pretrain_model_path):
+            state_dict = torch.load(
+                pretrain_model_path,
+                map_location=getattr(trainer, "device", "cpu"),
+            )
+            if hasattr(trainer, "eval_net") and hasattr(
+                trainer.eval_net, "load_state_dict"
+            ):
+                trainer.eval_net.load_state_dict(state_dict)
+            if hasattr(trainer, "target_net") and hasattr(
+                trainer.target_net, "load_state_dict"
+            ):
+                trainer.target_net.load_state_dict(state_dict)
+            logger.info(
+                "已读取已训练的预先训练模型并跳过预先训练 | 模型路径=%s",
+                pretrain_model_path,
+            )
+            eval_metrics = evaluate_warmup_sub_agents(
+                trainer=trainer,
+                train_df_cache=train_df_cache,
+                env_kwargs=env_kwargs,
+            )
+            return {
+                "episodes": 0,
+                "transitions": step_counter_pretrain,
+                "update_count": 0,
+                "eval_metrics": eval_metrics,
+            }, step_counter_pretrain
+        else:
+            raise FileNotFoundError(
+                f"pretrain model file not found: {pretrain_model_path}"
+            )
+
     if trainer.total_df_index_length <= 0:
         raise ValueError("exhaustive warmup requires total_df_index_length > 0")
     if getattr(trainer, "pretrain_epoch", 0) < 0:
@@ -268,67 +368,90 @@ def run_exhaustive_warmup(
     if trainer.pretrain_epoch > 0 and getattr(trainer, "update_times", 0) <= 0:
         raise ValueError("update_times must be positive when pretrain_epoch > 0")
     total_episodes = trainer.total_df_index_length * trainer.position_choices * 4
-    logger.info(
-        "exhaustive warmup collect start | df_count=%d | position_choices=%d | "
-        "episodes=%d",
-        trainer.total_df_index_length,
-        trainer.position_choices,
-        total_episodes,
-    )
-    start_pretrain_collect_workers(trainer, train_df_cache, env_kwargs, q_table_cache)
-    for df_index in range(trainer.total_df_index_length):
-        for initial_action in range(trainer.position_choices):
-            for rollout_index in range(4):
-                trainer.worker_input_queues[df_index].put(
-                    CollectPretrainEpisode(
-                        initial_action=initial_action,
-                        rollout_index=rollout_index,
-                        df_index=df_index,
+
+    # Check if pretrain buffer already exists
+    if pretrain_buffer_path is not None and os.path.exists(pretrain_buffer_path):
+        step_counter_pretrain = load_pretrain_buffer_file(
+            buffer_pretrain, pretrain_buffer_path, step_counter_pretrain
+        )
+        logger.info(
+            "预训练经验池已存在，直接加载并跳过探索 | 文件=%s | 经验池大小=%d",
+            pretrain_buffer_path,
+            len(buffer_pretrain),
+        )
+    else:
+        logger.info(
+            "exhaustive warmup collect start | df_count=%d | position_choices=%d | "
+            "episodes=%d",
+            trainer.total_df_index_length,
+            trainer.position_choices,
+            total_episodes,
+        )
+        start_pretrain_collect_workers(
+            trainer, train_df_cache, env_kwargs, q_table_cache
+        )
+        for df_index in range(trainer.total_df_index_length):
+            for initial_action in range(trainer.position_choices):
+                for rollout_index in range(4):
+                    trainer.worker_input_queues[df_index].put(
+                        CollectPretrainEpisode(
+                            initial_action=initial_action,
+                            rollout_index=rollout_index,
+                            df_index=df_index,
+                        )
                     )
+        collected = 0
+        progress_log_every = max(1, total_episodes // 20)
+        while collected < total_episodes:
+            result = trainer.worker_result_queue.get()
+            if isinstance(result, WorkerErrorMessage):
+                trainer._shutdown_parallel_workers()
+                raise_for_worker_error(result)
+            for transition in result.transitions:
+                buffer_pretrain.add(*transition)
+                step_counter_pretrain += 1
+            return_rate = result.final_balance / (
+                trainer.initial_wallet_balance + 1e-12
+            ) - 1
+            trainer.writer.add_scalar(
+                tag="pretrain_return_rate_train_{}".format(result.rollout_index),
+                scalar_value=return_rate,
+                global_step=collected,
+                walltime=None,
+            )
+            trainer.writer.add_scalar(
+                tag="pretrain_reward_sum_train_{}".format(result.rollout_index),
+                scalar_value=result.reward_sum,
+                global_step=collected,
+                walltime=None,
+            )
+            collected += 1
+            if collected % progress_log_every == 0 or collected == total_episodes:
+                logger.info(
+                    "exhaustive warmup collect progress | episodes=%d/%d | "
+                    "transitions=%d | buffer=%d",
+                    collected,
+                    total_episodes,
+                    step_counter_pretrain,
+                    len(buffer_pretrain),
                 )
-    collected = 0
-    progress_log_every = max(1, total_episodes // 20)
-    while collected < total_episodes:
-        result = trainer.worker_result_queue.get()
-        if isinstance(result, WorkerErrorMessage):
-            trainer._shutdown_parallel_workers()
-            raise_for_worker_error(result)
-        for transition in result.transitions:
-            buffer_pretrain.add(*transition)
-            step_counter_pretrain += 1
-        return_rate = result.final_balance / (
-            trainer.initial_wallet_balance + 1e-12
-        ) - 1
-        trainer.writer.add_scalar(
-            tag="pretrain_return_rate_train_{}".format(result.rollout_index),
-            scalar_value=return_rate,
-            global_step=collected,
-            walltime=None,
+        trainer._shutdown_parallel_workers()
+        logger.info(
+            "exhaustive warmup collect done | episodes=%d | transitions=%d | "
+            "buffer=%d",
+            total_episodes,
+            step_counter_pretrain,
+            len(buffer_pretrain),
         )
-        trainer.writer.add_scalar(
-            tag="pretrain_reward_sum_train_{}".format(result.rollout_index),
-            scalar_value=result.reward_sum,
-            global_step=collected,
-            walltime=None,
-        )
-        collected += 1
-        if collected % progress_log_every == 0 or collected == total_episodes:
+        if pretrain_buffer_path is not None:
+            save_pretrain_buffer_file(
+                buffer_pretrain, pretrain_buffer_path, step_counter_pretrain
+            )
             logger.info(
-                "exhaustive warmup collect progress | episodes=%d/%d | "
-                "transitions=%d | buffer=%d",
-                collected,
-                total_episodes,
-                step_counter_pretrain,
+                "探索完成，已保存经验池到文件 | 文件=%s | 经验池大小=%d",
+                pretrain_buffer_path,
                 len(buffer_pretrain),
             )
-    trainer._shutdown_parallel_workers()
-    logger.info(
-        "exhaustive warmup collect done | episodes=%d | transitions=%d | "
-        "buffer=%d",
-        total_episodes,
-        step_counter_pretrain,
-        len(buffer_pretrain),
-    )
 
     update_count = 0
     eval_metrics = []
@@ -382,14 +505,28 @@ def run_exhaustive_warmup(
                 last_losses[2],
                 update_count,
             )
-            if (epoch + 1) % eval_interval == 0:                
+            if (epoch + 1) % eval_interval == 0:
                 eval_metrics = evaluate_warmup_sub_agents(
                     trainer=trainer,
                     train_df_cache=train_df_cache,
                     env_kwargs=env_kwargs,
                 )
+
+        if (
+            getattr(trainer, "eval_net", None) is not None
+            and pretrain_model_path is not None
+        ):
+            dir_name = os.path.dirname(os.path.abspath(pretrain_model_path))
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
+            if hasattr(trainer.eval_net, "state_dict"):
+                torch.save(trainer.eval_net.state_dict(), pretrain_model_path)
+                logger.info(
+                    "exhaustive warmup 学习结束 | 模型已保存至=%s",
+                    pretrain_model_path,
+                )
     else:
-        logger.info("exhaustive warmup train skipped (pretrain_epoch=0)") 
+        logger.info("exhaustive warmup train skipped (pretrain_epoch=0)")
         eval_metrics = evaluate_warmup_sub_agents(
             trainer=trainer,
             train_df_cache=train_df_cache,
@@ -402,79 +539,6 @@ def run_exhaustive_warmup(
         "update_count": update_count,
         "eval_metrics": eval_metrics,
     }, step_counter_pretrain
-
-
-@dataclass(frozen=True)
-class SyncPretrainModel:
-    state_dict: dict
-
-
-@dataclass(frozen=True)
-class EvaluatePretrainEpisode:
-    context_index: int
-    df_index: int
-    initial_action: int
-
-
-@dataclass(frozen=True)
-class PretrainEvalResult:
-    df_index: int
-    context_index: int
-    initial_action: int
-    reward_sum: float
-    final_balance: float
-    return_rate: float
-
-
-def run_parallel_pretrain_evaluation(trainer, train_df_cache, env_kwargs):
-    from RL.DiHFT.low_level.parallel_diverse_train import make_cpu_state_dict
-
-    state_dict = make_cpu_state_dict(trainer.eval_net)
-    seen_queues = set()
-    for df_index in range(trainer.total_df_index_length):
-        q = trainer.worker_input_queues[df_index]
-        if id(q) not in seen_queues:
-            seen_queues.add(id(q))
-            q.put(SyncPretrainModel(state_dict=state_dict))
-
-    total_tasks = trainer.N * trainer.total_df_index_length
-    for context_index in range(trainer.N):
-        for df_index in range(trainer.total_df_index_length):
-            trainer.worker_input_queues[df_index].put(
-                EvaluatePretrainEpisode(
-                    context_index=context_index,
-                    df_index=df_index,
-                    initial_action=0,
-                )
-            )
-
-    eval_metrics = []
-    for _ in range(total_tasks):
-        result = trainer.worker_result_queue.get()
-        metric = WarmupEvalMetric(
-            context_index=result.context_index,
-            df_index=result.df_index,
-            initial_action=result.initial_action,
-            reward_sum=result.reward_sum,
-            final_balance=result.final_balance,
-            return_rate=result.return_rate,
-        )
-        eval_metrics.append(metric)
-        if getattr(trainer, "writer", None) is not None:
-            trainer.writer.add_scalar(
-                tag="pretrain_eval_return_rate_context_{}".format(metric.context_index),
-                scalar_value=metric.return_rate,
-                global_step=metric.df_index,
-                walltime=None,
-            )
-            trainer.writer.add_scalar(
-                tag="pretrain_eval_reward_sum_context_{}".format(metric.context_index),
-                scalar_value=metric.reward_sum,
-                global_step=metric.df_index,
-                walltime=None,
-            )
-    return eval_metrics
-
 
 def update_pretrain(
     trainer,
