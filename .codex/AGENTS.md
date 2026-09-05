@@ -22,6 +22,8 @@ Before implementing:
 - No abstractions for single-use code.
 - No "flexibility" or "configurability" that wasn't requested.
 - Fail fast, no defensive bloat: Do not add speculative defensive checks (e.g. redundant `None`/type checks, try-catch wrappers, default fallbacks) for internal calls or impossible scenarios. Let errors fail fast and loud.
+- Strict anti-defensive attribute access: Strictly forbid using `getattr(self, "attr", default)` or `hasattr(self, "attr")` for class members, configuration settings, or internal state. Always access attributes directly via `self.attr`. Never invent default values or magic numbers to silently paper over missing attributes. If an attribute is missing, let it fail fast with `AttributeError`.
+- No defensive accommodations for tests: Never introduce `getattr`/`hasattr` or fallback logic into production/business code to accommodate incomplete test mocks, stubs, or `__new__` instances. Tests must initialize and mock the necessary attributes.
 - No backward-compatibility baggage: When updating interfaces or logic, directly replace obsolete code and parameters. Do not add compatibility shims, fallback branches, or legacy wrappers unless explicitly requested.
 - If you write 200 lines and it could be 50, rewrite it.
 
@@ -91,6 +93,7 @@ Functions and structure:
 Errors and logging:
 - Catch specific exceptions, not bare `except:`.
 - Fail fast: Let exceptions propagate naturally. Do not catch exceptions unless they can be meaningfully handled or translated at this boundary; never invent silent fallback return values or swallow errors to prevent crashes.
+- Direct attribute access: Never guard normal attribute access with `getattr(..., default)` or `hasattr(...)`. If an attribute or dict key is required, access it directly (`self.attr` or `data[key]`).
 - Include useful context in error messages.
 - Use `logging` for library code; reserve `print` for CLI or script user output.
 
