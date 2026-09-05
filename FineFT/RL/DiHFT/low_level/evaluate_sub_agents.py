@@ -33,7 +33,8 @@ os.environ["F_ENABLE_ONEDNN_OPTS"] = "0"
 
 class weighted_trader:
     def __init__(self, 
-        data_files: List[str],
+        logg_file_path: str,
+        data_file_path:str,
         model_path: str,
         tech_indicator_list_path: str,
         maintenance_margin_ratio_dict_path: str,
@@ -72,7 +73,7 @@ class weighted_trader:
 
         # model file to evaluate
         self.model_file = model_path
-        self.data_files = data_files
+        self.data_file_path = data_file_path
         self.tech_indicator_list = np.load(
             tech_indicator_list_path
         )
@@ -242,31 +243,49 @@ class weighted_trader:
             "final_balance": final_balance,
             "final_return_rate": final_return_rate,
         }
-
+    
     def test(self):
         print("start")
         self.eval_net.eval()
         overall_result = [] 
-        for df_path in self.data_files: 
-            print(
-                "start df {}".format(
-                    df_path
-                )
-            )
-            test_df = pd.read_feather(df_path)
-            for initial_action in self.initial_action_list:
-                for bin_index in range(self.N):
-                    single_result = {
-                        "sub_model_index": bin_index,
-                        "df_path": df_path,
-                        "initial_action": initial_action,
-                        "df_length": len(test_df),
-                        **self._run_episode(test_df, initial_action, bin_index),
-                    }
-                    print(single_result)
-                    overall_result.append(single_result)
-
+        test_df = pd.read_feather(self.data_file_path)
+        for initial_action in self.initial_action_list:
+            for bin_index in range(self.N):
+                single_result = {
+                    "sub_model_index": bin_index,
+                    "df_path":self.data_file_path,
+                    "initial_action": initial_action,
+                    "df_length": len(test_df),
+                    **self._run_episode(test_df, initial_action, bin_index),
+                }
+                print(single_result)
+                overall_result.append(single_result)
        
         return overall_result
-
-
+    
+def evaluates( 
+        logg_file_path: str,
+        data_file_paths:List[str],
+        model_path: str,
+        tech_indicator_list_path: str,
+        maintenance_margin_ratio_dict_path: str,
+        transcation_cost: float,
+        max_holding_number: int,          
+        position_choices: int,   
+        N: int,        
+        time_info_dim: int = 2,
+        hidden_nodes: int=128,
+        leverage_choices: List[float]=[1],
+        initial_leverage: int = 1,
+        initial_position: int = 0,        
+        initial_wallet_balance: float = 10000,
+        order_book_depth: int=5,
+        early_stop:int=2,
+        enable_limit_reward: bool=False,
+        limit_hold_bonus: float =1.0,
+        limit_stay_bonus: float =0.5,
+        limit_reverse_penalty: float =1.5,
+        near_limit_threshold: float =0.05,
+        allow_reverse_position: bool = True):
+    """Evaluate the sub-agent."""
+    pass
