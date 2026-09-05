@@ -2,7 +2,7 @@
 
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
 
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+**Tradeoff:** These guidelines bias toward caution over speed, but caution means simplicity and precision, not adding defensive wrappers or backward-compatibility layers.
 
 ## 1. Think Before Coding
 
@@ -21,7 +21,8 @@ Before implementing:
 - No features beyond what was asked.
 - No abstractions for single-use code.
 - No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
+- Fail fast, no defensive bloat: Do not add speculative defensive checks (e.g. redundant `None`/type checks, try-catch wrappers, default fallbacks) for internal calls or impossible scenarios. Let errors fail fast and loud.
+- No backward-compatibility baggage: When updating interfaces or logic, directly replace obsolete code and parameters. Do not add compatibility shims, fallback branches, or legacy wrappers unless explicitly requested.
 - If you write 200 lines and it could be 50, rewrite it.
 
 Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
@@ -32,13 +33,14 @@ Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, sim
 
 When editing existing code:
 - Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
+- Don't refactor things that aren't broken, but directly replace what the task supersedes (no legacy adapters).
 - Match existing style, even if you'd do it differently.
 - If you notice unrelated dead code, mention it - don't delete it.
 
 When your changes create orphans:
 - Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
+- Clean up obsolete branches or parameters that your changes replace; do not keep them around for backward compatibility.
+- Don't remove pre-existing unrelated dead code unless asked.
 
 The test: Every changed line should trace directly to the user's request.
 
@@ -47,7 +49,7 @@ The test: Every changed line should trace directly to the user's request.
 **Define success criteria. Loop until verified.**
 
 Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Implement feature" → "Write tests for expected behavior, then make them pass"
 - "Fix the bug" → "Write a test that reproduces it, then make it pass"
 - "Refactor X" → "Ensure tests pass before and after"
 
@@ -88,7 +90,7 @@ Functions and structure:
 
 Errors and logging:
 - Catch specific exceptions, not bare `except:`.
-- Do not swallow exceptions unless there is a clear fallback or recovery path.
+- Fail fast: Let exceptions propagate naturally. Do not catch exceptions unless they can be meaningfully handled or translated at this boundary; never invent silent fallback return values or swallow errors to prevent crashes.
 - Include useful context in error messages.
 - Use `logging` for library code; reserve `print` for CLI or script user output.
 
@@ -100,7 +102,7 @@ Files and data:
 
 Tests:
 - For bug fixes, write or update a test that reproduces the failure before fixing it when feasible.
-- For new behavior, cover the main path and important edge cases.
+- For new behavior, cover the main path and realistic edge cases (do not invent unrealistic input scenarios).
 - Keep tests deterministic; avoid real network, wall-clock time, and order dependencies unless explicitly required.
 - Name tests by behavior, for example `test_rejects_empty_symbol`.
 
