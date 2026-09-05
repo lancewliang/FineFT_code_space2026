@@ -5,14 +5,17 @@
 # the cumulative reward sum, and the final return rate.
 
 import argparse
+import logging
 import os
 import re
 import sys
-from typing import List
+import traceback
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 import torch
+import torch.multiprocessing as mp
 
 sys.path.append(".")
 
@@ -28,6 +31,36 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["F_ENABLE_ONEDNN_OPTS"] = "0"
+
+logger = logging.getLogger(__name__)
+log = logger
+if not logger.handlers and not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+    )
+
+
+def configure_logger(logg_file_path: str):
+    if not logg_file_path:
+        return None
+    log_dir = os.path.dirname(logg_file_path)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+    abs_log_path = os.path.abspath(logg_file_path)
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    for handler in root_logger.handlers:
+        if isinstance(handler, logging.FileHandler) and handler.baseFilename == abs_log_path:
+            return abs_log_path
+
+    file_handler = logging.FileHandler(abs_log_path, encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(formatter)
+    root_logger.addHandler(file_handler)
+    return abs_log_path
 
    
 
@@ -58,6 +91,12 @@ class weighted_trader:
         allow_reverse_position: bool = True,
         
                  ):
+
+        # logger
+        self.logg_file_path = logg_file_path
+        self.abs_log_path = configure_logger(logg_file_path)
+        self.logger = logger
+        self.log = logger
 
         # device
         if torch.cuda.is_available():
@@ -134,6 +173,10 @@ class weighted_trader:
         self.initial_action_list = range(self.N_ACTIONS)
 
          
+
+    @staticmethod
+    def configure_logger(logg_file_path: str):
+        return configure_logger(logg_file_path)
 
     def act_test(self, state, info, context_index):
         assert context_index in range(self.N)
@@ -245,7 +288,7 @@ class weighted_trader:
         }
     
     def test(self):
-        print("start")
+        logger.info("start")
         self.eval_net.eval()
         overall_result = [] 
         test_df = pd.read_feather(self.data_file_path)
@@ -258,11 +301,33 @@ class weighted_trader:
                     "df_length": len(test_df),
                     **self._run_episode(test_df, initial_action, bin_index),
                 }
-                print(single_result)
+                logger.info(single_result)
                 overall_result.append(single_result)
        
         return overall_result
     
+def _evaluate_single_file_worker(conn, trader_kwargs: dict):
+    try:
+        trader = weighted_trader(**trader_kwargs)
+        single_file_results = trader.test()
+        if conn is not None:
+            conn.send((True, single_file_results))
+    except Exception as e:
+        logger.error(
+            "Error evaluating data file %s: %s",
+            trader_kwargs.get("data_file_path"),
+            traceback.format_exc(),
+        )
+        if conn is not None:
+            conn.send((False, traceback.format_exc()))
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def evaluates( 
         logg_file_path: str,
         data_file_paths:List[str],
@@ -286,6 +351,90 @@ def evaluates(
         limit_stay_bonus: float =0.5,
         limit_reverse_penalty: float =1.5,
         near_limit_threshold: float =0.05,
-        allow_reverse_position: bool = True):
-    """Evaluate the sub-agent."""
-    pass
+        allow_reverse_position: bool = True,
+        **kwargs):
+    """Evaluate the sub-agent across multiple data files using one subprocess per file."""
+    if logg_file_path:
+        configure_logger(logg_file_path)
+
+    if not data_file_paths:
+        logger.info("No data files provided for evaluation.")
+        return []
+
+    logger.info(
+        "Starting multi-process evaluation on %d data files",
+        len(data_file_paths),
+    )
+
+    base_trader_kwargs = {
+        "logg_file_path": logg_file_path,
+        "model_path": model_path,
+        "tech_indicator_list_path": tech_indicator_list_path,
+        "maintenance_margin_ratio_dict_path": maintenance_margin_ratio_dict_path,
+        "transcation_cost": transcation_cost,
+        "max_holding_number": max_holding_number,
+        "position_choices": position_choices,
+        "N": N,
+        "time_info_dim": time_info_dim,
+        "hidden_nodes": hidden_nodes,
+        "leverage_choices": leverage_choices,
+        "initial_leverage": initial_leverage,
+        "initial_position": initial_position,
+        "initial_wallet_balance": initial_wallet_balance,
+        "order_book_depth": order_book_depth,
+        "early_stop": early_stop,
+        "enable_limit_reward": enable_limit_reward,
+        "limit_hold_bonus": limit_hold_bonus,
+        "limit_stay_bonus": limit_stay_bonus,
+        "limit_reverse_penalty": limit_reverse_penalty,
+        "near_limit_threshold": near_limit_threshold,
+        "allow_reverse_position": allow_reverse_position,
+        **kwargs,
+    }
+
+    ctx = mp.get_context("spawn")
+    process_list = []
+
+    for df_path in data_file_paths:
+        parent_conn, child_conn = ctx.Pipe(duplex=False)
+        trader_kwargs = dict(base_trader_kwargs)
+        trader_kwargs["data_file_path"] = df_path
+
+        p = ctx.Process(
+            target=_evaluate_single_file_worker,
+            args=(child_conn, trader_kwargs),
+        )
+        p.start()
+        child_conn.close()
+        process_list.append((p, parent_conn, df_path))
+
+    overall_results = []
+    # Collect results from all subprocesses
+    for p, parent_conn, df_path in process_list:
+        try:
+            success, res = parent_conn.recv()
+            if success and res:
+                overall_results.extend(res)
+            elif not success:
+                logger.error(
+                    "Subprocess evaluation failed for file %s: %s",
+                    df_path,
+                    res,
+                )
+        except EOFError:
+            logger.error(
+                "Subprocess for file %s terminated unexpectedly without returning results",
+                df_path,
+            )
+        finally:
+            parent_conn.close()
+
+    # Wait for all subprocesses to complete
+    for p, _, df_path in process_list:
+        p.join()
+
+    logger.info(
+        "All %d evaluation subprocesses finished.",
+        len(process_list),
+    )
+    return overall_results

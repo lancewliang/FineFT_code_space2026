@@ -824,6 +824,8 @@ class Weighted_Contexts_DQN:
                 buffer_pretrain=buffer_pretrain,
                 step_counter_pretrain=step_counter_pretrain,
             )
+        #eval pretrain model
+        
         # step_counter_diverse = run_parallel_diverse_training(
         #     trainer=self,
         #     train_df_cache=train_df_cache,

@@ -58,21 +58,6 @@ class PretrainCollectResult:
     transition_count: int
 
 
-from RL.DiHFT.low_level.evaluate_sub_agents import (
-    DEFAULT_EVAL_NUM_WORKERS,
-    DEFAULT_PRETRAIN_EVAL_NUM_WORKERS,
-    SubAgentEvalMetric,
-    SubAgentEvalTask,
-    WarmupEvalMetric,
-    WarmupEvalTask,
-    act_test,
-    evaluate_single_sub_agent_df,
-    evaluate_sub_agents,
-    evaluate_warmup_sub_agents,
-    select_greedy_model_action,
-)
-
-
 def select_pretrain_action(
     info,
     optimal_step_counter,
@@ -517,18 +502,10 @@ def run_exhaustive_warmup(
             "exhaustive warmup 学习结束 | 模型已保存至=%s",
             pretrain_model_path,
         )
-        eval_metrics = evaluate_sub_agents(
-            trainer=trainer,
-            train_df_cache=train_df_cache,
-            env_kwargs=env_kwargs,
-        )
+        
     else:
         logger.info("exhaustive warmup train skipped (pretrain_epoch=0)")
-        eval_metrics = evaluate_sub_agents(
-            trainer=trainer,
-            train_df_cache=train_df_cache,
-            env_kwargs=env_kwargs,
-        )
+        
 
     return {
         "episodes": total_episodes,
