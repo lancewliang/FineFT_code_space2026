@@ -505,29 +505,26 @@ def run_exhaustive_warmup(
                 last_losses[2],
                 update_count,
             )
-            if (epoch + 1) % eval_interval == 0:
-                eval_metrics = evaluate_warmup_sub_agents(
-                    trainer=trainer,
-                    train_df_cache=train_df_cache,
-                    env_kwargs=env_kwargs,
-                )
+            
 
-        if (
-            getattr(trainer, "eval_net", None) is not None
-            and pretrain_model_path is not None
-        ):
-            dir_name = os.path.dirname(os.path.abspath(pretrain_model_path))
-            if dir_name:
-                os.makedirs(dir_name, exist_ok=True)
-            if hasattr(trainer.eval_net, "state_dict"):
-                torch.save(trainer.eval_net.state_dict(), pretrain_model_path)
-                logger.info(
-                    "exhaustive warmup 学习结束 | 模型已保存至=%s",
-                    pretrain_model_path,
-                )
+        
+        dir_name = os.path.dirname(os.path.abspath(pretrain_model_path))
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+       
+        torch.save(trainer.eval_net.state_dict(), pretrain_model_path)
+        logger.info(
+            "exhaustive warmup 学习结束 | 模型已保存至=%s",
+            pretrain_model_path,
+        )
+        eval_metrics = evaluate_sub_agents(
+            trainer=trainer,
+            train_df_cache=train_df_cache,
+            env_kwargs=env_kwargs,
+        )
     else:
         logger.info("exhaustive warmup train skipped (pretrain_epoch=0)")
-        eval_metrics = evaluate_warmup_sub_agents(
+        eval_metrics = evaluate_sub_agents(
             trainer=trainer,
             train_df_cache=train_df_cache,
             env_kwargs=env_kwargs,
