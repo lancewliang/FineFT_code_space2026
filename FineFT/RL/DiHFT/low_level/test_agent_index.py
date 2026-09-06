@@ -472,7 +472,6 @@ def build_trading_detail_row(
     position_before,
     leverage_before,
     test_env,
-    info,
     step_reward,
     action_change_step,
     trade_count_step,
@@ -486,6 +485,7 @@ def build_trading_detail_row(
     unrealized_pnl = state_after["unrealized_pnl"]
     position_after = state_after["position"]
     margin_balance = wallet_balance + unrealized_pnl
+    execution_metrics = test_env._execution_metric_info()
     row = {
         "label": label,
         "df_path": df_path,
@@ -505,12 +505,12 @@ def build_trading_detail_row(
         "cumulative_action_change_count": cumulative_action_change_count,
         "cumulative_trade_count": cumulative_trade_count,
         "step_reward": step_reward,
-        "realized_pnl_step": info["realized_pnl_step"],
-        "cumulative_realized_pnl": info["cumulative_realized_pnl"],
-        "commission_fee_step": info["commission_fee_step"],
-        "cumulative_commission_fee": info["cumulative_commission_fee"],
-        "slippage_step": info["slippage_step"],
-        "cumulative_slippage": info["cumulative_slippage"],
+        "realized_pnl_step": execution_metrics["realized_pnl_step"],
+        "cumulative_realized_pnl": execution_metrics["cumulative_realized_pnl"],
+        "commission_fee_step": execution_metrics["commission_fee_step"],
+        "cumulative_commission_fee": execution_metrics["cumulative_commission_fee"],
+        "slippage_step": execution_metrics["slippage_step"],
+        "cumulative_slippage": execution_metrics["cumulative_slippage"],
         "wallet_balance": wallet_balance,
         "unrealized_pnl": unrealized_pnl,
         "margin_balance": margin_balance,
@@ -833,7 +833,6 @@ class weighted_trader:
                                         position_before=position_before,
                                         leverage_before=leverage_before,
                                         test_env=test_env,
-                                        info=info,
                                         step_reward=r,
                                         action_change_step=action_change_step,
                                         trade_count_step=trade_count_step,

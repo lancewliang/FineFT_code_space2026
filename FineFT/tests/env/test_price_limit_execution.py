@@ -60,10 +60,11 @@ def _action(env, position):
     return env.env_map_position_leverage_to_action(position, 1)
 
 
-def _assert_no_execution(info):
-    assert info["commission_fee_step"] == 0.0
-    assert info["realized_pnl_step"] == 0.0
-    assert info["slippage_step"] == 0.0
+def _assert_no_execution(env):
+    execution_info = env._execution_metric_info()
+    assert execution_info["commission_fee_step"] == 0.0
+    assert execution_info["realized_pnl_step"] == 0.0
+    assert execution_info["slippage_step"] == 0.0
 
 
 def test_limit_down_blocks_long_reduction_in_mask_and_direct_step():
@@ -79,7 +80,7 @@ def test_limit_down_blocks_long_reduction_in_mask_and_direct_step():
     _, _, _, step_info = env.step(_action(env, 0.0))
 
     assert env.position == 2.0
-    _assert_no_execution(step_info)
+    _assert_no_execution(env)
     assert step_info["avaliable_action"][_action(env, 0.0)] == 0
 
 
@@ -96,7 +97,7 @@ def test_limit_up_blocks_short_reduction_in_mask_and_direct_step():
     _, _, _, step_info = env.step(_action(env, 0.0))
 
     assert env.position == -2.0
-    _assert_no_execution(step_info)
+    _assert_no_execution(env)
     assert step_info["avaliable_action"][_action(env, 0.0)] == 0
 
 
@@ -108,10 +109,10 @@ def test_limit_down_allows_buying_to_reduce_a_short_position():
     assert reset_info["avaliable_action"][_action(env, -4.0)] == 0
     assert reset_info["avaliable_action"][_action(env, 0.0)] == 1
 
-    _, _, _, step_info = env.step(_action(env, 0.0))
+    env.step(_action(env, 0.0))
 
     assert env.position == 0.0
-    assert step_info["commission_fee_step"] > 0.0
+    assert env._execution_metric_info()["commission_fee_step"] > 0.0
 
 
 def test_limit_up_allows_selling_to_reduce_a_long_position():
@@ -122,10 +123,10 @@ def test_limit_up_allows_selling_to_reduce_a_long_position():
     assert reset_info["avaliable_action"][_action(env, 4.0)] == 0
     assert reset_info["avaliable_action"][_action(env, 0.0)] == 1
 
-    _, _, _, step_info = env.step(_action(env, 0.0))
+    env.step(_action(env, 0.0))
 
     assert env.position == 0.0
-    assert step_info["commission_fee_step"] > 0.0
+    assert env._execution_metric_info()["commission_fee_step"] > 0.0
 
 
 @pytest.mark.parametrize(
@@ -145,10 +146,10 @@ def test_flat_position_blocks_only_the_forbidden_opening_direction(
     assert reset_info["avaliable_action"][_action(env, blocked_position)] == 0
     assert reset_info["avaliable_action"][_action(env, allowed_position)] == 1
 
-    _, _, _, blocked_info = env.step(_action(env, blocked_position))
+    env.step(_action(env, blocked_position))
 
     assert env.position == 0.0
-    _assert_no_execution(blocked_info)
+    _assert_no_execution(env)
 
     allowed_env = _make_env(**limit_kwargs)
     allowed_env.reset()
@@ -170,10 +171,10 @@ def test_price_limit_blocks_direct_same_direction_add(
     env = _make_env(initial_position=initial_position, **limit_kwargs)
     env.reset()
 
-    _, _, _, step_info = env.step(_action(env, blocked_add_position))
+    env.step(_action(env, blocked_add_position))
 
     assert env.position == initial_position
-    _assert_no_execution(step_info)
+    _assert_no_execution(env)
 
 
 @pytest.mark.parametrize(
@@ -193,10 +194,10 @@ def test_price_limit_rejects_the_entire_reverse_position(
 
     assert reset_info["avaliable_action"][reverse_action] == 0
 
-    _, _, _, step_info = env.step(reverse_action)
+    env.step(reverse_action)
 
     assert env.position == initial_position
-    _assert_no_execution(step_info)
+    _assert_no_execution(env)
 
 
 @pytest.mark.parametrize(
@@ -216,10 +217,10 @@ def test_single_sided_ratio_derives_hard_limit_state(
     blocked_action = _action(env, blocked_position)
     assert reset_info["avaliable_action"][blocked_action] == 0
 
-    _, _, _, step_info = env.step(blocked_action)
+    env.step(blocked_action)
 
     assert env.position == 0.0
-    _assert_no_execution(step_info)
+    _assert_no_execution(env)
 
 
 def test_near_limit_price_without_explicit_state_does_not_block_execution():

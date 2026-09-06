@@ -25,12 +25,8 @@ class FakeEnv:
     maintain_marigine_history = []
     new_position_required_money_history = []
 
-    def reset(self):
-        return [0.0], {"previous_action": 0}
-
-    def step(self, action):
-        return [0.0], 1.0, True, {
-            "previous_action": action,
+    def _execution_metric_info(self):
+        return {
             "commission_fee_step": 0.0,
             "realized_pnl_step": 0.0,
             "slippage_step": 0.0,
@@ -38,6 +34,12 @@ class FakeEnv:
             "cumulative_realized_pnl": 0.0,
             "cumulative_slippage": 0.0,
         }
+
+    def reset(self):
+        return [0.0], {"previous_action": 0}
+
+    def step(self, action):
+        return [0.0], 1.0, True, {"previous_action": action}
 
 
 class DetailFakeEnv:
@@ -53,6 +55,25 @@ class DetailFakeEnv:
         self.leverage = 1
         self.wallet_balance = 1000.0
         self.unrealized_pnl = 0.0
+
+    def _execution_metric_info(self):
+        if self.step_index == 1:
+            return {
+                "commission_fee_step": 0.5,
+                "realized_pnl_step": 0.0,
+                "slippage_step": 0.1,
+                "cumulative_commission_fee": 0.5,
+                "cumulative_realized_pnl": 0.0,
+                "cumulative_slippage": 0.1,
+            }
+        return {
+            "commission_fee_step": 0.7,
+            "realized_pnl_step": 5.0,
+            "slippage_step": 0.2,
+            "cumulative_commission_fee": 1.2,
+            "cumulative_realized_pnl": 5.0,
+            "cumulative_slippage": 0.3,
+        }
 
     def reset(self):
         return [0.0], {
@@ -70,12 +91,6 @@ class DetailFakeEnv:
                 "avaliable_action": [1, 1, 1],
                 "funding_count_down_hour": 0,
                 "funding_count_down_minute": 0,
-                "commission_fee_step": 0.5,
-                "realized_pnl_step": 0.0,
-                "slippage_step": 0.1,
-                "cumulative_commission_fee": 0.5,
-                "cumulative_realized_pnl": 0.0,
-                "cumulative_slippage": 0.1,
             }
         self.position = 1
         self.wallet_balance = 1001.0
@@ -86,12 +101,6 @@ class DetailFakeEnv:
             "avaliable_action": [1, 1, 1],
             "funding_count_down_hour": 0,
             "funding_count_down_minute": 0,
-            "commission_fee_step": 0.7,
-            "realized_pnl_step": 5.0,
-            "slippage_step": 0.2,
-            "cumulative_commission_fee": 1.2,
-            "cumulative_realized_pnl": 5.0,
-            "cumulative_slippage": 0.3,
         }
 
 

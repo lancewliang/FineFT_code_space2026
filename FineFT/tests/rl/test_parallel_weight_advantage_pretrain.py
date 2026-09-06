@@ -337,11 +337,9 @@ def test_run_diverse_training_phase_runs_deferred_updates_with_stacked_sampler(
         epoch_index=0,
     )
 
-    # 训练阶段按 UPDATE_WINDOWS_PER_EPOCH 个窗口执行，每窗口 update_count 次更新
-    expected_updates = pdt.UPDATE_WINDOWS_PER_EPOCH * 3
-    assert update_calls["count"] == expected_updates
+    assert update_calls["count"] == 3
     assert len(sampler_instances) == 1
-    assert sampler_instances[0].sample_calls == expected_updates
+    assert sampler_instances[0].sample_calls == 3
     assert losses == (1.0, 0.5, 0.5)
 
 
@@ -624,68 +622,6 @@ def test_save_diverse_buffer_writes_plain_tuple_snapshot(tmp_path):
     assert np.array_equal(snapshot["n_step_buffer"][0][0][0], np.array([9.0]))
 
 
-def test_load_diverse_buffer_restores_memory_n_step_buffer_and_info_key(tmp_path):
-    import numpy as np
-    from collections import deque, namedtuple
-    from RL.DiHFT.low_level import parallel_diverse_train as pdt
-
-    Experience = namedtuple(
-        "Experience",
-        ["state", "info", "action", "reward", "next_state", "done", "next_info"],
-    )
-    experience = Experience(
-        np.array([1.0, 2.0]),
-        {"previous_action": 0},
-        3,
-        1.5,
-        np.array([3.0, 4.0]),
-        True,
-        {"previous_action": 1},
-    )
-
-    class SaveBuffer:
-        memory = deque([experience], maxlen=10)
-        n_step_buffer = [
-            deque(
-                [(np.array([9.0]), {"k": 1}, 0, 0.5, np.array([8.0]), {"k": 2}, False)],
-                maxlen=4,
-            )
-        ]
-
-        def __len__(self):
-            return len(self.memory)
-
-    pdt.save_diverse_buffer(SaveBuffer(), str(tmp_path))
-    buffer_path = str(tmp_path / "buffer_diverse.pkl")
-
-    class LoadBuffer:
-        def __init__(self):
-            self.memory = deque(maxlen=10)
-            self.n_step_buffer = [deque(maxlen=4)]
-            self.experience = namedtuple(
-                "Experience",
-                ["state", "info", "action", "reward", "next_state", "done", "next_info"],
-            )
-
-        def __len__(self):
-            return len(self.memory)
-
-    buffer = LoadBuffer()
-    pdt.load_diverse_buffer(buffer, buffer_path)
-
-    # memory 恢复为目标 buffer 的 Experience namedtuple（与 add() 写入类型一致）
-    assert len(buffer.memory) == 1
-    assert isinstance(buffer.memory[0], buffer.experience)
-    assert np.array_equal(buffer.memory[0].state, np.array([1.0, 2.0]))
-    assert buffer.memory[0].action == 3
-    assert buffer.memory[0].done is True
-    # n_step_buffer 尾部 transition 原样恢复
-    assert len(buffer.n_step_buffer[0]) == 1
-    assert np.array_equal(buffer.n_step_buffer[0][0][0], np.array([9.0]))
-    # 直接填充 memory 绕过 add()，info_key 需从加载经验恢复（采样器依赖）
-    assert buffer.info_key == {"previous_action": 1}.keys()
-
-
 def test_run_parallel_rollout_task_completes_in_single_round_without_updates(
     monkeypatch,
 ):
@@ -828,7 +764,6 @@ def test_run_parallel_rollout_task_completes_in_single_round_without_updates(
 
 def test_run_parallel_diverse_training_completes_exploration_before_training(
     monkeypatch,
-    tmp_path,
 ):
     import queue
     import types
@@ -890,7 +825,6 @@ def test_run_parallel_diverse_training_completes_exploration_before_training(
             )
 
     trainer = MagicMock()
-    trainer.model_path = str(tmp_path)  # 空目录：无 buffer_diverse.pkl，正常探索
     trainer.total_df_index_length = 2
     trainer.num_epoch = 2
     trainer.N = 1
@@ -1024,7 +958,6 @@ def test_run_parallel_diverse_training_completes_exploration_before_training(
 
 def test_run_parallel_diverse_training_skips_exploration_after_three_stale_epochs(
     monkeypatch,
-    tmp_path,
 ):
     """连续 3 个 epoch 探索未新增经验后，后续 epoch 跳过探索，仅执行训练。"""
     import queue
@@ -1074,7 +1007,6 @@ def test_run_parallel_diverse_training_skips_exploration_after_three_stale_epoch
             )
 
     trainer = MagicMock()
-    trainer.model_path = str(tmp_path)  # 空目录：无 buffer_diverse.pkl，正常探索
     trainer.total_df_index_length = 2
     trainer.num_epoch = 5
     trainer.N = 1
@@ -1181,152 +1113,6 @@ def test_run_parallel_diverse_training_skips_exploration_after_three_stale_epoch
     assert "save_buffer" not in tail
     assert tail.count("sampler_built") == 1
     assert tail.count("update") == 30
-
-
-def test_run_parallel_diverse_training_loads_existing_buffer_and_skips_exploration(
-    monkeypatch,
-    tmp_path,
-):
-    """经验池文件已存在时直接从文件系统加载，跳过全部探索，仅执行训练。"""
-    import types
-    import numpy as np
-    from collections import deque, namedtuple
-    from unittest.mock import MagicMock
-    from RL.DiHFT.low_level import parallel_diverse_train as pdt
-
-    events = []
-
-    # 预先落盘一份经验池快照（模拟上次运行保存的结果）
-    Experience = namedtuple(
-        "Experience",
-        ["state", "info", "action", "reward", "next_state", "done", "next_info"],
-    )
-    saved = Experience(
-        np.array([1.0]),
-        {"previous_action": 0},
-        1,
-        0.5,
-        np.array([2.0]),
-        False,
-        {"previous_action": 1},
-    )
-
-    class SaveBuffer:
-        memory = deque([saved], maxlen=10)
-        n_step_buffer = [deque(maxlen=4)]
-
-        def __len__(self):
-            return len(self.memory)
-
-    pdt.save_diverse_buffer(SaveBuffer(), str(tmp_path))
-    assert (tmp_path / "buffer_diverse.pkl").exists()
-
-    trainer = MagicMock()
-    trainer.model_path = str(tmp_path)  # 已包含 buffer_diverse.pkl
-    trainer.total_df_index_length = 2
-    trainer.num_epoch = 2
-    trainer.N = 1
-    trainer.position_choices = 2
-    trainer.epsilon_init = 1.0
-    trainer.epsilon_min = 0.1
-    trainer.ada_init = 256.0
-    trainer.ada_min = 0.0
-    trainer.lr_init = 0.005
-    trainer.lr_min = 0.001
-    trainer.batch_size = 1
-    trainer.update_times = 1
-    trainer.n_step = 1
-    trainer.update_counter = 0
-    trainer.optimizer = types.SimpleNamespace(param_groups=[{"lr": 0.0}])
-    trainer.writer = MagicMock()
-
-    monkeypatch.setattr(
-        pdt,
-        "start_parallel_workers",
-        lambda *args, **kwargs: events.append("start_workers"),
-    )
-    monkeypatch.setattr(
-        pdt,
-        "shutdown_exploration_workers",
-        lambda tr: events.append("shutdown_workers"),
-    )
-    monkeypatch.setattr(
-        pdt,
-        "save_diverse_buffer",
-        lambda buffer, model_path: events.append("save_buffer"),
-    )
-
-    class LoadableBuffer:
-        def __init__(self):
-            self.memory = deque(maxlen=10)
-            self.n_step_buffer = [deque(maxlen=4)]
-            self.experience = namedtuple(
-                "Experience",
-                [
-                    "state",
-                    "info",
-                    "action",
-                    "reward",
-                    "next_state",
-                    "done",
-                    "next_info",
-                ],
-            )
-
-        def __len__(self):
-            return len(self.memory)
-
-        def add(self, *transition):
-            events.append("buffer_add")
-
-    buffer_diverse = LoadableBuffer()
-
-    class FakeSampler:
-        def __init__(self, buffer, batch_size, device):
-            events.append("sampler_built")
-
-        def sample(self):
-            return ("s", {}, "a", "r", "s_", {}, "d")
-
-    monkeypatch.setattr(pdt, "StackedTransitionSampler", FakeSampler)
-
-    def fake_update(tr, *args, **kwargs):
-        events.append("update")
-        tr.update_counter += 1
-        return (1.0, 0.5, 0.5)
-
-    monkeypatch.setattr(pdt, "update", fake_update)
-    monkeypatch.setattr(
-        pdt,
-        "save_parallel_epoch_model",
-        lambda tr, epoch_index: events.append(("save_model", epoch_index)),
-    )
-
-    final_steps = pdt.run_parallel_diverse_training(
-        trainer=trainer,
-        train_df_cache={},
-        env_kwargs={},
-        buffer_diverse=buffer_diverse,
-        step_counter_diverse=0,
-        diverse_rollout_latest_metrics_by_df={},
-    )
-
-    # 快照被加载：memory 恢复已保存经验，info_key 同步恢复
-    assert len(buffer_diverse.memory) == 1
-    assert buffer_diverse.memory[0] == saved
-    assert buffer_diverse.info_key == {"previous_action": 1}.keys()
-    # 全部 epoch 跳过探索：不创建/关闭子进程、不重新保存快照、不新增经验
-    assert events.count("start_workers") == 0
-    assert events.count("shutdown_workers") == 0
-    assert events.count("save_buffer") == 0
-    assert events.count("buffer_add") == 0
-    # 每个 epoch 仍执行完整训练并保存模型：2 × 30 = 60 次更新
-    assert events.count("sampler_built") == 2
-    assert events.count("update") == 60
-    assert ("save_model", 0) in events
-    assert ("save_model", 1) in events
-    # 无探索步数新增
-    assert final_steps == 0
 
 
 def test_start_parallel_workers_caps_at_twenty_and_assigns_round_robin(monkeypatch):

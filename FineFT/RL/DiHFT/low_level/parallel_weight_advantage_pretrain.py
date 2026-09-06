@@ -132,7 +132,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument(
     "--buffer_size",
     type=int,
-    default=3000000,
+    default=2000000,
     help="the number of transcation we store in one memory",
 )
 parser.add_argument(

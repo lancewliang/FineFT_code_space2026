@@ -69,14 +69,16 @@ def test_commodity_env_step_exposes_execution_metrics():
         env.env_map_position_leverage_to_action(1, env.leverage_choices[0])
     )
 
-    assert "commission_fee_step" in info
-    assert "realized_pnl_step" in info
-    assert "slippage_step" in info
-    assert "cumulative_commission_fee" in info
-    assert "cumulative_realized_pnl" in info
-    assert "cumulative_slippage" in info
-    assert info["commission_fee_step"] == env.commission_fee_step
-    assert info["cumulative_commission_fee"] == env.cumulative_commission_fee
+    assert "commission_fee_step" not in info
+    assert "realized_pnl_step" not in info
+    assert "slippage_step" not in info
+    assert "cumulative_commission_fee" not in info
+    assert "cumulative_realized_pnl" not in info
+    assert "cumulative_slippage" not in info
+
+    execution_info = env._execution_metric_info()
+    assert execution_info["commission_fee_step"] == env.commission_fee_step
+    assert execution_info["cumulative_commission_fee"] == env.cumulative_commission_fee
 
 
 def test_wallet_change_can_use_buy_and_sell_fee_rates():

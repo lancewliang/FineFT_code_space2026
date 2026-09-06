@@ -67,23 +67,25 @@ def test_reset_exposes_zero_cost_for_flat_position_without_changing_trading_info
     env = _make_env()
 
     _, info = env.reset()
+    cost_info = env._position_cost_info()
 
     assert env.current_holding_opening_price == 0.0
     assert env.current_holding_average_price == 0.0
-    assert info["current_holding_opening_price"] == 0.0
-    assert info["current_holding_average_price"] == 0.0
+    assert cost_info["current_holding_opening_price"] == 0.0
+    assert cost_info["current_holding_average_price"] == 0.0
     assert info["trading_info"].shape == (4,)
 
 
 def test_reset_uses_first_mark_price_for_nonzero_initial_position():
     env = _make_env(initial_position=-2.0, markprices=[123.0] * 7)
 
-    _, info = env.reset()
+    env.reset()
+    cost_info = env._position_cost_info()
 
     assert env.current_holding_opening_price == 123.0
     assert env.current_holding_average_price == 123.0
-    assert info["current_holding_opening_price"] == 123.0
-    assert info["current_holding_average_price"] == 123.0
+    assert cost_info["current_holding_opening_price"] == 123.0
+    assert cost_info["current_holding_average_price"] == 123.0
 
 
 def test_open_long_uses_actual_ask_fills_and_opening_fee():
@@ -92,13 +94,14 @@ def test_open_long_uses_actual_ask_fills_and_opening_fee():
     env = _make_env(ask_prices=ask_prices, ask_qtys=ask_qtys)
     env.reset()
 
-    _, _, _, info = env.step(env.env_map_position_leverage_to_action(2.0, 1))
+    env.step(env.env_map_position_leverage_to_action(2.0, 1))
+    cost_info = env._position_cost_info()
 
     expected_price = (204.0 + 2.04) / 2.0
     assert env.current_holding_opening_price == pytest.approx(expected_price)
     assert env.current_holding_average_price == pytest.approx(expected_price)
-    assert info["current_holding_opening_price"] == pytest.approx(expected_price)
-    assert info["current_holding_average_price"] == pytest.approx(expected_price)
+    assert cost_info["current_holding_opening_price"] == pytest.approx(expected_price)
+    assert cost_info["current_holding_average_price"] == pytest.approx(expected_price)
 
 
 def test_open_short_uses_actual_bid_fills_and_opening_fee():
@@ -107,13 +110,14 @@ def test_open_short_uses_actual_bid_fills_and_opening_fee():
     env = _make_env(bid_prices=bid_prices, bid_qtys=bid_qtys)
     env.reset()
 
-    _, _, _, info = env.step(env.env_map_position_leverage_to_action(-2.0, 1))
+    env.step(env.env_map_position_leverage_to_action(-2.0, 1))
+    cost_info = env._position_cost_info()
 
     expected_price = (196.0 - 1.96) / 2.0
     assert env.current_holding_opening_price == pytest.approx(expected_price)
     assert env.current_holding_average_price == pytest.approx(expected_price)
-    assert info["current_holding_opening_price"] == pytest.approx(expected_price)
-    assert info["current_holding_average_price"] == pytest.approx(expected_price)
+    assert cost_info["current_holding_opening_price"] == pytest.approx(expected_price)
+    assert cost_info["current_holding_average_price"] == pytest.approx(expected_price)
 
 
 def test_add_reduce_and_close_follow_current_holding_cost_lifecycle():
@@ -141,12 +145,13 @@ def test_add_reduce_and_close_follow_current_holding_cost_lifecycle():
     assert env.current_holding_opening_price == opening_price_before_reduce
     assert env.current_holding_average_price == average_price_before_reduce
 
-    _, _, _, info = env.step(env.env_map_position_leverage_to_action(0.0, 1))
+    env.step(env.env_map_position_leverage_to_action(0.0, 1))
+    cost_info = env._position_cost_info()
 
     assert env.current_holding_opening_price == 0.0
     assert env.current_holding_average_price == 0.0
-    assert info["current_holding_opening_price"] == 0.0
-    assert info["current_holding_average_price"] == 0.0
+    assert cost_info["current_holding_opening_price"] == 0.0
+    assert cost_info["current_holding_average_price"] == 0.0
 
 
 def test_partial_open_uses_actual_filled_quantity_instead_of_target_quantity():
@@ -155,13 +160,14 @@ def test_partial_open_uses_actual_filled_quantity_instead_of_target_quantity():
     env = _make_env(ask_prices=ask_prices, ask_qtys=ask_qtys)
     env.reset()
 
-    _, _, _, info = env.step(env.env_map_position_leverage_to_action(4.0, 1))
+    env.step(env.env_map_position_leverage_to_action(4.0, 1))
+    cost_info = env._position_cost_info()
 
     assert env.position == 2.0
     expected_price = (204.0 + 2.04) / 2.0
     assert env.current_holding_opening_price == pytest.approx(expected_price)
     assert env.current_holding_average_price == pytest.approx(expected_price)
-    assert info["current_holding_average_price"] == pytest.approx(expected_price)
+    assert cost_info["current_holding_average_price"] == pytest.approx(expected_price)
 
 
 def test_reverse_resets_cost_from_only_the_new_direction_opening_leg():
@@ -173,7 +179,8 @@ def test_reverse_resets_cost_from_only_the_new_direction_opening_leg():
     env.reset()
     env.step(env.env_map_position_leverage_to_action(2.0, 1))
 
-    _, _, _, info = env.step(env.env_map_position_leverage_to_action(-2.0, 1))
+    env.step(env.env_map_position_leverage_to_action(-2.0, 1))
+    cost_info = env._position_cost_info()
 
     assert env.position == -2.0
     expected_new_opening_price = (194.0 - 1.94) / 2.0
@@ -183,7 +190,7 @@ def test_reverse_resets_cost_from_only_the_new_direction_opening_leg():
     assert env.current_holding_average_price == pytest.approx(
         expected_new_opening_price
     )
-    assert info["current_holding_opening_price"] == pytest.approx(
+    assert cost_info["current_holding_opening_price"] == pytest.approx(
         expected_new_opening_price
     )
 
@@ -193,26 +200,28 @@ def test_reverse_that_only_closes_the_old_position_clears_cost_state():
     env.initial_state = (10.0, 200.0, 0.0, 2.0, 1)
     env.reset()
 
-    _, _, _, info = env.step(env.env_map_position_leverage_to_action(-4.0, 1))
+    env.step(env.env_map_position_leverage_to_action(-4.0, 1))
+    cost_info = env._position_cost_info()
 
     assert env.position == 0.0
     assert env.current_holding_opening_price == 0.0
     assert env.current_holding_average_price == 0.0
-    assert info["current_holding_opening_price"] == 0.0
-    assert info["current_holding_average_price"] == 0.0
+    assert cost_info["current_holding_opening_price"] == 0.0
+    assert cost_info["current_holding_average_price"] == 0.0
 
 
-def test_terminal_step_info_keeps_exposing_current_holding_cost():
+def test_terminal_step_keeps_current_holding_cost_state():
     env = _make_env(markprices=[100.0, 100.0])
     env.reset()
     long_action = env.env_map_position_leverage_to_action(2.0, 1)
     env.step(long_action)
 
-    _, _, terminal, info = env.step(long_action)
+    _, _, terminal, _ = env.step(long_action)
+    cost_info = env._position_cost_info()
 
     assert terminal is True
-    assert info["current_holding_opening_price"] == pytest.approx(102.01)
-    assert info["current_holding_average_price"] == pytest.approx(102.01)
+    assert cost_info["current_holding_opening_price"] == pytest.approx(102.01)
+    assert cost_info["current_holding_average_price"] == pytest.approx(102.01)
 
 
 def test_liquidation_ends_current_holding_cost_lifecycle():
@@ -223,13 +232,14 @@ def test_liquidation_ends_current_holding_cost_lifecycle():
     env.initial_state = (410.0, 0.0, 0.0, 0.0, 1)
     env.reset()
 
-    _, _, terminal, info = env.step(
+    _, _, terminal, _ = env.step(
         env.env_map_position_leverage_to_action(4.0, 1)
     )
+    cost_info = env._position_cost_info()
 
     assert terminal is True
-    assert info["current_holding_opening_price"] == 0.0
-    assert info["current_holding_average_price"] == 0.0
+    assert cost_info["current_holding_opening_price"] == 0.0
+    assert cost_info["current_holding_average_price"] == 0.0
 
 
 def test_wallet_change_keeps_legacy_six_values_and_names_opening_leg_metadata():

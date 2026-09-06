@@ -188,6 +188,7 @@ class Base_Env(gym.Env):
         self.new_position_required_money_history = []
         self.slippage_sum = 0
         self._reset_execution_metrics()
+        self.last_limit_reward = 0.0
         # single_holding_return
         self.single_holding_return = 0
         self.single_holding_return_rate = 0
@@ -256,6 +257,10 @@ class Base_Env(gym.Env):
             limit_reverse_penalty=self.limit_reverse_penalty,
             near_limit_threshold=self.near_limit_threshold,
         )
+
+    def get_last_limit_reward(self):
+        """返回最近一次 step 计算的涨跌停奖励（监控/测试用途，不进入 step 返回值）。"""
+        return self.last_limit_reward
 
     def _reset_execution_metrics(self):
         self.commission_fee_step = 0
@@ -428,7 +433,6 @@ class Base_Env(gym.Env):
         total_seconds = funding_count_down / np.timedelta64(1, "s")
         hours = total_seconds // 3600
         minutes = (total_seconds % 3600) // 60
-        seconds = total_seconds % 60
         # history related
         self.micro_action_history = []
         self.margine_balance_history = [self.wallet_balance + self.unrealized_pnl]
@@ -442,6 +446,7 @@ class Base_Env(gym.Env):
         ]
         self.slippage_sum = 0
         self._reset_execution_metrics()
+        self.last_limit_reward = 0.0
         self.new_position_required_money_history = [0]
         self.single_holding_return = 0
         self.single_holding_return_rate = 0
@@ -453,25 +458,18 @@ class Base_Env(gym.Env):
         return (
             state,
             {
-                "current_timestamp": current_timestamp,
-                "current_markprice": self.current_markprice,
                 "personal_state": self.initial_state,
                 "avaiable_action_list": avaiable_actions,
                 "avaliable_action": avaiable_action_mask,
-                "funding_count_down": current_funding_timestamp - current_timestamp,
                 "funding_count_down_hour": hours,
                 "funding_count_down_minute": minutes,
-                "funding_count_down_second": seconds,
                 "previous_action": self.env_map_position_leverage_to_action(
                     self.position, self.leverage
                 ),
                 "ask_qyts": self.ask_qtys,
                 "bid_qyts": self.bid_qtys,
-                "single_holding_return_rate": self.single_holding_return_rate,
                 "single_holding_max_drawdown": self.single_holding_max_drawdown,
                 "trading_info": self._calculate_trading_info(0),
-                **self._position_cost_info(),
-                **self._execution_metric_info(),
             },
         )
 
@@ -563,7 +561,6 @@ class Base_Env(gym.Env):
             total_seconds = previous_funding_count_down / np.timedelta64(1, "s")
             hours = total_seconds // 3600
             minutes = (total_seconds % 3600) // 60
-            seconds = total_seconds % 60
             self.margine_balance_history.append(wallet_balance + unrealized_pnL)
             print(
                 "liquidation happened right after the change of position and leverage, there might be something wrong with the calculate_avaliable_action"
@@ -618,6 +615,7 @@ class Base_Env(gym.Env):
                 self.wallet_balance_history,
             )
             self._clear_position_cost()
+            self.last_limit_reward = 0.0
             return (
                 state,
                 reward,
@@ -626,23 +624,15 @@ class Base_Env(gym.Env):
                     "personal_state": {0, 0, 0, 0, self.leverage_choices[0]},
                     "avaiable_action_list": avaiable_actions,
                     "avaliable_action": avaiable_action_mask,
-                    "previous_timestamp": previous_timestamp,
-                    "current_timestamp": current_timestamp,
-                    "funding_count_down": previous_funding_timestamp - previous_timestamp,
                     "funding_count_down_hour": hours,
                     "funding_count_down_minute": minutes,
-                    "funding_count_down_second": seconds,
                     "ask_qyts": self.ask_qtys,
                     "bid_qyts": self.bid_qtys,
-                    "single_holding_return_rate": self.single_holding_return_rate,
                     "single_holding_max_drawdown": self.single_holding_max_drawdown,
                     "trading_info": self._zero_trading_info(),
-                    "limit_reward": 0.0,
                     "previous_action": self.env_map_position_leverage_to_action(
                         self.position, self.leverage
                     ),
-                    **self._position_cost_info(),
-                    **self._execution_metric_info(),
                 },
             )
         else:
@@ -686,6 +676,7 @@ class Base_Env(gym.Env):
                     self.unrealized_pnl_history,
                     self.wallet_balance_history,
                 )
+                self.last_limit_reward = 0.0
                 return (
                     self.state_array[self.day],
                     self.wallet_balance + self.unrealized_pnl - previous_margine_balance,
@@ -700,23 +691,15 @@ class Base_Env(gym.Env):
                         ),
                         "avaiable_action_list": avaiable_actions,
                         "avaliable_action": avaiable_action_mask,
-                        "previous_timestamp": previous_timestamp,
-                        "current_timestamp": previous_timestamp,
-                        "funding_count_down": previous_funding_timestamp - previous_timestamp,
                         "funding_count_down_hour": 0,
                         "funding_count_down_minute": 0,
-                        "funding_count_down_second": 0,
                         "ask_qyts": self.ask_qtys,
                         "bid_qyts": self.bid_qtys,
-                        "single_holding_return_rate": self.single_holding_return_rate,
                         "single_holding_max_drawdown": self.single_holding_max_drawdown,
                         "trading_info": self._zero_trading_info(),
-                        "limit_reward": 0.0,
                         "previous_action": self.env_map_position_leverage_to_action(
                             self.position, self.leverage
                         ),
-                        **self._position_cost_info(),
-                        **self._execution_metric_info(),
                     },
                 )
             self.day += 1
@@ -745,7 +728,6 @@ class Base_Env(gym.Env):
             total_seconds = funding_count_down / np.timedelta64(1, "s")
             hours = total_seconds // 3600
             minutes = (total_seconds % 3600) // 60
-            seconds = total_seconds % 60
             if current_timestamp == previous_funding_timestamp:
                 funding_fee = self.position * previous_markprice * current_funding_rate
                 self.wallet_balance -= funding_fee
@@ -814,6 +796,7 @@ class Base_Env(gym.Env):
                     )
                 )
                 self._clear_position_cost()
+                self.last_limit_reward = 0.0
                 return (
                     state,
                     reward,
@@ -828,23 +811,15 @@ class Base_Env(gym.Env):
                         ),
                         "avaiable_action_list": avaiable_actions,
                         "avaliable_action": avaiable_action_mask,
-                        "previous_timestamp": previous_timestamp,
-                        "current_timestamp": current_timestamp,
-                        "funding_count_down": current_funding_timestamp - current_timestamp,
                         "funding_count_down_hour": hours,
                         "funding_count_down_minute": minutes,
-                        "funding_count_down_second": seconds,
                         "ask_qyts": self.ask_qtys,
                         "bid_qyts": self.bid_qtys,
-                        "single_holding_return_rate": self.single_holding_return_rate,
                         "single_holding_max_drawdown": self.single_holding_max_drawdown,
                         "trading_info": self._zero_trading_info(),
-                    "limit_reward": 0.0,
                         "previous_action": self.env_map_position_leverage_to_action(
                             self.position, self.leverage
                         ),
-                        **self._position_cost_info(),
-                        **self._execution_metric_info(),
                     },
                 )
             else:
@@ -904,6 +879,7 @@ class Base_Env(gym.Env):
                 )
                 limit_reward = self._compute_step_limit_reward(old_position)
                 reward += limit_reward
+                self.last_limit_reward = limit_reward
 
                 require_money = calculate_required_money(
                     np.array(self.initial_margin_history),
@@ -958,24 +934,16 @@ class Base_Env(gym.Env):
                             self.position,
                             self.leverage,
                         ),
-                        "previous_timestamp": previous_timestamp,
-                        "current_timestamp": current_timestamp,
                         "avaiable_action_list": avaiable_actions,
                         "avaliable_action": avaiable_action_mask,
-                        "funding_count_down": current_funding_timestamp - current_timestamp,
                         "funding_count_down_hour": hours,
                         "funding_count_down_minute": minutes,
-                        "funding_count_down_second": seconds,
                         "previous_action": self.env_map_position_leverage_to_action(
                             self.position, self.leverage
                         ),
                         "ask_qyts": self.ask_qtys,
                         "bid_qyts": self.bid_qtys,
-                        "single_holding_return_rate": self.single_holding_return_rate,
                         "single_holding_max_drawdown": self.single_holding_max_drawdown,
                         "trading_info": trading_info,
-                        "limit_reward": limit_reward,
-                        **self._position_cost_info(),
-                        **self._execution_metric_info(),
                     },
                 )
