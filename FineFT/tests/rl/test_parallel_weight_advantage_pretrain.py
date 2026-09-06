@@ -215,61 +215,70 @@ def test_raise_for_worker_error_includes_df_and_traceback():
 
 
 def test_make_cpu_state_dict_detaches_and_moves_to_cpu():
+    import numpy as np
     import torch
     from RL.DiHFT.low_level import parallel_diverse_train as pdt
 
     module = torch.nn.Linear(2, 1)
+    original_weight = module.weight.detach().clone()
     state_dict = pdt.make_cpu_state_dict(module)
 
     assert set(state_dict) == set(module.state_dict())
-    assert all(not tensor.requires_grad for tensor in state_dict.values())
-    assert all(tensor.device.type == "cpu" for tensor in state_dict.values())
+    # numpy 数组：跨进程传输不产生共享内存 fd
+    assert all(isinstance(value, np.ndarray) for value in state_dict.values())
+    # 与原模型存储完全独立（快照后修改原参数不影响快照）
+    module.weight.data.add_(1.0)
+    assert np.array_equal(state_dict["weight"], original_weight.numpy())
+
+    # worker 侧可无损转回 tensor 并载入模型
+    target = torch.nn.Linear(2, 1)
+    pdt.load_worker_state_dict(target, state_dict)
+    assert torch.allclose(target.weight, original_weight)
 
 
-def test_count_update_windows_crossed_preserves_serial_update_density():
-    import pytest
+def test_run_diverse_training_phase_skips_when_update_count_non_positive(
+    monkeypatch,
+):
     from RL.DiHFT.low_level import parallel_diverse_train as pdt
 
-    warmup_steps = 128 * 20 + 1
+    def fail_sampler(buffer, batch_size, device):
+        raise AssertionError("sampler must not be built when update_count <= 0")
 
-    assert pdt.count_update_windows_crossed(
-        previous_step_counter=0,
-        current_step_counter=warmup_steps,
-        rollout_steps=1024,
-        warmup_steps=warmup_steps,
-    ) == 0
-    assert pdt.count_update_windows_crossed(
-        previous_step_counter=0,
-        current_step_counter=4096,
-        rollout_steps=1024,
-        warmup_steps=warmup_steps,
-    ) == 1
-    assert pdt.count_update_windows_crossed(
-        previous_step_counter=4096,
-        current_step_counter=8192,
-        rollout_steps=1024,
-        warmup_steps=warmup_steps,
-    ) == 4
-    assert pdt.count_update_windows_crossed(
-        previous_step_counter=3073,
-        current_step_counter=4096,
-        rollout_steps=1024,
-        warmup_steps=warmup_steps,
-    ) == 0
-    with pytest.raises(ValueError, match="rollout_steps must be positive"):
-        pdt.count_update_windows_crossed(
-            previous_step_counter=0,
-            current_step_counter=1,
-            rollout_steps=0,
-            warmup_steps=0,
-        )
+    monkeypatch.setattr(pdt, "StackedTransitionSampler", fail_sampler)
 
-
-def test_run_fixed_update_times_uses_constant_update_count(monkeypatch):
-    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+    trainer = type(
+        "Trainer",
+        (),
+        {
+            "batch_size": 4,
+            "device": "cpu",
+            "writer": type(
+                "Writer", (), {"add_scalar": lambda *args, **kwargs: None}
+            )(),
+        },
+    )()
 
     class Buffer:
-        def __init__(self):
+        def __len__(self):
+            return 0
+
+    result = pdt.run_diverse_training_phase(
+        trainer=trainer,
+        buffer_diverse=Buffer(),
+        update_count=0,
+        epoch_index=0,
+    )
+
+    assert result is None
+
+
+def test_run_diverse_training_phase_runs_deferred_updates_with_stacked_sampler(
+    monkeypatch,
+):
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+
+    class FakeSampler:
+        def __init__(self, buffer, batch_size, device):
             self.sample_calls = 0
 
         def sample(self):
@@ -287,6 +296,8 @@ def test_run_fixed_update_times_uses_constant_update_count(monkeypatch):
     class Trainer:
         def __init__(self):
             self.update_counter = 0
+            self.batch_size = 4
+            self.device = "cpu"
             self.writer = type(
                 "Writer",
                 (),
@@ -294,7 +305,21 @@ def test_run_fixed_update_times_uses_constant_update_count(monkeypatch):
             )()
 
     trainer = Trainer()
+
+    class Buffer:
+        def __len__(self):
+            return 7
+
     buffer = Buffer()
+
+    sampler_instances = []
+
+    def fake_sampler_factory(buffer_arg, batch_size, device):
+        sampler = FakeSampler(buffer_arg, batch_size, device)
+        sampler_instances.append(sampler)
+        return sampler
+
+    monkeypatch.setattr(pdt, "StackedTransitionSampler", fake_sampler_factory)
 
     update_calls = {"count": 0}
 
@@ -305,15 +330,16 @@ def test_run_fixed_update_times_uses_constant_update_count(monkeypatch):
 
     monkeypatch.setattr(pdt, "update", fake_update)
 
-    losses = pdt.run_fixed_diverse_updates(
+    losses = pdt.run_diverse_training_phase(
         trainer=trainer,
         buffer_diverse=buffer,
-        update_times=3,
-        round_counter=8,
+        update_count=3,
+        epoch_index=0,
     )
 
     assert update_calls["count"] == 3
-    assert buffer.sample_calls == 3
+    assert len(sampler_instances) == 1
+    assert sampler_instances[0].sample_calls == 3
     assert losses == (1.0, 0.5, 0.5)
 
 
@@ -347,7 +373,7 @@ def test_buffer_writes_use_sorted_transition_payloads():
         True,
     )
 
-    pdt.write_round_transitions_to_buffer(
+    duplicates = pdt.write_round_transitions_to_buffer(
         buffer,
         [
             pdt.WorkerRoundResult(
@@ -383,12 +409,114 @@ def test_buffer_writes_use_sorted_transition_payloads():
                 done=False,
             ),
         ],
+        set(),
     )
 
     assert buffer.added == [transition_a, transition_b]
+    assert duplicates == 0
 
 
-def test_summarize_round_results_counts_steps_and_updates():
+def test_buffer_writes_skip_duplicate_experiences():
+    import numpy as np
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+
+    class Buffer:
+        def __init__(self):
+            self.added = []
+
+        def add(self, *transition):
+            self.added.append(transition)
+
+    buffer = Buffer()
+    transition = (
+        np.array([1.0, 2.0]),
+        {"previous_action": 0, "trading_info": np.zeros(2)},
+        1,
+        0.5,
+        np.array([1.0, 2.5]),
+        {"previous_action": 1, "trading_info": np.zeros(2)},
+        False,
+    )
+
+    seen = set()
+    duplicates = pdt.write_round_transitions_to_buffer(
+        buffer,
+        [
+            pdt.WorkerRoundResult(
+                df_index=0,
+                epoch_index=0,
+                context_index=0,
+                initial_action=0,
+                round_counter=0,
+                worker_steps=1,
+                transitions=[
+                    pdt.WorkerTransitionRecord(step_index=0, transition=transition)
+                ],
+                rollout_metrics=[],
+                done=True,
+            ),
+            # 内容完全相同的经验（来自另一个 df 的探索）不应被重复添加
+            pdt.WorkerRoundResult(
+                df_index=1,
+                epoch_index=0,
+                context_index=1,
+                initial_action=2,
+                round_counter=0,
+                worker_steps=1,
+                transitions=[
+                    pdt.WorkerTransitionRecord(step_index=0, transition=transition)
+                ],
+                rollout_metrics=[],
+                done=True,
+            ),
+        ],
+        seen,
+    )
+
+    assert len(buffer.added) == 1
+    assert duplicates == 1
+
+
+def test_build_transition_fingerprint_distinguishes_content():
+    import numpy as np
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+
+    def make_transition(action=1, state_value=1.0):
+        return (
+            np.array([state_value, 2.0]),
+            {"previous_action": 0, "trading_info": np.zeros(2)},
+            action,
+            0.5,
+            np.array([state_value, 2.5]),
+            {"previous_action": 1, "trading_info": np.zeros(2)},
+            False,
+        )
+
+    assert pdt.build_transition_fingerprint(make_transition()) == pdt.build_transition_fingerprint(
+        make_transition()
+    )
+    # dict 键的插入顺序不影响指纹
+    reordered = (
+        np.array([1.0, 2.0]),
+        {"trading_info": np.zeros(2), "previous_action": 0},
+        1,
+        0.5,
+        np.array([1.0, 2.5]),
+        {"trading_info": np.zeros(2), "previous_action": 1},
+        False,
+    )
+    assert pdt.build_transition_fingerprint(make_transition()) == pdt.build_transition_fingerprint(
+        reordered
+    )
+    assert pdt.build_transition_fingerprint(
+        make_transition(action=1)
+    ) != pdt.build_transition_fingerprint(make_transition(action=2))
+    assert pdt.build_transition_fingerprint(
+        make_transition(state_value=1.0)
+    ) != pdt.build_transition_fingerprint(make_transition(state_value=9.0))
+
+
+def test_summarize_round_results_counts_steps():
     from RL.DiHFT.low_level import parallel_diverse_train as pdt
 
     summary = pdt.summarize_parallel_round(
@@ -421,7 +549,6 @@ def test_summarize_round_results_counts_steps_and_updates():
             ),
         ],
         buffer_size=99,
-        update_count=20,
     )
 
     assert summary == pdt.ParallelRoundSummary(
@@ -432,7 +559,6 @@ def test_summarize_round_results_counts_steps_and_updates():
         round_steps=9,
         active_worker_count=2,
         buffer_size=99,
-        update_count=20,
     )
     assert summary.to_dict() == {
         "round_counter": 4,
@@ -442,7 +568,6 @@ def test_summarize_round_results_counts_steps_and_updates():
         "round_steps": 9,
         "active_worker_count": 2,
         "buffer_size": 99,
-        "update_count": 20,
     }
 
 
@@ -450,6 +575,762 @@ def test_epoch_model_path_uses_epoch_index():
     from RL.DiHFT.low_level import parallel_diverse_train as pdt
 
     assert pdt.build_epoch_model_path("/tmp/model", 2).endswith("epoch_3")
+
+
+def test_save_diverse_buffer_writes_plain_tuple_snapshot(tmp_path):
+    import numpy as np
+    import torch
+    from collections import deque, namedtuple
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+
+    Experience = namedtuple(
+        "Experience",
+        ["state", "info", "action", "reward", "next_state", "done", "next_info"],
+    )
+    experience = Experience(
+        np.array([1.0, 2.0]),
+        {"previous_action": 0},
+        3,
+        1.5,
+        np.array([3.0, 4.0]),
+        True,
+        {"previous_action": 1},
+    )
+
+    class DummyBuffer:
+        memory = deque(maxlen=10)
+        memory.append(experience)
+        n_step_buffer = [deque([(np.array([9.0]), {"k": 1}, 0, 0.5, np.array([8.0]), {"k": 2}, False)], maxlen=4)]
+
+        def __len__(self):
+            return len(self.memory)
+
+    buffer = DummyBuffer()
+    pdt.save_diverse_buffer(buffer, str(tmp_path))
+
+    buffer_path = tmp_path / "buffer_diverse.pkl"
+    assert buffer_path.exists()
+    snapshot = torch.load(buffer_path, weights_only=False)
+    # memory 以普通 tuple 落盘（动态创建的 namedtuple 无法被 pickle）
+    assert isinstance(snapshot["memory"][0], tuple)
+    assert not hasattr(snapshot["memory"][0], "state")
+    assert np.array_equal(snapshot["memory"][0][0], np.array([1.0, 2.0]))
+    assert snapshot["memory"][0][2] == 3
+    assert snapshot["memory"][0][5] is True  # done
+    # n_step_buffer 保存尚未折叠进 memory 的尾部 transition
+    assert len(snapshot["n_step_buffer"]) == 1
+    assert np.array_equal(snapshot["n_step_buffer"][0][0][0], np.array([9.0]))
+
+
+def test_run_parallel_rollout_task_completes_in_single_round_without_updates(
+    monkeypatch,
+):
+    import queue
+    import numpy as np
+    import pytest
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+
+    events = []
+
+    class DummyInputQueue:
+        """worker 侧 explore_round 单条消息一次性探索至 done 的行为模拟。"""
+
+        def __init__(self, df_index, result_queue, done=True):
+            self.df_index = df_index
+            self.result_queue = result_queue
+            self.done = done
+            self.explore_count = 0
+
+        def put(self, message):
+            if type(message).__name__ == "ResetWorkerTask":
+                events.append(("reset", self.df_index))
+                return
+            self.explore_count += 1
+            transition = (
+                np.array([float(self.df_index), float(message.round_counter)]),
+                {"previous_action": 0},
+                1,
+                1.0,
+                np.array([float(self.df_index), float(message.round_counter) + 0.5]),
+                {"previous_action": 1},
+                self.done,
+            )
+            events.append(("explore_sent", self.df_index, message.round_counter))
+            self.result_queue.put(
+                pdt.WorkerRoundResult(
+                    df_index=self.df_index,
+                    epoch_index=message.epoch_index,
+                    context_index=message.context_index,
+                    initial_action=message.initial_action,
+                    round_counter=message.round_counter,
+                    worker_steps=1,
+                    transitions=[
+                        pdt.WorkerTransitionRecord(
+                            step_index=0,
+                            transition=transition,
+                        )
+                    ],
+                    rollout_metrics=[
+                        pdt.RolloutMetrics(
+                            epoch_index=message.epoch_index,
+                            context_index=message.context_index,
+                            initial_action=message.initial_action,
+                            df_index=self.df_index,
+                            transition_count=1,
+                            reward_sum=1.0,
+                            final_balance=101.0,
+                            return_rate=0.01,
+                        )
+                    ],
+                    done=self.done,
+                )
+            )
+
+    class DummyBuffer:
+        def __init__(self):
+            self.count = 0
+
+        def __len__(self):
+            return self.count
+
+        def add(self, *transition):
+            self.count += 1
+            events.append("buffer_add")
+
+        def sample(self):
+            raise AssertionError("exploration must not sample or train")
+
+    class Trainer:
+        pass
+
+    trainer = Trainer()
+    trainer.total_df_index_length = 2
+    trainer.epsilon = 0.5
+    trainer.eval_net = object()
+    result_queue = queue.Queue()
+    trainer.worker_result_queue = result_queue
+    trainer.worker_input_queues = {
+        0: DummyInputQueue(0, result_queue),
+        1: DummyInputQueue(1, result_queue),
+    }
+
+    monkeypatch.setattr(pdt, "make_cpu_state_dict", lambda module: {"w": 1})
+
+    buffer = DummyBuffer()
+    round_counter, step_counter, task_metrics = pdt.run_parallel_rollout_task(
+        trainer=trainer,
+        epoch_index=0,
+        context_index=0,
+        initial_action=1,
+        buffer_diverse=buffer,
+        step_counter_diverse=10,
+        round_counter=5,
+        seen_fingerprints=set(),
+    )
+
+    # 单轮派发/收集即完成：每个 df 恰好收到一条探索消息（round_counter=5）
+    explore_rounds = [
+        ev
+        for ev in events
+        if isinstance(ev, tuple) and ev[0] == "explore_sent"
+    ]
+    assert [(df, rc) for _, df, rc in explore_rounds] == [(0, 5), (1, 5)]
+    # 共 2 条经验、累计 2 步、round_counter 前进 1
+    assert buffer.count == 2
+    assert step_counter == 12
+    assert round_counter == 6
+    assert len(task_metrics) == 2
+    # 探索期间没有任何采样/训练发生
+    assert events.count("buffer_add") == 2
+
+    # 任一 worker 上报未 done 违反探索完整性约定，必须直接抛错
+    stuck_queue = DummyInputQueue(0, result_queue, done=False)
+    trainer.worker_input_queues = {
+        0: stuck_queue,
+        1: DummyInputQueue(1, result_queue),
+    }
+    with pytest.raises(RuntimeError, match="finished without done"):
+        pdt.run_parallel_rollout_task(
+            trainer=trainer,
+            epoch_index=0,
+            context_index=0,
+            initial_action=1,
+            buffer_diverse=DummyBuffer(),
+            step_counter_diverse=10,
+            round_counter=6,
+            seen_fingerprints=set(),
+        )
+
+
+def test_run_parallel_diverse_training_completes_exploration_before_training(
+    monkeypatch,
+):
+    import queue
+    import types
+    import numpy as np
+    from unittest.mock import MagicMock
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+
+    events = []
+    episode_counter = {"count": 0}
+
+    class DummyInputQueue:
+        def __init__(self, df_index, result_queue):
+            self.df_index = df_index
+            self.result_queue = result_queue
+
+        def put(self, message):
+            if type(message).__name__ == "ResetWorkerTask":
+                return
+            # 每个任务每轮返回一条全新经验并 done=True
+            episode_counter["count"] += 1
+            idx = episode_counter["count"]
+            transition = (
+                np.array([float(idx)]),
+                {"previous_action": 0},
+                1,
+                1.0,
+                np.array([float(idx) + 0.5]),
+                {"previous_action": 1},
+                True,
+            )
+            self.result_queue.put(
+                pdt.WorkerRoundResult(
+                    df_index=self.df_index,
+                    epoch_index=message.epoch_index,
+                    context_index=message.context_index,
+                    initial_action=message.initial_action,
+                    round_counter=message.round_counter,
+                    worker_steps=1,
+                    transitions=[
+                        pdt.WorkerTransitionRecord(
+                            step_index=0,
+                            transition=transition,
+                        )
+                    ],
+                    rollout_metrics=[
+                        pdt.RolloutMetrics(
+                            epoch_index=message.epoch_index,
+                            context_index=message.context_index,
+                            initial_action=message.initial_action,
+                            df_index=self.df_index,
+                            transition_count=1,
+                            reward_sum=1.0,
+                            final_balance=101.0,
+                            return_rate=0.01,
+                        )
+                    ],
+                    done=True,
+                )
+            )
+
+    trainer = MagicMock()
+    trainer.total_df_index_length = 2
+    trainer.num_epoch = 2
+    trainer.N = 1
+    trainer.position_choices = 2
+    trainer.epsilon_init = 1.0
+    trainer.epsilon_min = 0.1
+    trainer.ada_init = 256.0
+    trainer.ada_min = 0.0
+    trainer.lr_init = 0.005
+    trainer.lr_min = 0.001
+    trainer.batch_size = 1
+    trainer.update_times = 1
+    trainer.n_step = 1
+    trainer.update_counter = 0
+    trainer.optimizer = types.SimpleNamespace(param_groups=[{"lr": 0.0}])
+    trainer.writer = MagicMock()
+
+    def fake_shutdown(tr):
+        events.append("shutdown_workers")
+
+    monkeypatch.setattr(pdt, "shutdown_exploration_workers", fake_shutdown)
+
+    def mock_start_workers(tr, train_df_cache, env_kwargs):
+        events.append("start_workers")
+        tr.worker_result_queue = queue.Queue()
+        tr.worker_input_queues = {
+            0: DummyInputQueue(0, tr.worker_result_queue),
+            1: DummyInputQueue(1, tr.worker_result_queue),
+        }
+
+    monkeypatch.setattr(pdt, "start_parallel_workers", mock_start_workers)
+    monkeypatch.setattr(pdt, "make_cpu_state_dict", lambda module: {"w": 1})
+
+    class DummyBuffer:
+        def __init__(self):
+            self.count = 0
+
+        def __len__(self):
+            return self.count
+
+        def add(self, *transition):
+            self.count += 1
+            events.append("buffer_add")
+
+    buffer_diverse = DummyBuffer()
+
+    class FakeSampler:
+        def __init__(self, buffer, batch_size, device):
+            events.append("sampler_built")
+
+        def sample(self):
+            events.append("buffer_sample")
+            return ("s", {}, "a", "r", "s_", {}, "d")
+
+    monkeypatch.setattr(pdt, "StackedTransitionSampler", FakeSampler)
+
+    def fake_update(tr, *args, **kwargs):
+        events.append("update")
+        tr.update_counter += 1
+        return (1.0, 0.5, 0.5)
+
+    monkeypatch.setattr(pdt, "update", fake_update)
+
+    def fake_save_model(tr, epoch_index):
+        events.append(("save_model", epoch_index))
+
+    monkeypatch.setattr(pdt, "save_parallel_epoch_model", fake_save_model)
+
+    def fake_save_buffer(buffer, model_path):
+        events.append("save_buffer")
+
+    monkeypatch.setattr(pdt, "save_diverse_buffer", fake_save_buffer)
+
+    final_steps = pdt.run_parallel_diverse_training(
+        trainer=trainer,
+        train_df_cache={},
+        env_kwargs={},
+        buffer_diverse=buffer_diverse,
+        step_counter_diverse=0,
+        diverse_rollout_latest_metrics_by_df={},
+    )
+
+    # 每个 epoch 探索 2 initial_action × 2 df = 4 条经验
+    assert final_steps == 8
+    assert events.count("buffer_add") == 8
+    # 每个 epoch 固定 30 个更新窗口 × update_times=1 -> 30 次更新/epoch
+    assert events.count("update") == 60
+    assert events.count("sampler_built") == 2
+    assert events.count("buffer_sample") == 60
+    # 每轮探索创建全新子进程，且训练前彻底关闭
+    assert events.count("start_workers") == 2
+    assert events.count("shutdown_workers") == 2
+    # 每次探索完成后（训练开始前）保存一次经验池快照
+    assert events.count("save_buffer") == 2
+
+    add_indices = [i for i, ev in enumerate(events) if ev == "buffer_add"]
+    sampler_indices = [i for i, ev in enumerate(events) if ev == "sampler_built"]
+    update_indices = [i for i, ev in enumerate(events) if ev == "update"]
+    start_indices = [i for i, ev in enumerate(events) if ev == "start_workers"]
+    shutdown_indices = [i for i, ev in enumerate(events) if ev == "shutdown_workers"]
+    save_buffer_indices = [i for i, ev in enumerate(events) if ev == "save_buffer"]
+    save_indices = [i for i, ev in enumerate(events) if ev == ("save_model", 0)] + [
+        i for i, ev in enumerate(events) if ev == ("save_model", 1)
+    ]
+
+    # 严格遵循「完整探索 -> 彻底关闭子进程 -> 保存经验池 -> 完整训练 -> 新一轮完整探索」：
+    for epoch in range(2):
+        adds = add_indices[4 * epoch : 4 * epoch + 4]
+        next_sampler = (
+            sampler_indices[epoch + 1]
+            if epoch + 1 < len(sampler_indices)
+            else len(events)
+        )
+        updates = [
+            i for i in update_indices if sampler_indices[epoch] < i < next_sampler
+        ]
+        # 先创建子进程，再探索
+        assert start_indices[epoch] < min(adds)
+        # 本轮全部经验写入后，才彻底关闭子进程
+        assert max(adds) < shutdown_indices[epoch]
+        # 子进程彻底关闭后，才保存经验池快照
+        assert shutdown_indices[epoch] < save_buffer_indices[epoch]
+        # 经验池保存后，才构建采样器并开始训练
+        assert save_buffer_indices[epoch] < sampler_indices[epoch]
+        assert sampler_indices[epoch] < min(updates)
+        # 本轮训练并保存完成后，才进入新一轮探索
+        assert save_indices[epoch] > max(updates)
+    assert min(add_indices[4:]) > save_indices[0]
+    assert save_indices[1] == len(events) - 1
+
+
+def test_run_parallel_diverse_training_skips_exploration_after_three_stale_epochs(
+    monkeypatch,
+):
+    """连续 3 个 epoch 探索未新增经验后，后续 epoch 跳过探索，仅执行训练。"""
+    import queue
+    import types
+    import numpy as np
+    from unittest.mock import MagicMock
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+
+    events = []
+
+    class DummyInputQueue:
+        """每个 df 始终返回内容完全相同的经验（跨 epoch / 跨任务均重复）。"""
+
+        def __init__(self, df_index, result_queue):
+            self.df_index = df_index
+            self.result_queue = result_queue
+
+        def put(self, message):
+            if type(message).__name__ == "ResetWorkerTask":
+                return
+            transition = (
+                np.array([float(self.df_index)]),
+                {"previous_action": 0},
+                1,
+                1.0,
+                np.array([float(self.df_index) + 0.5]),
+                {"previous_action": 1},
+                True,
+            )
+            self.result_queue.put(
+                pdt.WorkerRoundResult(
+                    df_index=self.df_index,
+                    epoch_index=message.epoch_index,
+                    context_index=message.context_index,
+                    initial_action=message.initial_action,
+                    round_counter=message.round_counter,
+                    worker_steps=1,
+                    transitions=[
+                        pdt.WorkerTransitionRecord(
+                            step_index=0,
+                            transition=transition,
+                        )
+                    ],
+                    rollout_metrics=[],
+                    done=True,
+                )
+            )
+
+    trainer = MagicMock()
+    trainer.total_df_index_length = 2
+    trainer.num_epoch = 5
+    trainer.N = 1
+    trainer.position_choices = 2
+    trainer.epsilon_init = 1.0
+    trainer.epsilon_min = 0.1
+    trainer.ada_init = 256.0
+    trainer.ada_min = 0.0
+    trainer.lr_init = 0.005
+    trainer.lr_min = 0.001
+    trainer.batch_size = 1
+    trainer.update_times = 1
+    trainer.n_step = 1
+    trainer.update_counter = 0
+    trainer.optimizer = types.SimpleNamespace(param_groups=[{"lr": 0.0}])
+    trainer.writer = MagicMock()
+
+    monkeypatch.setattr(
+        pdt, "shutdown_exploration_workers", lambda tr: events.append(
+            "shutdown_workers"
+        )
+    )
+
+    def mock_start_workers(tr, train_df_cache, env_kwargs):
+        events.append("start_workers")
+        tr.worker_result_queue = queue.Queue()
+        tr.worker_input_queues = {
+            0: DummyInputQueue(0, tr.worker_result_queue),
+            1: DummyInputQueue(1, tr.worker_result_queue),
+        }
+
+    monkeypatch.setattr(pdt, "start_parallel_workers", mock_start_workers)
+    monkeypatch.setattr(pdt, "make_cpu_state_dict", lambda module: {"w": 1})
+    # 跳过逻辑与线上阈值配置解耦：固定为 3 后断言行为
+    monkeypatch.setattr(pdt, "MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS", 3)
+
+    class DummyBuffer:
+        def __init__(self):
+            self.count = 0
+
+        def __len__(self):
+            return self.count
+
+        def add(self, *transition):
+            self.count += 1
+            events.append("buffer_add")
+
+    buffer_diverse = DummyBuffer()
+
+    class FakeSampler:
+        def __init__(self, buffer, batch_size, device):
+            events.append("sampler_built")
+
+        def sample(self):
+            return ("s", {}, "a", "r", "s_", {}, "d")
+
+    monkeypatch.setattr(pdt, "StackedTransitionSampler", FakeSampler)
+
+    def fake_update(tr, *args, **kwargs):
+        events.append("update")
+        tr.update_counter += 1
+        return (1.0, 0.5, 0.5)
+
+    monkeypatch.setattr(pdt, "update", fake_update)
+    monkeypatch.setattr(
+        pdt,
+        "save_parallel_epoch_model",
+        lambda tr, epoch_index: events.append(("save_model", epoch_index)),
+    )
+    monkeypatch.setattr(
+        pdt,
+        "save_diverse_buffer",
+        lambda buffer, model_path: events.append("save_buffer"),
+    )
+
+    final_steps = pdt.run_parallel_diverse_training(
+        trainer=trainer,
+        train_df_cache={},
+        env_kwargs={},
+        buffer_diverse=buffer_diverse,
+        step_counter_diverse=0,
+        diverse_rollout_latest_metrics_by_df={},
+    )
+
+    # epoch 0 新增 2 条经验（每个 df 各 1 条）；epoch 1-3 探索全部重复；
+    # 连续 3 个 epoch 无新增后，epoch 4 不再探索
+    assert events.count("buffer_add") == 2
+    # 4 个 epoch 探索（epoch 0-3），epoch 4 跳过
+    assert events.count("start_workers") == 4
+    assert events.count("shutdown_workers") == 4
+    assert events.count("save_buffer") == 4
+    # 5 个 epoch 均执行完整训练：5 × 30 = 150 次更新
+    assert events.count("update") == 150
+    assert events.count("sampler_built") == 5
+    # 每个探索过的 epoch 步数 = 2 任务 × 2 df × 1 步 = 4，共 4 个 epoch
+    assert final_steps == 16
+    # 跳过探索的 epoch：上一轮 save_model 之后直到下一轮 save_model 之间
+    # 没有任何 start_workers / save_buffer 事件
+    save_model_indices = {
+        epoch: events.index(("save_model", epoch)) for epoch in range(5)
+    }
+    tail = events[save_model_indices[3] + 1 : save_model_indices[4]]
+    assert "start_workers" not in tail
+    assert "save_buffer" not in tail
+    assert tail.count("sampler_built") == 1
+    assert tail.count("update") == 30
+
+
+def test_start_parallel_workers_caps_at_twenty_and_assigns_round_robin(monkeypatch):
+    from unittest.mock import MagicMock
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+
+    class FakeQueue:
+        pass
+
+    class FakeContext:
+        def Queue(self):
+            return FakeQueue()
+
+        def Process(self, target, args):
+            process = MagicMock()
+            process.worker_config = args[0]
+            process.input_queue = args[1]
+            return process
+
+    monkeypatch.setattr(pdt, "create_worker_context", lambda: FakeContext())
+    monkeypatch.setattr(pdt, "build_effective_df_indices", lambda n: list(range(n)))
+
+    trainer = MagicMock()
+    trainer.total_df_index_length = 45
+    trainer.device = "cpu"
+    trainer.leverage_choices = [5]
+    trainer.position_list = [0.0, 0.5, 1.0]
+    trainer.initial_wallet_balance = 10000.0
+    trainer.initial_unrealized_pnL = 0.0
+    trainer.tech_indicator_list = ["a", "b"]
+    trainer.N_ACTIONS = 5
+    trainer.hidden_nodes = 16
+    trainer.time_info_dim = 2
+    trainer.N = 3
+    train_df_cache = {df_index: "df{}".format(df_index) for df_index in range(45)}
+
+    pdt.start_parallel_workers(trainer, train_df_cache, {})
+
+    processes = trainer.worker_processes
+    # 子进程数量严格控制为 20（df 共 45 个）
+    assert len(processes) == 20
+
+    assignments = []
+    for process in processes:
+        config = process.worker_config
+        # 每个子进程获得 round-robin 分配的多个 df 及其全部数据
+        assert config["train_df_by_df"] == {
+            df: train_df_cache[df] for df in config["df_indices"]
+        }
+        assignments.extend(config["df_indices"])
+    # 45 个 df 每个恰好分配给一个子进程
+    assert sorted(assignments) == list(range(45))
+    # round-robin：worker k 负责索引 ≡ k (mod 20) 的 df
+    assert processes[0].worker_config["df_indices"] == [0, 20, 40]
+    assert processes[1].worker_config["df_indices"] == [1, 21, 41]
+    assert processes[5].worker_config["df_indices"] == [5, 25]
+    assert processes[19].worker_config["df_indices"] == [19, 39]
+    # 每个 df 的消息队列都路由到所属子进程的队列
+    for process in processes:
+        for df_index in process.worker_config["df_indices"]:
+            assert trainer.worker_input_queues[df_index] is process.input_queue
+
+
+def test_shutdown_exploration_workers_verifies_all_processes_exited(monkeypatch):
+    import pytest
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+
+    class FakeProcess:
+        def __init__(self, pid, stuck=False):
+            self.pid = pid
+            self.stuck = stuck
+            self.join_calls = 0
+            self.terminated = False
+
+        def join(self, timeout=None):
+            self.join_calls += 1
+
+        def is_alive(self):
+            return self.stuck
+
+        def terminate(self):
+            self.terminated = True
+
+    received = {}
+
+    def fake_shutdown_workers(queues, processes):
+        received["queues"] = list(queues)
+        received["processes"] = list(processes)
+
+    monkeypatch.setattr(pdt, "shutdown_workers", fake_shutdown_workers)
+
+    class Trainer:
+        pass
+
+    trainer = Trainer()
+    queue0, queue1 = object(), object()
+    trainer.worker_input_queues = {0: queue0, 1: queue1}
+    trainer.worker_processes = [FakeProcess(101), FakeProcess(102)]
+    trainer.worker_result_queue = object()
+
+    pdt.shutdown_exploration_workers(trainer)
+
+    # shutdown 消息发到全部队列，且每个进程都被 join 确认退出
+    assert received["queues"] == [queue0, queue1]
+    assert all(process.join_calls == 1 for process in received["processes"])
+    assert trainer.worker_input_queues == {}
+    assert trainer.worker_processes == []
+    assert trainer.worker_result_queue is None
+
+    # 有进程 terminate 后仍存活时，必须抛错阻止训练启动
+    stuck_trainer = Trainer()
+    stuck_trainer.worker_input_queues = {0: queue0}
+    stuck_process = FakeProcess(103, stuck=True)
+    stuck_trainer.worker_processes = [stuck_process]
+    stuck_trainer.worker_result_queue = object()
+
+    with pytest.raises(RuntimeError, match="failed to terminate"):
+        pdt.shutdown_exploration_workers(stuck_trainer)
+    assert stuck_process.terminated is True
+
+
+def test_df_rollout_worker_runner_tracks_episodes_per_df(monkeypatch):
+    import numpy as np
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+
+    envs = {}
+
+    class FakeEnv:
+        def __init__(self, df_name):
+            self.df_name = df_name
+            self.step_calls = 0
+            self.unrealized_pnl = 0.0
+            self.wallet_balance = 100.0
+
+        def reset(self):
+            return (np.zeros(2), {"avaiable_action_list": [0, 1]})
+
+        def step(self, action):
+            self.step_calls += 1
+            done = self.step_calls >= 2
+            return (np.ones(2), 0.5, done, {"avaiable_action_list": [0, 1]})
+
+    class FakeModel:
+        def load_state_dict(self, state_dict):
+            pass
+
+        def eval(self):
+            pass
+
+        def to(self, device):
+            return self
+
+    def fake_build_initial_state(
+        train_df, initial_action, leverage_choices, position_list, wallet, upnl
+    ):
+        return (None, None, None, "initial_state_{}".format(train_df))
+
+    def fake_create_demo_env(train_df, env_kwargs, initial_state):
+        env = FakeEnv(train_df)
+        envs[train_df] = env
+        return env
+
+    monkeypatch.setattr(pdt, "build_initial_state", fake_build_initial_state)
+    monkeypatch.setattr(pdt, "create_demo_env", fake_create_demo_env)
+    monkeypatch.setattr(
+        pdt, "create_parallel_worker_model", lambda config: FakeModel()
+    )
+
+    worker_config = {
+        "df_indices": [3, 7],
+        "train_df_by_df": {3: "df3", 7: "df7"},
+        "env_kwargs": {},
+        "device": "cpu",
+        "leverage_choices": [5],
+        "position_list": [0.0, 0.5, 1.0],
+        "initial_wallet_balance": 10000.0,
+        "initial_unrealized_pnL": 0.0,
+    }
+    runner = pdt.DfRolloutWorkerRunner(worker_config)
+
+    runner.reset_task(
+        pdt.ResetWorkerTask(
+            df_index=3, epoch_index=0, context_index=0, initial_action=1
+        )
+    )
+    runner.reset_task(
+        pdt.ResetWorkerTask(
+            df_index=7, epoch_index=0, context_index=0, initial_action=2
+        )
+    )
+    # 每个 df 拥有独立的 env 与回合状态
+    assert set(runner.episodes) == {3, 7}
+    assert envs["df3"] is not envs["df7"]
+
+    def explore(df_index, round_counter):
+        return runner.explore_round(
+            pdt.ExploreWorkerRound(
+                df_index=df_index,
+                epoch_index=0,
+                context_index=0,
+                initial_action=1,
+                round_counter=round_counter,
+                state_dict={},
+                epsilon=1.0,
+            )
+        )
+
+    # 单条消息一次性探索至回合结束：FakeEnv 2 步后 done
+    result_3 = explore(3, 0)
+    result_7 = explore(7, 0)
+    assert result_3.df_index == 3
+    assert result_7.df_index == 7
+    assert result_3.done is True
+    assert result_7.done is True
+    assert result_3.worker_steps == 2
+    assert result_7.worker_steps == 2
+    assert [record.step_index for record in result_3.transitions] == [0, 1]
+    assert [record.step_index for record in result_7.transitions] == [0, 1]
 
 
 def test_parallel_parser_allow_reverse_position_default_and_flag():
@@ -633,6 +1514,7 @@ def test_parallel_diverse_update_matches_paper_loss_computation():
 
 def test_run_exhaustive_warmup_collects_all_episodes_before_training_and_updates_model(
     monkeypatch,
+    tmp_path,
 ):
     import queue
     from unittest.mock import MagicMock
@@ -680,6 +1562,8 @@ def test_run_exhaustive_warmup_collects_all_episodes_before_training_and_updates
     trainer.update_times = 3
     trainer.batch_size = 2
     trainer.update_counter = 0
+    trainer.model_path = str(tmp_path)
+    trainer.eval_net.state_dict.return_value = {"dummy": "weights"}
 
     def fake_shutdown():
         events.append("shutdown_workers")
@@ -699,16 +1583,26 @@ def test_run_exhaustive_warmup_collects_all_episodes_before_training_and_updates
     added_transitions = []
 
     class DummyBuffer:
+        def __init__(self):
+            self.memory = []
+
         def __len__(self):
             return len(added_transitions)
 
         def add(self, *transition):
             added_transitions.append(transition)
+            self.memory.append(transition)
             events.append(("buffer_add", len(added_transitions)))
+
+    class FakeStackedSampler:
+        def __init__(self, buffer, batch_size, device):
+            pass
 
         def sample(self):
             events.append("buffer_sample")
             return ("states", {}, "actions", "rewards", "next_states", {}, "dones")
+
+    monkeypatch.setattr(pp, "StackedTransitionSampler", FakeStackedSampler)
 
     def mock_update_pretrain(tr, *batch):
         events.append("update_pretrain")

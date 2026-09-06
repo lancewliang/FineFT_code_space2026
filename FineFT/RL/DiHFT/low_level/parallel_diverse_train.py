@@ -1,24 +1,43 @@
 # Parallel diverse-training collection + orchestration components extracted
 # from parallel_weight_advantage_pretrain.py for easier review.
 #
-# This module holds the model-driven rollout runner, rollout metrics/diagnostics
-# dataclasses, the pure helpers and the parallel diverse-training orchestration
-# used by the diverse-training stage. It does NOT import the orchestrator module
-# at top level to keep the dependency graph acyclic; shared infrastructure is
-# imported lazily inside the functions that need it.
+# This module holds the model-driven rollout runner, rollout metrics dataclasses,
+# the pure helpers and the parallel diverse-training orchestration.
+#
+# 训练流程（每个 epoch 严格遵循）：
+#   1. 完整探索 —— 每轮探索创建全新的探索子进程（数据处理方式与 pretrain
+#      阶段完全一致：所有 df 以 round-robin 分配给子进程，子进程数量上限
+#      MAX_EXPLORATION_WORKERS=20），覆盖全部 context × initial_action 任务；
+#      worker 侧的 explore_round 单条消息一次性探索至回合结束（整个 df），
+#      主进程每个任务只需一轮派发/收集，无多轮重派发机制。
+#   2. 彻底关闭 —— 探索全部完成后，先关闭所有探索子进程并逐一确认退出，
+#      之后才允许进入训练阶段（避免子进程与训练争抢 GPU/CPU 资源）。
+#   3. 保存经验池 —— 探索结束后将经验池快照保存到
+#      model_path/buffer_diverse.pkl（覆盖式保存最新快照）。
+#   4. 完整训练 —— 对已冻结的经验池统一执行本轮全部参数更新
+#      （StackedTransitionSampler 预堆叠采样，避免逐元素 np.stack）。
+#   5. 训练结束后进入下一轮探索（回到 1）。
+# 经验唯一性由内容指纹保证：已存在相同指纹的经验不会重复写入经验池。
+# 连续 MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS 个 epoch 探索均未新增任何
+# 经验后，后续 epoch 跳过探索阶段，仅执行训练。
+#
+# 依赖方向：本模块在顶层导入编排模块 parallel_weight_advantage_pretrain 的
+# 共享基础设施；编排模块改为在 df_rollout_worker 函数内部延迟导入本模块，
+# 以保持模块加载依赖图无环。
 
+import hashlib
 import logging
 import os
 import torch
 import numpy as np
 from dataclasses import dataclass
 
-import torch.nn.functional as F
 from model.low_level import ensemble_Qnet
 from RL.DiHFT.low_level.pretrain_qtable_diagnostics import (
     build_initial_state,
     create_demo_env,
 )
+from RL.DiHFT.low_level.parallel_pretrain import StackedTransitionSampler
 from RL.util.update import (
     evaluate_quantile_at_action,
     calculate_huber_loss,
@@ -30,6 +49,23 @@ from RL.DiHFT.low_level.weight_advantage_pretrain import (
     calculate_paper_partial_loss,
     calculate_paper_supervisor_kl_loss,
 )
+from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import (
+    WorkerErrorMessage,
+    build_effective_df_indices,
+    create_worker_context,
+    df_rollout_worker,
+    raise_for_worker_error,
+    shutdown_workers,
+)
+
+# 探索子进程数量上限（严格控制为 20）：df 数量更多时按 round-robin 分配给子进程
+MAX_EXPLORATION_WORKERS = 20
+# 每个 epoch 训练阶段的更新窗口数（每窗口执行 trainer.update_times 次参数更新）
+UPDATE_WINDOWS_PER_EPOCH = 50
+# 连续多少个 epoch 探索未新增任何经验后，后续 epoch 不再探索（仅训练）
+MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS = 5
+# 关闭子进程时 join 的超时秒数；超时未退出的进程以 terminate 兜底
+WORKER_JOIN_TIMEOUT_SECONDS = 10
 
 # Reuse the orchestrator's configured logger so all log output flows through
 # the same file handler set up by configure_logger() in
@@ -121,6 +157,7 @@ class EpochTrainingParams:
 
 @dataclass(frozen=True)
 class ResetWorkerTask:
+    df_index: int
     epoch_index: int
     context_index: int
     initial_action: int
@@ -128,13 +165,13 @@ class ResetWorkerTask:
 
 @dataclass(frozen=True)
 class ExploreWorkerRound:
+    df_index: int
     epoch_index: int
     context_index: int
     initial_action: int
     round_counter: int
     state_dict: dict
     epsilon: float
-    rollout_steps: int
 
 
 @dataclass(frozen=True)
@@ -154,7 +191,6 @@ class WorkerRoundResult:
     transitions: list[WorkerTransitionRecord]
     rollout_metrics: list[RolloutMetrics]
     done: bool
-    progress: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -166,7 +202,6 @@ class ParallelRoundSummary:
     round_steps: int
     active_worker_count: int
     buffer_size: int
-    update_count: int
 
     def to_dict(self):
         return {
@@ -177,7 +212,6 @@ class ParallelRoundSummary:
             "round_steps": self.round_steps,
             "active_worker_count": self.active_worker_count,
             "buffer_size": self.buffer_size,
-            "update_count": self.update_count,
         }
 
 
@@ -298,11 +332,44 @@ def compute_epoch_training_params(
     )
 
 
+def apply_epoch_training_params(trainer, epoch_index):
+    """按 epoch 计算并写入 epsilon/ada/lr（学习率同步到 optimizer 参数组）。"""
+    params = compute_epoch_training_params(
+        epoch_index=epoch_index,
+        num_epoch=trainer.num_epoch,
+        epsilon_init=trainer.epsilon_init,
+        epsilon_min=trainer.epsilon_min,
+        ada_init=trainer.ada_init,
+        ada_min=trainer.ada_min,
+        lr_init=trainer.lr_init,
+        lr_min=trainer.lr_min,
+    )
+    trainer.epsilon = params.epsilon
+    trainer.ada = params.ada
+    trainer.lr = params.lr
+    for param_group in trainer.optimizer.param_groups:
+        param_group["lr"] = trainer.lr
+
+
 def make_cpu_state_dict(module):
+    """生成与模型存储完全独立的 CPU numpy state_dict，用于跨进程传输。
+
+    torch tensor 经 torch.multiprocessing 队列传输时会为每个 tensor 分配
+    共享内存 fd（外加 resource_sharer socket），一次性向多个 worker 派发
+    整个 state_dict 会耗尽文件描述符（Errno 24 Too many open files）。
+    numpy 数组按纯字节序列化，不占用任何 fd。
+    """
     return {
-        name: tensor.detach().cpu().clone()
+        name: tensor.detach().cpu().clone().numpy()
         for name, tensor in module.state_dict().items()
     }
+
+
+def load_worker_state_dict(model, state_dict):
+    """将 numpy state_dict 转回 tensor 并载入 worker 侧模型。"""
+    model.load_state_dict(
+        {name: torch.from_numpy(value) for name, value in state_dict.items()}
+    )
 
 
 def sort_round_transitions(round_results):
@@ -318,36 +385,82 @@ def sort_round_transitions(round_results):
     return ordered
 
 
-def write_round_transitions_to_buffer(buffer_diverse, round_results):
+def _freeze_transition_value(value):
+    if isinstance(value, np.ndarray):
+        return ("ndarray", value.shape, value.dtype.str, value.tobytes())
+    if isinstance(value, np.generic):
+        return ("npscalar", value.dtype.str, value.item())
+    if isinstance(value, (bool, int, float, str)):
+        return ("scalar", type(value).__name__, value)
+    if isinstance(value, (list, tuple)):
+        return ("sequence", tuple(_freeze_transition_value(item) for item in value))
+    if isinstance(value, dict):
+        return (
+            "mapping",
+            tuple(
+                (str(key), _freeze_transition_value(value[key]))
+                for key in sorted(value, key=str)
+            ),
+        )
+    return ("other", type(value).__name__, repr(value))
+
+
+def build_transition_fingerprint(transition):
+    """计算经验的內容指纹。
+
+    state / info / action / reward / next_state / next_info / done 完全一致的
+    transition 视为同一条经验。指纹为 64 位整数摘要（blake2b），在常规经验池
+    规模（<1e8 条）下碰撞概率可忽略。
+    """
+    frozen = _freeze_transition_value(tuple(transition))
+    digest = hashlib.blake2b(repr(frozen).encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(digest, "big")
+
+
+def write_round_transitions_to_buffer(buffer_diverse, round_results, seen_fingerprints):
+    """按 (df_index, step_index) 顺序写入经验池，保证经验唯一性。
+
+    已存在相同内容指纹的经验直接跳过，不重复添加；返回本轮跳过的重复数。
+    """
+    duplicate_count = 0
     for transition in sort_round_transitions(round_results):
+        fingerprint = build_transition_fingerprint(transition)
+        if fingerprint in seen_fingerprints:
+            duplicate_count += 1
+            continue
+        seen_fingerprints.add(fingerprint)
         buffer_diverse.add(*transition)
+    return duplicate_count
 
 
-def count_update_windows_crossed(
-    previous_step_counter,
-    current_step_counter,
-    rollout_steps,
-    warmup_steps,
-):
-    if rollout_steps <= 0:
-        raise ValueError("rollout_steps must be positive")
-    if current_step_counter <= previous_step_counter:
-        return 0
-    if current_step_counter <= warmup_steps:
-        return 0
+def run_diverse_training_phase(trainer, buffer_diverse, update_count, epoch_index):
+    """完整训练阶段：本轮探索全部结束后，对已冻结的经验池统一执行全部参数更新。
 
-    previous_effective_step = max(previous_step_counter, warmup_steps)
-    if previous_effective_step <= 0:
-        previous_window = -1
-    else:
-        previous_window = (previous_effective_step - 1) // rollout_steps
-    current_window = (current_step_counter - 1) // rollout_steps
-    return max(0, current_window - previous_window)
-
-
-def run_fixed_diverse_updates(trainer, buffer_diverse, update_times, round_counter):
+    采样参考 exhaustive warmup 的预堆叠采样优化（StackedTransitionSampler）：
+    训练阶段经验池不再增长，先一次性堆叠为连续数组，再以整数索引采样，
+    避免逐元素 np.stack 导致 GPU 空等。
+    """
+    if update_count <= 0:
+        logger.info(
+            "diverse training phase skipped | epoch_index=%d | update_count=%d",
+            epoch_index,
+            update_count,
+        )
+        return None
+    sampler = StackedTransitionSampler(
+        buffer_diverse,
+        trainer.batch_size,
+        trainer.device,
+    )
+    logger.info(
+        "diverse training phase start | epoch_index=%d | update_count=%d | "
+        "buffer_size=%d",
+        epoch_index,
+        update_count,
+        len(buffer_diverse),
+    )
     last_losses = None
-    for _ in range(update_times):
+    for _ in range(update_count):
         (
             states,
             infos,
@@ -356,7 +469,7 @@ def run_fixed_diverse_updates(trainer, buffer_diverse, update_times, round_count
             next_states,
             next_infos,
             dones,
-        ) = buffer_diverse.sample()
+        ) = sampler.sample()
         last_losses = update(
             trainer,
             states,
@@ -368,9 +481,18 @@ def run_fixed_diverse_updates(trainer, buffer_diverse, update_times, round_count
             dones,
         )
         total_loss, KL_loss, td_loss = last_losses
-        trainer.writer.add_scalar("total_loss", total_loss, round_counter)
-        trainer.writer.add_scalar("KL_loss", KL_loss, round_counter)
-        trainer.writer.add_scalar("td_loss", td_loss, round_counter)
+        trainer.writer.add_scalar("total_loss", total_loss, trainer.update_counter)
+        trainer.writer.add_scalar("KL_loss", KL_loss, trainer.update_counter)
+        trainer.writer.add_scalar("td_loss", td_loss, trainer.update_counter)
+    logger.info(
+        "diverse training phase complete | epoch_index=%d | update_count=%d | "
+        "total_loss=%.6f | KL_loss=%.6f | td_loss=%.6f",
+        epoch_index,
+        update_count,
+        last_losses[0],
+        last_losses[1],
+        last_losses[2],
+    )
     return last_losses
 
 
@@ -391,7 +513,6 @@ def summarize_parallel_round(
     initial_action,
     round_results,
     buffer_size,
-    update_count,
 ):
     return ParallelRoundSummary(
         round_counter=int(round_counter),
@@ -401,7 +522,6 @@ def summarize_parallel_round(
         round_steps=int(sum(result.worker_steps for result in round_results)),
         active_worker_count=int(len(round_results)),
         buffer_size=int(buffer_size),
-        update_count=int(update_count),
     )
 
 
@@ -409,42 +529,89 @@ def build_epoch_model_path(model_path, epoch_index):
     return os.path.join(model_path, "epoch_{}".format(epoch_index + 1))
 
 
+def build_diverse_buffer_path(model_path):
+    return os.path.join(model_path, "buffer_diverse.pkl")
+
+
+def save_diverse_buffer(buffer_diverse, model_path):
+    """将经验池快照保存到文件（每次探索完成后调用，覆盖式保存最新快照）。
+
+    经验以普通 tuple 落盘（Experience namedtuple 是在 buffer.__init__ 中动态
+    创建的类，无法被 pickle 序列化）。memory 中 tuple 的字段顺序为
+    (state, info, action, reward, next_state, done, next_info)；n_step_buffer
+    保存尚未折叠进 memory 的尾部 transition，字段顺序为
+    (state, info, action, reward, next_state, next_info, done)。
+    """
+    buffer_path = build_diverse_buffer_path(model_path)
+    torch.save(
+        {
+            "memory": [tuple(experience) for experience in buffer_diverse.memory],
+            "n_step_buffer": [
+                [tuple(transition) for transition in n_step_deque]
+                for n_step_deque in buffer_diverse.n_step_buffer
+            ],
+        },
+        buffer_path,
+    )
+    logger.info(
+        "diverse buffer snapshot saved | path=%s | memory_size=%d",
+        buffer_path,
+        len(buffer_diverse),
+    )
+
+
+@dataclass
+class _WorkerEpisode:
+    """单个 df 在一个探索任务内的回合状态（子进程侧）。"""
+
+    env: object
+    state: object
+    info: dict
+    done: bool
+    reward_sum: float = 0.0
+    transition_count: int = 0
+
+
 class DfRolloutWorkerRunner:
+    """探索子进程内的回合运行器：单个子进程可同时服务多个 df。
+
+    与 pretrain 阶段完全相同的数据处理方式：主进程把若干 df 以
+    round-robin 方式分配给每个子进程，ResetWorkerTask / ExploreWorkerRound
+    消息携带 df_index，本类按 df_index 维护各自独立的 env 与回合状态。
+    """
+
     def __init__(self, worker_config):
-        self.df_index = worker_config["df_index"]
-        self.train_df = worker_config["train_df"]
+        self.df_indices = worker_config["df_indices"]
+        self.train_df_by_df = worker_config["train_df_by_df"]
         self.env_kwargs = worker_config["env_kwargs"]
-        self.model_factory = worker_config.get("model_factory", create_parallel_worker_model)
         self.device = worker_config["device"]
         self.leverage_choices = worker_config["leverage_choices"]
         self.position_list = worker_config["position_list"]
         self.initial_wallet_balance = worker_config["initial_wallet_balance"]
         self.initial_unrealized_pnL = worker_config["initial_unrealized_pnL"]
-        if self.model_factory is create_parallel_worker_model:
-            self.model = self.model_factory(worker_config).to(self.device)
-        else:
-            self.model = self.model_factory().to(self.device)
-        self.env = None
-        self.state = None
-        self.info = None
-        self.done = True
-        self.reward_sum = 0.0
-        self.transition_count = 0
+        self.model = create_parallel_worker_model(worker_config).to(self.device)
+        # df_index -> 该 df 当前探索任务的回合状态
+        self.episodes = {}
 
     def reset_task(self, message):
+        """按 message.df_index 为对应数据文件重建 env 并重置回合状态。"""
+        train_df = self.train_df_by_df[message.df_index]
         _, _, _, initial_state = build_initial_state(
-            self.train_df,
+            train_df,
             message.initial_action,
             self.leverage_choices,
             self.position_list,
             self.initial_wallet_balance,
             self.initial_unrealized_pnL,
         )
-        self.env = create_demo_env(self.train_df, self.env_kwargs, initial_state)
-        self.state, self.info = self.env.reset()
-        self.done = False
-        self.reward_sum = 0.0
-        self.transition_count = 0
+        env = create_demo_env(train_df, self.env_kwargs, initial_state)
+        state, info = env.reset()
+        self.episodes[message.df_index] = _WorkerEpisode(
+            env=env,
+            state=state,
+            info=info,
+            done=False,
+        )
 
     def _act(self, state, info, context_index, epsilon):
         if np.random.uniform() <= epsilon:
@@ -481,24 +648,29 @@ class DfRolloutWorkerRunner:
             return int(torch.max(q_values[:, context_index, :], 1)[1].data.cpu().numpy()[0])
 
     def explore_round(self, message):
-        self.model.load_state_dict(message.state_dict)
+        """对 message.df_index 执行完整探索：单条消息一次性跑到回合结束。
+
+        探索完整性由 worker 侧保证：循环 env.step 直到 episode.done（df 数据
+        走完或爆仓）才返回，不依赖主进程的多轮重派发机制。
+        """
+        episode = self.episodes[message.df_index]
+        load_worker_state_dict(self.model, message.state_dict)
         self.model.eval()
         transitions = []
-        step_index = 0
-        while not self.done and step_index < message.rollout_steps:
+        while not episode.done:
             action = self._act(
-                self.state,
-                self.info,
+                episode.state,
+                episode.info,
                 message.context_index,
                 message.epsilon,
             )
-            next_state, reward, done, next_info = self.env.step(action)
+            next_state, reward, done, next_info = episode.env.step(action)
             transitions.append(
                 WorkerTransitionRecord(
-                    step_index=self.transition_count,
+                    step_index=episode.transition_count,
                     transition=(
-                        self.state,
-                        self.info,
+                        episode.state,
+                        episode.info,
                         action,
                         reward,
                         next_state,
@@ -507,13 +679,12 @@ class DfRolloutWorkerRunner:
                     ),
                 )
             )
-            self.reward_sum += reward
-            self.transition_count += 1
-            step_index += 1
-            self.state, self.info, self.done = next_state, next_info, done
-        final_balance = self.env.unrealized_pnl + self.env.wallet_balance
+            episode.reward_sum += reward
+            episode.transition_count += 1
+            episode.state, episode.info, episode.done = next_state, next_info, done
+        final_balance = episode.env.unrealized_pnl + episode.env.wallet_balance
         return WorkerRoundResult(
-            df_index=self.df_index,
+            df_index=message.df_index,
             epoch_index=message.epoch_index,
             context_index=message.context_index,
             initial_action=message.initial_action,
@@ -525,36 +696,47 @@ class DfRolloutWorkerRunner:
                     epoch_index=message.epoch_index,
                     context_index=message.context_index,
                     initial_action=message.initial_action,
-                    df_index=self.df_index,
-                    transition_count=self.transition_count,
-                    reward_sum=float(self.reward_sum),
+                    df_index=message.df_index,
+                    transition_count=episode.transition_count,
+                    reward_sum=float(episode.reward_sum),
                     final_balance=float(final_balance),
                     return_rate=float(
                         final_balance / (self.initial_wallet_balance + 1e-12) - 1
                     ),
                 )
             ],
-            done=self.done,
-            progress={"transition_count": self.transition_count},
+            done=episode.done,
         )
 
 
 def start_parallel_workers(trainer, train_df_cache, env_kwargs):
-    from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import (
-        build_effective_df_indices,
-        create_worker_context,
-        df_rollout_worker,
-    )
+    """为本轮探索创建全新的子进程（与 pretrain 阶段相同的数据处理方式）。
 
-    worker_context = create_worker_context()
-    trainer.worker_result_queue = worker_context.Queue()
+    所有 df 以 round-robin 方式分配给子进程：子进程数量 = min(df 数量,
+    MAX_EXPLORATION_WORKERS)，每个子进程负责多个 df，消息携带 df_index 路由。
+    每轮探索（每个 epoch）开始前调用，上一轮的子进程此时应已被彻底关闭。
+    """
     trainer.worker_input_queues = {}
     trainer.worker_processes = []
-    for df_index in build_effective_df_indices(trainer.total_df_index_length):
+    worker_context = create_worker_context()
+    trainer.worker_result_queue = worker_context.Queue()
+    effective_df_indices = build_effective_df_indices(trainer.total_df_index_length)
+    num_workers = min(len(effective_df_indices), MAX_EXPLORATION_WORKERS)
+    for worker_id in range(num_workers):
+        assigned_df_indices = [
+            df_index
+            for i, df_index in enumerate(effective_df_indices)
+            if i % num_workers == worker_id
+        ]
         input_queue = worker_context.Queue()
         worker_config = {
-            "df_index": df_index,
-            "train_df": train_df_cache[df_index],
+            "worker_id": worker_id,
+            "df_index": assigned_df_indices[0],
+            "df_indices": assigned_df_indices,
+            "train_df_by_df": {
+                df_index: train_df_cache[df_index]
+                for df_index in assigned_df_indices
+            },
             "env_kwargs": env_kwargs,
             "device": trainer.device,
             "leverage_choices": trainer.leverage_choices,
@@ -572,8 +754,47 @@ def start_parallel_workers(trainer, train_df_cache, env_kwargs):
             args=(worker_config, input_queue, trainer.worker_result_queue),
         )
         process.start()
-        trainer.worker_input_queues[df_index] = input_queue
+        for df_index in assigned_df_indices:
+            trainer.worker_input_queues[df_index] = input_queue
         trainer.worker_processes.append(process)
+    logger.info(
+        "exploration workers started | df_count=%d | worker_count=%d | "
+        "max_workers=%d",
+        len(effective_df_indices),
+        num_workers,
+        MAX_EXPLORATION_WORKERS,
+    )
+
+
+def shutdown_exploration_workers(trainer):
+    """彻底关闭全部探索子进程，并逐一确认退出后才返回。
+
+    训练阶段启动前必须调用：先发送 ShutdownWorker 让各子进程正常退出并
+    join 等待；超时未退出的进程以 terminate 兜底后再次 join；若仍有存活
+    进程则视为资源泄漏，直接抛错阻止训练启动。
+    """
+    shutdown_workers(
+        trainer.worker_input_queues.values(),
+        trainer.worker_processes,
+    )
+    for process in trainer.worker_processes:
+        process.join(timeout=WORKER_JOIN_TIMEOUT_SECONDS)
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=WORKER_JOIN_TIMEOUT_SECONDS)
+    alive_pids = [
+        process.pid
+        for process in trainer.worker_processes
+        if process.is_alive()
+    ]
+    trainer.worker_input_queues = {}
+    trainer.worker_processes = []
+    trainer.worker_result_queue = None
+    if alive_pids:
+        raise RuntimeError(
+            "exploration workers failed to terminate: pids={}".format(alive_pids)
+        )
+    logger.info("exploration workers shut down")
 
 
 def reset_worker_task(
@@ -583,9 +804,11 @@ def reset_worker_task(
     initial_action,
     active_df_indices,
 ):
+    """为每个 df 派发回合重置消息（按 df_index 路由到对应回合状态）。"""
     for df_index in sorted(active_df_indices):
         trainer.worker_input_queues[df_index].put(
             ResetWorkerTask(
+                df_index=df_index,
                 epoch_index=epoch_index,
                 context_index=context_index,
                 initial_action=initial_action,
@@ -602,25 +825,27 @@ def send_worker_rounds(
     round_counter,
     state_dict,
 ):
+    """为全部 df 派发一轮探索消息（携带最新模型参数与 epsilon）。
+
+    worker 侧的 explore_round 收到消息后一次性探索至回合结束（整个 df），
+    因此每个任务只需派发一轮消息，无需多轮重派发。
+    """
     for df_index in sorted(active_df_indices):
         trainer.worker_input_queues[df_index].put(
             ExploreWorkerRound(
+                df_index=df_index,
                 epoch_index=epoch_index,
                 context_index=context_index,
                 initial_action=initial_action,
                 round_counter=round_counter,
                 state_dict=state_dict,
                 epsilon=trainer.epsilon,
-                rollout_steps=trainer.rollout_steps,
             )
         )
 
 
 def collect_worker_rounds(trainer, active_df_indices, round_counter):
-    from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import (
-        WorkerErrorMessage,
-    )
-
+    """收集本轮全部活跃 df 的结果；任一子进程上报错误则原样返回交由上层抛错。"""
     expected_count = len(active_df_indices)
     results = []
     while len(results) < expected_count:
@@ -656,17 +881,17 @@ def run_parallel_rollout_task(
     epoch_index,
     context_index,
     initial_action,
-    train_df_cache,
-    env_kwargs,
     buffer_diverse,
     step_counter_diverse,
     round_counter,
+    seen_fingerprints,
 ):
-    from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import (
-        build_effective_df_indices,
-        raise_for_worker_error,
-    )
+    """单个 (epoch, context, initial_action) 任务的完整探索，不执行任何参数更新。
 
+    探索完整性由 worker 侧的 explore_round 保证：单条消息一次性探索至回合
+    结束（整个 df）。主进程只需一轮派发/收集；若任一 worker 上报未 done，
+    则违反探索完整性约定，直接抛错。
+    """
     active_df_indices = set(build_effective_df_indices(trainer.total_df_index_length))
     reset_worker_task(
         trainer,
@@ -676,86 +901,75 @@ def run_parallel_rollout_task(
         active_df_indices,
     )
     task_metrics = []
-    while active_df_indices:
-        send_worker_rounds(
-            trainer,
-            active_df_indices=active_df_indices,
-            epoch_index=epoch_index,
-            context_index=context_index,
-            initial_action=initial_action,
-            round_counter=round_counter,
-            state_dict=make_cpu_state_dict(trainer.eval_net),
-        )
-        round_results = collect_worker_rounds(trainer, active_df_indices, round_counter)
-        for result in round_results:
-            raise_for_worker_error(result)
-        write_round_transitions_to_buffer(buffer_diverse, round_results)
-        task_metrics.extend(
-            metrics for result in round_results for metrics in result.rollout_metrics
-        )
-        round_steps = sum(result.worker_steps for result in round_results)
-        previous_step_counter = step_counter_diverse
-        step_counter_diverse += round_steps
-        update_count = 0
-        warmup_steps = trainer.batch_size * trainer.update_times + trainer.n_step
-        update_windows = count_update_windows_crossed(
-            previous_step_counter=previous_step_counter,
-            current_step_counter=step_counter_diverse,
-            rollout_steps=trainer.rollout_steps,
-            warmup_steps=warmup_steps,
-        )
-        if update_windows:
-            update_count = trainer.update_times * update_windows
-            run_fixed_diverse_updates(
-                trainer,
-                buffer_diverse,
-                update_count,
-                round_counter,
+    task_start_step_counter = step_counter_diverse
+    task_record_count = 0
+    task_duplicate_count = 0
+    send_worker_rounds(
+        trainer,
+        active_df_indices=active_df_indices,
+        epoch_index=epoch_index,
+        context_index=context_index,
+        initial_action=initial_action,
+        round_counter=round_counter,
+        state_dict=make_cpu_state_dict(trainer.eval_net),
+    )
+    round_results = collect_worker_rounds(trainer, active_df_indices, round_counter)
+    for result in round_results:
+        raise_for_worker_error(result)
+    unfinished_df_indices = sorted(
+        result.df_index for result in round_results if not result.done
+    )
+    if unfinished_df_indices:
+        raise RuntimeError(
+            "worker round finished without done | df_indices={}".format(
+                unfinished_df_indices
             )
-        round_summary = summarize_parallel_round(
-            round_counter=round_counter,
-            epoch_index=epoch_index,
-            context_index=context_index,
-            initial_action=initial_action,
-            round_results=round_results,
-            buffer_size=len(buffer_diverse),
-            update_count=update_count,
         )
-        logger.info(
-            "parallel rollout round complete | round_counter=%d | epoch_index=%d | "
-            "context_index=%d | initial_action=%d | round_steps=%d | "
-            "active_worker_count=%d | buffer_size=%d | update_count=%d",
-            round_summary.round_counter,
-            round_summary.epoch_index,
-            round_summary.context_index,
-            round_summary.initial_action,
-            round_summary.round_steps,
-            round_summary.active_worker_count,
-            round_summary.buffer_size,
-            round_summary.update_count,
-        )
-        for result in round_results:
-            for metrics in result.rollout_metrics:
-                logger.info(
-                    "parallel rollout metrics | epoch_index=%d | context_index=%d | "
-                    "initial_action=%d | df_index=%d | transition_count=%d | "
-                    "reward_sum=%.4f | final_balance=%.4f | return_rate=%.6f",
-                    metrics.epoch_index,
-                    metrics.context_index,
-                    metrics.initial_action,
-                    metrics.df_index,
-                    metrics.transition_count,
-                    metrics.reward_sum,
-                    metrics.final_balance,
-                    metrics.return_rate,
-                )
-        active_df_indices = {
-            result.df_index
-            for result in round_results
-            if not result.done
-        }
-        round_counter += 1
-    return round_counter, step_counter_diverse, task_metrics
+    task_duplicate_count += write_round_transitions_to_buffer(
+        buffer_diverse,
+        round_results,
+        seen_fingerprints,
+    )
+    task_record_count += sum(
+        len(result.transitions) for result in round_results
+    )
+    task_metrics.extend(
+        metrics for result in round_results for metrics in result.rollout_metrics
+    )
+    step_counter_diverse += sum(result.worker_steps for result in round_results)
+    round_summary = summarize_parallel_round(
+        round_counter=round_counter,
+        epoch_index=epoch_index,
+        context_index=context_index,
+        initial_action=initial_action,
+        round_results=round_results,
+        buffer_size=len(buffer_diverse),
+    )
+    logger.info(
+        "parallel rollout round complete | round_counter=%d | epoch_index=%d | "
+        "context_index=%d | initial_action=%d | round_steps=%d | "
+        "active_worker_count=%d | buffer_size=%d",
+        round_summary.round_counter,
+        round_summary.epoch_index,
+        round_summary.context_index,
+        round_summary.initial_action,
+        round_summary.round_steps,
+        round_summary.active_worker_count,
+        round_summary.buffer_size,
+    )
+    logger.info(
+        "diverse rollout task exploration complete | epoch_index=%d | "
+        "context_index=%d | initial_action=%d | steps_collected=%d | "
+        "records=%d | duplicates_skipped=%d | buffer_size=%d",
+        epoch_index,
+        context_index,
+        initial_action,
+        step_counter_diverse - task_start_step_counter,
+        task_record_count,
+        task_duplicate_count,
+        len(buffer_diverse),
+    )
+    return round_counter + 1, step_counter_diverse, task_metrics
 
 
 def save_parallel_epoch_model(trainer, epoch_index):
@@ -773,6 +987,117 @@ def save_parallel_epoch_model(trainer, epoch_index):
     )
 
 
+def write_context_rollout_scalars(trainer, context_index, context_metrics, epoch_index):
+    """写入单个 context 的训练期 rollout 标量。"""
+    if not context_metrics:
+        return
+    summary = summarize_rollout_metrics(context_metrics)
+    trainer.writer.add_scalar(
+        tag="return_rate_train_{}".format(context_index),
+        scalar_value=summary.mean_return_rate,
+        global_step=epoch_index + 1,
+        walltime=None,
+    )
+    trainer.writer.add_scalar(
+        tag="reward_sum_train_{}".format(context_index),
+        scalar_value=summary.mean_reward_sum,
+        global_step=epoch_index + 1,
+        walltime=None,
+    )
+
+
+def write_epoch_rollout_scalars(trainer, epoch_metrics, epoch_index):
+    """写入整个 epoch 的训练期 rollout 标量。"""
+    if not epoch_metrics:
+        return
+    summary = summarize_rollout_metrics(epoch_metrics)
+    trainer.writer.add_scalar(
+        tag="epoch_return_rate_train",
+        scalar_value=summary.mean_return_rate,
+        global_step=epoch_index + 1,
+        walltime=None,
+    )
+    trainer.writer.add_scalar(
+        tag="epoch_final_balance_train",
+        scalar_value=summary.mean_final_balance,
+        global_step=epoch_index + 1,
+        walltime=None,
+    )
+    trainer.writer.add_scalar(
+        tag="epoch_reward_sum_train",
+        scalar_value=summary.mean_reward_sum,
+        global_step=epoch_index + 1,
+        walltime=None,
+    )
+
+
+def run_epoch_exploration(
+    trainer,
+    epoch_index,
+    train_df_cache,
+    env_kwargs,
+    buffer_diverse,
+    step_counter_diverse,
+    round_counter,
+    seen_fingerprints,
+    diverse_rollout_latest_metrics_by_df,
+):
+    """一个 epoch 的完整探索阶段：创建全新子进程 -> 全任务探索 -> 彻底关闭。
+
+    返回 (epoch_metrics, step_counter_diverse, round_counter)。无论探索正常
+    结束还是中途异常，finally 都会彻底关闭本轮全部探索子进程并确认退出，
+    保证训练阶段开始前不存在任何存活子进程。
+    """
+    epoch_metrics = []
+    epoch_start_step_counter = step_counter_diverse
+    try:
+        start_parallel_workers(trainer, train_df_cache, env_kwargs)
+        for context_index in range(trainer.N):
+            context_metrics = []
+            for initial_action in range(trainer.position_choices):
+                (
+                    round_counter,
+                    step_counter_diverse,
+                    task_metrics,
+                ) = run_parallel_rollout_task(
+                    trainer,
+                    epoch_index=epoch_index,
+                    context_index=context_index,
+                    initial_action=initial_action,
+                    buffer_diverse=buffer_diverse,
+                    step_counter_diverse=step_counter_diverse,
+                    round_counter=round_counter,
+                    seen_fingerprints=seen_fingerprints,
+                )
+                for metrics in task_metrics:
+                    record_diverse_rollout_latest_metric(
+                        diverse_rollout_latest_metrics_by_df,
+                        metrics.df_index,
+                        context_index,
+                        metrics.reward_sum,
+                        metrics.final_balance,
+                        metrics.return_rate,
+                    )
+                context_metrics.extend(task_metrics)
+                epoch_metrics.extend(task_metrics)
+            write_context_rollout_scalars(
+                trainer, context_index, context_metrics, epoch_index
+            )
+        # 探索完整性确认：全部任务结束，所有数据均已被探索完毕
+        logger.info(
+            "epoch exploration complete | epoch_index=%d | explored_tasks=%d | "
+            "steps_collected=%d | buffer_size=%d",
+            epoch_index,
+            trainer.N * trainer.position_choices,
+            step_counter_diverse - epoch_start_step_counter,
+            len(buffer_diverse),
+        )
+    finally:
+        # 所有探索子进程彻底关闭并确认退出后，才允许进入训练阶段
+        shutdown_exploration_workers(trainer)
+    return epoch_metrics, step_counter_diverse, round_counter
+
+
 def run_parallel_diverse_training(
     trainer,
     train_df_cache,
@@ -781,100 +1106,85 @@ def run_parallel_diverse_training(
     step_counter_diverse,
     diverse_rollout_latest_metrics_by_df,
 ):
+    """多样化训练主循环：每个 epoch 严格遵循「完整探索 -> 完整训练」。
+
+    阶段切换条件：
+    - 探索 -> 训练：本 epoch 内全部 (context_index, initial_action) 任务均完成
+      对所有 df 的完整探索（worker 侧 explore_round 单条消息一次性探索至
+      回合结束，主进程一轮派发/收集即完成），且全部探索子进程已被彻底
+      关闭并确认退出；
+    - 训练 -> 下一轮探索：本轮全部参数更新执行完毕并保存模型。
+    经验按内容指纹去重，重复经验不会写入经验池。
+    每次探索完成后将经验池快照保存到 model_path/buffer_diverse.pkl。
+    连续 MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS 个 epoch 探索均未新增任何
+    经验后，后续 epoch 跳过探索阶段（不再创建子进程），仅执行训练。
+    """
     if trainer.total_df_index_length <= 0:
         raise ValueError("parallel diverse training requires total_df_index_length > 0")
     round_counter = 0
-    start_parallel_workers(trainer, train_df_cache, env_kwargs)
-    try:
-        for epoch_index in range(trainer.num_epoch):
-            params = compute_epoch_training_params(
-                epoch_index=epoch_index,
-                num_epoch=trainer.num_epoch,
-                epsilon_init=trainer.epsilon_init,
-                epsilon_min=trainer.epsilon_min,
-                ada_init=trainer.ada_init,
-                ada_min=trainer.ada_min,
-                lr_init=trainer.lr_init,
-                lr_min=trainer.lr_min,
+    seen_fingerprints = set()
+    consecutive_no_new_experience_epochs = 0
+    skip_exploration = False
+    for epoch_index in range(trainer.num_epoch):
+        apply_epoch_training_params(trainer, epoch_index)
+        if skip_exploration:
+            logger.info(
+                "epoch exploration skipped | epoch_index=%d | "
+                "consecutive_no_new_experience_epochs=%d",
+                epoch_index,
+                consecutive_no_new_experience_epochs,
             )
-            trainer.epsilon = params.epsilon
-            trainer.ada = params.ada
-            trainer.lr = params.lr
-            for param_group in trainer.optimizer.param_groups:
-                param_group["lr"] = trainer.lr
-
             epoch_metrics = []
-            for context_index in range(trainer.N):
-                context_metrics = []
-                for initial_action in range(trainer.position_choices):
-                    (
-                        round_counter,
-                        step_counter_diverse,
-                        task_metrics,
-                    ) = run_parallel_rollout_task(
-                        trainer,
-                        epoch_index=epoch_index,
-                        context_index=context_index,
-                        initial_action=initial_action,
-                        train_df_cache=train_df_cache,
-                        env_kwargs=env_kwargs,
-                        buffer_diverse=buffer_diverse,
-                        step_counter_diverse=step_counter_diverse,
-                        round_counter=round_counter,
-                    )
-                    for metrics in task_metrics:
-                        record_diverse_rollout_latest_metric(
-                            diverse_rollout_latest_metrics_by_df,
-                            metrics.df_index,
-                            context_index,
-                            metrics.reward_sum,
-                            metrics.final_balance,
-                            metrics.return_rate,
-                        )
-                    context_metrics.extend(task_metrics)
-                    epoch_metrics.extend(task_metrics)
-                if context_metrics:
-                    context_summary = summarize_rollout_metrics(context_metrics)
-                    trainer.writer.add_scalar(
-                        tag="return_rate_train_{}".format(context_index),
-                        scalar_value=context_summary.mean_return_rate,
-                        global_step=epoch_index + 1,
-                        walltime=None,
-                    )
-                    trainer.writer.add_scalar(
-                        tag="reward_sum_train_{}".format(context_index),
-                        scalar_value=context_summary.mean_reward_sum,
-                        global_step=epoch_index + 1,
-                        walltime=None,
-                    )
-            if epoch_metrics:
-                epoch_summary = summarize_rollout_metrics(epoch_metrics)
-                trainer.writer.add_scalar(
-                    tag="epoch_return_rate_train",
-                    scalar_value=epoch_summary.mean_return_rate,
-                    global_step=epoch_index + 1,
-                    walltime=None,
-                )
-                trainer.writer.add_scalar(
-                    tag="epoch_final_balance_train",
-                    scalar_value=epoch_summary.mean_final_balance,
-                    global_step=epoch_index + 1,
-                    walltime=None,
-                )
-                trainer.writer.add_scalar(
-                    tag="epoch_reward_sum_train",
-                    scalar_value=epoch_summary.mean_reward_sum,
-                    global_step=epoch_index + 1,
-                    walltime=None,
-                )
-            log_diverse_rollout_latest_metrics(
-                epoch_index + 1,
+        else:
+            # 阶段一：完整探索 —— 本轮探索创建全新子进程（上限 20），结束即彻底关闭
+            fingerprints_before_exploration = len(seen_fingerprints)
+            epoch_metrics, step_counter_diverse, round_counter = run_epoch_exploration(
+                trainer,
+                epoch_index,
+                train_df_cache,
+                env_kwargs,
+                buffer_diverse,
+                step_counter_diverse,
+                round_counter,
+                seen_fingerprints,
                 diverse_rollout_latest_metrics_by_df,
-                logger,
             )
-            save_parallel_epoch_model(trainer, epoch_index)
-    finally:
-        trainer._shutdown_parallel_workers()
+            # 阶段二：保存经验池 —— 探索完成且经验已全部写入后，落盘最新快照
+            save_diverse_buffer(buffer_diverse, trainer.model_path)
+            new_experience_count = (
+                len(seen_fingerprints) - fingerprints_before_exploration
+            )
+            if new_experience_count == 0:
+                consecutive_no_new_experience_epochs += 1
+            else:
+                consecutive_no_new_experience_epochs = 0
+            if (
+                consecutive_no_new_experience_epochs
+                >= MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS
+            ):
+                skip_exploration = True
+                logger.info(
+                    "exploration exhausted | epoch_index=%d | "
+                    "consecutive_no_new_experience_epochs=%d | "
+                    "subsequent epochs will skip exploration",
+                    epoch_index,
+                    consecutive_no_new_experience_epochs,
+                )
+        # 阶段三：完整训练 —— 经验池已冻结，且无任何探索子进程存活
+        update_count = trainer.update_times * UPDATE_WINDOWS_PER_EPOCH
+        run_diverse_training_phase(
+            trainer,
+            buffer_diverse,
+            update_count,
+            epoch_index,
+        )
+        write_epoch_rollout_scalars(trainer, epoch_metrics, epoch_index)
+        log_diverse_rollout_latest_metrics(
+            epoch_index + 1,
+            diverse_rollout_latest_metrics_by_df,
+            logger,
+        )
+        save_parallel_epoch_model(trainer, epoch_index)
     return step_counter_diverse
 
 

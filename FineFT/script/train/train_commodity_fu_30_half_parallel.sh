@@ -16,7 +16,7 @@ export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
 numactl python -u FineFT/RL/DiHFT/low_level/parallel_weight_advantage_pretrain.py \
     --base_path dataset/30min \
     --dataset_name fu --experiment_name "${EXPERIMENT_NAME}" \
-    --initial_wallet_balance 5000 --batch_size 40960 --update_times=30 \
+    --initial_wallet_balance 5000 --batch_size 102400 --update_times=30 \
     --max_holding_number 1 --short_estimated_rate 0 --long_estimated_rate 0 \
     --position_choices 3 --transcation_cost 0.0005 --n_step 12 --gamma 0.9999 \
     --order_book_depth 5 --early_stop 2  --N 13 \

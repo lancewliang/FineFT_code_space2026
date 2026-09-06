@@ -115,12 +115,9 @@ from RL.DiHFT.low_level.parallel_pretrain import (
     CollectPretrainEpisode,
     run_exhaustive_warmup,
 )
-from RL.DiHFT.low_level.parallel_diverse_train import (
-    DfRolloutWorkerRunner,
-    ResetWorkerTask,
-    ExploreWorkerRound,
-    run_parallel_diverse_training,
-)
+# parallel_diverse_train 在顶层导入本模块的共享基础设施；为保持模块加载
+# 依赖图无环，本模块对其的导入（DfRolloutWorkerRunner 等）延迟到
+# df_rollout_worker 函数内部执行。
 
 
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -485,6 +482,12 @@ def raise_for_worker_error(message):
 
 
 def df_rollout_worker(worker_config, input_queue, result_queue):
+    from RL.DiHFT.low_level.parallel_diverse_train import (
+        DfRolloutWorkerRunner,
+        ExploreWorkerRound,
+        ResetWorkerTask,
+    )
+
     df_index = worker_config["df_index"]
     message = None
     try:
@@ -842,41 +845,50 @@ class Weighted_Contexts_DQN:
                 "跳过预训练子模型评估 | 未找到预训练模型文件=%s", pretrain_model_file
             )
         else:
-            eval_metrics = evaluates(
-                logg_file_path=self.logg_file_path,
-                data_file_paths=train_data_file_paths,
-                model_path=pretrain_model_file,
-                tech_indicator_list_path=self.tech_indicator_list_path,
-                maintenance_margin_ratio_dict_path=self.maintenance_margin_ratio_dict_path,
-                transcation_cost=self.transcation_cost,
-                max_holding_number=self.max_holding_number,
-                position_choices=self.position_choices,
-                N=self.N,
-                time_info_dim=self.time_info_dim,
-                hidden_nodes=self.hidden_nodes,
-                leverage_choices=self.leverage_choices,
-                initial_leverage=self.initial_leverage,
-                initial_position=self.initial_position,
-                initial_wallet_balance=self.initial_wallet_balance,
-                order_book_depth=self.order_book_depth,
-                early_stop=self.early_stop,
-                enable_limit_reward=self.enable_limit_reward,
-                limit_hold_bonus=self.limit_hold_bonus,
-                limit_stay_bonus=self.limit_stay_bonus,
-                limit_reverse_penalty=self.limit_reverse_penalty,
-                near_limit_threshold=self.near_limit_threshold,
-                allow_reverse_position=self.allow_reverse_position,
-            )
-            # logger.info(eval_metrics)
+            # eval_metrics = evaluates(
+            #     logg_file_path=self.logg_file_path,
+            #     data_file_paths=train_data_file_paths,
+            #     model_path=pretrain_model_file,
+            #     tech_indicator_list_path=self.tech_indicator_list_path,
+            #     maintenance_margin_ratio_dict_path=self.maintenance_margin_ratio_dict_path,
+            #     transcation_cost=self.transcation_cost,
+            #     max_holding_number=self.max_holding_number,
+            #     position_choices=self.position_choices,
+            #     N=self.N,
+            #     time_info_dim=self.time_info_dim,
+            #     hidden_nodes=self.hidden_nodes,
+            #     leverage_choices=self.leverage_choices,
+            #     initial_leverage=self.initial_leverage,
+            #     initial_position=self.initial_position,
+            #     initial_wallet_balance=self.initial_wallet_balance,
+            #     order_book_depth=self.order_book_depth,
+            #     early_stop=self.early_stop,
+            #     enable_limit_reward=self.enable_limit_reward,
+            #     limit_hold_bonus=self.limit_hold_bonus,
+            #     limit_stay_bonus=self.limit_stay_bonus,
+            #     limit_reverse_penalty=self.limit_reverse_penalty,
+            #     near_limit_threshold=self.near_limit_threshold,
+            #     allow_reverse_position=self.allow_reverse_position,
+            # )
+            # # logger.info(eval_metrics)
+            pass
 
-        # step_counter_diverse = run_parallel_diverse_training(
-        #     trainer=self,
-        #     train_df_cache=train_df_cache,
-        #     env_kwargs=env_kwargs,
-        #     buffer_diverse=buffer_diverse,
-        #     step_counter_diverse=step_counter_diverse,
-        #     diverse_rollout_latest_metrics_by_df=diverse_rollout_latest_metrics_by_df,
-        # )
+        # 预训练阶段已彻底结束（经验池已由 warmup 持久化到文件）：
+        # 清空预训练经验池，释放其占用的内存后再开始多样化训练
+        logger.info("清空预训练经验池 | 释放前经验数=%d", len(buffer_pretrain))
+        buffer_pretrain.reset()
+
+        from RL.DiHFT.low_level.parallel_diverse_train import (
+            run_parallel_diverse_training,
+        )
+        step_counter_diverse = run_parallel_diverse_training(
+            trainer=self,
+            train_df_cache=train_df_cache,
+            env_kwargs=env_kwargs,
+            buffer_diverse=buffer_diverse,
+            step_counter_diverse=step_counter_diverse,
+            diverse_rollout_latest_metrics_by_df=diverse_rollout_latest_metrics_by_df,
+        )
 
 
 if __name__ == "__main__":
