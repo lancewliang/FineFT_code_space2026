@@ -439,9 +439,9 @@ parser.add_argument(
 )
 parser.add_argument(
     "--load_pretrain_model",
-    "--load_pretrained_model",
     dest="load_pretrain_model",
-    action="store_true",
+    type=bool,
+    default=True,
     help="whether to read pre-trained model and skip pretraining",
 )
 
@@ -867,16 +867,16 @@ class Weighted_Contexts_DQN:
                 near_limit_threshold=self.near_limit_threshold,
                 allow_reverse_position=self.allow_reverse_position,
             )
-            logger.info(eval_metrics)
+            # logger.info(eval_metrics)
 
-        step_counter_diverse = run_parallel_diverse_training(
-            trainer=self,
-            train_df_cache=train_df_cache,
-            env_kwargs=env_kwargs,
-            buffer_diverse=buffer_diverse,
-            step_counter_diverse=step_counter_diverse,
-            diverse_rollout_latest_metrics_by_df=diverse_rollout_latest_metrics_by_df,
-        )
+        # step_counter_diverse = run_parallel_diverse_training(
+        #     trainer=self,
+        #     train_df_cache=train_df_cache,
+        #     env_kwargs=env_kwargs,
+        #     buffer_diverse=buffer_diverse,
+        #     step_counter_diverse=step_counter_diverse,
+        #     diverse_rollout_latest_metrics_by_df=diverse_rollout_latest_metrics_by_df,
+        # )
 
 
 if __name__ == "__main__":

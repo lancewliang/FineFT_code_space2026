@@ -246,11 +246,79 @@ def populate_buffer_transitions(buffer_pretrain, transitions):
     if hasattr(buffer_pretrain, "memory") and hasattr(buffer_pretrain, "experience"):
         for item in transitions:
             buffer_pretrain.memory.append(buffer_pretrain.experience(*item))
+        # 直接填充 memory 绕过了 add() -> calc_multistep_return() 的惰性初始化，
+        # 需要从加载的 transitions 恢复 info_key，否则 sample() 无法访问该属性
+        if transitions and not hasattr(buffer_pretrain, "info_key"):
+            buffer_pretrain.info_key = transitions[0][6].keys()
     elif hasattr(buffer_pretrain, "add"):
         for item in transitions:
             buffer_pretrain.add(*item)
     elif hasattr(buffer_pretrain, "items"):
         buffer_pretrain.items.extend(transitions)
+
+
+class StackedTransitionSampler:
+    """经验池预堆叠采样器。
+
+    训练前将整个经验池一次性堆叠为连续 numpy 数组，采样时用整数索引
+    直接取行，替代逐元素 np.stack（batch 很大时逐元素堆叠是主要瓶颈，
+    导致 GPU 大部分时间在空等 CPU 采样）。采样语义与
+    Multi_step_ReplayBuffer_multi_info.sample() 一致：无放回均匀采样。
+    仅适用于训练前经验池已冻结的场景（warmup 训练循环）。
+    """
+
+    def __init__(self, buffer, batch_size, device):
+        from RL.util.replay_buffer_DQN import NETWORK_INFO_KEYS
+
+        memory = list(buffer.memory)
+        self.n = len(memory)
+        if self.n < batch_size:
+            raise ValueError(
+                "buffer size ({}) is smaller than batch_size ({})".format(
+                    self.n, batch_size
+                )
+            )
+        self.batch_size = batch_size
+        self.device = device
+        self.states = np.stack([e.state for e in memory])
+        self.actions = np.vstack([e.action for e in memory])
+        self.rewards = np.vstack([e.reward for e in memory])
+        self.next_states = np.stack([e.next_state for e in memory])
+        self.dones = np.vstack([e.done for e in memory]).astype(float)
+        self.info_keys = [k for k in buffer.info_key if k in NETWORK_INFO_KEYS]
+        self.infos = {
+            k: np.stack([e.info[k] for e in memory]).astype(float)
+            for k in self.info_keys
+        }
+        self.next_infos = {
+            k: np.stack([e.next_info[k] for e in memory]).astype(float)
+            for k in self.info_keys
+        }
+
+    def sample(self):
+        idx = np.random.choice(self.n, size=self.batch_size, replace=False)
+        states = (
+            torch.from_numpy(self.states[idx]).float().to(self.device)
+        )
+        infos = {
+            k: torch.from_numpy(v[idx]).float().to(self.device)
+            for k, v in self.infos.items()
+        }
+        actions = torch.from_numpy(self.actions[idx]).long().to(self.device)
+        rewards = (
+            torch.from_numpy(self.rewards[idx]).float().to(self.device)
+        )
+        next_states = (
+            torch.from_numpy(self.next_states[idx]).float().to(self.device)
+        )
+        next_infos = {
+            k: torch.from_numpy(v[idx]).float().to(self.device)
+            for k, v in self.next_infos.items()
+        }
+        dones = (
+            torch.from_numpy(self.dones[idx]).float().to(self.device)
+        )
+        return (states, infos, actions, rewards, next_states, next_infos, dones)
 
 
 def save_pretrain_buffer_file(buffer_pretrain, buffer_path, step_counter):
@@ -267,7 +335,7 @@ def save_pretrain_buffer_file(buffer_pretrain, buffer_path, step_counter):
 
 
 def load_pretrain_buffer_file(buffer_pretrain, buffer_path, current_step_counter=0):
-    payload = torch.load(buffer_path, map_location="cpu")
+    payload = torch.load(buffer_path, map_location="cpu", weights_only=False)
     if isinstance(payload, dict) and "transitions" in payload:
         transitions = payload["transitions"]
         step_counter = payload.get(
@@ -451,6 +519,9 @@ def run_exhaustive_warmup(
                     len(buffer_pretrain), trainer.batch_size
                 )
             )
+        sampler = StackedTransitionSampler(
+            buffer_pretrain, trainer.batch_size, trainer.device
+        )
         logger.info(
             "exhaustive warmup train start | rounds=%d | updates_per_round=%d",
             trainer.pretrain_epoch,
@@ -467,7 +538,7 @@ def run_exhaustive_warmup(
                     next_states,
                     next_infos,
                     dones,
-                ) = buffer_pretrain.sample()
+                ) = sampler.sample()
                 last_losses = update_pretrain(
                     trainer,
                     states,

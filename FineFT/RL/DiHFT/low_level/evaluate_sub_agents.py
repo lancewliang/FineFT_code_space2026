@@ -219,8 +219,8 @@ class weighted_trader:
     def _run_episode(self, test_df, initial_action, bin_index):
         """Run one full episode with the given sub-model and initial action.
 
-        Returns the cumulative reward, the final balance and the final return
-        rate of the episode.
+        Returns the cumulative reward, the final balance, the final return
+        rate and the maximum drawdown of the episode.
         """
         initial_position, initial_leverage = map_action_to_position_leverage(
             initial_action,
@@ -279,12 +279,19 @@ class weighted_trader:
         final_return_rate = (
             final_balance - self.initial_margin_balance
         ) / self.initial_margin_balance
+        balance_history = (
+            np.array(test_env.wallet_balance_history)
+            + np.array(test_env.unrealized_pnl_history)
+        )
+        peak_history = np.maximum.accumulate(balance_history)
+        max_drawdown = float(np.max((peak_history - balance_history) / peak_history))
         return {
             "initial_position": initial_position,
             "initial_leverage": initial_leverage,
             "reward_sum": reward_sum,
             "final_balance": final_balance,
             "final_return_rate": final_return_rate,
+            "max_drawdown": max_drawdown,
         }
     
     def test(self):
@@ -432,6 +439,27 @@ def evaluates(
     # Wait for all subprocesses to complete
     for p, _, df_path in process_list:
         p.join()
+
+    # Per sub-agent averages across all data files and initial actions
+    sub_agent_metrics = {}
+    for result in overall_results:
+        metrics = sub_agent_metrics.setdefault(
+            result["sub_model_index"],
+            {"final_balance": [], "final_return_rate": [], "max_drawdown": []},
+        )
+        metrics["final_balance"].append(result["final_balance"])
+        metrics["final_return_rate"].append(result["final_return_rate"])
+        metrics["max_drawdown"].append(result["max_drawdown"])
+
+    for sub_model_index in sorted(sub_agent_metrics):
+        metrics = sub_agent_metrics[sub_model_index]
+        logger.info(
+            "Sub-agent %d: avg final balance = %.4f, avg return rate = %.2f%%, avg max drawdown = %.2f%%",
+            sub_model_index,
+            np.mean(metrics["final_balance"]),
+            np.mean(metrics["final_return_rate"]) * 100,
+            np.mean(metrics["max_drawdown"]) * 100,
+        )
 
     logger.info(
         "All %d evaluation subprocesses finished.",
