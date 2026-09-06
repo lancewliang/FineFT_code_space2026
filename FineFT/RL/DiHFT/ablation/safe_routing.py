@@ -537,6 +537,8 @@ class vae_risk_aware_routing:
                 self.zero_position_action,
                 self.leverage_choices,
                 self.position_list,
+                env.position,
+                env.leverage,
             )
             s, r, done, info = env.step(action)
             self.get_quantiles(s)

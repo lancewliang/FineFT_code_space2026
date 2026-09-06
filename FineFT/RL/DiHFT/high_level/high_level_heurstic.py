@@ -552,6 +552,8 @@ class high_level_trader:
                 self.zero_position_action,
                 self.leverage_choices,
                 self.position_list,
+                env.position,
+                env.leverage,
             )
             s_, r, done, info_ = env.step(trading_action)
             self.add_loss(s_)

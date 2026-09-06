@@ -50,6 +50,17 @@ TRADING_INFO_KEYS = (
     "current_holding_duration_norm",
 )
 
+# 已从 step/reset 返回 info 中移除、仅供按需显式查询的字段（见 get_info_field）。
+INFO_DIAGNOSTIC_FIELDS = (
+    "current_timestamp",
+    "previous_timestamp",
+    "current_markprice",
+    "funding_count_down",
+    "funding_count_down_second",
+    "single_holding_return_rate",
+    "limit_reward",
+)
+
 
 class Base_Env(gym.Env):
     def __init__(
@@ -258,9 +269,66 @@ class Base_Env(gym.Env):
             near_limit_threshold=self.near_limit_threshold,
         )
 
-    def get_last_limit_reward(self):
-        """返回最近一次 step 计算的涨跌停奖励（监控/测试用途，不进入 step 返回值）。"""
-        return self.last_limit_reward
+    def get_info_field(self, field):
+        """获取已从 info 返回结果中移除、仅供显式查询的诊断字段。
+
+        这些字段不随 step/reset 的 info 默认返回，调用方需要时按字段名
+        显式获取，用于统计分析与监控，避免主流程携带冗余数据。
+
+        Parameters
+        ----------
+        field : str
+            待查询字段名，必须为 INFO_DIAGNOSTIC_FIELDS 之一：
+            - "current_timestamp":          当前数据行 (self.day) 的时间戳，
+                                           np.datetime64
+            - "previous_timestamp":         上一数据行 (self.day - 1) 的时间戳，
+                                           np.datetime64；尚未 step 过
+                                           (self.day == 0) 时抛出 ValueError
+            - "current_markprice":          当前标记价格，float
+            - "funding_count_down":         当前行距下次资金费结算的时长，
+                                           np.timedelta64
+            - "funding_count_down_second":  上述时长的秒分量 (0-59)，float
+            - "single_holding_return_rate": 当前单次持仓收益率，float
+            - "limit_reward":              最近一次 step 计算的涨跌停奖励，
+                                           float（reset 后为 0.0）
+
+        Returns
+        -------
+        对应字段的当前值，类型见参数说明。
+
+        Raises
+        ------
+        ValueError
+            field 不在 INFO_DIAGNOSTIC_FIELDS 中；或尚未 step 过
+            (self.day == 0) 即请求 "previous_timestamp"。
+        """
+        if field == "current_timestamp":
+            return self.timestamp_array[self.day]
+        if field == "previous_timestamp":
+            if self.day == 0:
+                raise ValueError(
+                    "previous_timestamp is unavailable before any step "
+                    "(env.day == 0)"
+                )
+            return self.timestamp_array[self.day - 1]
+        if field == "current_markprice":
+            return self.current_markprice
+        if field == "funding_count_down":
+            return self.funding_timestamp_array[self.day] - self.timestamp_array[self.day]
+        if field == "funding_count_down_second":
+            count_down = (
+                self.funding_timestamp_array[self.day] - self.timestamp_array[self.day]
+            )
+            return float((count_down / np.timedelta64(1, "s")) % 60)
+        if field == "single_holding_return_rate":
+            return self.single_holding_return_rate
+        if field == "limit_reward":
+            return self.last_limit_reward
+        raise ValueError(
+            "unknown info field {!r}; supported fields: {}".format(
+                field, ", ".join(INFO_DIAGNOSTIC_FIELDS)
+            )
+        )
 
     def _reset_execution_metrics(self):
         self.commission_fee_step = 0
@@ -458,7 +526,6 @@ class Base_Env(gym.Env):
         return (
             state,
             {
-                "personal_state": self.initial_state,
                 "avaiable_action_list": avaiable_actions,
                 "avaliable_action": avaiable_action_mask,
                 "funding_count_down_hour": hours,
@@ -621,7 +688,6 @@ class Base_Env(gym.Env):
                 reward,
                 self.terminal,
                 {
-                    "personal_state": {0, 0, 0, 0, self.leverage_choices[0]},
                     "avaiable_action_list": avaiable_actions,
                     "avaliable_action": avaiable_action_mask,
                     "funding_count_down_hour": hours,
@@ -682,13 +748,6 @@ class Base_Env(gym.Env):
                     self.wallet_balance + self.unrealized_pnl - previous_margine_balance,
                     self.terminal,
                     {
-                        "personal_state": (
-                            self.wallet_balance,
-                            self.initial_margin,
-                            self.unrealized_pnl,
-                            self.position,
-                            self.leverage,
-                        ),
                         "avaiable_action_list": avaiable_actions,
                         "avaliable_action": avaiable_action_mask,
                         "funding_count_down_hour": 0,
@@ -802,13 +861,6 @@ class Base_Env(gym.Env):
                     reward,
                     self.terminal,
                     {
-                        "personal_state": (
-                            self.wallet_balance,
-                            self.initial_margin,
-                            self.unrealized_pnl,
-                            self.position,
-                            self.leverage,
-                        ),
                         "avaiable_action_list": avaiable_actions,
                         "avaliable_action": avaiable_action_mask,
                         "funding_count_down_hour": hours,
@@ -927,13 +979,6 @@ class Base_Env(gym.Env):
                     reward,
                     self.terminal,
                     {
-                        "personal_state": (
-                            self.wallet_balance,
-                            self.initial_margin,
-                            self.unrealized_pnl,
-                            self.position,
-                            self.leverage,
-                        ),
                         "avaiable_action_list": avaiable_actions,
                         "avaliable_action": avaiable_action_mask,
                         "funding_count_down_hour": hours,

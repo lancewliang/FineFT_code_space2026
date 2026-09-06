@@ -273,7 +273,6 @@ def test_run_full_df_warmup_updates_once_per_df(monkeypatch):
             return "s0", {
                 "avaiable_action_list": [0, 1, 2],
                 "previous_action": 0,
-                "personal_state": [0, 0, 0, 0, 0.0],
             }
 
         def step(self, action):
@@ -282,7 +281,6 @@ def test_run_full_df_warmup_updates_once_per_df(monkeypatch):
             return "s1", 1.0, done, {
                 "avaiable_action_list": [0, 1, 2],
                 "previous_action": action,
-                "personal_state": [0, 0, 0, 0, 0.0],
             }
 
     trainer = Weighted_Contexts_DQN.__new__(Weighted_Contexts_DQN)
@@ -362,14 +360,12 @@ def test_run_full_df_warmup_logs_first_row_tech_indicators(monkeypatch, caplog):
             return "s0", {
                 "avaiable_action_list": [0, 1, 2],
                 "previous_action": 0,
-                "personal_state": [0, 0, 0, 0, 0.0],
             }
 
         def step(self, action):
             return "s1", 1.0, True, {
                 "avaiable_action_list": [0, 1, 2],
                 "previous_action": action,
-                "personal_state": [0, 0, 0, 0, 0.0],
             }
 
     trainer = Weighted_Contexts_DQN.__new__(Weighted_Contexts_DQN)
@@ -452,7 +448,6 @@ def test_full_df_warmup_logs_rollout_balances_without_df_final_balance(
             return "s0", {
                 "avaiable_action_list": [0, 1, 2],
                 "previous_action": 0,
-                "personal_state": [0, 0, 0, 0, 0.0],
             }
 
         def step(self, action):
@@ -468,7 +463,6 @@ def test_full_df_warmup_logs_rollout_balances_without_df_final_balance(
             return "s1", reward, True, {
                 "avaiable_action_list": [0, 1, 2],
                 "previous_action": action,
-                "personal_state": [0, 0, 0, 0, 0.0],
             }
 
     trainer = Weighted_Contexts_DQN.__new__(Weighted_Contexts_DQN)

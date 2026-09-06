@@ -48,7 +48,7 @@ def test_disabled_by_default():
     env = initiate_base_env(df, feature_list=["feat1"], enable_limit_reward=False)
     env.reset()
     env.step(0)
-    assert env.get_last_limit_reward() == 0.0
+    assert env.get_info_field("limit_reward") == 0.0
 
 
 def test_limit_up_reward_and_penalty():
@@ -71,12 +71,12 @@ def test_limit_up_reward_and_penalty():
     # Action to take positive position (long)
     action_long = env.env_map_position_leverage_to_action(4, 5)
     env.step(action_long)
-    assert env.get_last_limit_reward() > 0.0
+    assert env.get_info_field("limit_reward") > 0.0
 
     # Step to short position in limit up
     action_short = env.env_map_position_leverage_to_action(-4, 5)
     env.step(action_short)
-    assert env.get_last_limit_reward() < 0.0
+    assert env.get_info_field("limit_reward") < 0.0
 
 
 def test_limit_down_reward_and_penalty():
@@ -99,12 +99,12 @@ def test_limit_down_reward_and_penalty():
     # Action to take negative position (short)
     action_short = env.env_map_position_leverage_to_action(-4, 5)
     env.step(action_short)
-    assert env.get_last_limit_reward() > 0.0
+    assert env.get_info_field("limit_reward") > 0.0
 
     # Action to take long position in limit down
     action_long = env.env_map_position_leverage_to_action(4, 5)
     env.step(action_long)
-    assert env.get_last_limit_reward() < 0.0
+    assert env.get_info_field("limit_reward") < 0.0
 
 
 def test_depth_ratio_scaling():
@@ -124,7 +124,9 @@ def test_depth_ratio_scaling():
     env1.step(action_long)
     env2.step(action_long)
 
-    assert env2.get_last_limit_reward() > env1.get_last_limit_reward()
+    assert (
+        env2.get_info_field("limit_reward") > env1.get_info_field("limit_reward")
+    )
 
 
 def test_demo_env_with_limit_reward():
@@ -145,5 +147,5 @@ def test_demo_env_with_limit_reward():
     env.reset()
     action_long = env.env_map_position_leverage_to_action(4, 5)
     _, _, _, info = env.step(action_long)
-    assert env.get_last_limit_reward() > 0.0
+    assert env.get_info_field("limit_reward") > 0.0
     assert "q_value" in info

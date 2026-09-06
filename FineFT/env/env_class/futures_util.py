@@ -1685,16 +1685,50 @@ def find_closest_action_target(
     return closest_action
 
 
-def rule_based_close(info, zero_position_action, leverage_choices, position_list):
-    # one step close position (step by step)
+def rule_based_close(
+    info,
+    zero_position_action,
+    leverage_choices,
+    position_list,
+    current_position,
+    current_leverage,
+):
+    """基于当前仓位的一步式逐步平仓动作选择。
+
+    仓位与杠杆通过显式参数传入（调用方从 env.position / env.leverage
+    读取），info 仅提供订单簿一档量（ask_qyts / bid_qyts）与可选动作
+    列表（avaiable_action_list），不依赖 personal_state。
+
+    Parameters
+    ----------
+    info : dict
+        env.step / env.reset 返回的 info，需包含 "ask_qyts"、"bid_qyts"
+        （订单簿一档量，用于限制单步平仓幅度）与 "avaiable_action_list"。
+    zero_position_action : int
+        空仓动作编号（仓位可直接清零时直接返回）。
+    leverage_choices : list
+        可用杠杆档位列表。
+    position_list : list
+        可用仓位档位列表。
+    current_position : float
+        当前持仓量（正为多，负为空）。
+    current_leverage : int
+        当前杠杆档位。
+
+    Returns
+    -------
+    int
+        本步应执行的平仓动作编号。
+
+    Raises
+    ------
+    KeyError
+        info 中缺少 "ask_qyts"、"bid_qyts" 或 "avaiable_action_list"。
+    """
     ask_qyts = info["ask_qyts"]
     bid_qyts = info["bid_qyts"]
     bid1_size = bid_qyts[0]
     ask1_size = ask_qyts[0]
-    current_position, current_leverage = (
-        info["personal_state"][-2],
-        info["personal_state"][-1],
-    )
     if current_position > 0:
         if current_position <= bid1_size:
             action = zero_position_action
