@@ -349,6 +349,7 @@ def apply_epoch_training_params(trainer, epoch_index):
     trainer.lr = params.lr
     for param_group in trainer.optimizer.param_groups:
         param_group["lr"] = trainer.lr
+    logger.info("epoch %d: epsilon=%.6f, ada=%.6f, lr=%.6f", epoch_index, params.epsilon, params.ada, params.lr)
 
 
 def make_cpu_state_dict(module):
