@@ -20,6 +20,9 @@
 # 经验唯一性由内容指纹保证：已存在相同指纹的经验不会重复写入经验池。
 # 连续 MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS 个 epoch 探索均未新增任何
 # 经验后，后续 epoch 跳过探索阶段，仅执行训练。
+# 启动时若 model_path/buffer_diverse.pkl 已存在（上次运行保存的快照），直接
+# 从文件系统加载并跳过全部探索，所有 epoch 仅在已冻结的经验池上训练；
+# 删除该文件即可重新从零开始完整探索。
 #
 # 依赖方向：本模块在顶层导入编排模块 parallel_weight_advantage_pretrain 的
 # 共享基础设施；编排模块改为在 df_rollout_worker 函数内部延迟导入本模块，
@@ -61,7 +64,7 @@ from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import (
 # 探索子进程数量上限（严格控制为 20）：df 数量更多时按 round-robin 分配给子进程
 MAX_EXPLORATION_WORKERS = 20
 # 每个 epoch 训练阶段的更新窗口数（每窗口执行 trainer.update_times 次参数更新）
-UPDATE_WINDOWS_PER_EPOCH = 50
+UPDATE_WINDOWS_PER_EPOCH = 5
 # 连续多少个 epoch 探索未新增任何经验后，后续 epoch 不再探索（仅训练）
 MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS = 5
 # 关闭子进程时 join 的超时秒数；超时未退出的进程以 terminate 兜底
@@ -349,6 +352,13 @@ def apply_epoch_training_params(trainer, epoch_index):
     trainer.lr = params.lr
     for param_group in trainer.optimizer.param_groups:
         param_group["lr"] = trainer.lr
+    logger.info(
+        "第 %d 轮 epoch 训练 | 学习率=%.6f | epsilon=%.6f | ada=%.6f",
+        epoch_index,
+        trainer.lr,
+        trainer.epsilon,
+        trainer.ada,
+    )
 
 
 def make_cpu_state_dict(module):
@@ -452,47 +462,50 @@ def run_diverse_training_phase(trainer, buffer_diverse, update_count, epoch_inde
         trainer.batch_size,
         trainer.device,
     )
-    logger.info(
-        "diverse training phase start | epoch_index=%d | update_count=%d | "
-        "buffer_size=%d",
-        epoch_index,
-        update_count,
-        len(buffer_diverse),
-    )
+
     last_losses = None
-    for _ in range(update_count):
-        (
-            states,
-            infos,
-            actions,
-            rewards,
-            next_states,
-            next_infos,
-            dones,
-        ) = sampler.sample()
-        last_losses = update(
-            trainer,
-            states,
-            infos,
-            actions,
-            rewards,
-            next_states,
-            next_infos,
-            dones,
+    for _window in range(UPDATE_WINDOWS_PER_EPOCH):
+        logger.info(
+            "diverse training phase window | epoch_index=%d | window=%d | update_count=%d | "
+            "buffer_size=%d",
+            epoch_index,
+            _window,
+            update_count,
+            len(buffer_diverse),
         )
-        total_loss, KL_loss, td_loss = last_losses
-        trainer.writer.add_scalar("total_loss", total_loss, trainer.update_counter)
-        trainer.writer.add_scalar("KL_loss", KL_loss, trainer.update_counter)
-        trainer.writer.add_scalar("td_loss", td_loss, trainer.update_counter)
-    logger.info(
-        "diverse training phase complete | epoch_index=%d | update_count=%d | "
-        "total_loss=%.6f | KL_loss=%.6f | td_loss=%.6f",
-        epoch_index,
-        update_count,
-        last_losses[0],
-        last_losses[1],
-        last_losses[2],
-    )
+        for _ in range(update_count):
+            (
+                states,
+                infos,
+                actions,
+                rewards,
+                next_states,
+                next_infos,
+                dones,
+            ) = sampler.sample()
+            last_losses = update(
+                trainer,
+                states,
+                infos,
+                actions,
+                rewards,
+                next_states,
+                next_infos,
+                dones,
+            )
+            total_loss, KL_loss, td_loss = last_losses
+            trainer.writer.add_scalar("total_loss", total_loss, trainer.update_counter)
+            trainer.writer.add_scalar("KL_loss", KL_loss, trainer.update_counter)
+            trainer.writer.add_scalar("td_loss", td_loss, trainer.update_counter)
+        logger.info(
+            "diverse training phase complete | epoch_index=%d | update_count=%d | "
+            "total_loss=%.6f | KL_loss=%.6f | td_loss=%.6f",
+            epoch_index,
+            update_count,
+            last_losses[0],
+            last_losses[1],
+            last_losses[2],
+        )
     return last_losses
 
 
@@ -541,8 +554,12 @@ def save_diverse_buffer(buffer_diverse, model_path):
     (state, info, action, reward, next_state, done, next_info)；n_step_buffer
     保存尚未折叠进 memory 的尾部 transition，字段顺序为
     (state, info, action, reward, next_state, next_info, done)。
+
+    先写入临时文件再 os.replace 原子替换：进程被杀死时不会留下截断的
+    半成品快照（历史遗留的 0 字节文件曾导致加载时 EOFError）。
     """
     buffer_path = build_diverse_buffer_path(model_path)
+    buffer_tmp_path = buffer_path + ".tmp"
     torch.save(
         {
             "memory": [tuple(experience) for experience in buffer_diverse.memory],
@@ -551,10 +568,33 @@ def save_diverse_buffer(buffer_diverse, model_path):
                 for n_step_deque in buffer_diverse.n_step_buffer
             ],
         },
-        buffer_path,
+        buffer_tmp_path,
     )
+    os.replace(buffer_tmp_path, buffer_path)
     logger.info(
         "diverse buffer snapshot saved | path=%s | memory_size=%d",
+        buffer_path,
+        len(buffer_diverse),
+    )
+
+
+def load_diverse_buffer(buffer_diverse, buffer_path):
+    """从文件加载经验池快照（save_diverse_buffer 的逆操作）。
+
+    memory / n_step_buffer 按保存时的顺序原样恢复。直接填充 memory 绕过了
+    add() -> calc_multistep_return() 的惰性初始化，需要从加载的经验恢复
+    info_key，否则 StackedTransitionSampler 构建时无法访问该属性。
+    """
+    payload = torch.load(buffer_path, map_location="cpu", weights_only=False)
+    for experience in payload["memory"]:
+        buffer_diverse.memory.append(buffer_diverse.experience(*experience))
+    for deque_index, transitions in enumerate(payload["n_step_buffer"]):
+        for transition in transitions:
+            buffer_diverse.n_step_buffer[deque_index].append(tuple(transition))
+    if payload["memory"]:
+        buffer_diverse.info_key = payload["memory"][0][6].keys()
+    logger.info(
+        "diverse buffer snapshot loaded | path=%s | memory_size=%d",
         buffer_path,
         len(buffer_diverse),
     )
@@ -656,6 +696,7 @@ class DfRolloutWorkerRunner:
         episode = self.episodes[message.df_index]
         load_worker_state_dict(self.model, message.state_dict)
         self.model.eval()
+
         transitions = []
         while not episode.done:
             action = self._act(
@@ -1116,6 +1157,9 @@ def run_parallel_diverse_training(
     - 训练 -> 下一轮探索：本轮全部参数更新执行完毕并保存模型。
     经验按内容指纹去重，重复经验不会写入经验池。
     每次探索完成后将经验池快照保存到 model_path/buffer_diverse.pkl。
+    启动时若该文件已存在（上次运行保存的快照），直接从文件系统加载并跳过
+    全部探索，所有 epoch 仅在已冻结的经验池上训练；删除该文件即可重新
+    从零开始完整探索。
     连续 MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS 个 epoch 探索均未新增任何
     经验后，后续 epoch 跳过探索阶段（不再创建子进程），仅执行训练。
     """
@@ -1125,6 +1169,18 @@ def run_parallel_diverse_training(
     seen_fingerprints = set()
     consecutive_no_new_experience_epochs = 0
     skip_exploration = False
+    buffer_path = build_diverse_buffer_path(trainer.model_path)
+    if os.path.exists(buffer_path):
+        # 上次运行保存的经验池快照已存在：直接加载并跳过全部探索，
+        # 所有 epoch 仅在已冻结的经验池上执行训练
+        load_diverse_buffer(buffer_diverse, buffer_path)
+        
+        logger.info(
+            "多样化训练经验池已存在，直接从文件系统加载并跳过探索 | "
+            "文件=%s | 经验池大小=%d",
+            buffer_path,
+            len(buffer_diverse),
+        )
     for epoch_index in range(trainer.num_epoch):
         apply_epoch_training_params(trainer, epoch_index)
         if skip_exploration:
@@ -1135,6 +1191,7 @@ def run_parallel_diverse_training(
                 consecutive_no_new_experience_epochs,
             )
             epoch_metrics = []
+            
         else:
             # 阶段一：完整探索 —— 本轮探索创建全新子进程（上限 20），结束即彻底关闭
             fingerprints_before_exploration = len(seen_fingerprints)
@@ -1170,20 +1227,22 @@ def run_parallel_diverse_training(
                     epoch_index,
                     consecutive_no_new_experience_epochs,
                 )
-        # 阶段三：完整训练 —— 经验池已冻结，且无任何探索子进程存活
-        update_count = trainer.update_times * UPDATE_WINDOWS_PER_EPOCH
+            else:
+                skip_exploration = False
+            log_diverse_rollout_latest_metrics(
+                epoch_index + 1,
+                diverse_rollout_latest_metrics_by_df,
+                logger,
+            )
+
+        # 阶段三：完整训练 —— 经验池已冻结，且无任何探索子进程存活         
         run_diverse_training_phase(
             trainer,
             buffer_diverse,
-            update_count,
+            trainer.update_times,
             epoch_index,
         )
         write_epoch_rollout_scalars(trainer, epoch_metrics, epoch_index)
-        log_diverse_rollout_latest_metrics(
-            epoch_index + 1,
-            diverse_rollout_latest_metrics_by_df,
-            logger,
-        )
         save_parallel_epoch_model(trainer, epoch_index)
     return step_counter_diverse
 
