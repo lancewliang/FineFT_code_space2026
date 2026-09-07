@@ -61,7 +61,7 @@ from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import (
 # 探索子进程数量上限（严格控制为 20）：df 数量更多时按 round-robin 分配给子进程
 MAX_EXPLORATION_WORKERS = 20
 # 每个 epoch 训练阶段的更新窗口数（每窗口执行 trainer.update_times 次参数更新）
-UPDATE_WINDOWS_PER_EPOCH = 30
+UPDATE_WINDOWS_PER_EPOCH = 1
 # 连续多少个 epoch 探索未新增任何经验后，后续 epoch 不再探索（仅训练）
 MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS = 5
 # 关闭子进程时 join 的超时秒数；超时未退出的进程以 terminate 兜底
@@ -324,10 +324,14 @@ def compute_epoch_training_params(
     ada_min,
     lr_init,
     lr_min,
+    decay_epochs=None,
 ):
+    effective_decay_epochs = num_epoch if decay_epochs is None else decay_epochs
     return EpochTrainingParams(
-        epsilon=_linear_value(epsilon_init, epsilon_min, epoch_index, num_epoch),
-        ada=_held_then_linear_value(ada_init, ada_min, epoch_index, num_epoch),
+        epsilon=_linear_value(
+            epsilon_init, epsilon_min, epoch_index, effective_decay_epochs
+        ),
+        ada=_linear_value(ada_init, ada_min, epoch_index, effective_decay_epochs),
         lr=_held_then_linear_value(lr_init, lr_min, epoch_index, num_epoch),
     )
 
@@ -343,6 +347,7 @@ def apply_epoch_training_params(trainer, epoch_index):
         ada_min=trainer.ada_min,
         lr_init=trainer.lr_init,
         lr_min=trainer.lr_min,
+        decay_epochs=trainer.decay_epochs,
     )
     trainer.epsilon = params.epsilon
     trainer.ada = params.ada

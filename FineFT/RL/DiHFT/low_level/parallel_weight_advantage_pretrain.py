@@ -357,6 +357,12 @@ parser.add_argument(
     help="number of parallel diverse-training epochs; one epoch explores every effective df once",
 )
 parser.add_argument(
+    "--decay_epochs",
+    type=int,
+    default=None,
+    help="number of epochs to complete epsilon and ada decay; defaults to num_epoch if not set",
+)
+parser.add_argument(
     "--seed",
     type=int,
     default=12345,
@@ -591,6 +597,11 @@ class Weighted_Contexts_DQN:
         self.lr = self.lr_init
         self.num_sample = args.num_sample
         self.num_epoch = args.num_epoch if args.num_epoch is not None else args.num_sample
+        self.decay_epochs = (
+            args.decay_epochs if args.decay_epochs is not None else self.num_epoch
+        )
+        if self.decay_epochs <= 0:
+            raise ValueError("decay_epochs must be positive")
         # trading environment setting
         self.base_path = args.base_path
         self.dataset_name = args.dataset_name

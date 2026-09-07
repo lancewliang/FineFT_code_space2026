@@ -128,9 +128,68 @@ def test_compute_epoch_schedules_match_decay_requirements():
     )
 
     assert first == pdt.EpochTrainingParams(epsilon=1.0, ada=256.0, lr=0.005)
-    assert middle == pdt.EpochTrainingParams(epsilon=0.6, ada=256.0, lr=0.005)
+    assert middle == pdt.EpochTrainingParams(epsilon=0.6, ada=128.0, lr=0.005)
     assert last == pdt.EpochTrainingParams(epsilon=0.2, ada=0.0, lr=0.001)
     assert first.to_dict() == {"epsilon": 1.0, "ada": 256.0, "lr": 0.005}
+
+
+def test_compute_epoch_schedules_with_decay_epochs():
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+    import pytest
+
+    params_start = pdt.compute_epoch_training_params(
+        epoch_index=0,
+        num_epoch=10,
+        epsilon_init=1.0,
+        epsilon_min=0.1,
+        ada_init=256.0,
+        ada_min=0.0,
+        lr_init=0.005,
+        lr_min=0.001,
+        decay_epochs=7,
+    )
+    params_mid = pdt.compute_epoch_training_params(
+        epoch_index=3,
+        num_epoch=10,
+        epsilon_init=1.0,
+        epsilon_min=0.1,
+        ada_init=256.0,
+        ada_min=0.0,
+        lr_init=0.005,
+        lr_min=0.001,
+        decay_epochs=7,
+    )
+    params_epoch7 = pdt.compute_epoch_training_params(
+        epoch_index=6,
+        num_epoch=10,
+        epsilon_init=1.0,
+        epsilon_min=0.1,
+        ada_init=256.0,
+        ada_min=0.0,
+        lr_init=0.005,
+        lr_min=0.001,
+        decay_epochs=7,
+    )
+    params_later = pdt.compute_epoch_training_params(
+        epoch_index=8,
+        num_epoch=10,
+        epsilon_init=1.0,
+        epsilon_min=0.1,
+        ada_init=256.0,
+        ada_min=0.0,
+        lr_init=0.005,
+        lr_min=0.001,
+        decay_epochs=7,
+    )
+
+    assert params_start.epsilon == 1.0
+    assert params_start.ada == 256.0
+    assert params_mid.epsilon == pytest.approx(0.55)
+    assert params_mid.ada == pytest.approx(128.0)
+    assert params_epoch7.epsilon == pytest.approx(0.1)
+    assert params_epoch7.ada == pytest.approx(0.0)
+    assert params_later.epsilon == pytest.approx(0.1)
+    assert params_later.ada == pytest.approx(0.0)
 
 
 def test_single_epoch_schedule_keeps_initial_values():
@@ -827,6 +886,7 @@ def test_run_parallel_diverse_training_completes_exploration_before_training(
     trainer = MagicMock()
     trainer.total_df_index_length = 2
     trainer.num_epoch = 2
+    trainer.decay_epochs = 2
     trainer.N = 1
     trainer.position_choices = 2
     trainer.epsilon_init = 1.0
@@ -1009,6 +1069,7 @@ def test_run_parallel_diverse_training_skips_exploration_after_three_stale_epoch
     trainer = MagicMock()
     trainer.total_df_index_length = 2
     trainer.num_epoch = 5
+    trainer.decay_epochs = 5
     trainer.N = 1
     trainer.position_choices = 2
     trainer.epsilon_init = 1.0
@@ -1341,6 +1402,16 @@ def test_parallel_parser_allow_reverse_position_default_and_flag():
 
     args_flag = pwap.parser.parse_args(["--allow_reverse_position"])
     assert args_flag.allow_reverse_position is True
+
+
+def test_parallel_parser_decay_epochs_default_and_flags():
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+
+    args_default = pwap.parser.parse_args([])
+    assert args_default.decay_epochs is None
+
+    args_flag = pwap.parser.parse_args(["--decay_epochs", "7"])
+    assert args_flag.decay_epochs == 7
 
 
 def _make_parallel_update_trainer(pwap):
