@@ -21,9 +21,12 @@ Before implementing:
 - No features beyond what was asked.
 - No abstractions for single-use code.
 - No "flexibility" or "configurability" that wasn't requested.
-- Fail fast, no defensive bloat: Do not add speculative defensive checks (e.g. redundant `None`/type checks, try-catch wrappers, default fallbacks) for internal calls or impossible scenarios. Let errors fail fast and loud.
-- Strict anti-defensive attribute access: Strictly forbid using `getattr(self, "attr", default)` or `hasattr(self, "attr")` for class members, configuration settings, or internal state. Always access attributes directly via `self.attr`. Never invent default values or magic numbers to silently paper over missing attributes. If an attribute is missing, let it fail fast with `AttributeError`.
-- No defensive accommodations for tests: Never introduce `getattr`/`hasattr` or fallback logic into production/business code to accommodate incomplete test mocks, stubs, or `__new__` instances. Tests must initialize and mock the necessary attributes.
+- Fail fast, no defensive bloat: Strictly prohibit defensive bloat and speculative guards (e.g. redundant `None` checks, try-catch wrappers, default fallbacks, runtime type assertions) for internal calls or impossible scenarios. Let errors fail fast and loud at the exact failure site.
+- Strict prohibition of `hasattr` and `getattr`: Strictly forbid using `getattr(obj, "attr", default)` or `hasattr(obj, "attr")` on any object, class instance, configuration setting, or module. Always access attributes directly via `obj.attr` or `self.attr`. Dynamic `getattr` is only permissible when the attribute name is a truly dynamic variable from an external registry or configuration dispatch, never as a defensive existence check. If an attribute is missing, let it fail fast with `AttributeError`.
+- Strict prohibition of `isinstance` type guards: Strictly forbid defensive `isinstance(...)` checks or type assertion ladders (e.g. `if not isinstance(x, T): raise TypeError(...)` or `if isinstance(x, list): ... elif isinstance(x, str): ...`) in internal logic. Trust type annotations and duck typing. Do not write defensive polymorphic adapters; expect callers to adhere to signatures and allow standard operations to fail naturally with `TypeError` or `AttributeError`.
+- Strict prohibition of defensive dictionary access: Forbid `dict.get("key", default)` when the key is expected or required by schema, config, or business contract. Use direct indexing `data["key"]`. Never use `if "key" in data:` solely to guard an immediate access or inject speculative fallback values. Missing keys must fail fast with `KeyError`.
+- No defensive exception swallowing: Never wrap normal attribute, dict, or method access in `try...except (AttributeError, KeyError, TypeError):` to silently swallow errors or return defaults. Errors must surface immediately to reveal bugs at their root cause.
+- No defensive accommodations for tests: Never introduce `getattr`/`hasattr`/`isinstance` or fallback logic into production/business code to accommodate incomplete test mocks, stubs, or `__new__` instances. Tests must initialize and mock the necessary attributes.
 - No backward-compatibility baggage: When updating interfaces or logic, directly replace obsolete code and parameters. Do not add compatibility shims, fallback branches, or legacy wrappers unless explicitly requested.
 - If you write 200 lines and it could be 50, rewrite it.
 
@@ -83,6 +86,7 @@ Types and interfaces:
 - Public functions, cross-module interfaces, and non-trivial data structures should have explicit types.
 - Avoid broad `Any`; if it is necessary, keep it local and explain why through the surrounding code.
 - Prefer built-in generics such as `list[str]` and `dict[str, int]` when the supported Python version allows it.
+- Trust types, avoid runtime type inspections: Do not use `isinstance(...)` or `type(x) is T` as runtime guards or dispatch ladders in internal logic. Trust type signatures and Python duck typing; let invalid operations fail fast with `TypeError` or `AttributeError`.
 
 Functions and structure:
 - Keep functions focused on one job.
@@ -93,7 +97,8 @@ Functions and structure:
 Errors and logging:
 - Catch specific exceptions, not bare `except:`.
 - Fail fast: Let exceptions propagate naturally. Do not catch exceptions unless they can be meaningfully handled or translated at this boundary; never invent silent fallback return values or swallow errors to prevent crashes.
-- Direct attribute access: Never guard normal attribute access with `getattr(..., default)` or `hasattr(...)`. If an attribute or dict key is required, access it directly (`self.attr` or `data[key]`).
+- Direct attribute and key access: Strictly avoid defensive access patterns. Never guard normal attribute access with `getattr(..., default)` or `hasattr(...)` on any object. If an attribute or dict key is required, access it directly (`obj.attr` or `data[key]`).
+- No defensive swallowing: Never wrap calls in `try...except (AttributeError, KeyError, TypeError):` to paper over missing attributes or keys with default values.
 - Include useful context in error messages.
 - Use `logging` for library code; reserve `print` for CLI or script user output.
 
