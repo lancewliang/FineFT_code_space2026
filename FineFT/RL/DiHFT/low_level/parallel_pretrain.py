@@ -257,66 +257,196 @@ def populate_buffer_transitions(buffer_pretrain, transitions):
         buffer_pretrain.items.extend(transitions)
 
 
+def extract_stacked_tensor_dict(buffer, chunk_size=50000):
+    """将经验池（ReplayBuffer 或快照字典）分批提取并堆叠为连续 Tensor 字典。
+
+    使用预分配 Tensor + 分块（chunk_size）写入，避免数百万个小对象的列表推导式
+    与全量 np.stack 造成数十 GB 临时内存爆炸。
+    """
+    if isinstance(buffer, dict) and "states" in buffer:
+        return buffer
+
+    from RL.util.replay_buffer_DQN import NETWORK_INFO_KEYS
+
+    if isinstance(buffer, dict) and "memory" in buffer:
+        memory = buffer["memory"]
+        n_step_buffer = buffer.get("n_step_buffer", [])
+    elif hasattr(buffer, "memory"):
+        memory = list(buffer.memory)
+        n_step_buffer = [
+            [tuple(t) for t in deque_item]
+            for deque_item in getattr(buffer, "n_step_buffer", [])
+        ]
+    else:
+        memory = list(buffer)
+        n_step_buffer = [
+            [tuple(t) for t in deque_item]
+            for deque_item in getattr(buffer, "n_step_buffer", [])
+        ]
+
+    n = len(memory)
+    if n == 0:
+        return {
+            "states": torch.empty((0, 0), dtype=torch.float32),
+            "actions": torch.empty((0, 1), dtype=torch.int64),
+            "rewards": torch.empty((0, 1), dtype=torch.float32),
+            "next_states": torch.empty((0, 0), dtype=torch.float32),
+            "dones": torch.empty((0, 1), dtype=torch.float32),
+            "infos": {},
+            "next_infos": {},
+            "info_keys": [],
+            "n_step_buffer": n_step_buffer,
+            "buffer_size": 0,
+        }
+
+    first = memory[0]
+    if hasattr(first, "state"):
+        first_state = first.state
+        first_info = first.info
+        first_next_info = first.next_info
+    else:
+        first_state = first[0]
+        first_info = first[1]
+        first_next_info = first[6]
+
+    state_shape = np.asarray(first_state).shape
+    raw_info_keys = getattr(buffer, "info_key", None)
+    if raw_info_keys is None:
+        raw_info_keys = list(first_info.keys())
+    target_info_keys = [k for k in raw_info_keys if k in NETWORK_INFO_KEYS]
+    if not target_info_keys and raw_info_keys:
+        target_info_keys = list(raw_info_keys)
+
+    states = torch.empty((n, *state_shape), dtype=torch.float32)
+    actions = torch.empty((n, 1), dtype=torch.int64)
+    rewards = torch.empty((n, 1), dtype=torch.float32)
+    next_states = torch.empty((n, *state_shape), dtype=torch.float32)
+    dones = torch.empty((n, 1), dtype=torch.float32)
+
+    infos = {}
+    next_infos = {}
+    for k in target_info_keys:
+        val = np.asarray(first_info[k])
+        val_dtype = torch.float32 if np.issubdtype(val.dtype, np.floating) else torch.int64
+        infos[k] = torch.empty((n, *val.shape), dtype=val_dtype)
+        val_ = np.asarray(first_next_info[k])
+        val_dtype_ = torch.float32 if np.issubdtype(val_.dtype, np.floating) else torch.int64
+        next_infos[k] = torch.empty((n, *val_.shape), dtype=val_dtype_)
+
+    for start in range(0, n, chunk_size):
+        end = min(start + chunk_size, n)
+        chunk = memory[start:end]
+        if hasattr(chunk[0], "state"):
+            c_states = [e.state for e in chunk]
+            c_actions = [e.action for e in chunk]
+            c_rewards = [e.reward for e in chunk]
+            c_next_states = [e.next_state for e in chunk]
+            c_dones = [e.done for e in chunk]
+            c_infos = [e.info for e in chunk]
+            c_next_infos = [e.next_info for e in chunk]
+        else:
+            c_states = [e[0] for e in chunk]
+            c_infos = [e[1] for e in chunk]
+            c_actions = [e[2] for e in chunk]
+            c_rewards = [e[3] for e in chunk]
+            c_next_states = [e[4] for e in chunk]
+            c_dones = [e[5] for e in chunk]
+            c_next_infos = [e[6] for e in chunk]
+
+        states[start:end] = torch.from_numpy(np.stack(c_states)).float()
+        actions[start:end] = torch.from_numpy(np.vstack(c_actions)).long()
+        rewards[start:end] = torch.from_numpy(np.vstack(c_rewards)).float()
+        next_states[start:end] = torch.from_numpy(np.stack(c_next_states)).float()
+        dones[start:end] = torch.from_numpy(np.vstack(c_dones)).float()
+
+        for k in target_info_keys:
+            infos[k][start:end] = torch.as_tensor(np.stack([np.asarray(inf[k]) for inf in c_infos]))
+            next_infos[k][start:end] = torch.as_tensor(np.stack([np.asarray(inf[k]) for inf in c_next_infos]))
+
+    return {
+        "states": states,
+        "actions": actions,
+        "rewards": rewards,
+        "next_states": next_states,
+        "dones": dones,
+        "infos": infos,
+        "next_infos": next_infos,
+        "info_keys": target_info_keys,
+        "n_step_buffer": n_step_buffer,
+        "buffer_size": n,
+    }
+
+
 class StackedTransitionSampler:
     """经验池预堆叠采样器。
 
-    训练前将整个经验池一次性堆叠为连续 numpy 数组，采样时用整数索引
-    直接取行，替代逐元素 np.stack（batch 很大时逐元素堆叠是主要瓶颈，
-    导致 GPU 大部分时间在空等 CPU 采样）。采样语义与
-    Multi_step_ReplayBuffer_multi_info.sample() 一致：无放回均匀采样。
-    仅适用于训练前经验池已冻结的场景（warmup 训练循环）。
+    支持两种输入：
+    1. 张量化字典（{"states": tensor, ...}），无需重新堆叠，零额外内存开销；
+    2. 传统 buffer 对象（含 memory deque），按分块（chunk_size）预堆叠为张量，严格控制峰值内存。
+    采样语义与 Multi_step_ReplayBuffer_multi_info.sample() 一致：无放回均匀采样。
     """
 
     def __init__(self, buffer, batch_size, device):
-        from RL.util.replay_buffer_DQN import NETWORK_INFO_KEYS
-
-        memory = list(buffer.memory)
-        self.n = len(memory)
-        if self.n < batch_size:
-            raise ValueError(
-                "buffer size ({}) is smaller than batch_size ({})".format(
-                    self.n, batch_size
+        if isinstance(buffer, dict) and "states" in buffer:
+            self.n = buffer["buffer_size"] if "buffer_size" in buffer else buffer["states"].shape[0]
+            if self.n < batch_size:
+                raise ValueError(
+                    "buffer size ({}) is smaller than batch_size ({})".format(
+                        self.n, batch_size
+                    )
                 )
-            )
-        self.batch_size = batch_size
-        self.device = device
-        self.states = np.stack([e.state for e in memory])
-        self.actions = np.vstack([e.action for e in memory])
-        self.rewards = np.vstack([e.reward for e in memory])
-        self.next_states = np.stack([e.next_state for e in memory])
-        self.dones = np.vstack([e.done for e in memory]).astype(float)
-        self.info_keys = [k for k in buffer.info_key if k in NETWORK_INFO_KEYS]
-        self.infos = {
-            k: np.stack([e.info[k] for e in memory]).astype(float)
-            for k in self.info_keys
-        }
-        self.next_infos = {
-            k: np.stack([e.next_info[k] for e in memory]).astype(float)
-            for k in self.info_keys
-        }
+            self.batch_size = batch_size
+            self.device = device
+            self.states = buffer["states"]
+            self.actions = buffer["actions"]
+            self.rewards = buffer["rewards"]
+            self.next_states = buffer["next_states"]
+            self.dones = buffer["dones"]
+            self.info_keys = list(buffer.get("infos", {}).keys())
+            self.infos = buffer.get("infos", {})
+            self.next_infos = buffer.get("next_infos", {})
+        else:
+            payload = extract_stacked_tensor_dict(buffer)
+            self.n = payload["buffer_size"]
+            if self.n < batch_size:
+                raise ValueError(
+                    "buffer size ({}) is smaller than batch_size ({})".format(
+                        self.n, batch_size
+                    )
+                )
+            self.batch_size = batch_size
+            self.device = device
+            self.states = payload["states"]
+            self.actions = payload["actions"]
+            self.rewards = payload["rewards"]
+            self.next_states = payload["next_states"]
+            self.dones = payload["dones"]
+            self.info_keys = payload["info_keys"]
+            self.infos = payload["infos"]
+            self.next_infos = payload["next_infos"]
 
     def sample(self):
         idx = np.random.choice(self.n, size=self.batch_size, replace=False)
         states = (
-            torch.from_numpy(self.states[idx]).float().to(self.device)
+            torch.as_tensor(self.states[idx]).float().to(self.device)
         )
         infos = {
-            k: torch.from_numpy(v[idx]).float().to(self.device)
+            k: torch.as_tensor(v[idx]).float().to(self.device)
             for k, v in self.infos.items()
         }
-        actions = torch.from_numpy(self.actions[idx]).long().to(self.device)
+        actions = torch.as_tensor(self.actions[idx]).long().to(self.device)
         rewards = (
-            torch.from_numpy(self.rewards[idx]).float().to(self.device)
+            torch.as_tensor(self.rewards[idx]).float().to(self.device)
         )
         next_states = (
-            torch.from_numpy(self.next_states[idx]).float().to(self.device)
+            torch.as_tensor(self.next_states[idx]).float().to(self.device)
         )
         next_infos = {
-            k: torch.from_numpy(v[idx]).float().to(self.device)
+            k: torch.as_tensor(v[idx]).float().to(self.device)
             for k, v in self.next_infos.items()
         }
         dones = (
-            torch.from_numpy(self.dones[idx]).float().to(self.device)
+            torch.as_tensor(self.dones[idx]).float().to(self.device)
         )
         return (states, infos, actions, rewards, next_states, next_infos, dones)
 
@@ -380,40 +510,30 @@ def run_exhaustive_warmup(
     pretrain_buffer_path, pretrain_model_path = resolve_pretrain_paths(trainer)
 
     load_model = getattr(trainer, "load_pretrain_model", False)
-    if isinstance(load_model, bool) and load_model:
-        if pretrain_model_path is not None and os.path.exists(pretrain_model_path):
-            state_dict = torch.load(
-                pretrain_model_path,
-                map_location=getattr(trainer, "device", "cpu"),
-            )
-            if hasattr(trainer, "eval_net") and hasattr(
-                trainer.eval_net, "load_state_dict"
-            ):
-                trainer.eval_net.load_state_dict(state_dict)
-            if hasattr(trainer, "target_net") and hasattr(
-                trainer.target_net, "load_state_dict"
-            ):
-                trainer.target_net.load_state_dict(state_dict)
-            logger.info(
-                "已读取已训练的预先训练模型并跳过预先训练 | 模型路径=%s",
-                pretrain_model_path,
-            )
-            eval_metrics = evaluate_warmup_sub_agents(
-                trainer=trainer,
-                train_df_cache=train_df_cache,
-                env_kwargs=env_kwargs,
-            )
-            return {
-                "episodes": 0,
-                "transitions": step_counter_pretrain,
-                "update_count": 0,
-                "eval_metrics": eval_metrics,
-            }, step_counter_pretrain
-        else:
-            raise FileNotFoundError(
-                f"pretrain model file not found: {pretrain_model_path}"
-            )
-
+    if isinstance(load_model, bool) and load_model and pretrain_model_path is not None and os.path.exists(pretrain_model_path):
+        state_dict = torch.load(
+            pretrain_model_path,
+            map_location=getattr(trainer, "device", "cpu"),
+        )
+        if hasattr(trainer, "eval_net") and hasattr(
+            trainer.eval_net, "load_state_dict"
+        ):
+            trainer.eval_net.load_state_dict(state_dict)
+        if hasattr(trainer, "target_net") and hasattr(
+            trainer.target_net, "load_state_dict"
+        ):
+            trainer.target_net.load_state_dict(state_dict)
+        logger.info(
+            "已读取已训练的预先训练模型并跳过预先训练 | 模型路径=%s",
+            pretrain_model_path,
+        )
+        
+        return {
+            "episodes": 0,
+            "transitions": step_counter_pretrain,
+            "update_count": 0,
+        }, step_counter_pretrain
+   
     if trainer.total_df_index_length <= 0:
         raise ValueError("exhaustive warmup requires total_df_index_length > 0")
     if getattr(trainer, "pretrain_epoch", 0) < 0:

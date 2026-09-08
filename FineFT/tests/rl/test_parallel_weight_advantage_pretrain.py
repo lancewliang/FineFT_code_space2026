@@ -636,11 +636,12 @@ def test_epoch_model_path_uses_epoch_index():
     assert pdt.build_epoch_model_path("/tmp/model", 2).endswith("epoch_3")
 
 
-def test_save_diverse_buffer_writes_plain_tuple_snapshot(tmp_path):
+def test_save_diverse_buffer_writes_tensor_snapshot(tmp_path):
     import numpy as np
     import torch
     from collections import deque, namedtuple
     from RL.DiHFT.low_level import parallel_diverse_train as pdt
+    from RL.DiHFT.low_level.parallel_pretrain import StackedTransitionSampler
 
     Experience = namedtuple(
         "Experience",
@@ -665,20 +666,30 @@ def test_save_diverse_buffer_writes_plain_tuple_snapshot(tmp_path):
             return len(self.memory)
 
     buffer = DummyBuffer()
-    pdt.save_diverse_buffer(buffer, str(tmp_path))
+    payload = pdt.save_diverse_buffer(buffer, str(tmp_path))
 
     buffer_path = tmp_path / "buffer_diverse.pkl"
     assert buffer_path.exists()
     snapshot = torch.load(buffer_path, weights_only=False)
-    # memory 以普通 tuple 落盘（动态创建的 namedtuple 无法被 pickle）
-    assert isinstance(snapshot["memory"][0], tuple)
-    assert not hasattr(snapshot["memory"][0], "state")
-    assert np.array_equal(snapshot["memory"][0][0], np.array([1.0, 2.0]))
-    assert snapshot["memory"][0][2] == 3
-    assert snapshot["memory"][0][5] is True  # done
+    # 张量化存储落盘：直接以 Tensor 连续组织，消除嵌套 Python 复合对象
+    assert torch.is_tensor(snapshot["states"])
+    assert torch.allclose(snapshot["states"][0], torch.tensor([1.0, 2.0]))
+    assert snapshot["actions"][0].item() == 3
+    assert snapshot["rewards"][0].item() == 1.5
+    assert torch.allclose(snapshot["next_states"][0], torch.tensor([3.0, 4.0]))
+    assert snapshot["dones"][0].item() == 1.0
+    assert snapshot["infos"]["previous_action"][0].item() == 0
+    assert snapshot["next_infos"]["previous_action"][0].item() == 1
+    assert snapshot["buffer_size"] == 1
     # n_step_buffer 保存尚未折叠进 memory 的尾部 transition
     assert len(snapshot["n_step_buffer"]) == 1
     assert np.array_equal(snapshot["n_step_buffer"][0][0][0], np.array([9.0]))
+
+    # 验证 StackedTransitionSampler 可直接基于该快照采样
+    sampler = StackedTransitionSampler(snapshot, batch_size=1, device="cpu")
+    batch = sampler.sample()
+    assert len(batch) == 7
+    assert torch.allclose(batch[0][0], torch.tensor([1.0, 2.0]))
 
 
 def test_run_parallel_rollout_task_completes_in_single_round_without_updates(
@@ -1174,6 +1185,226 @@ def test_run_parallel_diverse_training_skips_exploration_after_three_stale_epoch
     assert "save_buffer" not in tail
     assert tail.count("sampler_built") == 1
     assert tail.count("update") == 30
+
+
+def test_is_buffer_full_detects_capacity_from_buffer_or_trainer():
+    from collections import deque
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+
+    class BufferWithAttr:
+        buffer_size = 10
+
+        def __len__(self):
+            return 10
+
+    assert pdt.is_buffer_full(BufferWithAttr()) is True
+
+    class BufferWithDeque:
+        memory = deque(maxlen=5)
+
+        def __len__(self):
+            return 5
+
+    assert pdt.is_buffer_full(BufferWithDeque()) is True
+
+    class BufferNotFull:
+        buffer_size = 10
+
+        def __len__(self):
+            return 9
+
+    assert pdt.is_buffer_full(BufferNotFull()) is False
+
+    class BufferWithoutAttr:
+        def __len__(self):
+            return 20
+
+    assert pdt.is_buffer_full(BufferWithoutAttr()) is False
+    trainer = type("Trainer", (), {"buffer_size": 20})()
+    assert pdt.is_buffer_full(BufferWithoutAttr(), trainer) is True
+
+
+def test_run_parallel_diverse_training_skips_exploration_when_buffer_full(monkeypatch):
+    """经验池已满时，直接跳过探索阶段，不启动任何 worker，直接执行训练。"""
+    import types
+    from unittest.mock import MagicMock
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+
+    events = []
+
+    trainer = MagicMock()
+    trainer.total_df_index_length = 2
+    trainer.num_epoch = 2
+    trainer.decay_epochs = 2
+    trainer.N = 1
+    trainer.position_choices = 1
+    trainer.epsilon_init = 1.0
+    trainer.epsilon_min = 0.1
+    trainer.ada_init = 256.0
+    trainer.ada_min = 0.0
+    trainer.lr_init = 0.005
+    trainer.lr_min = 0.001
+    trainer.batch_size = 1
+    trainer.update_times = 1
+    trainer.n_step = 1
+    trainer.update_counter = 0
+    trainer.optimizer = types.SimpleNamespace(param_groups=[{"lr": 0.0}])
+    trainer.writer = MagicMock()
+
+    class FullBuffer:
+        buffer_size = 10
+
+        def __len__(self):
+            return 10
+
+    buffer_diverse = FullBuffer()
+
+    monkeypatch.setattr(
+        pdt, "start_parallel_workers", lambda *args: events.append("start_workers")
+    )
+    monkeypatch.setattr(
+        pdt,
+        "shutdown_exploration_workers",
+        lambda *args: events.append("shutdown_workers"),
+    )
+    monkeypatch.setattr(
+        pdt, "save_diverse_buffer", lambda *args: events.append("save_buffer")
+    )
+
+    class FakeSampler:
+        def __init__(self, buffer, batch_size, device):
+            events.append("sampler_built")
+
+        def sample(self):
+            return ("s", {}, "a", "r", "s_", {}, "d")
+
+    monkeypatch.setattr(pdt, "StackedTransitionSampler", FakeSampler)
+    monkeypatch.setattr(pdt, "update", lambda *args, **kwargs: (1.0, 0.5, 0.5))
+    monkeypatch.setattr(
+        pdt,
+        "save_parallel_epoch_model",
+        lambda tr, epoch_index: events.append(("save_model", epoch_index)),
+    )
+
+    final_steps = pdt.run_parallel_diverse_training(
+        trainer=trainer,
+        train_df_cache={},
+        env_kwargs={},
+        buffer_diverse=buffer_diverse,
+        step_counter_diverse=0,
+        diverse_rollout_latest_metrics_by_df={},
+    )
+
+    # 经验池满：完全不启动 worker，不保存 buffer，只执行训练
+    assert events.count("start_workers") == 0
+    assert events.count("shutdown_workers") == 0
+    assert events.count("save_buffer") == 0
+    assert events.count("sampler_built") == 2
+    assert final_steps == 0
+
+
+def test_run_epoch_exploration_stops_early_when_buffer_becomes_full(monkeypatch):
+    """探索过程中经验池达到上限，提前终止本轮后续任务探索并安全退出。"""
+    import queue
+    import numpy as np
+    from unittest.mock import MagicMock
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+
+    events = []
+
+    class DummyInputQueue:
+        def __init__(self, df_index, result_queue):
+            self.df_index = df_index
+            self.result_queue = result_queue
+
+        def put(self, message):
+            if type(message).__name__ == "ResetWorkerTask":
+                return
+            transition = (
+                np.array(
+                    [
+                        float(self.df_index),
+                        float(message.context_index),
+                        float(message.initial_action),
+                    ]
+                ),
+                {"previous_action": message.initial_action},
+                1,
+                1.0,
+                np.array(
+                    [
+                        float(self.df_index),
+                        float(message.context_index),
+                        float(message.initial_action) + 0.5,
+                    ]
+                ),
+                {"previous_action": 1},
+                True,
+            )
+            self.result_queue.put(
+                pdt.WorkerRoundResult(
+                    df_index=self.df_index,
+                    epoch_index=message.epoch_index,
+                    context_index=message.context_index,
+                    initial_action=message.initial_action,
+                    round_counter=message.round_counter,
+                    worker_steps=1,
+                    transitions=[
+                        pdt.WorkerTransitionRecord(step_index=0, transition=transition)
+                    ],
+                    rollout_metrics=[],
+                    done=True,
+                )
+            )
+
+    trainer = MagicMock()
+    trainer.total_df_index_length = 1
+    trainer.N = 3
+    trainer.position_choices = 2  # 总共 3 * 2 = 6 个任务
+    trainer.epsilon = 0.5
+    trainer.eval_net = object()
+    trainer.buffer_size = 2  # 上限为 2
+
+    def fake_start(tr, train_df_cache, env_kwargs):
+        tr.worker_result_queue = queue.Queue()
+        tr.worker_input_queues = {0: DummyInputQueue(0, tr.worker_result_queue)}
+
+    monkeypatch.setattr(pdt, "start_parallel_workers", fake_start)
+    monkeypatch.setattr(
+        pdt,
+        "shutdown_exploration_workers",
+        lambda tr: events.append("shutdown_workers"),
+    )
+    monkeypatch.setattr(pdt, "make_cpu_state_dict", lambda module: {"w": 1})
+
+    class GrowingBuffer:
+        def __init__(self):
+            self.items = []
+
+        def __len__(self):
+            return len(self.items)
+
+        def add(self, *args):
+            self.items.append(args)
+
+    buffer = GrowingBuffer()
+    metrics, final_steps, round_counter = pdt.run_epoch_exploration(
+        trainer=trainer,
+        epoch_index=0,
+        train_df_cache={},
+        env_kwargs={},
+        buffer_diverse=buffer,
+        step_counter_diverse=0,
+        round_counter=0,
+        seen_fingerprints=set(),
+        diverse_rollout_latest_metrics_by_df={},
+    )
+
+    # 达到 buffer_size=2 后提前终止：只执行了前 2 个任务（共 6 个），收集 2 步
+    assert len(buffer) == 2
+    assert final_steps == 2
+    assert round_counter == 2
+    assert events == ["shutdown_workers"]
 
 
 def test_start_parallel_workers_caps_at_twenty_and_assigns_round_robin(monkeypatch):
