@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # Code reference: https://github.com/Lizhi-sjtu/DRL-code-pytorch/tree/main/3.Rainbow_DQN
 
 import copy
@@ -5,6 +7,7 @@ import os
 import random
 import argparse
 import sys
+from typing import Any
 import numpy as np
 import torch
 from torch import nn
@@ -293,7 +296,7 @@ parser.add_argument(
 )
 
 
-def seed_torch(seed):
+def seed_torch(seed: int) -> None:
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
     np.random.seed(seed)
@@ -308,7 +311,7 @@ def seed_torch(seed):
 
 
 class Weighted_Contexts_DQN:
-    def __init__(self, args):
+    def __init__(self, args: argparse.Namespace):
         # seed
         self.seed = args.seed
         seed_torch(self.seed)
@@ -437,13 +440,13 @@ class Weighted_Contexts_DQN:
 
     def get_rank(
         self,
-        states: torch.tensor,
-        info: dict,
-        actions: torch.tensor,
-        rewards: torch.tensor,
-        next_states: torch.tensor,
-        info_: dict,
-        dones: torch.tensor,
+        states: torch.Tensor,
+        info: dict[str, Any],
+        actions: torch.Tensor,
+        rewards: torch.Tensor,
+        next_states: torch.Tensor,
+        info_: dict[str, Any],
+        dones: torch.Tensor,
     ):
         bs = states.shape[0]
         states = states.reshape(bs, -1)
@@ -505,13 +508,13 @@ class Weighted_Contexts_DQN:
 
     def update(
         self,
-        states: torch.tensor,
-        info: dict,
-        actions: torch.tensor,
-        rewards: torch.tensor,
-        next_states: torch.tensor,
-        info_: dict,
-        dones: torch.tensor,
+        states: torch.Tensor,
+        info: dict[str, Any],
+        actions: torch.Tensor,
+        rewards: torch.Tensor,
+        next_states: torch.Tensor,
+        info_: dict[str, Any],
+        dones: torch.Tensor,
     ):
         # current input
         bs = states.shape[0]

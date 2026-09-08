@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # Code reference: https://github.com/Lizhi-sjtu/DRL-code-pytorch/tree/main/3.Rainbow_DQN
 
 import copy
@@ -7,6 +9,7 @@ import argparse
 import json
 import re
 import sys
+from typing import Any
 import numpy as np
 import torch
 from torch import nn
@@ -230,7 +233,7 @@ parser.add_argument(
     help="label type, e.g. slope or volatility",
 )
 
-def build_serial_model_path(result_path, dataset_name, experiment_name):
+def build_serial_model_path(result_path: str, dataset_name: str, experiment_name: str) -> str:
     return os.path.join(
         result_path,
         dataset_name,
@@ -240,7 +243,7 @@ def build_serial_model_path(result_path, dataset_name, experiment_name):
 
 
 
-def _detect_step_limit_states(test_df, step_index):
+def _detect_step_limit_states(test_df: pd.DataFrame, step_index: int) -> tuple[bool, bool]:
     if step_index >= len(test_df):
         idx = len(test_df) - 1
     else:
@@ -370,7 +373,7 @@ CSV_HEADER_LABELS = {
 }
 
 
-def _bilingual_csv_columns(df):
+def _bilingual_csv_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df.rename(columns=CSV_HEADER_LABELS)
 
 
@@ -384,14 +387,14 @@ def _json_array(value):
     return json.dumps(list(value), default=_json_default)
 
 
-def write_analysis_csv(overall_result, csv_path):
+def write_analysis_csv(overall_result: list[dict[str, Any]], csv_path: str) -> None:
     analysis_df = pd.DataFrame(overall_result)
     for column in AGGREGATE_JSON_COLUMNS:
         analysis_df[column] = analysis_df[column].apply(_json_array)
     _bilingual_csv_columns(analysis_df).to_csv(csv_path, index=False)
 
 
-def trading_detail_csv_path(epoch_path, epoch_num, label_type=None):
+def trading_detail_csv_path(epoch_path: str, epoch_num: int, label_type: str | None = None) -> str:
     if label_type:
         return os.path.join(
             epoch_path, label_type, f"trading_action_detail_epoch_{epoch_num}.csv"
@@ -399,11 +402,11 @@ def trading_detail_csv_path(epoch_path, epoch_num, label_type=None):
     return os.path.join(epoch_path, f"trading_action_detail_epoch_{epoch_num}.csv")
 
 
-def write_trading_detail_csv(detail_rows, csv_path):
+def write_trading_detail_csv(detail_rows: list[dict[str, Any]], csv_path: str) -> None:
     _bilingual_csv_columns(pd.DataFrame(detail_rows)).to_csv(csv_path, index=False)
 
 
-def _iter_valid_feather_files(root_dir):
+def _iter_valid_feather_files(root_dir: str) -> list[dict[str, Any]]:
     entries = []
     if not os.path.isdir(root_dir):
         raise FileNotFoundError(f"valid data path does not exist: {root_dir}")
@@ -440,7 +443,7 @@ DETAIL_REQUIRED_MARKET_COLUMNS = ["timestamp", "close", "volume", "mark_price"]
 DETAIL_MARKET_COLUMNS = ["timestamp", "open", "high", "low", "close", "volume", "mark_price"]
 
 
-def _market_fields(test_df, timestep):
+def _market_fields(test_df: pd.DataFrame, timestep: int) -> dict[str, Any]:
     row = test_df.iloc[timestep]
     return {
         column: row.get(column, np.nan)
@@ -449,7 +452,7 @@ def _market_fields(test_df, timestep):
     }
 
 
-def _personal_state_from_env(test_env):
+def _personal_state_from_env(test_env: Any) -> dict[str, Any]:
     return {
         "wallet_balance": test_env.wallet_balance,
         "unrealized_pnl": test_env.unrealized_pnl,
@@ -521,7 +524,7 @@ def build_trading_detail_row(
     return row
 
 
-def seed_torch(seed):
+def seed_torch(seed: int) -> None:
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
     np.random.seed(seed)
@@ -536,7 +539,7 @@ def seed_torch(seed):
 
 
 class weighted_trader:
-    def __init__(self, args):
+    def __init__(self, args: argparse.Namespace):
 
         # device
         if torch.cuda.is_available():
@@ -641,7 +644,7 @@ class weighted_trader:
             (self.position_choices - 1) * len(self.leverage_choices) + 1
         )
 
-    def act_test(self, state, info, context_index):
+    def act_test(self, state: np.ndarray | list[float], info: dict[str, Any], context_index: int) -> int:
         assert context_index in range(self.N)
         state = torch.unsqueeze(torch.FloatTensor(state).reshape(-1), 0).to(self.device)
         previous_action = torch.unsqueeze(

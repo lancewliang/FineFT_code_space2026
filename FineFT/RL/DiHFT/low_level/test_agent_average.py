@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # Code reference: https://github.com/Lizhi-sjtu/DRL-code-pytorch/tree/main/3.Rainbow_DQN
 
 import sys
@@ -6,6 +8,7 @@ sys.path.append(".")
 import os
 import random
 import argparse
+from typing import Any
 import numpy as np
 import torch
 from torch import nn
@@ -161,7 +164,7 @@ parser.add_argument(
 )
 
 
-def seed_torch(seed):
+def seed_torch(seed: int) -> None:
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
     np.random.seed(seed)
@@ -176,7 +179,7 @@ def seed_torch(seed):
 
 
 class weighted_trader:
-    def __init__(self, args):
+    def __init__(self, args: argparse.Namespace):
 
         # device
         if torch.cuda.is_available():
@@ -270,7 +273,7 @@ class weighted_trader:
             (self.position_choices - 1) * len(self.leverage_choices) + 1
         )
 
-    def act_test(self, state, info):
+    def act_test(self, state: np.ndarray | list[float], info: dict[str, Any]) -> int:
         state = torch.unsqueeze(torch.FloatTensor(state).reshape(-1), 0).to(self.device)
         previous_action = torch.unsqueeze(
             torch.tensor([info["previous_action"]]).float().to(self.device), 0

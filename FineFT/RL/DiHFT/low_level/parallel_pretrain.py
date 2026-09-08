@@ -7,12 +7,23 @@
 # dependency graph acyclic; shared infrastructure is imported lazily inside
 # the functions that need it.
 
+from __future__ import annotations
+
 import logging
 import os
 import sys
-import torch
-import numpy as np
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+import torch
+
+if TYPE_CHECKING:
+    import pandas as pd
+    from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import (
+        Weighted_Contexts_DQN,
+    )
+    from RL.util.replay_buffer_DQN import Multi_step_ReplayBuffer_multi_info
 
 import torch.nn.functional as F
 from env.env_class.futures_util import get_dp_action_from_qtable
@@ -161,7 +172,12 @@ class PretrainCollectRunner:
         )
 
 
-def write_pretrain_loss_scalars(trainer, total_loss, KL_loss, td_loss):
+def write_pretrain_loss_scalars(
+    trainer: Weighted_Contexts_DQN,
+    total_loss: float,
+    KL_loss: float,
+    td_loss: float,
+):
     trainer.writer.add_scalar(
         tag="total_loss",
         scalar_value=total_loss,
@@ -182,7 +198,12 @@ def write_pretrain_loss_scalars(trainer, total_loss, KL_loss, td_loss):
     )
 
 
-def start_pretrain_collect_workers(trainer, train_df_cache, env_kwargs, q_table_cache):
+def start_pretrain_collect_workers(
+    trainer: Weighted_Contexts_DQN,
+    train_df_cache: dict[int, pd.DataFrame],
+    env_kwargs: dict[str, Any],
+    q_table_cache: dict[int, Any],
+):
     from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import (
         build_effective_df_indices,
         create_worker_context,
@@ -232,7 +253,7 @@ def start_pretrain_collect_workers(trainer, train_df_cache, env_kwargs, q_table_
         trainer.worker_processes.append(process)
 
 
-def extract_buffer_transitions(buffer_pretrain):
+def extract_buffer_transitions(buffer_pretrain: Multi_step_ReplayBuffer_multi_info | Any):
     if hasattr(buffer_pretrain, "memory"):
         return [tuple(e) for e in buffer_pretrain.memory]
     if hasattr(buffer_pretrain, "items"):
@@ -240,7 +261,7 @@ def extract_buffer_transitions(buffer_pretrain):
     return list(buffer_pretrain)
 
 
-def populate_buffer_transitions(buffer_pretrain, transitions):
+def populate_buffer_transitions(buffer_pretrain: Multi_step_ReplayBuffer_multi_info | Any, transitions: list[Any]):
     if hasattr(buffer_pretrain, "memory") and hasattr(buffer_pretrain, "experience"):
         for item in transitions:
             buffer_pretrain.memory.append(buffer_pretrain.experience(*item))
@@ -435,7 +456,7 @@ class StackedTransitionSampler:
         return (states, infos, actions, rewards, next_states, next_infos, dones)
 
 
-def save_pretrain_buffer_file(buffer_pretrain, buffer_path, step_counter):
+def save_pretrain_buffer_file(buffer_pretrain: Multi_step_ReplayBuffer_multi_info | Any, buffer_path: str, step_counter: int):
     transitions = extract_buffer_transitions(buffer_pretrain)
     payload = {
         "transitions": transitions,
@@ -448,7 +469,11 @@ def save_pretrain_buffer_file(buffer_pretrain, buffer_path, step_counter):
     torch.save(payload, buffer_path)
 
 
-def load_pretrain_buffer_file(buffer_pretrain, buffer_path, current_step_counter=0):
+def load_pretrain_buffer_file(
+    buffer_pretrain: Multi_step_ReplayBuffer_multi_info | Any,
+    buffer_path: str,
+    current_step_counter: int = 0,
+):
     payload = torch.load(buffer_path, map_location="cpu", weights_only=False)
     if isinstance(payload, dict) and "transitions" in payload:
         transitions = payload["transitions"]
@@ -465,7 +490,7 @@ def load_pretrain_buffer_file(buffer_pretrain, buffer_path, current_step_counter
     return step_counter
 
 
-def resolve_pretrain_paths(trainer):
+def resolve_pretrain_paths(trainer: Weighted_Contexts_DQN):
     model_path = trainer.model_path
     if not model_path:
         return None, None
@@ -475,12 +500,12 @@ def resolve_pretrain_paths(trainer):
 
 
 def run_exhaustive_warmup(
-    trainer,
-    q_table_cache,
-    train_df_cache,
-    env_kwargs,
-    buffer_pretrain,
-    step_counter_pretrain,
+    trainer: Weighted_Contexts_DQN,
+    q_table_cache: dict[int, Any],
+    train_df_cache: dict[int, pd.DataFrame],
+    env_kwargs: dict[str, Any],
+    buffer_pretrain: Multi_step_ReplayBuffer_multi_info | Any,
+    step_counter_pretrain: int,
 ):
     from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import (
         WorkerErrorMessage,
@@ -677,14 +702,14 @@ def run_exhaustive_warmup(
     }, step_counter_pretrain
 
 def update_pretrain(
-    trainer,
-    states: torch.tensor,
-    info: dict,
-    actions: torch.tensor,
-    rewards: torch.tensor,
-    next_states: torch.tensor,
-    info_: dict,
-    dones: torch.tensor,
+    trainer: Weighted_Contexts_DQN,
+    states: torch.Tensor,
+    info: dict[str, Any],
+    actions: torch.Tensor,
+    rewards: torch.Tensor,
+    next_states: torch.Tensor,
+    info_: dict[str, Any],
+    dones: torch.Tensor,
 ):
     bs = states.shape[0]
     states = states.reshape(bs, -1)

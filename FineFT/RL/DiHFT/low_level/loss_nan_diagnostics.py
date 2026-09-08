@@ -1,4 +1,8 @@
+from __future__ import annotations
+
+import logging
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import torch
@@ -172,7 +176,11 @@ def _find_nonfinite_locations(value, path, locations, max_items=20):
                 return
 
 
-def build_loss_nan_diagnostics(numeric_values, info_values, max_items=20):
+def build_loss_nan_diagnostics(
+    numeric_values: dict[str, Any],
+    info_values: dict[str, Any],
+    max_items: int = 20,
+) -> LossNanDiagnostics:
     diagnostics = LossNanDiagnostics(numeric={}, info_nonfinite=[])
     for name, value in numeric_values.items():
         diagnostics.numeric[name] = _summarize_numeric_value(value)
@@ -188,7 +196,12 @@ def build_loss_nan_diagnostics(numeric_values, info_values, max_items=20):
     return diagnostics
 
 
-def log_loss_nan_diagnostics(logger, numeric_values, info_values, trainer):
+def log_loss_nan_diagnostics(
+    logger: logging.Logger,
+    numeric_values: dict[str, Any],
+    info_values: dict[str, Any],
+    trainer: Any,
+) -> None:
     diagnostics = build_loss_nan_diagnostics(numeric_values, info_values)
     logger.error(
         "loss is nan | update_counter=%s | batch_size=%s | ada=%s | "

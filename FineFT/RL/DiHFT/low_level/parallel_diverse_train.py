@@ -25,12 +25,23 @@
 # 共享基础设施；编排模块改为在 df_rollout_worker 函数内部延迟导入本模块，
 # 以保持模块加载依赖图无环。
 
+from __future__ import annotations
+
 import hashlib
 import logging
 import os
-import torch
-import numpy as np
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+import torch
+
+if TYPE_CHECKING:
+    import pandas as pd
+    from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import (
+        Weighted_Contexts_DQN,
+    )
+    from RL.util.replay_buffer_DQN import Multi_step_ReplayBuffer_multi_info
 
 from model.low_level import ensemble_Qnet
 from RL.DiHFT.low_level.pretrain_qtable_diagnostics import (
@@ -339,7 +350,7 @@ def compute_epoch_training_params(
     )
 
 
-def apply_epoch_training_params(trainer, epoch_index):
+def apply_epoch_training_params(trainer: Weighted_Contexts_DQN, epoch_index: int):
     """按 epoch 计算并写入 epsilon/ada/lr（学习率同步到 optimizer 参数组）。"""
     params = compute_epoch_training_params(
         epoch_index=epoch_index,
@@ -360,7 +371,7 @@ def apply_epoch_training_params(trainer, epoch_index):
     logger.info("epoch %d: epsilon=%.6f, ada=%.6f, lr=%.6f", epoch_index, params.epsilon, params.ada, params.lr)
 
 
-def make_cpu_state_dict(module):
+def make_cpu_state_dict(module: torch.nn.Module):
     """生成与模型存储完全独立的 CPU numpy state_dict，用于跨进程传输。
 
     torch tensor 经 torch.multiprocessing 队列传输时会为每个 tensor 分配
@@ -374,7 +385,7 @@ def make_cpu_state_dict(module):
     }
 
 
-def load_worker_state_dict(model, state_dict):
+def load_worker_state_dict(model: torch.nn.Module, state_dict: dict[str, Any]):
     """将 numpy state_dict 转回 tensor 并载入 worker 侧模型。"""
     model.load_state_dict(
         {name: torch.from_numpy(value) for name, value in state_dict.items()}
@@ -426,7 +437,11 @@ def build_transition_fingerprint(transition):
     return int.from_bytes(digest, "big")
 
 
-def write_round_transitions_to_buffer(buffer_diverse, round_results, seen_fingerprints):
+def write_round_transitions_to_buffer(
+    buffer_diverse: Multi_step_ReplayBuffer_multi_info,
+    round_results: list[WorkerRoundResult],
+    seen_fingerprints: set[Any],
+):
     """按 (df_index, step_index) 顺序写入经验池，保证经验唯一性。
 
     已存在相同内容指纹的经验直接跳过，不重复添加；返回本轮跳过的重复数。
@@ -442,7 +457,12 @@ def write_round_transitions_to_buffer(buffer_diverse, round_results, seen_finger
     return duplicate_count
 
 
-def run_diverse_training_phase(trainer, buffer_diverse, update_count, epoch_index):
+def run_diverse_training_phase(
+    trainer: Weighted_Contexts_DQN,
+    buffer_diverse: Multi_step_ReplayBuffer_multi_info | dict[str, Any],
+    update_count: int,
+    epoch_index: int,
+):
     """完整训练阶段：本轮探索全部结束后，对已冻结的经验池统一执行全部参数更新。
 
     采样参考 exhaustive warmup 的预堆叠采样优化（StackedTransitionSampler）：
@@ -543,15 +563,15 @@ def summarize_parallel_round(
     )
 
 
-def build_epoch_model_path(model_path, epoch_index):
+def build_epoch_model_path(model_path: str, epoch_index: int) -> str:
     return os.path.join(model_path, "epoch_{}".format(epoch_index + 1))
 
 
-def build_diverse_buffer_path(model_path):
+def build_diverse_buffer_path(model_path: str) -> str:
     return os.path.join(model_path, "buffer_diverse.pkl")
 
 
-def save_diverse_buffer(buffer_diverse, model_path):
+def save_diverse_buffer(buffer_diverse: Multi_step_ReplayBuffer_multi_info, model_path: str):
     """将经验池快照以分批张量化格式保存到文件。
 
     避免将数百万个独立的 Python dict / Experience namedtuple 直接 pickle 导致
@@ -719,7 +739,11 @@ class DfRolloutWorkerRunner:
         )
 
 
-def start_parallel_workers(trainer, train_df_cache, env_kwargs):
+def start_parallel_workers(
+    trainer: Weighted_Contexts_DQN,
+    train_df_cache: dict[int, pd.DataFrame],
+    env_kwargs: dict[str, Any],
+):
     """为本轮探索创建全新的子进程（与 pretrain 阶段相同的数据处理方式）。
 
     所有 df 以 round-robin 方式分配给子进程：子进程数量 = min(df 数量,
@@ -776,7 +800,7 @@ def start_parallel_workers(trainer, train_df_cache, env_kwargs):
     )
 
 
-def shutdown_exploration_workers(trainer):
+def shutdown_exploration_workers(trainer: Weighted_Contexts_DQN):
     """彻底关闭全部探索子进程，并逐一确认退出后才返回。
 
     训练阶段启动前必须调用：先发送 ShutdownWorker 让各子进程正常退出并
@@ -808,11 +832,11 @@ def shutdown_exploration_workers(trainer):
 
 
 def reset_worker_task(
-    trainer,
-    epoch_index,
-    context_index,
-    initial_action,
-    active_df_indices,
+    trainer: Weighted_Contexts_DQN,
+    epoch_index: int,
+    context_index: int,
+    initial_action: int,
+    active_df_indices: set[int] | list[int],
 ):
     """为每个 df 派发回合重置消息（按 df_index 路由到对应回合状态）。"""
     for df_index in sorted(active_df_indices):
@@ -827,13 +851,13 @@ def reset_worker_task(
 
 
 def send_worker_rounds(
-    trainer,
-    active_df_indices,
-    epoch_index,
-    context_index,
-    initial_action,
-    round_counter,
-    state_dict,
+    trainer: Weighted_Contexts_DQN,
+    active_df_indices: set[int] | list[int],
+    epoch_index: int,
+    context_index: int,
+    initial_action: int,
+    round_counter: int,
+    state_dict: dict[str, Any],
 ):
     """为全部 df 派发一轮探索消息（携带最新模型参数与 epsilon）。
 
@@ -854,7 +878,11 @@ def send_worker_rounds(
         )
 
 
-def collect_worker_rounds(trainer, active_df_indices, round_counter):
+def collect_worker_rounds(
+    trainer: Weighted_Contexts_DQN,
+    active_df_indices: set[int] | list[int],
+    round_counter: int,
+):
     """收集本轮全部活跃 df 的结果；任一子进程上报错误则原样返回交由上层抛错。"""
     expected_count = len(active_df_indices)
     results = []
@@ -887,14 +915,14 @@ def collect_worker_rounds(trainer, active_df_indices, round_counter):
 
 
 def run_parallel_rollout_task(
-    trainer,
-    epoch_index,
-    context_index,
-    initial_action,
-    buffer_diverse,
-    step_counter_diverse,
-    round_counter,
-    seen_fingerprints,
+    trainer: Weighted_Contexts_DQN,
+    epoch_index: int,
+    context_index: int,
+    initial_action: int,
+    buffer_diverse: Multi_step_ReplayBuffer_multi_info,
+    step_counter_diverse: int,
+    round_counter: int,
+    seen_fingerprints: set[Any],
 ):
     """单个 (epoch, context, initial_action) 任务的完整探索，不执行任何参数更新。
 
@@ -982,7 +1010,7 @@ def run_parallel_rollout_task(
     return round_counter + 1, step_counter_diverse, task_metrics
 
 
-def save_parallel_epoch_model(trainer, epoch_index):
+def save_parallel_epoch_model(trainer: Weighted_Contexts_DQN, epoch_index: int):
     epoch_path = build_epoch_model_path(trainer.model_path, epoch_index)
     if not os.path.exists(epoch_path):
         os.makedirs(epoch_path)
@@ -997,7 +1025,12 @@ def save_parallel_epoch_model(trainer, epoch_index):
     )
 
 
-def write_context_rollout_scalars(trainer, context_index, context_metrics, epoch_index):
+def write_context_rollout_scalars(
+    trainer: Weighted_Contexts_DQN,
+    context_index: int,
+    context_metrics: list[RolloutMetrics],
+    epoch_index: int,
+):
     """写入单个 context 的训练期 rollout 标量。"""
     if not context_metrics:
         return
@@ -1016,7 +1049,11 @@ def write_context_rollout_scalars(trainer, context_index, context_metrics, epoch
     )
 
 
-def write_epoch_rollout_scalars(trainer, epoch_metrics, epoch_index):
+def write_epoch_rollout_scalars(
+    trainer: Weighted_Contexts_DQN,
+    epoch_metrics: list[RolloutMetrics],
+    epoch_index: int,
+):
     """写入整个 epoch 的训练期 rollout 标量。"""
     if not epoch_metrics:
         return
@@ -1041,7 +1078,10 @@ def write_epoch_rollout_scalars(trainer, epoch_metrics, epoch_index):
     )
 
 
-def get_buffer_capacity(buffer_diverse, trainer=None):
+def get_buffer_capacity(
+    buffer_diverse: Multi_step_ReplayBuffer_multi_info | Any,
+    trainer: Weighted_Contexts_DQN | Any = None,
+):
     """获取经验池容量上限。"""
     capacity = getattr(buffer_diverse, "buffer_size", None)
     if isinstance(capacity, (int, float)):
@@ -1053,7 +1093,10 @@ def get_buffer_capacity(buffer_diverse, trainer=None):
     return None
 
 
-def is_buffer_full(buffer_diverse, trainer=None):
+def is_buffer_full(
+    buffer_diverse: Multi_step_ReplayBuffer_multi_info | Any,
+    trainer: Weighted_Contexts_DQN | Any = None,
+):
     """判断经验池是否已达到容量上限。"""
     capacity = get_buffer_capacity(buffer_diverse, trainer)
     if capacity is None or capacity <= 0:
@@ -1062,15 +1105,15 @@ def is_buffer_full(buffer_diverse, trainer=None):
 
 
 def run_epoch_exploration(
-    trainer,
-    epoch_index,
-    train_df_cache,
-    env_kwargs,
-    buffer_diverse,
-    step_counter_diverse,
-    round_counter,
-    seen_fingerprints,
-    diverse_rollout_latest_metrics_by_df,
+    trainer: Weighted_Contexts_DQN,
+    epoch_index: int,
+    train_df_cache: dict[int, pd.DataFrame],
+    env_kwargs: dict[str, Any],
+    buffer_diverse: Multi_step_ReplayBuffer_multi_info,
+    step_counter_diverse: int,
+    round_counter: int,
+    seen_fingerprints: set[Any],
+    diverse_rollout_latest_metrics_by_df: dict[int, Any],
 ):
     """一个 epoch 的完整探索阶段：创建全新子进程 -> 全任务探索 -> 彻底关闭。
 
@@ -1146,12 +1189,12 @@ def run_epoch_exploration(
 
 
 def run_parallel_diverse_training(
-    trainer,
-    train_df_cache,
-    env_kwargs,
-    buffer_diverse,
-    step_counter_diverse,
-    diverse_rollout_latest_metrics_by_df,
+    trainer: Weighted_Contexts_DQN,
+    train_df_cache: dict[int, pd.DataFrame],
+    env_kwargs: dict[str, Any],
+    buffer_diverse: Multi_step_ReplayBuffer_multi_info,
+    step_counter_diverse: int,
+    diverse_rollout_latest_metrics_by_df: dict[int, Any],
 ):
     """多样化训练主循环：每个 epoch 严格遵循「完整探索 -> 完整训练」。
 
@@ -1252,14 +1295,14 @@ def run_parallel_diverse_training(
 
 
 def update(
-    trainer,
-    states: torch.tensor,
-    info: dict,
-    actions: torch.tensor,
-    rewards: torch.tensor,
-    next_states: torch.tensor,
-    info_: dict,
-    dones: torch.tensor,
+    trainer: Weighted_Contexts_DQN,
+    states: torch.Tensor,
+    info: dict[str, Any],
+    actions: torch.Tensor,
+    rewards: torch.Tensor,
+    next_states: torch.Tensor,
+    info_: dict[str, Any],
+    dones: torch.Tensor,
 ):
     # current input
     bs = states.shape[0]

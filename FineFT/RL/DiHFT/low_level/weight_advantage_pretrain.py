@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # Code reference: https://github.com/Lizhi-sjtu/DRL-code-pytorch/tree/main/3.Rainbow_DQN
 
 import copy
@@ -6,10 +8,14 @@ import random
 import argparse
 import logging
 import sys
+from typing import TYPE_CHECKING, Any
 import numpy as np
 import torch
 from torch import nn
 from torch.utils.tensorboard import SummaryWriter
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 sys.path.append(".")
 
@@ -21,7 +27,7 @@ if not logger.handlers:
     )
 
 
-def build_train_log_path(dataset_name, experiment_name):
+def build_train_log_path(dataset_name: str, experiment_name: str) -> str:
     return os.path.join(
         "log/DiHFT",
         dataset_name,
@@ -32,7 +38,7 @@ def build_train_log_path(dataset_name, experiment_name):
     )
 
 
-def build_serial_model_path(result_path, dataset_name, experiment_name):
+def build_serial_model_path(result_path: str, dataset_name: str, experiment_name: str) -> str:
     return os.path.join(
         result_path,
         dataset_name,
@@ -41,7 +47,7 @@ def build_serial_model_path(result_path, dataset_name, experiment_name):
     )
 
 
-def build_training_data_paths(base_path, dataset_name):
+def build_training_data_paths(base_path: str, dataset_name: str) -> dict[str, str]:
     dataset_root = os.path.join(base_path, dataset_name)
     train_root = os.path.join(dataset_root, "train")
     train_slice_root = os.path.join(train_root, "slice")
@@ -66,7 +72,7 @@ def count_training_data_files(train_data_path: str) -> int:
     )
 
 
-def configure_logger(dataset_name, experiment_name):
+def configure_logger(dataset_name: str, experiment_name: str) -> str:
     log_path = build_train_log_path(dataset_name, experiment_name)
     log_dir = os.path.dirname(log_path)
     os.makedirs(log_dir, exist_ok=True)
@@ -578,7 +584,7 @@ def calculate_paper_partial_loss(
     return learner_weights, batch_loss.mean()
 
 
-def seed_torch(seed):
+def seed_torch(seed: int) -> None:
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
     np.random.seed(seed)
@@ -593,7 +599,7 @@ def seed_torch(seed):
 
 
 class Weighted_Contexts_DQN:
-    def __init__(self, args):
+    def __init__(self, args: argparse.Namespace):
         # seed
         self.seed = args.seed
         seed_torch(self.seed)
@@ -758,14 +764,14 @@ class Weighted_Contexts_DQN:
 
     def update(
         self,
-        states: torch.tensor,
-        info: dict,
-        actions: torch.tensor,
-        rewards: torch.tensor,
-        next_states: torch.tensor,
-        info_: dict,
-        dones: torch.tensor,
-    ):
+        states: torch.Tensor,
+        info: dict[str, Any],
+        actions: torch.Tensor,
+        rewards: torch.Tensor,
+        next_states: torch.Tensor,
+        info_: dict[str, Any],
+        dones: torch.Tensor,
+    ) -> tuple[float, float, float]:
         # current input
         bs = states.shape[0]
         states = states.reshape(bs, -1)
@@ -860,14 +866,14 @@ class Weighted_Contexts_DQN:
 
     def update_pretrain(
         self,
-        states: torch.tensor,
-        info: dict,
-        actions: torch.tensor,
-        rewards: torch.tensor,
-        next_states: torch.tensor,
-        info_: dict,
-        dones: torch.tensor,
-    ):
+        states: torch.Tensor,
+        info: dict[str, Any],
+        actions: torch.Tensor,
+        rewards: torch.Tensor,
+        next_states: torch.Tensor,
+        info_: dict[str, Any],
+        dones: torch.Tensor,
+    ) -> tuple[float, float, float]:
         bs = states.shape[0]
         states = states.reshape(bs, -1)
         previous_action = info["previous_action"].float().unsqueeze(1)
@@ -1055,7 +1061,7 @@ class Weighted_Contexts_DQN:
             action = get_close_element(action, avaliable_action_list)
             return action
 
-    def _set_initial_state_from_action(self, train_df, initial_action):
+    def _set_initial_state_from_action(self, train_df: pd.DataFrame, initial_action: int):
         (
             self.initial_position,
             self.initial_leverage,

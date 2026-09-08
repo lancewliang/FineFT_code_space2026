@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # Code reference: https://github.com/Lizhi-sjtu/DRL-code-pytorch/tree/main/3.Rainbow_DQN
 
 import copy
@@ -8,6 +10,7 @@ import logging
 import sys
 import traceback
 from dataclasses import dataclass
+from typing import Any
 import numpy as np
 import torch
 import torch.multiprocessing as tmp
@@ -41,7 +44,7 @@ class WorkerErrorMessage:
     traceback: str
 
 
-def build_serial_model_path(result_path, dataset_name, experiment_name):
+def build_serial_model_path(result_path: str, dataset_name: str, experiment_name: str) -> str:
     return os.path.join(
         result_path,
         dataset_name,
@@ -50,7 +53,7 @@ def build_serial_model_path(result_path, dataset_name, experiment_name):
     )
 
 
-def build_training_data_paths(base_path, dataset_name):
+def build_training_data_paths(base_path: str, dataset_name: str) -> dict[str, str]:
     dataset_root = os.path.join(base_path, dataset_name)
     train_root = os.path.join(dataset_root, "train")
     train_slice_root = os.path.join(train_root, "slice")
@@ -75,7 +78,7 @@ def count_training_data_files(train_data_path: str) -> int:
     )
 
 
-def configure_logger(dataset_name, experiment_name):
+def configure_logger(dataset_name: str, experiment_name: str) -> str:
     log_dir = os.path.join(
         "log/DiHFT", dataset_name, "low_level", "train", experiment_name
     )
@@ -450,7 +453,7 @@ parser.add_argument(
 
 
 
-def seed_torch(seed):
+def seed_torch(seed: int) -> None:
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
     np.random.seed(seed)
@@ -464,11 +467,11 @@ def seed_torch(seed):
     torch.backends.cudnn.allow_tf32 = True
 
 
-def build_effective_df_indices(total_df_index_length):
+def build_effective_df_indices(total_df_index_length: int) -> list[int]:
     return list(range(total_df_index_length))
 
 
-def raise_for_worker_error(message):
+def raise_for_worker_error(message: WorkerErrorMessage | Any) -> None:
     if not isinstance(message, WorkerErrorMessage):
         return
     raise RuntimeError(
@@ -484,7 +487,7 @@ def raise_for_worker_error(message):
     )
 
 
-def df_rollout_worker(worker_config, input_queue, result_queue):
+def df_rollout_worker(worker_config: dict[str, Any], input_queue: Any, result_queue: Any) -> None:
     from RL.DiHFT.low_level.parallel_diverse_train import (
         DfRolloutWorkerRunner,
         ExploreWorkerRound,
@@ -529,7 +532,7 @@ def create_worker_context():
     return tmp.get_context("spawn")
 
 
-def shutdown_workers(input_queues, processes):
+def shutdown_workers(input_queues: Any, processes: list[Any]) -> None:
     seen = set()
     unique_queues = []
     for queue in input_queues:
@@ -545,7 +548,7 @@ def shutdown_workers(input_queues, processes):
 
 
 class Weighted_Contexts_DQN:
-    def __init__(self, args):
+    def __init__(self, args: argparse.Namespace):
         # seed
         self.seed = args.seed
         seed_torch(self.seed)
@@ -721,7 +724,7 @@ class Weighted_Contexts_DQN:
             )
         return "<{}>".format(type(value).__name__)
 
-    def _log_internal_parameters(self, stage):
+    def _log_internal_parameters(self, stage: str) -> None:
         logger.info("Weighted_Contexts_DQN internal parameters | stage=%s", stage)
         for name, value in self.__dict__.items():
             logger.info("%s=%s", name, self._format_internal_parameter_value(value))

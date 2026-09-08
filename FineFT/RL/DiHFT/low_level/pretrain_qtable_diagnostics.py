@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import json
 import multiprocessing as mp
 import os
 import random
 import re
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -326,12 +329,12 @@ def extend_q_table_cache(
 
 
 def build_initial_state(
-    train_df,
-    initial_action,
-    leverage_choices,
-    position_list,
-    initial_wallet_balance,
-    initial_unrealized_pnl,
+    train_df: pd.DataFrame,
+    initial_action: int,
+    leverage_choices: list[int] | np.ndarray,
+    position_list: list[float] | np.ndarray,
+    initial_wallet_balance: float,
+    initial_unrealized_pnl: float,
 ):
     initial_position, initial_leverage = map_action_to_position_leverage(
         initial_action, leverage_choices, position_list
@@ -348,7 +351,11 @@ def build_initial_state(
     return initial_position, initial_leverage, initial_margin, initial_state
 
 
-def create_demo_env(train_df, env_kwargs, initial_state):
+def create_demo_env(
+    train_df: pd.DataFrame,
+    env_kwargs: dict[str, Any],
+    initial_state: tuple[float, float, float, float, float],
+):
     has_limit_cols = (
         "UpperLimitPrice" in train_df.columns
         and "limit_up_single_sided_ratio" in train_df.columns
@@ -409,11 +416,11 @@ def _build_diagnostics_manifest(
     )
 
 
-def _manifest_payload(manifest):
+def _manifest_payload(manifest: PretrainDiagnosticsManifest) -> dict[str, Any]:
     return manifest.to_dict()
 
 
-def _manifest_matches(output_dir, expected_manifest):
+def _manifest_matches(output_dir: str, expected_manifest: PretrainDiagnosticsManifest) -> bool:
     manifest_path = os.path.join(output_dir, DIAGNOSTIC_MANIFEST_NAME)
     if not os.path.isfile(manifest_path):
         return False
@@ -425,7 +432,7 @@ def _manifest_matches(output_dir, expected_manifest):
     return existing_manifest == _manifest_payload(expected_manifest)
 
 
-def _write_diagnostics_manifest(output_dir, manifest):
+def _write_diagnostics_manifest(output_dir: str, manifest: PretrainDiagnosticsManifest) -> None:
     os.makedirs(output_dir, exist_ok=True)
     manifest_path = os.path.join(output_dir, DIAGNOSTIC_MANIFEST_NAME)
     with open(manifest_path, "w", encoding="utf-8") as manifest_file:

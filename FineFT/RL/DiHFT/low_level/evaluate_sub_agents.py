@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # Code reference: https://github.com/Lizhi-sjtu/DRL-code-pytorch/tree/main/3.Rainbow_DQN
 # Evaluate every sub-agent (each qnet in the ensemble) on all valid dataset files.
 # For each sub-model x dataset file x initial action, run one full episode and
@@ -175,7 +177,7 @@ class weighted_trader:
     def configure_logger(logg_file_path: str):
         return configure_logger(logg_file_path)
 
-    def act_test(self, state, info, context_index):
+    def act_test(self, state: np.ndarray | list[float], info: dict[str, Any], context_index: int) -> int:
         assert context_index in range(self.N)
         state = torch.unsqueeze(torch.FloatTensor(state).reshape(-1), 0).to(self.device)
         previous_action = torch.unsqueeze(
@@ -213,7 +215,7 @@ class weighted_trader:
 
         return action
 
-    def _run_episode(self, test_df, initial_action, bin_index):
+    def _run_episode(self, test_df: pd.DataFrame, initial_action: int, bin_index: int):
         """Run one full episode with the given sub-model and initial action.
 
         Returns the cumulative reward, the final balance, the final return
