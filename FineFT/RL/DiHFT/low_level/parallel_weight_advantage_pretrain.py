@@ -459,12 +459,9 @@ def seed_torch(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
-    if hasattr(torch, "set_float32_matmul_precision"):
-        torch.set_float32_matmul_precision("high")
-    if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
-        torch.backends.cuda.matmul.allow_tf32 = True
-    if hasattr(torch.backends, "cudnn"):
-        torch.backends.cudnn.allow_tf32 = True
+    torch.set_float32_matmul_precision("high")
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
 
 
 def build_effective_df_indices(total_df_index_length):
@@ -686,20 +683,20 @@ class Weighted_Contexts_DQN:
         self.neighbor_size = args.neighbor_size
         if self.neighbor_size < 0:
             raise ValueError("neighbor_size must be non-negative")
-        self.pretrain_num_workers = getattr(args, "pretrain_num_workers", 150)
+        self.pretrain_num_workers = args.pretrain_num_workers
         if self.pretrain_num_workers <= 0:
             raise ValueError("pretrain_num_workers must be positive")
-        self.eval_num_workers = getattr(args, "eval_num_workers", 150)
+        self.eval_num_workers = args.eval_num_workers
         self.pretrain_eval_num_workers = self.eval_num_workers
         if self.eval_num_workers <= 0:
             raise ValueError("eval_num_workers must be positive")
-        self.load_pretrain_model = getattr(args, "load_pretrain_model", False)
-        self.allow_reverse_position = getattr(args, "allow_reverse_position", False)
-        self.enable_limit_reward = getattr(args, "enable_limit_reward", True)
-        self.limit_hold_bonus = getattr(args, "limit_hold_bonus", 1.0)
-        self.limit_stay_bonus = getattr(args, "limit_stay_bonus", 0.5)
-        self.limit_reverse_penalty = getattr(args, "limit_reverse_penalty", 1.5)
-        self.near_limit_threshold = getattr(args, "near_limit_threshold", 0.003)
+        self.load_pretrain_model = args.load_pretrain_model
+        self.allow_reverse_position = args.allow_reverse_position
+        self.enable_limit_reward = args.enable_limit_reward
+        self.limit_hold_bonus = args.limit_hold_bonus
+        self.limit_stay_bonus = args.limit_stay_bonus
+        self.limit_reverse_penalty = args.limit_reverse_penalty
+        self.near_limit_threshold = args.near_limit_threshold
         self._log_internal_parameters("init_end")
 
     def _format_internal_parameter_value(self, value):
@@ -832,7 +829,7 @@ class Weighted_Contexts_DQN:
         if self.load_pretrain_model and os.path.exists(pretrain_model_file):
             state_dict = torch.load(pretrain_model_file, map_location=self.device)
             self.eval_net.load_state_dict(state_dict)
-            if hasattr(self, "target_net") and self.target_net is not None:
+            if self.target_net is not None:
                 self.target_net.load_state_dict(state_dict)
             logger.info("已读取已训练的预先训练模型并跳过预先训练 | 模型路径=%s", pretrain_model_file)
         else:
@@ -900,12 +897,9 @@ class Weighted_Contexts_DQN:
 
 
 if __name__ == "__main__":
-    if hasattr(torch, "set_float32_matmul_precision"):
-        torch.set_float32_matmul_precision("high")
-    if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
-        torch.backends.cuda.matmul.allow_tf32 = True
-    if hasattr(torch.backends, "cudnn"):
-        torch.backends.cudnn.allow_tf32 = True
+    torch.set_float32_matmul_precision("high")
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
     args = parser.parse_args()
     configure_logger(args.dataset_name, args.experiment_name)
     logger.info('start')

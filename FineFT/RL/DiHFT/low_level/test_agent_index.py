@@ -451,10 +451,10 @@ def _market_fields(test_df, timestep):
 
 def _personal_state_from_env(test_env):
     return {
-        "wallet_balance": getattr(test_env, "wallet_balance", np.nan),
-        "unrealized_pnl": getattr(test_env, "unrealized_pnl", np.nan),
-        "position": getattr(test_env, "position", np.nan),
-        "leverage": getattr(test_env, "leverage", np.nan),
+        "wallet_balance": test_env.wallet_balance,
+        "unrealized_pnl": test_env.unrealized_pnl,
+        "position": test_env.position,
+        "leverage": test_env.leverage,
     }
 
 
@@ -530,12 +530,9 @@ def seed_torch(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
-    if hasattr(torch, "set_float32_matmul_precision"):
-        torch.set_float32_matmul_precision("high")
-    if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
-        torch.backends.cuda.matmul.allow_tf32 = True
-    if hasattr(torch.backends, "cudnn"):
-        torch.backends.cudnn.allow_tf32 = True
+    torch.set_float32_matmul_precision("high")
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
 
 
 class weighted_trader:
@@ -544,12 +541,9 @@ class weighted_trader:
         # device
         if torch.cuda.is_available():
             self.device = "cuda"
-            if hasattr(torch, "set_float32_matmul_precision"):
-                torch.set_float32_matmul_precision("high")
-            if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
-                torch.backends.cuda.matmul.allow_tf32 = True
-            if hasattr(torch.backends, "cudnn"):
-                torch.backends.cudnn.allow_tf32 = True
+            torch.set_float32_matmul_precision("high")
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
         else:
             self.device = "cpu"
         # log path
@@ -562,7 +556,7 @@ class weighted_trader:
         # trading environment setting
         self.base_path = args.base_path
         self.dataset_name = args.dataset_name
-        self.label_type = getattr(args, "label_type", "")
+        self.label_type = args.label_type
         if not self.label_type:
             raise ValueError("label_type must be specified")
         self.valid_data_path = os.path.join(
@@ -597,12 +591,12 @@ class weighted_trader:
         self.long_estimated_rate = args.long_estimated_rate
         self.short_estimated_rate = args.short_estimated_rate
         self.transcation_cost = args.transcation_cost
-        self.allow_reverse_position = getattr(args, "allow_reverse_position", False)
-        self.enable_limit_reward = getattr(args, "enable_limit_reward", True)
-        self.limit_hold_bonus = getattr(args, "limit_hold_bonus", 1.0)
-        self.limit_stay_bonus = getattr(args, "limit_stay_bonus", 0.5)
-        self.limit_reverse_penalty = getattr(args, "limit_reverse_penalty", 1.5)
-        self.near_limit_threshold = getattr(args, "near_limit_threshold", 0.003)
+        self.allow_reverse_position = args.allow_reverse_position
+        self.enable_limit_reward = args.enable_limit_reward
+        self.limit_hold_bonus = args.limit_hold_bonus
+        self.limit_stay_bonus = args.limit_stay_bonus
+        self.limit_reverse_penalty = args.limit_reverse_penalty
+        self.near_limit_threshold = args.near_limit_threshold
         self.early_stop = args.early_stop
         self.initial_wallet_balance = args.initial_wallet_balance
         self.initial_margin = args.initial_margin
@@ -747,7 +741,7 @@ class weighted_trader:
                             initial_leverage,
                         )
                         enable_limit = (
-                            getattr(self, "enable_limit_reward", True)
+                            self.enable_limit_reward
                             and "UpperLimitPrice" in self.test_df.columns
                             and "limit_up_single_sided_ratio" in self.test_df.columns
                         )
@@ -768,12 +762,12 @@ class weighted_trader:
                             early_stop=0,
                             # initial_personal_state
                             initial_state=self.initial_state,
-                            allow_reverse_position=getattr(self, "allow_reverse_position", False),
+                            allow_reverse_position=self.allow_reverse_position,
                             enable_limit_reward=enable_limit,
-                            limit_hold_bonus=getattr(self, "limit_hold_bonus", 1.0),
-                            limit_stay_bonus=getattr(self, "limit_stay_bonus", 0.5),
-                            limit_reverse_penalty=getattr(self, "limit_reverse_penalty", 1.5),
-                            near_limit_threshold=getattr(self, "near_limit_threshold", 0.003),
+                            limit_hold_bonus=self.limit_hold_bonus,
+                            limit_stay_bonus=self.limit_stay_bonus,
+                            limit_reverse_penalty=self.limit_reverse_penalty,
+                            near_limit_threshold=self.near_limit_threshold,
                         )
                         position_after_list = []
                         limit_up_list = []
@@ -789,12 +783,8 @@ class weighted_trader:
                         cumulative_trade_count = 0
                         while not done:
                             timestep = len(action_list)
-                            position_before = getattr(
-                                test_env, "position", initial_position
-                            )
-                            leverage_before = getattr(
-                                test_env, "leverage", initial_leverage
-                            )
+                            position_before = test_env.position
+                            leverage_before = test_env.leverage
                             a = self.act_test(s, info, bin_index)
                             target_position, target_leverage = (
                                 map_action_to_position_leverage(
@@ -806,12 +796,8 @@ class weighted_trader:
                             action_change_step = int(a != previous_action)
                             turn_over += np.abs(a - previous_action) / 4
                             s_, r, done, info = test_env.step(a)
-                            position_after = getattr(
-                                test_env, "position", position_before
-                            )
-                            leverage_after = getattr(
-                                test_env, "leverage", leverage_before
-                            )
+                            position_after = test_env.position
+                            leverage_after = test_env.leverage
                             trade_count_step = int(
                                 position_after != position_before
                                 or leverage_after != leverage_before
@@ -953,7 +939,7 @@ class weighted_trader:
                             short_reward_sum = float(np.sum(rew_arr[short_mask]))
                             flat_reward_sum = float(np.sum(rew_arr[flat_mask]))
 
-                            max_hold = float(getattr(self, "max_holding_number", 1.0))
+                            max_hold = float(self.max_holding_number)
                             if max_hold <= 0:
                                 max_hold = 1.0
                             net_position_exposure = float(mean_pos / max_hold)
@@ -1078,12 +1064,9 @@ class weighted_trader:
 
 
 if __name__ == "__main__":
-    if hasattr(torch, "set_float32_matmul_precision"):
-        torch.set_float32_matmul_precision("high")
-    if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
-        torch.backends.cuda.matmul.allow_tf32 = True
-    if hasattr(torch.backends, "cudnn"):
-        torch.backends.cudnn.allow_tf32 = True
+    torch.set_float32_matmul_precision("high")
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
     args = parser.parse_args()
     trader = weighted_trader(args)
     trader.test()

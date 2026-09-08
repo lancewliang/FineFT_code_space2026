@@ -410,7 +410,7 @@ def _build_diagnostics_manifest(
 
 
 def _manifest_payload(manifest):
-    return manifest.to_dict() if hasattr(manifest, "to_dict") else manifest
+    return manifest.to_dict()
 
 
 def _manifest_matches(output_dir, expected_manifest):

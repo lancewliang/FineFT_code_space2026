@@ -101,12 +101,9 @@ class weighted_trader:
         # device
         if torch.cuda.is_available():
             self.device = "cuda"
-            if hasattr(torch, "set_float32_matmul_precision"):
-                torch.set_float32_matmul_precision("high")
-            if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
-                torch.backends.cuda.matmul.allow_tf32 = True
-            if hasattr(torch.backends, "cudnn"):
-                torch.backends.cudnn.allow_tf32 = True
+            torch.set_float32_matmul_precision("high")
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
         else:
             self.device = "cpu"
 
@@ -239,7 +236,7 @@ class weighted_trader:
             initial_leverage,
         )
         enable_limit = (
-            getattr(self, "enable_limit_reward", True)
+            self.enable_limit_reward
             and "UpperLimitPrice" in test_df.columns
             and "limit_up_single_sided_ratio" in test_df.columns
         )
@@ -257,12 +254,12 @@ class weighted_trader:
             early_stop=0,
             # initial_personal_state
             initial_state=initial_state,
-            allow_reverse_position=getattr(self, "allow_reverse_position", False),
+            allow_reverse_position=self.allow_reverse_position,
             enable_limit_reward=enable_limit,
-            limit_hold_bonus=getattr(self, "limit_hold_bonus", 1.0),
-            limit_stay_bonus=getattr(self, "limit_stay_bonus", 0.5),
-            limit_reverse_penalty=getattr(self, "limit_reverse_penalty", 1.5),
-            near_limit_threshold=getattr(self, "near_limit_threshold", 0.003),
+            limit_hold_bonus=self.limit_hold_bonus,
+            limit_stay_bonus=self.limit_stay_bonus,
+            limit_reverse_penalty=self.limit_reverse_penalty,
+            near_limit_threshold=self.near_limit_threshold,
         )
         s, info = test_env.reset()
         done = False

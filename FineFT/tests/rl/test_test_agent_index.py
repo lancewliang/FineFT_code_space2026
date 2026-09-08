@@ -25,6 +25,12 @@ class FakeEnv:
     maintain_marigine_history = []
     new_position_required_money_history = []
 
+    def __init__(self):
+        self.position = 0
+        self.leverage = 1
+        self.wallet_balance = 1000.0
+        self.unrealized_pnl = 0.0
+
     def _execution_metric_info(self):
         return {
             "commission_fee_step": 0.0,
@@ -160,6 +166,12 @@ def _make_test_trader(tai, tmp_path, save_trading_detail_csv=False, label_type="
     trader.transcation_cost = 0
     trader.maintenance_margin_ratio_dict = {}
     trader.tech_indicator_list = []
+    trader.allow_reverse_position = False
+    trader.enable_limit_reward = True
+    trader.limit_hold_bonus = 1.0
+    trader.limit_stay_bonus = 0.5
+    trader.limit_reverse_penalty = 1.5
+    trader.near_limit_threshold = 0.003
     trader.epoch_path = str(tmp_path)
     trader.epoch_num = 1
     trader.save_trading_detail_csv = save_trading_detail_csv

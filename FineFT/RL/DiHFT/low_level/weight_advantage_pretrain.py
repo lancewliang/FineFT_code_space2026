@@ -587,12 +587,9 @@ def seed_torch(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
-    if hasattr(torch, "set_float32_matmul_precision"):
-        torch.set_float32_matmul_precision("high")
-    if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
-        torch.backends.cuda.matmul.allow_tf32 = True
-    if hasattr(torch.backends, "cudnn"):
-        torch.backends.cudnn.allow_tf32 = True
+    torch.set_float32_matmul_precision("high")
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
 
 
 class Weighted_Contexts_DQN:
@@ -690,12 +687,12 @@ class Weighted_Contexts_DQN:
             self.initial_position,
             self.initial_leverage,
         )
-        self.allow_reverse_position = getattr(args, "allow_reverse_position", False)
-        self.enable_limit_reward = getattr(args, "enable_limit_reward", True)
-        self.limit_hold_bonus = getattr(args, "limit_hold_bonus", 1.0)
-        self.limit_stay_bonus = getattr(args, "limit_stay_bonus", 0.5)
-        self.limit_reverse_penalty = getattr(args, "limit_reverse_penalty", 1.5)
-        self.near_limit_threshold = getattr(args, "near_limit_threshold", 0.003)
+        self.allow_reverse_position = args.allow_reverse_position
+        self.enable_limit_reward = args.enable_limit_reward
+        self.limit_hold_bonus = args.limit_hold_bonus
+        self.limit_stay_bonus = args.limit_stay_bonus
+        self.limit_reverse_penalty = args.limit_reverse_penalty
+        self.near_limit_threshold = args.near_limit_threshold
 
         # network
         self.time_info_dim = args.time_info_dim
@@ -1079,11 +1076,7 @@ class Weighted_Contexts_DQN:
                 "Unable to resolve empty position action from position_list={} and "
                 "leverage_choices={}".format(self.position_list, self.leverage_choices)
             )
-        action_count = getattr(
-            self,
-            "N_ACTIONS",
-            (self.position_choices - 1) * len(self.leverage_choices) + 1,
-        )
+        action_count = (self.position_choices - 1) * len(self.leverage_choices) + 1
         for action in range(action_count):
             position, _ = map_action_to_position_leverage(
                 action,
@@ -1673,12 +1666,9 @@ class Weighted_Contexts_DQN:
 
 
 if __name__ == "__main__":
-    if hasattr(torch, "set_float32_matmul_precision"):
-        torch.set_float32_matmul_precision("high")
-    if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
-        torch.backends.cuda.matmul.allow_tf32 = True
-    if hasattr(torch.backends, "cudnn"):
-        torch.backends.cudnn.allow_tf32 = True
+    torch.set_float32_matmul_precision("high")
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
     args = parser.parse_args()
     configure_logger(args.dataset_name, args.experiment_name)
     logger.info('start')

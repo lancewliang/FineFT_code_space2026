@@ -193,11 +193,11 @@ def log_loss_nan_diagnostics(logger, numeric_values, info_values, trainer):
     logger.error(
         "loss is nan | update_counter=%s | batch_size=%s | ada=%s | "
         "gamma=%s | grad_clip=%s",
-        getattr(trainer, "update_counter", None),
-        getattr(trainer, "batch_size", None),
-        getattr(trainer, "ada", None),
-        getattr(trainer, "gamma", None),
-        getattr(trainer, "grad_clip", None),
+        trainer.update_counter,
+        trainer.batch_size,
+        trainer.ada,
+        trainer.gamma,
+        trainer.grad_clip,
     )
     for name, summary in diagnostics.numeric.items():
         logger.error(

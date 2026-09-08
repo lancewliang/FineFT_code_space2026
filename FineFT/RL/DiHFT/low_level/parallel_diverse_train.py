@@ -1044,12 +1044,13 @@ def write_epoch_rollout_scalars(trainer, epoch_metrics, epoch_index):
 def get_buffer_capacity(buffer_diverse, trainer=None):
     """获取经验池容量上限。"""
     capacity = getattr(buffer_diverse, "buffer_size", None)
-    if capacity is None:
-        memory = getattr(buffer_diverse, "memory", None)
-        capacity = getattr(memory, "maxlen", None)
-    if capacity is None and trainer is not None:
-        capacity = getattr(trainer, "buffer_size", None)
-    return capacity
+    if isinstance(capacity, (int, float)):
+        return int(capacity)
+    if trainer is not None:
+        trainer_capacity = getattr(trainer, "buffer_size", None)
+        if isinstance(trainer_capacity, (int, float)):
+            return int(trainer_capacity)
+    return None
 
 
 def is_buffer_full(buffer_diverse, trainer=None):
@@ -1057,12 +1058,7 @@ def is_buffer_full(buffer_diverse, trainer=None):
     capacity = get_buffer_capacity(buffer_diverse, trainer)
     if capacity is None or capacity <= 0:
         return False
-    current_size = (
-        buffer_diverse["buffer_size"]
-        if isinstance(buffer_diverse, dict) and "buffer_size" in buffer_diverse
-        else len(buffer_diverse)
-    )
-    return current_size >= capacity
+    return len(buffer_diverse) >= capacity
 
 
 def run_epoch_exploration(

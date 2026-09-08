@@ -84,6 +84,7 @@ Naming:
 Types and interfaces:
 - Add type hints for new or changed functions when practical.
 - Public functions, cross-module interfaces, and non-trivial data structures should have explicit types.
+- Explicit class parameter annotations: When function or method parameters have clear and concrete class types, explicitly annotate them in the `def` signature (e.g. `def run_phase(trainer: Weighted_Contexts_DQN, buffer: Multi_step_ReplayBuffer_multi_info) -> None:`) to make code structure immediately identifiable and navigable.
 - Avoid broad `Any`; if it is necessary, keep it local and explain why through the surrounding code.
 - Prefer built-in generics such as `list[str]` and `dict[str, int]` when the supported Python version allows it.
 - Trust types, avoid runtime type inspections: Do not use `isinstance(...)` or `type(x) is T` as runtime guards or dispatch ladders in internal logic. Trust type signatures and Python duck typing; let invalid operations fail fast with `TypeError` or `AttributeError`.

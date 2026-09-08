@@ -105,9 +105,7 @@ class PretrainCollectRunner:
         self._perfection_cache = {}
 
     def collect_episode(self, message):
-        df_index = getattr(message, "df_index", None)
-        if df_index is None:
-            df_index = self.df_index
+        df_index = message.df_index if message.df_index is not None else self.df_index
         train_df = self.train_df_by_df[df_index]
         q_table = self.q_table_by_df[df_index]
         initial_action = message.initial_action
@@ -196,7 +194,7 @@ def start_pretrain_collect_workers(trainer, train_df_cache, env_kwargs, q_table_
     trainer.worker_input_queues = {}
     trainer.worker_processes = []
     effective_df_indices = build_effective_df_indices(trainer.total_df_index_length)
-    max_workers = getattr(trainer, "pretrain_num_workers", 150)
+    max_workers = trainer.pretrain_num_workers
     if max_workers <= 0:
         raise ValueError("pretrain_num_workers must be positive")
     num_workers = min(len(effective_df_indices), max_workers)
@@ -300,14 +298,9 @@ def extract_stacked_tensor_dict(buffer, chunk_size=50000):
         }
 
     first = memory[0]
-    if hasattr(first, "state"):
-        first_state = first.state
-        first_info = first.info
-        first_next_info = first.next_info
-    else:
-        first_state = first[0]
-        first_info = first[1]
-        first_next_info = first[6]
+    first_state = first[0]
+    first_info = first[1]
+    first_next_info = first[6]
 
     state_shape = np.asarray(first_state).shape
     raw_info_keys = getattr(buffer, "info_key", None)
@@ -336,22 +329,13 @@ def extract_stacked_tensor_dict(buffer, chunk_size=50000):
     for start in range(0, n, chunk_size):
         end = min(start + chunk_size, n)
         chunk = memory[start:end]
-        if hasattr(chunk[0], "state"):
-            c_states = [e.state for e in chunk]
-            c_actions = [e.action for e in chunk]
-            c_rewards = [e.reward for e in chunk]
-            c_next_states = [e.next_state for e in chunk]
-            c_dones = [e.done for e in chunk]
-            c_infos = [e.info for e in chunk]
-            c_next_infos = [e.next_info for e in chunk]
-        else:
-            c_states = [e[0] for e in chunk]
-            c_infos = [e[1] for e in chunk]
-            c_actions = [e[2] for e in chunk]
-            c_rewards = [e[3] for e in chunk]
-            c_next_states = [e[4] for e in chunk]
-            c_dones = [e[5] for e in chunk]
-            c_next_infos = [e[6] for e in chunk]
+        c_states = [e[0] for e in chunk]
+        c_infos = [e[1] for e in chunk]
+        c_actions = [e[2] for e in chunk]
+        c_rewards = [e[3] for e in chunk]
+        c_next_states = [e[4] for e in chunk]
+        c_dones = [e[5] for e in chunk]
+        c_next_infos = [e[6] for e in chunk]
 
         states[start:end] = torch.from_numpy(np.stack(c_states)).float()
         actions[start:end] = torch.from_numpy(np.vstack(c_actions)).long()
@@ -482,15 +466,11 @@ def load_pretrain_buffer_file(buffer_pretrain, buffer_path, current_step_counter
 
 
 def resolve_pretrain_paths(trainer):
-    model_path = getattr(trainer, "model_path", None)
-    if not isinstance(model_path, str):
-        model_path = None
-
-    pretrain_buffer_path = None
-    pretrain_model_path = None
-    if model_path is not None:
-        pretrain_buffer_path = os.path.join(model_path, "pretrain_buffer.pt")
-        pretrain_model_path = os.path.join(model_path, "pretrain_model.pkl")
+    model_path = trainer.model_path
+    if not model_path:
+        return None, None
+    pretrain_buffer_path = os.path.join(model_path, "pretrain_buffer.pt")
+    pretrain_model_path = os.path.join(model_path, "pretrain_model.pkl")
     return pretrain_buffer_path, pretrain_model_path
 
 
@@ -509,19 +489,13 @@ def run_exhaustive_warmup(
 
     pretrain_buffer_path, pretrain_model_path = resolve_pretrain_paths(trainer)
 
-    load_model = getattr(trainer, "load_pretrain_model", False)
-    if isinstance(load_model, bool) and load_model and pretrain_model_path is not None and os.path.exists(pretrain_model_path):
+    if trainer.load_pretrain_model and pretrain_model_path is not None and os.path.exists(pretrain_model_path):
         state_dict = torch.load(
             pretrain_model_path,
-            map_location=getattr(trainer, "device", "cpu"),
+            map_location=trainer.device,
         )
-        if hasattr(trainer, "eval_net") and hasattr(
-            trainer.eval_net, "load_state_dict"
-        ):
-            trainer.eval_net.load_state_dict(state_dict)
-        if hasattr(trainer, "target_net") and hasattr(
-            trainer.target_net, "load_state_dict"
-        ):
+        trainer.eval_net.load_state_dict(state_dict)
+        if trainer.target_net is not None:
             trainer.target_net.load_state_dict(state_dict)
         logger.info(
             "已读取已训练的预先训练模型并跳过预先训练 | 模型路径=%s",
@@ -536,9 +510,9 @@ def run_exhaustive_warmup(
    
     if trainer.total_df_index_length <= 0:
         raise ValueError("exhaustive warmup requires total_df_index_length > 0")
-    if getattr(trainer, "pretrain_epoch", 0) < 0:
+    if trainer.pretrain_epoch < 0:
         raise ValueError("pretrain_epoch must be non-negative")
-    if trainer.pretrain_epoch > 0 and getattr(trainer, "update_times", 0) <= 0:
+    if trainer.pretrain_epoch > 0 and trainer.update_times <= 0:
         raise ValueError("update_times must be positive when pretrain_epoch > 0")
     total_episodes = trainer.total_df_index_length * trainer.position_choices * 4
 
@@ -628,10 +602,7 @@ def run_exhaustive_warmup(
 
     update_count = 0
     eval_metrics = []
-    raw_interval = getattr(trainer, "eval_every_rounds", None)
-    eval_interval = (
-        raw_interval if isinstance(raw_interval, int) and raw_interval > 0 else 30
-    )
+    eval_interval = 30
     if trainer.pretrain_epoch > 0:
         if len(buffer_pretrain) < trainer.batch_size:
             raise ValueError(
