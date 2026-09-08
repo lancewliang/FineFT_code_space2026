@@ -825,17 +825,16 @@ class Weighted_Contexts_DQN:
             q_table_cache=q_table_cache,
             train_df_cache=train_df_cache,
         )
-        if self.load_pretrain_model:
-            model_file = os.path.join(
-                self.model_path, "pretrain_model.pkl"
-            )
-            if not os.path.exists(model_file):
-                raise FileNotFoundError(f"pretrain model file not found: {model_file}")
-            state_dict = torch.load(model_file, map_location=self.device)
+        
+        pretrain_model_file = os.path.join(
+            self.model_path, "pretrain_model.pkl"
+        )
+        if self.load_pretrain_model and os.path.exists(pretrain_model_file):
+            state_dict = torch.load(pretrain_model_file, map_location=self.device)
             self.eval_net.load_state_dict(state_dict)
             if hasattr(self, "target_net") and self.target_net is not None:
                 self.target_net.load_state_dict(state_dict)
-            logger.info("已读取已训练的预先训练模型并跳过预先训练 | 模型路径=%s", model_file)
+            logger.info("已读取已训练的预先训练模型并跳过预先训练 | 模型路径=%s", pretrain_model_file)
         else:
             _, step_counter_pretrain = run_exhaustive_warmup(
                 trainer=self,
@@ -845,7 +844,6 @@ class Weighted_Contexts_DQN:
                 buffer_pretrain=buffer_pretrain,
                 step_counter_pretrain=step_counter_pretrain,
             )
-        pretrain_model_file = os.path.join(self.model_path, "pretrain_model.pkl")
         train_data_file_paths = sorted(
             os.path.join(self.train_data_path, file_name)
             for file_name in os.listdir(self.train_data_path)
@@ -856,33 +854,32 @@ class Weighted_Contexts_DQN:
                 "跳过预训练子模型评估 | 未找到预训练模型文件=%s", pretrain_model_file
             )
         else:
-            # eval_metrics = evaluates(
-            #     logg_file_path=self.logg_file_path,
-            #     data_file_paths=train_data_file_paths,
-            #     model_path=pretrain_model_file,
-            #     tech_indicator_list_path=self.tech_indicator_list_path,
-            #     maintenance_margin_ratio_dict_path=self.maintenance_margin_ratio_dict_path,
-            #     transcation_cost=self.transcation_cost,
-            #     max_holding_number=self.max_holding_number,
-            #     position_choices=self.position_choices,
-            #     N=self.N,
-            #     time_info_dim=self.time_info_dim,
-            #     hidden_nodes=self.hidden_nodes,
-            #     leverage_choices=self.leverage_choices,
-            #     initial_leverage=self.initial_leverage,
-            #     initial_position=self.initial_position,
-            #     initial_wallet_balance=self.initial_wallet_balance,
-            #     order_book_depth=self.order_book_depth,
-            #     early_stop=self.early_stop,
-            #     enable_limit_reward=self.enable_limit_reward,
-            #     limit_hold_bonus=self.limit_hold_bonus,
-            #     limit_stay_bonus=self.limit_stay_bonus,
-            #     limit_reverse_penalty=self.limit_reverse_penalty,
-            #     near_limit_threshold=self.near_limit_threshold,
-            #     allow_reverse_position=self.allow_reverse_position,
-            # )
-            # # logger.info(eval_metrics)
-            pass
+            eval_metrics = evaluates(
+                logg_file_path=self.logg_file_path,
+                data_file_paths=train_data_file_paths,
+                model_path=pretrain_model_file,
+                tech_indicator_list_path=self.tech_indicator_list_path,
+                maintenance_margin_ratio_dict_path=self.maintenance_margin_ratio_dict_path,
+                transcation_cost=self.transcation_cost,
+                max_holding_number=self.max_holding_number,
+                position_choices=self.position_choices,
+                N=self.N,
+                time_info_dim=self.time_info_dim,
+                hidden_nodes=self.hidden_nodes,
+                leverage_choices=self.leverage_choices,
+                initial_leverage=self.initial_leverage,
+                initial_position=self.initial_position,
+                initial_wallet_balance=self.initial_wallet_balance,
+                order_book_depth=self.order_book_depth,
+                early_stop=self.early_stop,
+                enable_limit_reward=self.enable_limit_reward,
+                limit_hold_bonus=self.limit_hold_bonus,
+                limit_stay_bonus=self.limit_stay_bonus,
+                limit_reverse_penalty=self.limit_reverse_penalty,
+                near_limit_threshold=self.near_limit_threshold,
+                allow_reverse_position=self.allow_reverse_position,
+            )
+            logger.info(eval_metrics)
 
         # 预训练阶段已彻底结束（经验池已由 warmup 持久化到文件）：
         # 清空预训练经验池，释放其占用的内存后再开始多样化训练
