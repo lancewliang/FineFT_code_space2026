@@ -548,6 +548,15 @@ def shutdown_workers(input_queues: Any, processes: list[Any]) -> None:
 
 
 class Weighted_Contexts_DQN:
+    """强化学习低层加权上下文 DQN 训练与编排核心类。
+
+    契约规范：
+    本类所有的运行路径、超参数与环境配置均在 __init__ 中严格初始化。
+    外部函数与模块使用本类实例时，必须显式声明类型注解（trainer: Weighted_Contexts_DQN）
+    并通过属性直接访问（例如 self.train_data_path 或 trainer.tech_indicator_list_path）。
+    严禁使用 getattr(trainer, ...) 做防御性回退；若属性缺失，必须立即抛出 AttributeError。
+    """
+
     def __init__(self, args: argparse.Namespace):
         # seed
         self.seed = args.seed
@@ -844,15 +853,20 @@ class Weighted_Contexts_DQN:
                 buffer_pretrain=buffer_pretrain,
                 step_counter_pretrain=step_counter_pretrain,
             )
-        train_data_file_paths = sorted(
-            os.path.join(self.train_data_path, file_name)
-            for file_name in os.listdir(self.train_data_path)
-            if file_name.startswith("df_") and file_name.endswith(".feather")
-        )
+        if self.train_data_path and os.path.exists(self.train_data_path):
+            train_data_file_paths = sorted(
+                os.path.join(self.train_data_path, file_name)
+                for file_name in os.listdir(self.train_data_path)
+                if file_name.startswith("df_") and file_name.endswith(".feather")
+            )
+        else:
+            train_data_file_paths = []
         if not os.path.exists(pretrain_model_file):
             logger.warning(
                 "跳过预训练子模型评估 | 未找到预训练模型文件=%s", pretrain_model_file
             )
+        elif not train_data_file_paths:
+            logger.warning("跳过预训练子模型评估 | 未找到评估数据文件")
         else:
             eval_metrics = evaluates(
                 logg_file_path=self.logg_file_path,
@@ -889,14 +903,28 @@ class Weighted_Contexts_DQN:
         from RL.DiHFT.low_level.parallel_diverse_train import (
             run_parallel_diverse_training,
         )
-        step_counter_diverse = run_parallel_diverse_training(
-            trainer=self,
-            train_df_cache=train_df_cache,
-            env_kwargs=env_kwargs,
-            buffer_diverse=buffer_diverse,
-            step_counter_diverse=step_counter_diverse,
-            diverse_rollout_latest_metrics_by_df=diverse_rollout_latest_metrics_by_df,
-        )
+        if self.total_df_index_length > 0:
+            step_counter_diverse = run_parallel_diverse_training(
+                trainer=self,
+                train_df_cache=train_df_cache,
+                env_kwargs=env_kwargs,
+                buffer_diverse=buffer_diverse,
+                step_counter_diverse=step_counter_diverse,
+                diverse_rollout_latest_metrics_by_df=diverse_rollout_latest_metrics_by_df,
+            )
+            logger.info("多样化训练及评估完成，准备退出主进程")
+        else:
+            logger.warning("跳过多样化训练 | total_df_index_length <= 0")
+
+
+def __getattr__(name: str):
+    if name in ("run_parallel_diverse_training", "evaluate_parallel_diverse_model"):
+        from RL.DiHFT.low_level import parallel_diverse_train as pdt
+
+        if name == "run_parallel_diverse_training":
+            return pdt.run_parallel_diverse_training
+        return pdt.evaluate_parallel_diverse_model
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 if __name__ == "__main__":

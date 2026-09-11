@@ -366,6 +366,17 @@ class Multi_step_ReplayBuffer_multi_info:
             self.memory.append(e)
         self.iter_ += 1
 
+    def replace(self, index: int, *transition):
+        """Replace transition at index in internal memory."""
+        if 0 <= index < len(self.memory):
+            if len(transition) == 7:
+                state, info, action, reward, next_state, next_info, done = transition
+                self.memory[index] = self.experience(
+                    state, info, action, reward, next_state, done, next_info
+                )
+            elif len(transition) == 1 and isinstance(transition[0], tuple):
+                self.replace(index, *transition[0])
+
     def add_transition(
         self,
         transition,

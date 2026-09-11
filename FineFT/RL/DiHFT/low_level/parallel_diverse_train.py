@@ -71,6 +71,7 @@ from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import (
     raise_for_worker_error,
     shutdown_workers,
 )
+from RL.DiHFT.low_level.evaluate_sub_agents import evaluates
 
 # 探索子进程数量上限（严格控制为 20）：df 数量更多时按 round-robin 分配给子进程
 MAX_EXPLORATION_WORKERS = 20
@@ -192,6 +193,7 @@ class ExploreWorkerRound:
 class WorkerTransitionRecord:
     step_index: int
     transition: object
+    td_error: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -392,6 +394,19 @@ def load_worker_state_dict(model: torch.nn.Module, state_dict: dict[str, Any]):
     )
 
 
+def sort_round_records(
+    round_results: list[WorkerRoundResult],
+) -> list[tuple[int, WorkerTransitionRecord]]:
+    ordered = []
+    for result in sorted(round_results, key=lambda item: item.df_index):
+        for record in sorted(
+            result.transitions,
+            key=lambda transition: transition.step_index,
+        ):
+            ordered.append((result.df_index, record))
+    return ordered
+
+
 def sort_round_transitions(round_results):
     ordered = []
     for result in sorted(round_results, key=lambda item: item.df_index):
@@ -425,6 +440,43 @@ def _freeze_transition_value(value):
     return ("other", type(value).__name__, repr(value))
 
 
+def build_semantic_transition_key(
+    state: np.ndarray | Any,
+    action: int,
+    info: dict[str, Any],
+) -> tuple[int, int, int, int, int]:
+    """提取经验的语义决策键，剔除浮点路径噪音、累计 reward 与 Teacher Q 值。
+
+    键由以下离散正交状态组成：
+    (state_hash, previous_action, action, pos_dir, dur_bucket)
+    """
+    if isinstance(state, np.ndarray):
+        state_bytes = state.tobytes()
+    else:
+        state_bytes = repr(state).encode("utf-8")
+    state_hash = int.from_bytes(
+        hashlib.blake2b(state_bytes, digest_size=8).digest(), "big"
+    )
+
+    previous_action = int(info["previous_action"])
+    trading_info = info.get("trading_info")
+    if trading_info is not None and len(trading_info) >= 1:
+        pos_dir = int(np.round(float(trading_info[0])))
+        raw_steps = int(float(trading_info[3]) * 180) if len(trading_info) >= 4 else 0
+        if raw_steps <= 2:
+            dur_bucket = 0
+        elif raw_steps <= 12:
+            dur_bucket = 1
+        elif raw_steps <= 36:
+            dur_bucket = 2
+        else:
+            dur_bucket = 3
+    else:
+        pos_dir, dur_bucket = 0, 0
+
+    return (state_hash, previous_action, int(action), pos_dir, dur_bucket)
+
+
 def build_transition_fingerprint(transition):
     """计算经验的內容指纹。
 
@@ -437,23 +489,86 @@ def build_transition_fingerprint(transition):
     return int.from_bytes(digest, "big")
 
 
+def _get_buffer_length(buffer: Any) -> int:
+    try:
+        return len(buffer)
+    except TypeError:
+        if hasattr(buffer, "added"):
+            return len(buffer.added)
+        if hasattr(buffer, "memory"):
+            return len(buffer.memory)
+        return 0
+
+
+def _replace_in_buffer(buffer: Any, index: int, transition: tuple) -> None:
+    if hasattr(buffer, "replace"):
+        buffer.replace(index, *transition)
+    elif hasattr(buffer, "memory") and index < len(buffer.memory):
+        if hasattr(buffer, "experience") and len(transition) == 7:
+            s, info, a, r, s_, next_info, d = transition
+            buffer.memory[index] = buffer.experience(s, info, a, r, s_, d, next_info)
+        else:
+            buffer.memory[index] = transition
+    elif hasattr(buffer, "added") and index < len(buffer.added):
+        buffer.added[index] = transition
+
+
 def write_round_transitions_to_buffer(
     buffer_diverse: Multi_step_ReplayBuffer_multi_info,
     round_results: list[WorkerRoundResult],
-    seen_fingerprints: set[Any],
-):
-    """按 (df_index, step_index) 顺序写入经验池，保证经验唯一性。
+    seen_fingerprints: set[Any] | dict[Any, tuple[int, float]],
+) -> int:
+    """按 (df_index, step_index) 顺序写入经验池，基于语义键与 TD-Error 择优保留。
 
-    已存在相同内容指纹的经验直接跳过，不重复添加；返回本轮跳过的重复数。
+    支持两种跟踪器：
+    1. dict[semantic_key, (buffer_index, td_error)]:
+       - 未见过的语义键：追加写入经验池，记录位置与 td_error
+       - 已存在的语义键：若新样本 td_error > old_td_error，择优就地替换旧样本；否则跳过（计入 duplicate）
+    2. set[fingerprint]（兼容模式）：
+       - 使用语义指纹/键去重，已存在则直接跳过
+    返回本轮跳过的重复数。
     """
     duplicate_count = 0
-    for transition in sort_round_transitions(round_results):
-        fingerprint = build_transition_fingerprint(transition)
-        if fingerprint in seen_fingerprints:
-            duplicate_count += 1
-            continue
-        seen_fingerprints.add(fingerprint)
-        buffer_diverse.add(*transition)
+    records = sort_round_records(round_results)
+    is_tracker_dict = isinstance(seen_fingerprints, dict)
+
+    for df_index, record in records:
+        transition = record.transition
+        step_index = record.step_index
+        td_error = getattr(record, "td_error", 0.0)
+
+        if (
+            len(transition) >= 3
+            and isinstance(transition[1], dict)
+            and "previous_action" in transition[1]
+        ):
+            semantic_key = build_semantic_transition_key(
+                state=transition[0],
+                action=int(transition[2]),
+                info=transition[1],
+            )
+        else:
+            semantic_key = build_transition_fingerprint(transition)
+
+        if is_tracker_dict:
+            if semantic_key in seen_fingerprints:
+                old_idx, old_td_error = seen_fingerprints[semantic_key]
+                if td_error > old_td_error:
+                    _replace_in_buffer(buffer_diverse, old_idx, transition)
+                    seen_fingerprints[semantic_key] = (old_idx, td_error)
+                else:
+                    duplicate_count += 1
+                continue
+            buf_idx = _get_buffer_length(buffer_diverse)
+            seen_fingerprints[semantic_key] = (buf_idx, td_error)
+            buffer_diverse.add(*transition)
+        else:
+            if semantic_key in seen_fingerprints:
+                duplicate_count += 1
+                continue
+            seen_fingerprints.add(semantic_key)
+            buffer_diverse.add(*transition)
+
     return duplicate_count
 
 
@@ -645,7 +760,7 @@ class DfRolloutWorkerRunner:
 
     def _act(self, state, info, context_index, epsilon):
         if np.random.uniform() <= epsilon:
-            return np.random.choice(info["avaiable_action_list"])
+            return int(np.random.choice(info["avaiable_action_list"])), 0.0
         with torch.no_grad():
             state_tensor = torch.unsqueeze(torch.FloatTensor(state).reshape(-1), 0).to(
                 self.device
@@ -675,7 +790,10 @@ class DfRolloutWorkerRunner:
                 avaliable_action=avaliable_action,
                 trading_info=trading_info,
             )
-            return int(torch.max(q_values[:, context_index, :], 1)[1].data.cpu().numpy()[0])
+            context_q = q_values[:, context_index, :]
+            action = int(torch.max(context_q, 1)[1].data.cpu().numpy()[0])
+            chosen_q = float(context_q[0, action].item())
+            return action, chosen_q
 
     def explore_round(self, message):
         """对 message.df_index 执行完整探索：单条消息一次性跑到回合结束。
@@ -688,13 +806,19 @@ class DfRolloutWorkerRunner:
         self.model.eval()
         transitions = []
         while not episode.done:
-            action = self._act(
+            action, chosen_q = self._act(
                 episode.state,
                 episode.info,
                 message.context_index,
                 message.epsilon,
             )
             next_state, reward, done, next_info = episode.env.step(action)
+            if "q_value" in episode.info and len(episode.info["q_value"]) > action:
+                teacher_q = float(episode.info["q_value"][action])
+                td_error = abs(teacher_q - chosen_q)
+            else:
+                td_error = abs(float(reward) - chosen_q)
+
             transitions.append(
                 WorkerTransitionRecord(
                     step_index=episode.transition_count,
@@ -707,6 +831,7 @@ class DfRolloutWorkerRunner:
                         next_info,
                         done,
                     ),
+                    td_error=float(td_error),
                 )
             )
             episode.reward_sum += reward
@@ -1155,24 +1280,13 @@ def run_epoch_exploration(
                         metrics.return_rate,
                     )
                 context_metrics.extend(task_metrics)
-                epoch_metrics.extend(task_metrics)
-                if is_buffer_full(buffer_diverse, trainer):
-                    buffer_full = True
-                    logger.info(
-                        "buffer is full | stopping epoch exploration early | "
-                        "epoch_index=%d | context_index=%d | initial_action=%d | "
-                        "buffer_size=%d",
-                        epoch_index,
-                        context_index,
-                        initial_action,
-                        len(buffer_diverse),
-                    )
-                    break
+                epoch_metrics.extend(task_metrics)               
+            if is_buffer_full(buffer_diverse, trainer):
+                continue
             write_context_rollout_scalars(
                 trainer, context_index, context_metrics, epoch_index
             )
-            if buffer_full:
-                break
+             
         # 探索完整性确认：全部任务结束或经验池已满
         logger.info(
             "epoch exploration complete | epoch_index=%d | explored_tasks=%d | "
@@ -1212,14 +1326,17 @@ def run_parallel_diverse_training(
     if trainer.total_df_index_length <= 0:
         raise ValueError("parallel diverse training requires total_df_index_length > 0")
     round_counter = 0
-    seen_fingerprints = set()
+    seen_fingerprints = {}
     consecutive_no_new_experience_epochs = 0
     skip_exploration = False
     tensor_snapshot = None
+    best_loss = float("inf")
+    best_model_file = None
+    best_epoch_index = -1
     for epoch_index in range(trainer.num_epoch):
         apply_epoch_training_params(trainer, epoch_index)
         buffer_full = is_buffer_full(buffer_diverse, trainer)
-        if skip_exploration or buffer_full:
+        if skip_exploration:
             skip_exploration = True
             logger.info(
                 "epoch exploration skipped | epoch_index=%d | buffer_full=%s | "
@@ -1283,7 +1400,7 @@ def run_parallel_diverse_training(
         training_source = (
             tensor_snapshot if tensor_snapshot is not None else buffer_diverse
         )
-        run_diverse_training_phase(
+        last_losses = run_diverse_training_phase(
             trainer,
             training_source,
             trainer.update_times,
@@ -1291,7 +1408,125 @@ def run_parallel_diverse_training(
         )
         write_epoch_rollout_scalars(trainer, epoch_metrics, epoch_index)
         save_parallel_epoch_model(trainer, epoch_index)
+
+        epoch_model_file = os.path.join(
+            build_epoch_model_path(trainer.model_path, epoch_index),
+            "trained_model.pkl",
+        )
+        if last_losses is not None:
+            epoch_total_loss = (
+                last_losses[0]
+                if isinstance(last_losses, (tuple, list))
+                else float(last_losses)
+            )
+            if epoch_total_loss < best_loss:
+                best_loss = epoch_total_loss
+                best_model_file = epoch_model_file
+                best_epoch_index = epoch_index
+                logger.info(
+                    "更新最小 total_loss 模型 | epoch=%d | total_loss=%.6f | 模型路径=%s",
+                    epoch_index + 1,
+                    best_loss,
+                    best_model_file,
+                )
+        elif best_model_file is None:
+            best_model_file = epoch_model_file
+            best_epoch_index = epoch_index
+
+    if best_model_file is None:
+        pretrain_model = os.path.join(trainer.model_path, "pretrain_model.pkl")
+        if os.path.exists(pretrain_model):
+            best_model_file = pretrain_model
+        else:
+            last_epoch_model = os.path.join(
+                build_epoch_model_path(trainer.model_path, max(0, trainer.num_epoch - 1)),
+                "trained_model.pkl",
+            )
+            if os.path.exists(last_epoch_model):
+                best_model_file = last_epoch_model
+
+    logger.info(
+        "并行训练结束，准备使用 total loss 最小的模型进行最终评估 | "
+        "最优 epoch=%d | 最小 total_loss=%.6f | 模型路径=%s",
+        best_epoch_index + 1 if best_epoch_index >= 0 else 0,
+        best_loss if best_loss != float("inf") else 0.0,
+        best_model_file,
+    )
+
+    eval_metrics = evaluate_parallel_diverse_model(trainer, best_model_file)
+    trainer.best_model_path = best_model_file
+    trainer.best_loss = best_loss
+    trainer.best_epoch_index = best_epoch_index
+    trainer.diverse_eval_metrics = eval_metrics
     return step_counter_diverse
+
+
+def evaluate_parallel_diverse_model(
+    trainer: Weighted_Contexts_DQN,
+    model_path: str,
+) -> list[dict[str, Any]]:
+    """使用指定的模型（通常为 total loss 最小的模型）执行一次评估。
+
+    使用 evaluate_sub_agents.evaluates 多进程评估器在数据文件上运行评估，
+    等待所有评估子进程结束并输出统计后返回。
+    """
+    if not model_path or not os.path.exists(model_path):
+        logger.warning("跳过多样化训练评估 | 未找到模型文件=%s", model_path)
+        return []
+
+    if not os.path.exists(trainer.train_data_path):
+        logger.warning("跳过多样化训练评估 | 数据目录不存在=%s", trainer.train_data_path)
+        return []
+
+    data_file_paths = sorted(
+        os.path.join(trainer.train_data_path, file_name)
+        for file_name in os.listdir(trainer.train_data_path)
+        if file_name.startswith("df_") and file_name.endswith(".feather")
+    )
+
+    if not data_file_paths:
+        logger.warning("跳过多样化训练评估 | 未找到评估数据文件")
+        return []
+
+    logg_file_path = os.path.join(trainer.model_path, "diverse_evaluation.log")
+
+    logger.info(
+        "开始执行多样化训练评估 | 模型=%s | 数据文件数=%d | 评估日志=%s",
+        model_path,
+        len(data_file_paths),
+        logg_file_path,
+    )
+    eval_metrics = evaluates(
+        logg_file_path=logg_file_path,
+        data_file_paths=data_file_paths,
+        model_path=model_path,
+        tech_indicator_list_path=trainer.tech_indicator_list_path,
+        maintenance_margin_ratio_dict_path=trainer.maintenance_margin_ratio_dict_path,
+        transcation_cost=trainer.transcation_cost,
+        max_holding_number=trainer.max_holding_number,
+        position_choices=trainer.position_choices,
+        N=trainer.N,
+        time_info_dim=trainer.time_info_dim,
+        hidden_nodes=trainer.hidden_nodes,
+        leverage_choices=trainer.leverage_choices,
+        initial_leverage=trainer.initial_leverage,
+        initial_position=trainer.initial_position,
+        initial_wallet_balance=trainer.initial_wallet_balance,
+        order_book_depth=trainer.order_book_depth,
+        early_stop=trainer.early_stop,
+        enable_limit_reward=trainer.enable_limit_reward,
+        limit_hold_bonus=trainer.limit_hold_bonus,
+        limit_stay_bonus=trainer.limit_stay_bonus,
+        limit_reverse_penalty=trainer.limit_reverse_penalty,
+        near_limit_threshold=trainer.near_limit_threshold,
+        allow_reverse_position=trainer.allow_reverse_position,
+    )
+    logger.info(
+        "多样化训练评估完成 | 评估样本数=%d | 模型=%s",
+        len(eval_metrics),
+        model_path,
+    )
+    return eval_metrics
 
 
 def update(

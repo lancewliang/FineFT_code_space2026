@@ -4,7 +4,7 @@ set -euo pipefail
 ROOTPATH=${ROOTPATH:-$(pwd)}
 SYMBOL=${SYMBOL:-fu}
 TARGET_FREQ=${TARGET_FREQ:-10min}
-CHUNK_LENGTH=${CHUNK_LENGTH:-10000}
+CHUNK_LENGTH=${CHUNK_LENGTH:-5000}
 EARLY_STOP=${EARLY_STOP:-2}
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
@@ -21,17 +21,16 @@ python FineFT/datahandler/commodity_contract_dataset.py \
   --chunk_length "${CHUNK_LENGTH}" \
   --early_stop "${EARLY_STOP}"
 
-
 python FineFT/datahandler/valid_cross_contract_label_calibration.py \
   --valid_dir "dataset/${TARGET_FREQ}/${SYMBOL}/valid" \
-  --dynamic_number 4 \
+  --dynamic_number 3 \
   --labeling_method "slope" \
   --threshold_method global_segment_quantile \
   --timestamp timestamp
 
 python FineFT/datahandler/valid_cross_contract_label_calibration.py \
   --valid_dir "dataset/${TARGET_FREQ}/${SYMBOL}/valid" \
-  --dynamic_number 4 \
+  --dynamic_number 3 \
   --labeling_method "volatility" \
   --threshold_method global_segment_quantile \
   --timestamp timestamp
@@ -39,4 +38,11 @@ python FineFT/datahandler/valid_cross_contract_label_calibration.py \
 python FineFT/datahandler/vae_data_creation.py \
   --base_path "dataset/${TARGET_FREQ}" \
   --dataset_name "${SYMBOL}" \
-  --save_path "dataset/${TARGET_FREQ}"
+  --save_path "dataset/${TARGET_FREQ}" \
+  --labeling_method "slope"
+
+python FineFT/datahandler/vae_data_creation.py \
+  --base_path "dataset/${TARGET_FREQ}" \
+  --dataset_name "${SYMBOL}" \
+  --save_path "dataset/${TARGET_FREQ}" \
+  --labeling_method "volatility"
