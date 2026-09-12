@@ -339,23 +339,40 @@ def _held_then_linear_value(start, end, epoch_index, num_epoch):
 
 
 def compute_epoch_training_params(
-    epoch_index,
-    num_epoch,
-    epsilon_init,
-    epsilon_min,
-    ada_init,
-    ada_min,
-    lr_init,
-    lr_min,
-    decay_epochs=None,
-):
-    effective_decay_epochs = num_epoch if decay_epochs is None else decay_epochs
+    epoch_index: int,
+    num_epoch: int,
+    epsilon_init: float,
+    epsilon_min: float,
+    ada_init: float,
+    ada_min: float,
+    lr_init: float,
+    lr_min: float,
+    curriculum_block_epochs: int = 3,
+) -> EpochTrainingParams:
+    if curriculum_block_epochs <= 0:
+        raise ValueError(
+            f"curriculum_block_epochs must be positive, got {curriculum_block_epochs}"
+        )
+
+    decay_boundary = 3 * curriculum_block_epochs
+    if epoch_index >= decay_boundary:
+        epsilon = float(epsilon_min)
+        ada = float(ada_min)
+    else:
+        phase_epoch = epoch_index % curriculum_block_epochs
+        epsilon = _linear_value(
+            epsilon_init, epsilon_min, phase_epoch, curriculum_block_epochs
+        )
+        ada = _linear_value(
+            ada_init, ada_min, phase_epoch, curriculum_block_epochs
+        )
+
+    lr = _held_then_linear_value(lr_init, lr_min, epoch_index, num_epoch)
+
     return EpochTrainingParams(
-        epsilon=_linear_value(
-            epsilon_init, epsilon_min, epoch_index, effective_decay_epochs
-        ),
-        ada=_linear_value(ada_init, ada_min, epoch_index, effective_decay_epochs),
-        lr=_held_then_linear_value(lr_init, lr_min, epoch_index, num_epoch),
+        epsilon=epsilon,
+        ada=ada,
+        lr=lr,
     )
 
 
@@ -370,7 +387,7 @@ def apply_epoch_training_params(trainer: Weighted_Contexts_DQN, epoch_index: int
         ada_min=trainer.ada_min,
         lr_init=trainer.lr_init,
         lr_min=trainer.lr_min,
-        decay_epochs=trainer.decay_epochs,
+        curriculum_block_epochs=trainer.curriculum_block_epochs,
     )
     trainer.epsilon = params.epsilon
     trainer.ada = params.ada
@@ -1225,6 +1242,18 @@ def run_parallel_diverse_training(
     best_model_file = None
     best_epoch_index = -1
     for epoch_index in range(trainer.num_epoch):
+        is_new_phase_entry = (
+            trainer.curriculum_block_epochs > 0
+            and epoch_index in (
+                trainer.curriculum_block_epochs,
+                2 * trainer.curriculum_block_epochs,
+            )
+        )
+        if is_new_phase_entry:
+            consecutive_no_new_experience_epochs = 0
+            if not is_buffer_full(buffer_diverse, trainer):
+                skip_exploration = False
+
         apply_epoch_training_params(trainer, epoch_index)
         buffer_full = is_buffer_full(buffer_diverse, trainer)
         if skip_exploration or buffer_full:

@@ -361,12 +361,6 @@ parser.add_argument(
     help="number of parallel diverse-training epochs; one epoch explores every effective df once",
 )
 parser.add_argument(
-    "--decay_epochs",
-    type=int,
-    default=None,
-    help="number of epochs to complete epsilon and ada decay; defaults to num_epoch if not set",
-)
-parser.add_argument(
     "--curriculum_block_epochs",
     type=int,
     default=3,
@@ -604,6 +598,8 @@ class Weighted_Contexts_DQN:
         self.n_step = args.n_step
         self.buffer_size = args.buffer_size
         self.curriculum_block_epochs = int(args.curriculum_block_epochs)
+        if self.curriculum_block_epochs <= 0:
+            raise ValueError("curriculum_block_epochs must be positive")
         # resample method
         self.priority_transformation = get_transformation_even_risk
         # general learning setting
@@ -614,11 +610,11 @@ class Weighted_Contexts_DQN:
         self.lr = self.lr_init
         self.num_sample = args.num_sample
         self.num_epoch = args.num_epoch if args.num_epoch is not None else args.num_sample
-        self.decay_epochs = (
-            args.decay_epochs if args.decay_epochs is not None else self.num_epoch
-        )
-        if self.decay_epochs <= 0:
-            raise ValueError("decay_epochs must be positive")
+        if self.num_epoch < 3 * self.curriculum_block_epochs:
+            raise ValueError(
+                f"num_epoch ({self.num_epoch}) must be at least 3 * curriculum_block_epochs "
+                f"({3 * self.curriculum_block_epochs}) to complete all 3 curriculum phases"
+            )
         # trading environment setting
         self.base_path = args.base_path
         self.dataset_name = args.dataset_name

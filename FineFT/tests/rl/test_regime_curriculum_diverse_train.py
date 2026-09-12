@@ -80,3 +80,133 @@ def test_end_to_end_curriculum_phase_rotation_and_balanced_updates(monkeypatch):
 
     for epoch in range(6, 9):
         assert observed_active_grids[epoch] == [2, 5, 8]
+
+
+def test_phase_cyclic_parameter_decay_schedule_across_18_epochs():
+    """验证用户要求的 18 轮完整调度行为：
+    epoch 0-2 从 max 衰减到最低
+    epoch 3-5 从 max 衰减到最低
+    epoch 6-8 从 max 衰减到最低
+    epoch 9-17 恒等于最低
+    学习率 lr 维持全局半程保持后线性衰减。
+    """
+    num_epoch = 18
+    block_epochs = 3
+    eps_init, eps_min = 1.0, 0.1
+    ada_init, ada_min = 256.0, 0.0
+    lr_init, lr_min = 0.0005, 0.0001
+
+    for ep in range(num_epoch):
+        params = pdt.compute_epoch_training_params(
+            epoch_index=ep,
+            num_epoch=num_epoch,
+            epsilon_init=eps_init,
+            epsilon_min=eps_min,
+            ada_init=ada_init,
+            ada_min=ada_min,
+            lr_init=lr_init,
+            lr_min=lr_min,
+            curriculum_block_epochs=block_epochs,
+        )
+
+        # 验证 3 个阶段的周期性重置与衰减
+        if ep in (0, 3, 6):
+            # 阶段起点：恢复至 max
+            assert params.epsilon == pytest.approx(eps_init)
+            assert params.ada == pytest.approx(ada_init)
+        elif ep in (1, 4, 7):
+            # 阶段中点：线性中间值
+            assert params.epsilon == pytest.approx((eps_init + eps_min) / 2.0)
+            assert params.ada == pytest.approx((ada_init + ada_min) / 2.0)
+        elif ep in (2, 5, 8):
+            # 阶段末点：严格达到 min
+            assert params.epsilon == pytest.approx(eps_min)
+            assert params.ada == pytest.approx(ada_min)
+        else:
+            # ep >= 9: 剩余轮次恒等于最低值
+            assert params.epsilon == pytest.approx(eps_min)
+            assert params.ada == pytest.approx(ada_min)
+
+        # 验证学习率保持全局调度：前 9 轮保持 lr_init，后 9 轮线性衰减至 lr_min
+        if ep < 9:
+            assert params.lr == pytest.approx(lr_init)
+        elif ep == 17:
+            assert params.lr == pytest.approx(lr_min)
+
+
+def test_compute_epoch_training_params_rejects_non_positive_block_epochs():
+    with pytest.raises(ValueError, match="curriculum_block_epochs must be positive"):
+        pdt.compute_epoch_training_params(
+            epoch_index=0,
+            num_epoch=18,
+            epsilon_init=1.0,
+            epsilon_min=0.1,
+            ada_init=256.0,
+            ada_min=0.0,
+            lr_init=0.0005,
+            lr_min=0.0001,
+            curriculum_block_epochs=0,
+        )
+
+
+def test_phase_entry_resets_exploration_exhaustion_in_diverse_train(monkeypatch):
+    """验证进入 Phase 1 (epoch 3) 和 Phase 2 (epoch 6) 时重置探索早停状态。"""
+    trainer = MagicMock()
+    trainer.total_df_index_length = 1
+    trainer.update_times = 1
+    trainer.num_epoch = 9
+    trainer.curriculum_block_epochs = 3
+    trainer.epsilon_init = 1.0
+    trainer.epsilon_min = 0.1
+    trainer.ada_init = 256.0
+    trainer.ada_min = 0.0
+    trainer.lr_init = 0.0005
+    trainer.lr_min = 0.0001
+    trainer.optimizer = MagicMock()
+    trainer.optimizer.param_groups = [{"lr": 0.0005}]
+    trainer.model_path = "/tmp/test_phase_entry"
+
+    buffer = MagicMock()
+    buffer.total_added_count = 0
+    buffer.__len__ = MagicMock(return_value=100)
+
+    # 模拟 buffer 未满
+    monkeypatch.setattr(pdt, "is_buffer_full", lambda buf, tr: False)
+    # 模拟保存
+    monkeypatch.setattr(pdt, "save_diverse_buffer", lambda buf, path: None)
+    # 模拟训练阶段
+    monkeypatch.setattr(pdt, "run_diverse_training_phase", lambda *args, **kwargs: (1.0, 0.1, 0.9))
+    # 模拟标量记录和模型保存
+    monkeypatch.setattr(pdt, "write_epoch_rollout_scalars", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pdt, "save_parallel_epoch_model", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pdt, "build_epoch_model_path", lambda path, ep: f"{path}/epoch_{ep}")
+
+    explored_epochs = []
+
+    def mock_run_epoch_exploration(tr, epoch_index, *args, **kwargs):
+        explored_epochs.append(epoch_index)
+        # 始终不增加新经验，模拟连续无新经验触发早停
+        return [], 0, 0
+
+    monkeypatch.setattr(pdt, "run_epoch_exploration", mock_run_epoch_exploration)
+
+    # 运行多样化训练主循环
+    pdt.run_parallel_diverse_training(
+        trainer=trainer,
+        train_df_cache={},
+        env_kwargs={},
+        buffer_diverse=buffer,
+        step_counter_diverse=0,
+        diverse_rollout_latest_metrics_by_df={},
+    )
+
+    # 在 MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS = 3 下：
+    # Phase 0 (ep 0, 1, 2): ep 0(count=1), ep 1(count=2), ep 2(count=3 -> skip_exploration=True)
+    # 进入 Phase 1 (ep 3): 阶段重置 count=0, skip_exploration=False -> ep 3 被正常探索！
+    # ep 4(count=2), ep 5(count=3 -> skip_exploration=True)
+    # 进入 Phase 2 (ep 6): 再次阶段重置 count=0, skip_exploration=False -> ep 6 被正常探索！
+    assert 0 in explored_epochs
+    assert 1 in explored_epochs
+    assert 2 in explored_epochs
+    assert 3 in explored_epochs
+    assert 6 in explored_epochs

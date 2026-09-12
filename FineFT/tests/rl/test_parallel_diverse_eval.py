@@ -29,6 +29,7 @@ def test_run_parallel_diverse_training_selects_min_total_loss_model(tmp_path: Pa
     trainer = MagicMock()
     trainer.total_df_index_length = 1
     trainer.num_epoch = 3
+    trainer.curriculum_block_epochs = 3
     trainer.model_path = str(model_dir)
     trainer.update_times = 1
     trainer.writer = MagicMock()
@@ -121,6 +122,7 @@ def test_run_parallel_diverse_training_waits_for_eval_completion(tmp_path: Path,
     trainer = MagicMock()
     trainer.total_df_index_length = 1
     trainer.num_epoch = 1
+    trainer.curriculum_block_epochs = 3
     trainer.model_path = str(model_dir)
     trainer.update_times = 1
     trainer.writer = MagicMock()
