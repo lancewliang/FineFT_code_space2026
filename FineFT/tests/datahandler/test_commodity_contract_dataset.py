@@ -582,3 +582,141 @@ def test_run_dataset_generation_writes_manifest_stage_files_and_train_slices(tmp
     ]
     assert [item["output_row_count"] for item in train_slices] == slice_row_counts
     assert not (dataset_root / "valid" / "label_0").exists()
+
+
+def test_calibrate_and_inject_train_regimes_annotates_contracts_and_persists_thresholds(tmp_path):
+    from datahandler.commodity_contract_dataset import (
+        calibrate_and_inject_train_regimes,
+        write_train_slices,
+    )
+    import json
+
+    train_dir = tmp_path / "dataset" / "10min" / "fu" / "train"
+    train_dir.mkdir(parents=True)
+
+    rows = 120
+    # Alternating slope pattern: down, up, down, up to ensure negative and positive waves
+    inc1 = np.resize(np.array([1.0] * 10 + [-1.0] * 10 + [0.5] * 10 + [-0.5] * 10), rows)
+    inc2 = np.resize(np.array([-1.5] * 10 + [1.5] * 10 + [-0.2] * 10 + [0.2] * 10), rows)
+    p1 = 100.0 + np.cumsum(inc1)
+    p2 = 120.0 + np.cumsum(inc2)
+
+    pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-01-01", periods=rows, freq="10min"),
+            "symbol": ["fu2605"] * rows,
+            "mark_price": p1,
+            "feature_a": np.arange(rows),
+        }
+    ).to_feather(train_dir / "fu2605.feather")
+
+    pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-01-01", periods=rows, freq="10min"),
+            "symbol": ["fu2609"] * rows,
+            "mark_price": p2,
+            "feature_a": np.arange(rows),
+        }
+    ).to_feather(train_dir / "fu2609.feather")
+
+    manifest = _dataset_manifest_from_dict({
+        "sets": {
+            "train": {
+                "contracts": [
+                    {
+                        "contract": "fu2605",
+                        "input_path": str(train_dir / "fu2605.feather"),
+                        "output_path": str(train_dir / "fu2605.feather"),
+                        "slice_outputs": [
+                            {
+                                "index": 0,
+                                "path": str(train_dir / "slice" / "df_0.feather"),
+                                "row_start": 0,
+                                "row_end": 60,
+                            },
+                            {
+                                "index": 1,
+                                "path": str(train_dir / "slice" / "df_1.feather"),
+                                "row_start": 50,
+                                "row_end": 110,
+                            },
+                        ],
+                    },
+                    {
+                        "contract": "fu2609",
+                        "input_path": str(train_dir / "fu2609.feather"),
+                        "output_path": str(train_dir / "fu2609.feather"),
+                        "slice_outputs": [
+                            {
+                                "index": 2,
+                                "path": str(train_dir / "slice" / "df_2.feather"),
+                                "row_start": 0,
+                                "row_end": 60,
+                            },
+                        ],
+                    },
+                ]
+            }
+        }
+    })
+
+    manifest_out = calibrate_and_inject_train_regimes(
+        manifest,
+        key_indicator="mark_price",
+        min_length_limit=4,
+        filter_padlen=5,
+        merging_threshold=-1.0,
+    )
+
+    reg_file = train_dir / "regime_thresholds.json"
+    assert reg_file.exists()
+    reg_meta = json.loads(reg_file.read_text(encoding="utf-8"))
+    assert reg_meta["fit_scope"] == "train_all_contracts"
+    assert reg_meta["slope_thresholds"][0] < 0.0
+    assert reg_meta["slope_thresholds"][1] > 0.0
+    assert reg_meta["vol_thresholds"][0] > 0.0
+
+    # Assert columns injected in contract file
+    c1 = pd.read_feather(train_dir / "fu2605.feather")
+    assert "regime_grid_id" in c1.columns
+    assert "slope_label" in c1.columns
+    assert "volatility_label" in c1.columns
+    assert not (c1["regime_grid_id"] < 0).any()
+
+    # Now write slices and assert inheritance
+    write_train_slices(manifest)
+    s0 = pd.read_feather(train_dir / "slice" / "df_0.feather")
+    assert "regime_grid_id" in s0.columns
+    assert len(s0) == 60
+
+
+def test_calibrate_and_inject_train_regimes_fails_fast_on_missing_mark_price(tmp_path):
+    from datahandler.commodity_contract_dataset import calibrate_and_inject_train_regimes
+
+    train_dir = tmp_path / "train"
+    train_dir.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-01-01", periods=10, freq="10min"),
+            "symbol": ["fu2605"] * 10,
+            "close": [100.0] * 10,
+        }
+    ).to_feather(train_dir / "fu2605.feather")
+
+    manifest = _dataset_manifest_from_dict({
+        "sets": {
+            "train": {
+                "contracts": [
+                    {
+                        "contract": "fu2605",
+                        "input_path": str(train_dir / "fu2605.feather"),
+                        "output_path": str(train_dir / "fu2605.feather"),
+                        "slice_outputs": [],
+                    }
+                ]
+            }
+        }
+    })
+
+    with pytest.raises(ValueError, match="missing required key_indicator column: mark_price"):
+        calibrate_and_inject_train_regimes(manifest, key_indicator="mark_price")

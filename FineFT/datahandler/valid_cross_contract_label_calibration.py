@@ -34,15 +34,39 @@ try:
         SliceManifest,
         SkippedContractManifest,
     )
+    from .regime_calibration_engine import (
+        ContractSegments,
+        apply_regime_labels_to_dataframe,
+        calibrate_regime_thresholds,
+    )
 except ImportError:
     import label_util as util
-    from manifests import (
-        SliceContractManifest,
-        SliceFileManifest,
-        SliceLabelManifest,
-        SliceManifest,
-        SkippedContractManifest,
-    )
+    try:
+        from manifests import (
+            SliceContractManifest,
+            SliceFileManifest,
+            SliceLabelManifest,
+            SliceManifest,
+            SkippedContractManifest,
+        )
+        from regime_calibration_engine import (
+            ContractSegments,
+            apply_regime_labels_to_dataframe,
+            calibrate_regime_thresholds,
+        )
+    except ImportError:
+        from datahandler.manifests import (
+            SliceContractManifest,
+            SliceFileManifest,
+            SliceLabelManifest,
+            SliceManifest,
+            SkippedContractManifest,
+        )
+        from datahandler.regime_calibration_engine import (
+            ContractSegments,
+            apply_regime_labels_to_dataframe,
+            calibrate_regime_thresholds,
+        )
 
 
 @dataclass
@@ -55,6 +79,8 @@ class _ContractFit:
     prepared: pd.DataFrame  # 预处理后的基础数据 DataFrame
     groups: list[tuple[Any, list[int], list[float], np.ndarray]]
     scores: list[float]
+    group_slopes: list[list[float]]
+    group_vols: list[list[float]]
 
 
 def _contract_name(path: Path) -> str:
@@ -203,6 +229,8 @@ def _fit_contract(
 
     groups: list[tuple[Any, list[int], list[float], np.ndarray]] = []
     scores: list[float] = []
+    all_group_slopes: list[list[float]] = []
+    all_group_vols: list[list[float]] = []
     # 遍历每个 tic，校验并整理拟合结果
     for worker_tic in worker.tics:
         points = [_point(value) for value in worker.turning_points_dict[worker_tic]]
@@ -216,20 +244,23 @@ def _fit_contract(
         # 首尾转折点必须完全覆盖该 tic 的起始与终点索引
         if points[0] != 0 or points[-1] != len(row_positions):
             raise ValueError(f"{source_path} has invalid segment boundaries")
+        group_vols = [
+            _segment_log_return_volatility(
+                prepared.iloc[row_positions[start:end]][key_indicator].to_numpy(
+                    dtype=float
+                ),
+                source_path,
+            )
+            for start, end in zip(points[:-1], points[1:])
+        ]
         if labeling_method == "slope":
             group_scores = group_slopes
         else:
-            group_scores = [
-                _segment_log_return_volatility(
-                    prepared.iloc[row_positions[start:end]][key_indicator].to_numpy(
-                        dtype=float
-                    ),
-                    source_path,
-                )
-                for start, end in zip(points[:-1], points[1:])
-            ]
+            group_scores = group_vols
         groups.append((worker_tic, points, group_scores, row_positions))
         scores.extend(group_scores)
+        all_group_slopes.append(group_slopes)
+        all_group_vols.append(group_vols)
     return _ContractFit(
         contract=contract,
         source_path=source_path,
@@ -237,6 +268,8 @@ def _fit_contract(
         prepared=prepared,
         groups=groups,
         scores=scores,
+        group_slopes=all_group_slopes,
+        group_vols=all_group_vols,
     )
 
 
@@ -559,6 +592,28 @@ def build_valid_dataset(
                 pooled_scores, dynamic_number, risk_bond=0.1
             )
         thresholds = [float(value) for value in threshold_values]
+
+        # 2D 标签注水：无论当前运行的是 slope 还是 volatility，统一调用核心引擎计算 3x3 联合体制列并注入 prepared
+        all_slopes = [s for f in fits for g_slopes in f.group_slopes for s in g_slopes]
+        all_vols = [v for f in fits for g_vols in f.group_vols for v in g_vols]
+        regime_2d_meta = calibrate_regime_thresholds(all_slopes, all_vols, dynamic_number=3)
+
+        for fit in fits:
+            first_group = fit.groups[0]
+            segments = ContractSegments(
+                contract=fit.contract,
+                turning_points=first_group[1],
+                slopes=fit.group_slopes[0],
+                vols=fit.group_vols[0],
+                row_positions=first_group[3],
+            )
+            fit.prepared = apply_regime_labels_to_dataframe(
+                fit.prepared,
+                segments,
+                slope_thresholds=regime_2d_meta["slope_thresholds"],
+                vol_thresholds=regime_2d_meta["vol_thresholds"],
+                key_indicator=key_indicator,
+            )
 
         # 第三阶段：根据全局阈值生成各合约的切片与 Manifest 结构
         contracts = {

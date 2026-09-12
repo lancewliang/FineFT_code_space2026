@@ -503,3 +503,32 @@ def test_build_valid_dataset_rolls_back_when_publication_fails(tmp_path, monkeyp
         valid_dir / "slope" / "slice_manifest.json"
     ).read_bytes() == previous_manifest
     assert sorted(path.name for path in valid_dir.iterdir()) == previous_contracts
+
+
+def test_valid_slices_contain_2d_regime_grid_id_columns(tmp_path):
+    from datahandler import valid_cross_contract_label_calibration as calibration
+
+    valid_dir = tmp_path / "valid"
+    valid_dir.mkdir()
+    _write_contract(valid_dir, "fu2501", 100.0, rows=96)
+    _write_contract(valid_dir, "fu2505", 110.0, rows=96)
+
+    calibration.build_valid_dataset(
+        valid_dir,
+        labeling_method="slope",
+        dynamic_number=3,
+        timestamp="timestamp",
+        min_length_limit=4,
+        filter_padlen=5,
+        merging_threshold=-1.0,
+    )
+
+    slope_slices = list((valid_dir / "slope").glob("*/*/*.feather"))
+    assert len(slope_slices) > 0
+    for s_path in slope_slices:
+        df = pd.read_feather(s_path)
+        assert "regime_grid_id" in df.columns
+        assert "slope_label" in df.columns
+        assert "volatility_label" in df.columns
+        assert not (df["regime_grid_id"] < 0).any()
+        assert (df["regime_grid_id"] <= 8).all()

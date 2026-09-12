@@ -272,7 +272,7 @@ Valid 动态切片产生的无语义编号；它不表示方向、幅度或涨�
 _Avoid_: 动态簇、Label 方向语义、上涨/下跌 Label、涨跌停 Label
 
 **全合约 Label 定标 (Cross-contract Label Calibration)**:
-从同一 valid 集合的全部合约片段共同拟合一套无语义动态 Label slope 阈值，并将该阈值应用到每个合约；每个最终市场动态片段贡献一个等权分数，不按片段长度或合约重新加权，也不要求各合约的 Label 样本比例一致。
+从同一数据集集合（如 train 或 valid）的全部合约波段共同拟合一套动态 Label 阈值（包含斜率与波动率），并将该阈值应用到该集合内的各个合约；每个最终市场动态波段贡献一个等权分数，不按波段长度或合约重新加权，也不要求各合约的 Label 样本比例一致。
 _Avoid_: 逐合约 Label 定标、按合约强制 Label 均衡
 
 **全局 Segment Quantile (Global Segment Quantile)**:
@@ -337,9 +337,9 @@ _Avoid_: 经验池内多步累加、跨体制时序拼接
 在多样化训练不同轮次间激活特定体制经验池子集进行平衡采样，促使各轮次快照在 Q 地形上产生显著分化的调度机制。
 _Avoid_: 动态经验池轮转、轮次交替抽样
 
-**步级因果体制标签 (Step-level Causal Regime Label)**:
-在交易环境推进中利用历史因果滚动窗口实时计算的波动率与斜率档位，用于驱动经验路由的微观状态标签。
-_Avoid_: 实时行情分类、步级标签
+**宏观波段体制标签 (Segment-level Dynamic Regime Label)**:
+由转折点波段切片算法提取的宏观市场动态波段所对应的 3×3 正交网格编号（`regime_grid_id \in [0, 8]`，由 `volatility_label * 3 + slope_label` 合成），在数据集构建期行级物化至特征数据中，并在交易环境推进时通过 `info` 字典暴露，供经验池分层路由与轮次课程调度使用。
+_Avoid_: 步级因果体制标签、实时行情分类、步级标签
 
 **Potential Model**:
 低层 agent 选择后组装的模型文件，每个 label 对应一个选中的 qnet。

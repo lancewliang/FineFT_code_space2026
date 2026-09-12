@@ -14,6 +14,11 @@ try:
         DatasetSliceOutput,
         DatasetSplitManifest,
     )
+    from .regime_calibration_engine import (
+        apply_regime_labels_to_dataframe,
+        calibrate_regime_thresholds,
+        extract_contract_segments,
+    )
 except ImportError:
     datahandler_parent = Path(__file__).resolve().parents[1]
     if str(datahandler_parent) not in sys.path:
@@ -24,6 +29,11 @@ except ImportError:
         DatasetSetManifest,
         DatasetSliceOutput,
         DatasetSplitManifest,
+    )
+    from datahandler.regime_calibration_engine import (
+        apply_regime_labels_to_dataframe,
+        calibrate_regime_thresholds,
+        extract_contract_segments,
     )
 
 
@@ -203,6 +213,92 @@ def rebuild_train_slice_plan(manifest, chunk_length, early_stop):
         contract.slice_outputs = slice_outputs
 
 
+def calibrate_and_inject_train_regimes(
+    manifest: DatasetManifest,
+    key_indicator: str = "mark_price",
+    filter_strength: int = 1,
+    min_length_limit: int = 288,
+    merging_threshold: float = 0.0003,
+    merging_metric: str = "DTW_distance",
+    merging_dynamic_constraint: int = 1,
+    max_length_expectation: int = 864,
+    filter_padlen: int = 15,
+):
+    if "train" not in manifest.sets or not manifest.sets["train"].contracts:
+        return manifest
+
+    train_contracts = manifest.sets["train"].contracts
+    train_dir = Path(train_contracts[0].output_path).parent
+    stage_root = train_dir / ".regime-calibration-staging"
+    stage_root.mkdir(parents=True, exist_ok=True)
+
+    contract_dfs = []
+    contract_segments = []
+
+    try:
+        for contract in train_contracts:
+            df = pd.read_feather(contract.output_path)
+            if key_indicator not in df.columns:
+                raise ValueError(
+                    f"{contract.contract} missing required key_indicator column: {key_indicator}"
+                )
+            if len(df) <= filter_padlen:
+                continue
+            segments = extract_contract_segments(
+                df,
+                contract=contract.contract,
+                stage_root=stage_root,
+                key_indicator=key_indicator,
+                filter_strength=filter_strength,
+                min_length_limit=min_length_limit,
+                merging_threshold=merging_threshold,
+                merging_metric=merging_metric,
+                merging_dynamic_constraint=merging_dynamic_constraint,
+                max_length_expectation=max_length_expectation,
+                filter_padlen=filter_padlen,
+            )
+            contract_dfs.append((contract, df))
+            contract_segments.append(segments)
+
+        if not contract_segments:
+            return manifest
+
+        pooled_slopes = [
+            slope for seg in contract_segments for slope in seg.slopes
+        ]
+        pooled_vols = [
+            vol for seg in contract_segments for vol in seg.vols
+        ]
+
+        regime_meta = calibrate_regime_thresholds(
+            pooled_slopes, pooled_vols, dynamic_number=3
+        )
+        regime_meta["fit_scope"] = "train_all_contracts"
+        regime_meta["participating_contracts"] = [
+            c.contract for c in train_contracts
+        ]
+        regime_meta["key_indicator"] = key_indicator
+
+        regime_file = train_dir / "regime_thresholds.json"
+        with regime_file.open("w", encoding="utf-8") as f:
+            json.dump(regime_meta, f, indent=2)
+
+        for (contract, df), seg in zip(contract_dfs, contract_segments):
+            labeled_df = apply_regime_labels_to_dataframe(
+                df,
+                seg,
+                slope_thresholds=regime_meta["slope_thresholds"],
+                vol_thresholds=regime_meta["vol_thresholds"],
+                key_indicator=key_indicator,
+            )
+            labeled_df.to_feather(contract.output_path)
+
+    finally:
+        shutil.rmtree(stage_root, ignore_errors=True)
+
+    return manifest
+
+
 def write_train_slices(manifest):
     expected_index = 0
     train_dir = Path(manifest.sets["train"].contracts[0].output_path).parent
@@ -261,6 +357,7 @@ def run_dataset_generation(
     )
     dataset_root.mkdir(parents=True, exist_ok=True)
     write_stage_datasets(manifest)
+    calibrate_and_inject_train_regimes(manifest)
     rebuild_train_slice_plan(manifest, chunk_length=chunk_length, early_stop=early_stop)
     write_train_slices(manifest)
     (dataset_root / "dataset_manifest.json").write_text(
