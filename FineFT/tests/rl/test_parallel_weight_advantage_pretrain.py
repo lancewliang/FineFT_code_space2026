@@ -172,6 +172,7 @@ def test_single_epoch_schedule_keeps_initial_values():
         ada_min=0.0,
         lr_init=0.005,
         lr_min=0.001,
+        curriculum_block_epochs=3,
     ) == pdt.EpochTrainingParams(epsilon=1.0, ada=256.0, lr=0.005)
 
 

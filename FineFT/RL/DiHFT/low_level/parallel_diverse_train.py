@@ -347,7 +347,7 @@ def compute_epoch_training_params(
     ada_min: float,
     lr_init: float,
     lr_min: float,
-    curriculum_block_epochs: int = 3,
+    curriculum_block_epochs: int,
 ) -> EpochTrainingParams:
     if curriculum_block_epochs <= 0:
         raise ValueError(
@@ -1242,12 +1242,9 @@ def run_parallel_diverse_training(
     best_model_file = None
     best_epoch_index = -1
     for epoch_index in range(trainer.num_epoch):
-        is_new_phase_entry = (
-            trainer.curriculum_block_epochs > 0
-            and epoch_index in (
-                trainer.curriculum_block_epochs,
-                2 * trainer.curriculum_block_epochs,
-            )
+        is_new_phase_entry = epoch_index in (
+            trainer.curriculum_block_epochs,
+            2 * trainer.curriculum_block_epochs,
         )
         if is_new_phase_entry:
             consecutive_no_new_experience_epochs = 0
