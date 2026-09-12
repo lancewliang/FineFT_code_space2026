@@ -19,9 +19,9 @@
    - 在商品期货（如 fu 30min）数据集中，4×4 划分会导致极端角落（如低波动强单边 `vol=0, slope=0`）的独立连续行情（run）严重匮乏（仅 39 个 run，占比 2.76%），引发样本饥渴；
    - 3×3 划分采用三分位数（Terciles，33.3% 与 66.7% 分位点），边际分布严格均分，联合网格中样本最稀缺的格子依然拥有 **994 步 Transition、71 个独立 Run、覆盖 13 个合约**，彻底消除了极端样本荒漠；
    - 3×3 划分天然对应金融市场的经典九宫格语义：波动率（平静/正常/剧烈）× 方向趋势（下跌/震荡/上涨）。
-3. **分轮次经验池调度（Curriculum & Regime-Targeted Sampling）能够直接制造模型状态的剧烈差异**：
-   - 通过在不同 Epoch 激活不同经验池子集（例如：奇数轮次仅抽样趋势池，偶数轮次仅抽样震荡池），强制网络在特定市场动态上经历集中的梯度推力，使各 Epoch 模型快照在 Q 值地形和动作分布上产生结构性差异；
-   - 结合“子代理-经验池软绑定”，可使 $N=9$ 的子代理集合各自演化为对应市场体制的专精专家，彻底解决下游阶段 II 选择器全部回退为 `empty_model` 的困境。
+3. **分轮次经验池调度（Curriculum & Directional Regime Sampling，见 ADR-0012）能够直接制造模型状态的剧烈差异**：
+   - 严格将**上涨趋势（做多）与下跌趋势（做空）分离**，并设置每阶段至少 3 个 Epoch 的块级轮转（Block Rotation），彻底消除同一批次内相反方向梯度的互相抵消；
+   - 采用轨迹优先因果累加（Trajectory-first N-Step Accumulation），消除跨体制时序拼接污染，使各阶段模型在对应体制上形成极化且专精的策略快照，彻底解决下游阶段 II 选择器全部回退为 `empty_model` 的困境。
 
 ---
 
@@ -45,12 +45,13 @@
 
 为确保方案具备坚实的经验证据，我们基于 `fu 30min` 训练集 14 个切片（[dataset/30min/fu/train/slice/](/home/lanceliang/opt/aiwork/FineFT_code_space2026/dataset/30min/fu/train/slice/)，总计 15,982 行，剔除每合约前 47 根 bar 后可用步数 15,310 步），采用 48-bar 因果滚动窗口拟合并实测了 9 格的真实分布。
 
-#### 1.3.1 训练集三分位数阈值（Tercile Thresholds）
+#### 1.3.1 训练集三分位数阈值（Tercile Thresholds）与斜率下界必须为负契约
 - **有符号 OLS 斜率**（`% log-return / bar`）：
   - 阈值点：$T_{\text{slope}} = [-0.011772, 0.038954]$
-  - `slope=0`（下行趋势，Down）：$\text{slope} \le -0.011772$（占三分之一）
-  - `slope=1`（震荡横盘，Flat）：$-0.011772 < \text{slope} \le 0.038954$（占三分之一）
-  - `slope=2`（上行趋势，Up）：$\text{slope} > 0.038954$（占三分之一）
+  - **核心不变性契约（Negative Slope Boundary Invariant）**：定标器必须严格断言 $T_{\text{slope}}[0] < 0.0$ 且 $T_{\text{slope}}[1] > 0.0$。确保 `slope=0`（下行趋势）绝不混入非负样本，绝对走平的 0 轴严格包含在 `slope=1`（震荡横盘）内部。
+  - `slope=0`（下行趋势，Down）：$\text{slope} \le -0.011772$（严格占三分之一，负斜率）
+  - `slope=1`（震荡横盘，Flat）：$-0.011772 < \text{slope} \le 0.038954$（严格占三分之一，包含 0 轴）
+  - `slope=2`（上行趋势，Up）：$\text{slope} > 0.038954$（严格占三分之一，正斜率）
 - **滚动收益率波动率**（`% log-return std`）：
   - 阈值点：$T_{\text{vol}} = [0.342431, 0.446722]$
   - `vol=0`（低波动，Low）：$\text{vol} \le 0.342431$（占三分之一）
@@ -150,9 +151,9 @@
   - **100% 纯因果**：无任何未来数据穿越，在线观测与离线经验池标签完全对齐；
   - **微观精度极高**：Transition 级别的精准归类，避免了长切片中局部波段的标签污染；
   - **特征与经验池无缝共振**：若未来引入因果 Regime Anchor 特征（如滚动斜率与波动率 z-score），特征计算与经验池路由共用同一套滑动窗口，完全自洽。
-- **缺点**：
-  - 数据前 $W-1=47$ 根 bar 无法形成完整窗口，需在切片起始时采用前向填补或丢弃前 47 步的 Transition 记录；
-  - 需在环境或预处理中维护长度为 48 的价格双端队列（`deque(maxlen=48)`）。但由于 $W=48$ 极小，单步增量更新耗时低于 2 微秒，工程开销可忽略不计。
+- **工程落地优化（特征工程/数据层预先物化）**：
+  - 由于特征工程流水线（`time_operator_util.py`）已在连续合约全量数据上预先计算了 `log_price_slope_48` 与滚动波动率，切片数据在进入环境前可直接向量化注入 `regime_grid_id` 列；
+  - 这一机制带来双重收益：彻底消除切片起始 47 根 bar 的冷启动丢弃问题（切片前已成熟），且环境在 `step()` 时仅需读取数组索引，运行时计算开销彻底降为零。
 
 ---
 
@@ -211,23 +212,25 @@ $$W_{\text{prior}}(i, g) = \exp\left(-\frac{\|(\text{vol}_i, \text{slope}_i) - (
 若模型维持原有 $N$（如 $N=7$ 或仅追踪单一体制集成），如何让**“每一轮训练完的模型状态有巨大差异”**？
 答案是实施 **轮次体制交替聚焦训练（Epoch-Level Regime Rotation）**。
 
-#### 3.2.1 三阶段周期轮换课程表（3-Phase Rotating Curriculum）
-将训练轮次划分为模 3 的循环体系，每一轮仅激活指定的 3 个网格经验池进行梯度更新：
+#### 3.2.1 三阶段纯方向块级轮换课程表（3-Phase Pure Directional Block Curriculum）
+根据 ADR-0012 规范与研讨决策，**上涨趋势与下跌趋势必须严格分离**，且每个阶段必须连续训练至少 3 个 Epoch（Block Duration $\\ge 3$），确保策略有足够的连续梯度步数在单一方向体制上深度拟合：
 
 ```text
-Epoch e 采样配置：
-├── e % 3 == 0: 【趋势单边突破轮】 (Trend Regimes)
-│   └── 激活经验池：B0 (低波下行), B2 (低波上行), B6 (高波下行), B8 (高波上行)
-│   └── 效果：模型状态大幅偏向追随单边强趋势、降低换手率、持仓穿越波动。
+Phase 索引计算：phase_index = (epoch_index // block_epochs) % 3  (其中 block_epochs >= 3)
+
+├── Phase 0 (phase_index == 0): 【下跌趋势专精轮】 (Downtrend / Bear Regimes)
+│   └── 激活经验池：[0, 3, 6] 即 (v0_s0, v1_s0, v2_s0，低/中/高波下跌)
+│   └── 核心效果：模型梯度 100% 聚焦于下行破位、逢高做空与空头持仓穿越，消除上涨干扰。
 │
-├── e % 3 == 1: 【震荡均值回归轮】 (Mean-Reversion Regimes)
-│   └── 激活经验池：B1 (低波震荡), B4 (中波震荡), B7 (高波剧震)
-│   └── 效果：模型状态大幅偏向快进快出、高抛低吸、严控仓位暴露。
+├── Phase 1 (phase_index == 1): 【横盘震荡套利轮】 (Range / Flat Regimes)
+│   └── 激活经验池：[1, 4, 7] 即 (v0_s1, v1_s1, v2_s1，低/中/高波横盘)
+│   └── 核心效果：模型梯度聚焦于均值回归、高抛低吸、快速止盈与杜绝趋势追高。
 │
-└── e % 3 == 2: 【极端危机与微澜对比轮】 (Extreme Contrast Regimes)
-    └── 激活经验池：B0 (低波极度沉寂下行), B6 (高波动暴跌危机), B8 (高波动主升浪)
-    └── 效果：模型状态直面极端风控与尾部收益，学习大波动下的避险与激进进攻。
+└── Phase 2 (phase_index == 2): 【上涨趋势进攻轮】 (Uptrend / Bull Regimes)
+    └── 激活经验池：[2, 5, 8] 即 (v0_s2, v1_s2, v2_s2，低/中/高波上涨)
+    └── 核心效果：模型梯度 100% 聚焦于顺势追多、放飞利润与做多仓位管理。
 ```
+**关键价值**：通过以至少 3 个 Epoch 为一个块连续训练特定方向，再轮换至下一方向，各轮次产生的 Checkpoint 将具备极其纯粹且互补的交易风格。
 
 #### 3.2.2 模型状态差异的量化指标监控
 在训练日志中实时输出各 Epoch 后的状态向量差异度（Cosine Distance / KL Divergence）：
@@ -268,72 +271,64 @@ $$C_g = \lfloor \frac{B_{\text{total}}}{9} \rfloor \approx 220,000 \quad (g \in 
 
 ## 4. 系统工程架构与现有代码集成方案（Engineering Architecture）
 
-### 4.1 核心类设计：`NineGridReplayBuffer`
+### 4.1 核心类设计：`RegimeStratifiedReplayBuffer`（独立文件实现）
 
-在 `FineFT/RL/util/replay_buffer_DQN.py` 中新增 `NineGridReplayBuffer`，作为 9 个 `Multi_step_ReplayBuffer_multi_info` 的统一编排门面（Facade）：
+根据 ADR-0012 与模块解耦要求，**`RegimeStratifiedReplayBuffer` 必须在独立文件 `FineFT/RL/util/regime_stratified_replay_buffer.py` 中实现**，严禁堆积在 `replay_buffer_DQN.py`。
+
+#### 4.1.1 轨迹优先多步累加（Trajectory-First N-Step Accumulation）
+多步回报（$N=12$）在 Worker 探索阶段直接沿单条连续合约时序轨迹完成闭环累加，尾部不足 12 步折现截断并标记 `done=True`。因此，底层 9 个经验池以 `n_step=1` 运行，彻底杜绝非连续时序片段在池内交错导致的收益污染。
 
 ```python
-class NineGridReplayBuffer:
-    """9 格（3x3 波动率 x 斜率）体制分层多步经验回放池管理器。"""
+# FineFT/RL/util/regime_stratified_replay_buffer.py
+
+def accumulate_trajectory_n_step(
+    transitions: list[tuple],
+    gamma: float = 0.99,
+    n_step: int = 12,
+) -> list[tuple]:
+    """在单条连续轨迹上闭环累加 12 步贴现回报，保留起始步 info_t 作为路由标签。"""
+    ...
+
+class RegimeStratifiedReplayBuffer:
+    """9 格（3x3 波动率 x 斜率）体制分层经验回放池管理器（独立队列 + 独立 FIFO）。"""
 
     def __init__(
         self,
         total_buffer_size: int,
         batch_size: int,
         device: str,
-        seed: int,
-        gamma: float,
-        n_step: int,
-        slope_thresholds: list[float],
-        vol_thresholds: list[float],
+        seed: int = 42,
+        num_grids: int = 9,
     ):
-        self.num_grids = 9
-        self.grid_capacity = total_buffer_size // self.num_grids
+        self.num_grids = num_grids
+        self.grid_capacity = total_buffer_size // num_grids
         self.batch_size = batch_size
         self.device = device
-        self.slope_thresholds = np.asarray(slope_thresholds, dtype=float)
-        self.vol_thresholds = np.asarray(vol_thresholds, dtype=float)
 
-        # 初始化 9 个独立的底层经验池
-        self.buffers: dict[int, Multi_step_ReplayBuffer_multi_info] = {
-            grid_id: Multi_step_ReplayBuffer_multi_info(
+        # 底层 9 个独立队列以 n_step=1 初始化
+        self.buffers = {
+            g: Multi_step_ReplayBuffer_multi_info(
                 buffer_size=self.grid_capacity,
                 batch_size=batch_size,
                 device=device,
-                seed=seed + grid_id,
-                gamma=gamma,
-                n_step=n_step,
+                seed=seed + g,
+                gamma=1.0,
+                n_step=1,
             )
-            for grid_id in range(self.num_grids)
+            for g in range(num_grids)
         }
+        # 跟踪每个网格内部的 {semantic_key: (buffer_index, td_error)} 去重索引
+        self.seen_fingerprints = {g: {} for g in range(num_grids)}
 
-    def route_transition(self, info: dict[str, Any]) -> int:
-        """根据 info 中的因果滚动指标计算 grid_id (0..8)。"""
-        if "regime_grid_id" in info:
-            return int(info["regime_grid_id"])
-        # 若未预计算，则从 info 中的实时指标计算
-        vol = float(info["rolling_volatility_48"])
-        slope = float(info["rolling_slope_48"])
-        v_bin = int(np.searchsorted(self.vol_thresholds, vol, side="right"))
-        s_bin = int(np.searchsorted(self.slope_thresholds, slope, side="right"))
-        return v_bin * 3 + s_bin
-
-    def add_transition(self, transition: tuple) -> int:
-        """根据 Transition 的当前 info 自动路由写入对应经验池。"""
-        # transition: (s, info, a, r, s_, next_info, done)
+    def add_transition(self, transition: tuple, td_error: float = 0.0) -> int:
+        """按起始步 info 中的 regime_grid_id (0..8) 路由入池，执行网格内部择优替换。"""
         info = transition[1]
-        grid_id = self.route_transition(info)
-        self.buffers[grid_id].add_transition(transition)
-        return grid_id
-
-    def sample_from_grids(
-        self,
-        active_grid_ids: list[int],
-        grid_weights: list[float] | None = None,
-    ) -> tuple[torch.Tensor, ...]:
-        """从指定的活跃经验池子集中按权重配比采样完整 Batch。"""
-        # 根据 active_grid_ids 与配比抽取 transitions 并聚合
+        grid_id = int(info["regime_grid_id"])
+        if grid_id < 0 or grid_id >= self.num_grids:
+            return -1
+        # 独立 FIFO 淘汰与 TD-error 择优替换
         ...
+        return grid_id
 ```
 
 ---
@@ -374,23 +369,24 @@ class NineGridReplayBuffer:
 
 ## 5. 实施路线图与消融实验规划（Implementation Roadmap & Ablations）
 
-为保证代码演进符合工程审慎原则（CLAUDE.md: Surgical Changes & Goal-Driven Execution），建议按以下顺序分步落地与消融：
+为保证代码演进符合工程审慎原则（CLAUDE.md 与 OpenSpec 规范），按以下顺序分步落地与验证：
 
 ```
-Step 1: 环境与因果标签注入 (Causal Tagging in Env)
-  └── 编写测试：test_causal_regime_tagging.py
-  └── 在 base_env.py / commodity_env.py 中维护 48-bar 滚动窗口并向 info 注入 regime_grid_id
-  └── 验证：断言 14 个训练切片生成的 grid_id 分布与实测 9 格一致
+Step 1: 定标器工具与负斜率契约 (Calibrator & Negative Slope Invariant)
+  └── 独立模块：FineFT/RL/util/calibrate_regime_thresholds.py
+  └── 严格断言 T_slope[0] < 0 < T_slope[1]，生成 regime_thresholds.json
+  └── 编写测试：FineFT/tests/rl/test_calibrate_regime_thresholds.py
 
-Step 2: 9 格经验池数据结构构建 (NineGridReplayBuffer)
-  └── 编写测试：test_nine_grid_replay_buffer.py
-  └── 实现 NineGridReplayBuffer 与 StratifiedStackedSampler
-  └── 验证：测试各格容量隔离、FIFO 独立淘汰、去重指纹独立性及按权重采样准确性
+Step 2: 9 格经验池与分层采样器独立实现 (RegimeStratifiedReplayBuffer)
+  └── 独立文件：FineFT/RL/util/regime_stratified_replay_buffer.py
+  └── 实现轨迹优先多步累加 accumulate_trajectory_n_step 与尾部截断
+  └── 实现 StratifiedStackedSampler 平衡抽样与有放回兜底机制
+  └── 编写测试：FineFT/tests/rl/test_regime_stratified_replay_buffer.py
 
-Step 3: 并行训练流水线集成 (Diverse Train Integration)
-  └── 改造 parallel_diverse_train.py 中的写入与采样逻辑
-  └── 接入模式一（子代理-体制软绑定）与模式二（轮次课程表），开放 CLI 参数控制 --regime_sampling_mode
-  └── 验证：断言各轮次训练日志中各格子经验数平稳增长，skip_exploration 不再过早触发
+Step 3: 并行训练流水线与 3 阶段方向课程表集成 (Diverse Train Integration)
+  └── 在 parallel_diverse_train.py 中接入 3 阶段纯方向轮换（Down [0,3,6] / Flat [1,4,7] / Up [2,5,8]）
+  └── 开放 CLI 参数控制 --curriculum_block_epochs 3（每阶段至少 3 个 Epoch）
+  └── 编写集成测试验证多轮次激活池切换、均衡抽样与模型状态分化
 
 Step 4: 小规模消融验证与下游评估 (Ablation Experiment)
   └── 对比实验组：

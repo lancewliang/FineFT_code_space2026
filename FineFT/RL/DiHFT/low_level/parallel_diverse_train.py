@@ -42,6 +42,10 @@ if TYPE_CHECKING:
         Weighted_Contexts_DQN,
     )
     from RL.util.replay_buffer_DQN import Multi_step_ReplayBuffer_multi_info
+    from RL.util.regime_stratified_replay_buffer import (
+        RegimeStratifiedReplayBuffer,
+        accumulate_trajectory_n_step,
+    )
 
 from model.low_level import ensemble_Qnet
 from RL.DiHFT.low_level.pretrain_qtable_diagnostics import (
@@ -63,6 +67,10 @@ from RL.DiHFT.low_level.weight_advantage_pretrain import (
     calculate_paper_partial_loss,
     calculate_paper_supervisor_kl_loss,
 )
+from RL.util.regime_stratified_replay_buffer import (
+    RegimeStratifiedReplayBuffer,
+    accumulate_trajectory_n_step,
+)
 from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import (
     WorkerErrorMessage,
     build_effective_df_indices,
@@ -76,7 +84,7 @@ from RL.DiHFT.low_level.evaluate_sub_agents import evaluates
 # 探索子进程数量上限（严格控制为 20）：df 数量更多时按 round-robin 分配给子进程
 MAX_EXPLORATION_WORKERS = 20
 # 每个 epoch 训练阶段的更新窗口数（每窗口执行 trainer.update_times 次参数更新）
-UPDATE_WINDOWS_PER_EPOCH = 1
+UPDATE_WINDOWS_PER_EPOCH = 30
 # 连续多少个 epoch 探索未新增任何经验后，后续 epoch 不再探索（仅训练）
 MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS = 5
 # 关闭子进程时 join 的超时秒数；超时未退出的进程以 terminate 兜底
@@ -441,7 +449,7 @@ def _freeze_transition_value(value):
 
 
 def build_semantic_transition_key(
-    state: np.ndarray | Any,
+    state: np.ndarray,
     action: int,
     info: dict[str, Any],
 ) -> tuple[int, int, int, int, int]:
@@ -450,29 +458,22 @@ def build_semantic_transition_key(
     键由以下离散正交状态组成：
     (state_hash, previous_action, action, pos_dir, dur_bucket)
     """
-    if isinstance(state, np.ndarray):
-        state_bytes = state.tobytes()
-    else:
-        state_bytes = repr(state).encode("utf-8")
     state_hash = int.from_bytes(
-        hashlib.blake2b(state_bytes, digest_size=8).digest(), "big"
+        hashlib.blake2b(state.tobytes(), digest_size=8).digest(), "big"
     )
 
     previous_action = int(info["previous_action"])
-    trading_info = info.get("trading_info")
-    if trading_info is not None and len(trading_info) >= 1:
-        pos_dir = int(np.round(float(trading_info[0])))
-        raw_steps = int(float(trading_info[3]) * 180) if len(trading_info) >= 4 else 0
-        if raw_steps <= 2:
-            dur_bucket = 0
-        elif raw_steps <= 12:
-            dur_bucket = 1
-        elif raw_steps <= 36:
-            dur_bucket = 2
-        else:
-            dur_bucket = 3
+    trading_info = info["trading_info"]
+    pos_dir = int(np.round(float(trading_info[0])))
+    raw_steps = int(float(trading_info[3]) * 180)
+    if raw_steps <= 2:
+        dur_bucket = 0
+    elif raw_steps <= 12:
+        dur_bucket = 1
+    elif raw_steps <= 36:
+        dur_bucket = 2
     else:
-        pos_dir, dur_bucket = 0, 0
+        dur_bucket = 3
 
     return (state_hash, previous_action, int(action), pos_dir, dur_bucket)
 
@@ -489,101 +490,31 @@ def build_transition_fingerprint(transition):
     return int.from_bytes(digest, "big")
 
 
-def _get_buffer_length(buffer: Any) -> int:
-    try:
-        return len(buffer)
-    except TypeError:
-        if hasattr(buffer, "added"):
-            return len(buffer.added)
-        if hasattr(buffer, "memory"):
-            return len(buffer.memory)
-        return 0
-
-
-def _replace_in_buffer(buffer: Any, index: int, transition: tuple) -> None:
-    if hasattr(buffer, "replace"):
-        buffer.replace(index, *transition)
-    elif hasattr(buffer, "memory") and index < len(buffer.memory):
-        if hasattr(buffer, "experience") and len(transition) == 7:
-            s, info, a, r, s_, next_info, d = transition
-            buffer.memory[index] = buffer.experience(s, info, a, r, s_, d, next_info)
-        else:
-            buffer.memory[index] = transition
-    elif hasattr(buffer, "added") and index < len(buffer.added):
-        buffer.added[index] = transition
-
-
 def write_round_transitions_to_buffer(
-    buffer_diverse: Multi_step_ReplayBuffer_multi_info,
+    buffer_diverse: RegimeStratifiedReplayBuffer,
     round_results: list[WorkerRoundResult],
-    seen_fingerprints: set[Any] | dict[Any, tuple[int, float]],
+    seen_fingerprints: Any = None,
 ) -> int:
-    """按 (df_index, step_index) 顺序写入经验池，基于语义键与 TD-Error 择优保留。
-
-    支持两种跟踪器：
-    1. dict[semantic_key, (buffer_index, td_error)]:
-       - 未见过的语义键：追加写入经验池，记录位置与 td_error
-       - 已存在的语义键：若新样本 td_error > old_td_error，择优就地替换旧样本；否则跳过（计入 duplicate）
-    2. set[fingerprint]（兼容模式）：
-       - 使用语义指纹/键去重，已存在则直接跳过
-    返回本轮跳过的重复数。
-    """
+    """按 (df_index, step_index) 顺序写入体制分层经验池，基于各格语义键与 TD-Error 择优保留。"""
     duplicate_count = 0
     records = sort_round_records(round_results)
-    is_tracker_dict = isinstance(seen_fingerprints, dict)
-
     for df_index, record in records:
-        transition = record.transition
-        step_index = record.step_index
-        td_error = getattr(record, "td_error", 0.0)
-
-        if (
-            len(transition) >= 3
-            and isinstance(transition[1], dict)
-            and "previous_action" in transition[1]
-        ):
-            semantic_key = build_semantic_transition_key(
-                state=transition[0],
-                action=int(transition[2]),
-                info=transition[1],
-            )
-        else:
-            semantic_key = build_transition_fingerprint(transition)
-
-        if is_tracker_dict:
-            if semantic_key in seen_fingerprints:
-                old_idx, old_td_error = seen_fingerprints[semantic_key]
-                if td_error > old_td_error:
-                    _replace_in_buffer(buffer_diverse, old_idx, transition)
-                    seen_fingerprints[semantic_key] = (old_idx, td_error)
-                else:
-                    duplicate_count += 1
-                continue
-            buf_idx = _get_buffer_length(buffer_diverse)
-            seen_fingerprints[semantic_key] = (buf_idx, td_error)
-            buffer_diverse.add(*transition)
-        else:
-            if semantic_key in seen_fingerprints:
-                duplicate_count += 1
-                continue
-            seen_fingerprints.add(semantic_key)
-            buffer_diverse.add(*transition)
-
+        grid_id = buffer_diverse.add_transition(
+            record.transition,
+            td_error=record.td_error,
+        )
+        if grid_id in (-1, -2):
+            duplicate_count += 1
     return duplicate_count
 
 
 def run_diverse_training_phase(
     trainer: Weighted_Contexts_DQN,
-    buffer_diverse: Multi_step_ReplayBuffer_multi_info | dict[str, Any],
+    buffer_diverse: RegimeStratifiedReplayBuffer,
     update_count: int,
     epoch_index: int,
 ):
-    """完整训练阶段：本轮探索全部结束后，对已冻结的经验池统一执行全部参数更新。
-
-    采样参考 exhaustive warmup 的预堆叠采样优化（StackedTransitionSampler）：
-    训练阶段经验池不再增长，先一次性堆叠为连续数组，再以整数索引采样，
-    避免逐元素 np.stack 导致 GPU 空等。
-    """
+    """完整训练阶段：根据轮次课程表激活对应体制经验池子集并执行分层平衡更新。"""
     if update_count <= 0:
         logger.info(
             "diverse training phase skipped | epoch_index=%d | update_count=%d",
@@ -591,17 +522,11 @@ def run_diverse_training_phase(
             update_count,
         )
         return None
-    sampler = StackedTransitionSampler(
-        buffer_diverse,
-        trainer.batch_size,
-        trainer.device,
+    sampler = buffer_diverse.create_sampler(
+        epoch_index=epoch_index,
+        block_epochs=trainer.curriculum_block_epochs,
     )
-
-    buffer_size = (
-        buffer_diverse["buffer_size"]
-        if isinstance(buffer_diverse, dict) and "buffer_size" in buffer_diverse
-        else len(buffer_diverse)
-    )
+    buffer_size = len(buffer_diverse)
 
     last_losses = None
     for _window in range(UPDATE_WINDOWS_PER_EPOCH):
@@ -686,21 +611,15 @@ def build_diverse_buffer_path(model_path: str) -> str:
     return os.path.join(model_path, "buffer_diverse.pkl")
 
 
-def save_diverse_buffer(buffer_diverse: Multi_step_ReplayBuffer_multi_info, model_path: str):
-    """将经验池快照以分批张量化格式保存到文件。
-
-    避免将数百万个独立的 Python dict / Experience namedtuple 直接 pickle 导致
-    内存剧烈膨胀（BytesIO 翻倍 + memo 字典爆炸触发系统 OOM）。
-    以预分配连续 Tensor 分块（chunk_size=50000）组织并由 torch.save 原生落盘，
-    存盘过程零额外内存拷贝，磁盘占用缩小 70% 以上，存盘耗时由数分钟缩短至数秒。
-    """
+def save_diverse_buffer(buffer_diverse: RegimeStratifiedReplayBuffer, model_path: str):
+    """将 9 格经验池快照以分批张量化格式保存到文件。"""
     buffer_path = build_diverse_buffer_path(model_path)
-    payload = extract_stacked_tensor_dict(buffer_diverse)
+    payload = buffer_diverse.extract_stacked_tensor_dicts()
     torch.save(payload, buffer_path)
     logger.info(
         "diverse buffer snapshot saved | path=%s | memory_size=%d",
         buffer_path,
-        payload["buffer_size"],
+        len(buffer_diverse),
     )
     return payload
 
@@ -734,6 +653,8 @@ class DfRolloutWorkerRunner:
         self.position_list = worker_config["position_list"]
         self.initial_wallet_balance = worker_config["initial_wallet_balance"]
         self.initial_unrealized_pnL = worker_config["initial_unrealized_pnL"]
+        self.gamma = float(worker_config.get("gamma", 0.99))
+        self.n_step = int(worker_config.get("n_step", 12))
         self.model = create_parallel_worker_model(worker_config).to(self.device)
         # df_index -> 该 df 当前探索任务的回合状态
         self.episodes = {}
@@ -838,14 +759,28 @@ class DfRolloutWorkerRunner:
             episode.transition_count += 1
             episode.state, episode.info, episode.done = next_state, next_info, done
         final_balance = episode.env.unrealized_pnl + episode.env.wallet_balance
+        raw_tuples = [r.transition for r in transitions]
+        acc_tuples = accumulate_trajectory_n_step(
+            raw_tuples,
+            gamma=self.gamma,
+            n_step=self.n_step,
+        )
+        accumulated_transitions = [
+            WorkerTransitionRecord(
+                step_index=r.step_index,
+                transition=acc_t,
+                td_error=r.td_error,
+            )
+            for r, acc_t in zip(transitions, acc_tuples)
+        ]
         return WorkerRoundResult(
             df_index=message.df_index,
             epoch_index=message.epoch_index,
             context_index=message.context_index,
             initial_action=message.initial_action,
             round_counter=message.round_counter,
-            worker_steps=len(transitions),
-            transitions=transitions,
+            worker_steps=len(accumulated_transitions),
+            transitions=accumulated_transitions,
             rollout_metrics=[
                 RolloutMetrics(
                     epoch_index=message.epoch_index,
@@ -907,6 +842,8 @@ def start_parallel_workers(
             "hidden_nodes": trainer.hidden_nodes,
             "time_info_dim": trainer.time_info_dim,
             "ensemble_number": trainer.N,
+            "gamma": trainer.gamma,
+            "n_step": trainer.n_step,
         }
         process = worker_context.Process(
             target=df_rollout_worker,
@@ -1203,30 +1140,12 @@ def write_epoch_rollout_scalars(
     )
 
 
-def get_buffer_capacity(
-    buffer_diverse: Multi_step_ReplayBuffer_multi_info | Any,
-    trainer: Weighted_Contexts_DQN | Any = None,
-):
-    """获取经验池容量上限。"""
-    capacity = getattr(buffer_diverse, "buffer_size", None)
-    if isinstance(capacity, (int, float)):
-        return int(capacity)
-    if trainer is not None:
-        trainer_capacity = getattr(trainer, "buffer_size", None)
-        if isinstance(trainer_capacity, (int, float)):
-            return int(trainer_capacity)
-    return None
-
-
 def is_buffer_full(
-    buffer_diverse: Multi_step_ReplayBuffer_multi_info | Any,
-    trainer: Weighted_Contexts_DQN | Any = None,
-):
+    buffer_diverse: RegimeStratifiedReplayBuffer,
+    trainer: Weighted_Contexts_DQN,
+) -> bool:
     """判断经验池是否已达到容量上限。"""
-    capacity = get_buffer_capacity(buffer_diverse, trainer)
-    if capacity is None or capacity <= 0:
-        return False
-    return len(buffer_diverse) >= capacity
+    return len(buffer_diverse) >= trainer.buffer_size
 
 
 def run_epoch_exploration(
@@ -1280,9 +1199,12 @@ def run_epoch_exploration(
                         metrics.return_rate,
                     )
                 context_metrics.extend(task_metrics)
-                epoch_metrics.extend(task_metrics)               
-            if is_buffer_full(buffer_diverse, trainer):
-                continue
+                epoch_metrics.extend(task_metrics)
+                if is_buffer_full(buffer_diverse, trainer):
+                    buffer_full = True
+                    break
+            if buffer_full:
+                break
             write_context_rollout_scalars(
                 trainer, context_index, context_metrics, epoch_index
             )
@@ -1306,7 +1228,7 @@ def run_parallel_diverse_training(
     trainer: Weighted_Contexts_DQN,
     train_df_cache: dict[int, pd.DataFrame],
     env_kwargs: dict[str, Any],
-    buffer_diverse: Multi_step_ReplayBuffer_multi_info,
+    buffer_diverse: RegimeStratifiedReplayBuffer,
     step_counter_diverse: int,
     diverse_rollout_latest_metrics_by_df: dict[int, Any],
 ):
@@ -1336,7 +1258,7 @@ def run_parallel_diverse_training(
     for epoch_index in range(trainer.num_epoch):
         apply_epoch_training_params(trainer, epoch_index)
         buffer_full = is_buffer_full(buffer_diverse, trainer)
-        if skip_exploration:
+        if skip_exploration or buffer_full:
             skip_exploration = True
             logger.info(
                 "epoch exploration skipped | epoch_index=%d | buffer_full=%s | "
@@ -1349,7 +1271,7 @@ def run_parallel_diverse_training(
             epoch_metrics = []
         else:
             # 阶段一：完整探索 —— 本轮探索创建全新子进程（上限 20），结束即彻底关闭
-            fingerprints_before_exploration = len(seen_fingerprints)
+            buffer_len_before_exploration = len(buffer_diverse)
             epoch_metrics, step_counter_diverse, round_counter = run_epoch_exploration(
                 trainer,
                 epoch_index,
@@ -1364,7 +1286,7 @@ def run_parallel_diverse_training(
             # 阶段二：保存经验池 —— 探索完成且经验已全部写入后，落盘最新快照
             tensor_snapshot = save_diverse_buffer(buffer_diverse, trainer.model_path)
             new_experience_count = (
-                len(seen_fingerprints) - fingerprints_before_exploration
+                len(buffer_diverse) - buffer_len_before_exploration
             )
             if new_experience_count == 0:
                 consecutive_no_new_experience_epochs += 1
@@ -1414,11 +1336,7 @@ def run_parallel_diverse_training(
             "trained_model.pkl",
         )
         if last_losses is not None:
-            epoch_total_loss = (
-                last_losses[0]
-                if isinstance(last_losses, (tuple, list))
-                else float(last_losses)
-            )
+            epoch_total_loss = float(last_losses[0])
             if epoch_total_loss < best_loss:
                 best_loss = epoch_total_loss
                 best_model_file = epoch_model_file

@@ -59,6 +59,7 @@ class Demo_Env(Base_Env):
         limit_stay_bonus=0.5,
         limit_reverse_penalty=1.5,
         near_limit_threshold=0.003,
+        regime_grid_ids_array=None,
     ):
 
         super(Demo_Env, self).__init__(
@@ -97,6 +98,7 @@ class Demo_Env(Base_Env):
             limit_stay_bonus=limit_stay_bonus,
             limit_reverse_penalty=limit_reverse_penalty,
             near_limit_threshold=near_limit_threshold,
+            regime_grid_ids_array=regime_grid_ids_array,
         )
         self.q_table = create_optimal_q_table(
             ask_prices_array,

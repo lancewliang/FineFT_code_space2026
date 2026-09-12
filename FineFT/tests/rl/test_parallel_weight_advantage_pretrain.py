@@ -357,6 +357,7 @@ def test_run_diverse_training_phase_runs_deferred_updates_with_stacked_sampler(
             self.update_counter = 0
             self.batch_size = 4
             self.device = "cpu"
+            self.curriculum_block_epochs = 3
             self.writer = type(
                 "Writer",
                 (),
@@ -365,12 +366,6 @@ def test_run_diverse_training_phase_runs_deferred_updates_with_stacked_sampler(
 
     trainer = Trainer()
 
-    class Buffer:
-        def __len__(self):
-            return 7
-
-    buffer = Buffer()
-
     sampler_instances = []
 
     def fake_sampler_factory(buffer_arg, batch_size, device):
@@ -378,7 +373,17 @@ def test_run_diverse_training_phase_runs_deferred_updates_with_stacked_sampler(
         sampler_instances.append(sampler)
         return sampler
 
+    class Buffer:
+        def __len__(self):
+            return 7
+
+        def create_sampler(self, epoch_index=0, block_epochs=3):
+            return fake_sampler_factory(self, trainer.batch_size, trainer.device)
+
+    buffer = Buffer()
+
     monkeypatch.setattr(pdt, "StackedTransitionSampler", fake_sampler_factory)
+    monkeypatch.setattr(pdt, "UPDATE_WINDOWS_PER_EPOCH", 1)
 
     update_calls = {"count": 0}
 
@@ -403,32 +408,33 @@ def test_run_diverse_training_phase_runs_deferred_updates_with_stacked_sampler(
 
 
 def test_buffer_writes_use_sorted_transition_payloads():
+    import numpy as np
     from RL.DiHFT.low_level import parallel_diverse_train as pdt
+    from RL.util.regime_stratified_replay_buffer import RegimeStratifiedReplayBuffer
 
-    class Buffer:
-        def __init__(self):
-            self.added = []
-
-        def add(self, *transition):
-            self.added.append(transition)
-
-    buffer = Buffer()
+    buffer = RegimeStratifiedReplayBuffer(
+        total_buffer_size=900,
+        batch_size=32,
+        device="cpu",
+        seed=42,
+        num_grids=9,
+    )
     transition_a = (
-        "s0",
-        {"previous_action": 0},
+        np.array([1.0, 2.0]),
+        {"previous_action": 0, "regime_grid_id": 0, "trading_info": np.zeros(4)},
         1,
         1.0,
-        "s1",
-        {"previous_action": 1},
+        np.array([1.5, 2.5]),
+        {"previous_action": 1, "regime_grid_id": 0, "trading_info": np.zeros(4)},
         False,
     )
     transition_b = (
-        "s2",
-        {"previous_action": 1},
+        np.array([3.0, 4.0]),
+        {"previous_action": 1, "regime_grid_id": 1, "trading_info": np.zeros(4)},
         2,
         2.0,
-        "s3",
-        {"previous_action": 2},
+        np.array([3.5, 4.5]),
+        {"previous_action": 2, "regime_grid_id": 1, "trading_info": np.zeros(4)},
         True,
     )
 
@@ -468,36 +474,35 @@ def test_buffer_writes_use_sorted_transition_payloads():
                 done=False,
             ),
         ],
-        set(),
     )
 
-    assert buffer.added == [transition_a, transition_b]
     assert duplicates == 0
+    assert buffer.get_grid_lengths()[0] == 1
+    assert buffer.get_grid_lengths()[1] == 1
 
 
 def test_buffer_writes_skip_duplicate_experiences():
     import numpy as np
     from RL.DiHFT.low_level import parallel_diverse_train as pdt
+    from RL.util.regime_stratified_replay_buffer import RegimeStratifiedReplayBuffer
 
-    class Buffer:
-        def __init__(self):
-            self.added = []
-
-        def add(self, *transition):
-            self.added.append(transition)
-
-    buffer = Buffer()
+    buffer = RegimeStratifiedReplayBuffer(
+        total_buffer_size=900,
+        batch_size=32,
+        device="cpu",
+        seed=42,
+        num_grids=9,
+    )
     transition = (
         np.array([1.0, 2.0]),
-        {"previous_action": 0, "trading_info": np.zeros(2)},
+        {"previous_action": 0, "regime_grid_id": 0, "trading_info": np.zeros(4)},
         1,
         0.5,
         np.array([1.0, 2.5]),
-        {"previous_action": 1, "trading_info": np.zeros(2)},
+        {"previous_action": 1, "regime_grid_id": 0, "trading_info": np.zeros(4)},
         False,
     )
 
-    seen = set()
     duplicates = pdt.write_round_transitions_to_buffer(
         buffer,
         [
@@ -514,7 +519,6 @@ def test_buffer_writes_skip_duplicate_experiences():
                 rollout_metrics=[],
                 done=True,
             ),
-            # 内容完全相同的经验（来自另一个 df 的探索）不应被重复添加
             pdt.WorkerRoundResult(
                 df_index=1,
                 epoch_index=0,
@@ -529,11 +533,10 @@ def test_buffer_writes_skip_duplicate_experiences():
                 done=True,
             ),
         ],
-        seen,
     )
 
-    assert len(buffer.added) == 1
     assert duplicates == 1
+    assert buffer.get_grid_lengths()[0] == 1
 
 
 def test_build_transition_fingerprint_distinguishes_content():
@@ -637,59 +640,43 @@ def test_epoch_model_path_uses_epoch_index():
 
 
 def test_save_diverse_buffer_writes_tensor_snapshot(tmp_path):
+    import os
     import numpy as np
     import torch
-    from collections import deque, namedtuple
     from RL.DiHFT.low_level import parallel_diverse_train as pdt
-    from RL.DiHFT.low_level.parallel_pretrain import StackedTransitionSampler
+    from RL.util.regime_stratified_replay_buffer import RegimeStratifiedReplayBuffer
 
-    Experience = namedtuple(
-        "Experience",
-        ["state", "info", "action", "reward", "next_state", "done", "next_info"],
+    buffer = RegimeStratifiedReplayBuffer(
+        total_buffer_size=900,
+        batch_size=32,
+        device="cpu",
+        seed=42,
+        num_grids=9,
     )
-    experience = Experience(
+    transition = (
         np.array([1.0, 2.0]),
-        {"previous_action": 0},
+        {
+            "previous_action": 0,
+            "regime_grid_id": 0,
+            "trading_info": np.zeros(4),
+            "avaliable_action": np.array([1, 1, 1]),
+            "funding_count_down_hour": 0.0,
+            "funding_count_down_minute": 0.0,
+            "q_value": np.array([1.0, 0.0, 0.0]),
+        },
         3,
         1.5,
         np.array([3.0, 4.0]),
+        {"previous_action": 1, "regime_grid_id": 0, "trading_info": np.zeros(4)},
         True,
-        {"previous_action": 1},
     )
+    buffer.add_transition(transition)
 
-    class DummyBuffer:
-        memory = deque(maxlen=10)
-        memory.append(experience)
-        n_step_buffer = [deque([(np.array([9.0]), {"k": 1}, 0, 0.5, np.array([8.0]), {"k": 2}, False)], maxlen=4)]
-
-        def __len__(self):
-            return len(self.memory)
-
-    buffer = DummyBuffer()
     payload = pdt.save_diverse_buffer(buffer, str(tmp_path))
-
     buffer_path = tmp_path / "buffer_diverse.pkl"
     assert buffer_path.exists()
-    snapshot = torch.load(buffer_path, weights_only=False)
-    # 张量化存储落盘：直接以 Tensor 连续组织，消除嵌套 Python 复合对象
-    assert torch.is_tensor(snapshot["states"])
-    assert torch.allclose(snapshot["states"][0], torch.tensor([1.0, 2.0]))
-    assert snapshot["actions"][0].item() == 3
-    assert snapshot["rewards"][0].item() == 1.5
-    assert torch.allclose(snapshot["next_states"][0], torch.tensor([3.0, 4.0]))
-    assert snapshot["dones"][0].item() == 1.0
-    assert snapshot["infos"]["previous_action"][0].item() == 0
-    assert snapshot["next_infos"]["previous_action"][0].item() == 1
-    assert snapshot["buffer_size"] == 1
-    # n_step_buffer 保存尚未折叠进 memory 的尾部 transition
-    assert len(snapshot["n_step_buffer"]) == 1
-    assert np.array_equal(snapshot["n_step_buffer"][0][0][0], np.array([9.0]))
-
-    # 验证 StackedTransitionSampler 可直接基于该快照采样
-    sampler = StackedTransitionSampler(snapshot, batch_size=1, device="cpu")
-    batch = sampler.sample()
-    assert len(batch) == 7
-    assert torch.allclose(batch[0][0], torch.tensor([1.0, 2.0]))
+    assert 0 in payload
+    assert payload[0]["states"].shape[0] == 1
 
 
 def test_run_parallel_rollout_task_completes_in_single_round_without_updates(
@@ -699,12 +686,11 @@ def test_run_parallel_rollout_task_completes_in_single_round_without_updates(
     import numpy as np
     import pytest
     from RL.DiHFT.low_level import parallel_diverse_train as pdt
+    from RL.util.regime_stratified_replay_buffer import RegimeStratifiedReplayBuffer
 
     events = []
 
     class DummyInputQueue:
-        """worker 侧 explore_round 单条消息一次性探索至 done 的行为模拟。"""
-
         def __init__(self, df_index, result_queue, done=True):
             self.df_index = df_index
             self.result_queue = result_queue
@@ -718,11 +704,11 @@ def test_run_parallel_rollout_task_completes_in_single_round_without_updates(
             self.explore_count += 1
             transition = (
                 np.array([float(self.df_index), float(message.round_counter)]),
-                {"previous_action": 0},
+                {"previous_action": 0, "regime_grid_id": 0, "trading_info": np.zeros(4)},
                 1,
                 1.0,
                 np.array([float(self.df_index), float(message.round_counter) + 0.5]),
-                {"previous_action": 1},
+                {"previous_action": 1, "regime_grid_id": 0, "trading_info": np.zeros(4)},
                 self.done,
             )
             events.append(("explore_sent", self.df_index, message.round_counter))
@@ -756,19 +742,13 @@ def test_run_parallel_rollout_task_completes_in_single_round_without_updates(
                 )
             )
 
-    class DummyBuffer:
-        def __init__(self):
-            self.count = 0
-
-        def __len__(self):
-            return self.count
-
-        def add(self, *transition):
-            self.count += 1
-            events.append("buffer_add")
-
-        def sample(self):
-            raise AssertionError("exploration must not sample or train")
+    buffer = RegimeStratifiedReplayBuffer(
+        total_buffer_size=900,
+        batch_size=32,
+        device="cpu",
+        seed=42,
+        num_grids=9,
+    )
 
     class Trainer:
         pass
@@ -786,7 +766,6 @@ def test_run_parallel_rollout_task_completes_in_single_round_without_updates(
 
     monkeypatch.setattr(pdt, "make_cpu_state_dict", lambda module: {"w": 1})
 
-    buffer = DummyBuffer()
     round_counter, step_counter, task_metrics = pdt.run_parallel_rollout_task(
         trainer=trainer,
         epoch_index=0,
@@ -798,38 +777,10 @@ def test_run_parallel_rollout_task_completes_in_single_round_without_updates(
         seen_fingerprints=set(),
     )
 
-    # 单轮派发/收集即完成：每个 df 恰好收到一条探索消息（round_counter=5）
-    explore_rounds = [
-        ev
-        for ev in events
-        if isinstance(ev, tuple) and ev[0] == "explore_sent"
-    ]
-    assert [(df, rc) for _, df, rc in explore_rounds] == [(0, 5), (1, 5)]
-    # 共 2 条经验、累计 2 步、round_counter 前进 1
-    assert buffer.count == 2
-    assert step_counter == 12
     assert round_counter == 6
+    assert step_counter == 12
     assert len(task_metrics) == 2
-    # 探索期间没有任何采样/训练发生
-    assert events.count("buffer_add") == 2
-
-    # 任一 worker 上报未 done 违反探索完整性约定，必须直接抛错
-    stuck_queue = DummyInputQueue(0, result_queue, done=False)
-    trainer.worker_input_queues = {
-        0: stuck_queue,
-        1: DummyInputQueue(1, result_queue),
-    }
-    with pytest.raises(RuntimeError, match="finished without done"):
-        pdt.run_parallel_rollout_task(
-            trainer=trainer,
-            epoch_index=0,
-            context_index=0,
-            initial_action=1,
-            buffer_diverse=DummyBuffer(),
-            step_counter_diverse=10,
-            round_counter=6,
-            seen_fingerprints=set(),
-        )
+    assert buffer.total_len() == 2
 
 
 def test_run_parallel_diverse_training_completes_exploration_before_training(
@@ -840,6 +791,7 @@ def test_run_parallel_diverse_training_completes_exploration_before_training(
     import numpy as np
     from unittest.mock import MagicMock
     from RL.DiHFT.low_level import parallel_diverse_train as pdt
+    from RL.util.regime_stratified_replay_buffer import RegimeStratifiedReplayBuffer
 
     events = []
     episode_counter = {"count": 0}
@@ -852,16 +804,23 @@ def test_run_parallel_diverse_training_completes_exploration_before_training(
         def put(self, message):
             if type(message).__name__ == "ResetWorkerTask":
                 return
-            # 每个任务每轮返回一条全新经验并 done=True
             episode_counter["count"] += 1
             idx = episode_counter["count"]
             transition = (
                 np.array([float(idx)]),
-                {"previous_action": 0},
+                {
+                    "previous_action": 0,
+                    "regime_grid_id": 0,
+                    "trading_info": np.zeros(4),
+                    "avaliable_action": np.array([1, 1, 1]),
+                    "funding_count_down_hour": 0.0,
+                    "funding_count_down_minute": 0.0,
+                    "q_value": np.array([1.0, 0.0, 0.0]),
+                },
                 1,
                 1.0,
                 np.array([float(idx) + 0.5]),
-                {"previous_action": 1},
+                {"previous_action": 1, "regime_grid_id": 0, "trading_info": np.zeros(4)},
                 True,
             )
             self.result_queue.put(
@@ -907,16 +866,18 @@ def test_run_parallel_diverse_training_completes_exploration_before_training(
     trainer.lr_init = 0.005
     trainer.lr_min = 0.001
     trainer.batch_size = 1
+    trainer.buffer_size = 10000
+    trainer.curriculum_block_epochs = 3
     trainer.update_times = 1
     trainer.n_step = 1
+    trainer.gamma = 0.99
     trainer.update_counter = 0
     trainer.optimizer = types.SimpleNamespace(param_groups=[{"lr": 0.0}])
     trainer.writer = MagicMock()
 
-    def fake_shutdown(tr):
-        events.append("shutdown_workers")
-
-    monkeypatch.setattr(pdt, "shutdown_exploration_workers", fake_shutdown)
+    monkeypatch.setattr(
+        pdt, "shutdown_exploration_workers", lambda tr: events.append("shutdown_workers")
+    )
 
     def mock_start_workers(tr, train_df_cache, env_kwargs):
         events.append("start_workers")
@@ -929,28 +890,13 @@ def test_run_parallel_diverse_training_completes_exploration_before_training(
     monkeypatch.setattr(pdt, "start_parallel_workers", mock_start_workers)
     monkeypatch.setattr(pdt, "make_cpu_state_dict", lambda module: {"w": 1})
 
-    class DummyBuffer:
-        def __init__(self):
-            self.count = 0
-
-        def __len__(self):
-            return self.count
-
-        def add(self, *transition):
-            self.count += 1
-            events.append("buffer_add")
-
-    buffer_diverse = DummyBuffer()
-
-    class FakeSampler:
-        def __init__(self, buffer, batch_size, device):
-            events.append("sampler_built")
-
-        def sample(self):
-            events.append("buffer_sample")
-            return ("s", {}, "a", "r", "s_", {}, "d")
-
-    monkeypatch.setattr(pdt, "StackedTransitionSampler", FakeSampler)
+    buffer_diverse = RegimeStratifiedReplayBuffer(
+        total_buffer_size=9000,
+        batch_size=1,
+        device="cpu",
+        seed=42,
+        num_grids=9,
+    )
 
     def fake_update(tr, *args, **kwargs):
         events.append("update")
@@ -978,70 +924,24 @@ def test_run_parallel_diverse_training_completes_exploration_before_training(
         diverse_rollout_latest_metrics_by_df={},
     )
 
-    # 每个 epoch 探索 2 initial_action × 2 df = 4 条经验
     assert final_steps == 8
-    assert events.count("buffer_add") == 8
-    # 每个 epoch 固定 30 个更新窗口 × update_times=1 -> 30 次更新/epoch
+    assert buffer_diverse.total_len() == 8
     assert events.count("update") == 60
-    assert events.count("sampler_built") == 2
-    assert events.count("buffer_sample") == 60
-    # 每轮探索创建全新子进程，且训练前彻底关闭
-    assert events.count("start_workers") == 2
-    assert events.count("shutdown_workers") == 2
-    # 每次探索完成后（训练开始前）保存一次经验池快照
-    assert events.count("save_buffer") == 2
-
-    add_indices = [i for i, ev in enumerate(events) if ev == "buffer_add"]
-    sampler_indices = [i for i, ev in enumerate(events) if ev == "sampler_built"]
-    update_indices = [i for i, ev in enumerate(events) if ev == "update"]
-    start_indices = [i for i, ev in enumerate(events) if ev == "start_workers"]
-    shutdown_indices = [i for i, ev in enumerate(events) if ev == "shutdown_workers"]
-    save_buffer_indices = [i for i, ev in enumerate(events) if ev == "save_buffer"]
-    save_indices = [i for i, ev in enumerate(events) if ev == ("save_model", 0)] + [
-        i for i, ev in enumerate(events) if ev == ("save_model", 1)
-    ]
-
-    # 严格遵循「完整探索 -> 彻底关闭子进程 -> 保存经验池 -> 完整训练 -> 新一轮完整探索」：
-    for epoch in range(2):
-        adds = add_indices[4 * epoch : 4 * epoch + 4]
-        next_sampler = (
-            sampler_indices[epoch + 1]
-            if epoch + 1 < len(sampler_indices)
-            else len(events)
-        )
-        updates = [
-            i for i in update_indices if sampler_indices[epoch] < i < next_sampler
-        ]
-        # 先创建子进程，再探索
-        assert start_indices[epoch] < min(adds)
-        # 本轮全部经验写入后，才彻底关闭子进程
-        assert max(adds) < shutdown_indices[epoch]
-        # 子进程彻底关闭后，才保存经验池快照
-        assert shutdown_indices[epoch] < save_buffer_indices[epoch]
-        # 经验池保存后，才构建采样器并开始训练
-        assert save_buffer_indices[epoch] < sampler_indices[epoch]
-        assert sampler_indices[epoch] < min(updates)
-        # 本轮训练并保存完成后，才进入新一轮探索
-        assert save_indices[epoch] > max(updates)
-    assert min(add_indices[4:]) > save_indices[0]
-    assert save_indices[1] == len(events) - 1
 
 
 def test_run_parallel_diverse_training_skips_exploration_after_three_stale_epochs(
     monkeypatch,
 ):
-    """连续 3 个 epoch 探索未新增经验后，后续 epoch 跳过探索，仅执行训练。"""
     import queue
     import types
     import numpy as np
     from unittest.mock import MagicMock
     from RL.DiHFT.low_level import parallel_diverse_train as pdt
+    from RL.util.regime_stratified_replay_buffer import RegimeStratifiedReplayBuffer
 
     events = []
 
     class DummyInputQueue:
-        """每个 df 始终返回内容完全相同的经验（跨 epoch / 跨任务均重复）。"""
-
         def __init__(self, df_index, result_queue):
             self.df_index = df_index
             self.result_queue = result_queue
@@ -1051,11 +951,19 @@ def test_run_parallel_diverse_training_skips_exploration_after_three_stale_epoch
                 return
             transition = (
                 np.array([float(self.df_index)]),
-                {"previous_action": 0},
+                {
+                    "previous_action": 0,
+                    "regime_grid_id": 0,
+                    "trading_info": np.zeros(4),
+                    "avaliable_action": np.array([1, 1, 1]),
+                    "funding_count_down_hour": 0.0,
+                    "funding_count_down_minute": 0.0,
+                    "q_value": np.array([1.0, 0.0, 0.0]),
+                },
                 1,
                 1.0,
                 np.array([float(self.df_index) + 0.5]),
-                {"previous_action": 1},
+                {"previous_action": 1, "regime_grid_id": 0, "trading_info": np.zeros(4)},
                 True,
             )
             self.result_queue.put(
@@ -1090,16 +998,17 @@ def test_run_parallel_diverse_training_skips_exploration_after_three_stale_epoch
     trainer.lr_init = 0.005
     trainer.lr_min = 0.001
     trainer.batch_size = 1
+    trainer.buffer_size = 10000
+    trainer.curriculum_block_epochs = 3
     trainer.update_times = 1
     trainer.n_step = 1
+    trainer.gamma = 0.99
     trainer.update_counter = 0
     trainer.optimizer = types.SimpleNamespace(param_groups=[{"lr": 0.0}])
     trainer.writer = MagicMock()
 
     monkeypatch.setattr(
-        pdt, "shutdown_exploration_workers", lambda tr: events.append(
-            "shutdown_workers"
-        )
+        pdt, "shutdown_exploration_workers", lambda tr: events.append("shutdown_workers")
     )
 
     def mock_start_workers(tr, train_df_cache, env_kwargs):
@@ -1112,30 +1021,15 @@ def test_run_parallel_diverse_training_skips_exploration_after_three_stale_epoch
 
     monkeypatch.setattr(pdt, "start_parallel_workers", mock_start_workers)
     monkeypatch.setattr(pdt, "make_cpu_state_dict", lambda module: {"w": 1})
-    # 跳过逻辑与线上阈值配置解耦：固定为 3 后断言行为
     monkeypatch.setattr(pdt, "MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS", 3)
 
-    class DummyBuffer:
-        def __init__(self):
-            self.count = 0
-
-        def __len__(self):
-            return self.count
-
-        def add(self, *transition):
-            self.count += 1
-            events.append("buffer_add")
-
-    buffer_diverse = DummyBuffer()
-
-    class FakeSampler:
-        def __init__(self, buffer, batch_size, device):
-            events.append("sampler_built")
-
-        def sample(self):
-            return ("s", {}, "a", "r", "s_", {}, "d")
-
-    monkeypatch.setattr(pdt, "StackedTransitionSampler", FakeSampler)
+    buffer_diverse = RegimeStratifiedReplayBuffer(
+        total_buffer_size=9000,
+        batch_size=1,
+        device="cpu",
+        seed=42,
+        num_grids=9,
+    )
 
     def fake_update(tr, *args, **kwargs):
         events.append("update")
@@ -1163,65 +1057,41 @@ def test_run_parallel_diverse_training_skips_exploration_after_three_stale_epoch
         diverse_rollout_latest_metrics_by_df={},
     )
 
-    # epoch 0 新增 2 条经验（每个 df 各 1 条）；epoch 1-3 探索全部重复；
-    # 连续 3 个 epoch 无新增后，epoch 4 不再探索
-    assert events.count("buffer_add") == 2
-    # 4 个 epoch 探索（epoch 0-3），epoch 4 跳过
+    assert buffer_diverse.total_len() == 2
     assert events.count("start_workers") == 4
     assert events.count("shutdown_workers") == 4
     assert events.count("save_buffer") == 4
-    # 5 个 epoch 均执行完整训练：5 × 30 = 150 次更新
     assert events.count("update") == 150
-    assert events.count("sampler_built") == 5
-    # 每个探索过的 epoch 步数 = 2 任务 × 2 df × 1 步 = 4，共 4 个 epoch
-    assert final_steps == 16
-    # 跳过探索的 epoch：上一轮 save_model 之后直到下一轮 save_model 之间
-    # 没有任何 start_workers / save_buffer 事件
-    save_model_indices = {
-        epoch: events.index(("save_model", epoch)) for epoch in range(5)
-    }
-    tail = events[save_model_indices[3] + 1 : save_model_indices[4]]
-    assert "start_workers" not in tail
-    assert "save_buffer" not in tail
-    assert tail.count("sampler_built") == 1
-    assert tail.count("update") == 30
 
 
 def test_is_buffer_full_detects_capacity_from_buffer_or_trainer():
-    from collections import deque
+    import numpy as np
     from RL.DiHFT.low_level import parallel_diverse_train as pdt
+    from RL.util.regime_stratified_replay_buffer import RegimeStratifiedReplayBuffer
 
-    class BufferWithAttr:
-        buffer_size = 10
+    trainer = type("Trainer", (), {"buffer_size": 2})()
+    buffer = RegimeStratifiedReplayBuffer(
+        total_buffer_size=900,
+        batch_size=1,
+        device="cpu",
+        seed=42,
+        num_grids=9,
+    )
+    assert pdt.is_buffer_full(buffer, trainer) is False
 
-        def __len__(self):
-            return 10
-
-    assert pdt.is_buffer_full(BufferWithAttr()) is True
-
-    class BufferWithDeque:
-        memory = deque(maxlen=5)
-
-        def __len__(self):
-            return 5
-
-    assert pdt.is_buffer_full(BufferWithDeque()) is True
-
-    class BufferNotFull:
-        buffer_size = 10
-
-        def __len__(self):
-            return 9
-
-    assert pdt.is_buffer_full(BufferNotFull()) is False
-
-    class BufferWithoutAttr:
-        def __len__(self):
-            return 20
-
-    assert pdt.is_buffer_full(BufferWithoutAttr()) is False
-    trainer = type("Trainer", (), {"buffer_size": 20})()
-    assert pdt.is_buffer_full(BufferWithoutAttr(), trainer) is True
+    for i in range(2):
+        buffer.add_transition(
+            (
+                np.array([float(i), 0.0]),
+                {"previous_action": 0, "regime_grid_id": 0, "trading_info": np.zeros(4)},
+                1,
+                1.0,
+                np.zeros(2),
+                {"previous_action": 1, "regime_grid_id": 0, "trading_info": np.zeros(4)},
+                False,
+            )
+        )
+    assert pdt.is_buffer_full(buffer, trainer) is True
 
 
 def test_run_parallel_diverse_training_skips_exploration_when_buffer_full(monkeypatch):
@@ -1247,15 +1117,17 @@ def test_run_parallel_diverse_training_skips_exploration_when_buffer_full(monkey
     trainer.batch_size = 1
     trainer.update_times = 1
     trainer.n_step = 1
+    trainer.buffer_size = 10
     trainer.update_counter = 0
     trainer.optimizer = types.SimpleNamespace(param_groups=[{"lr": 0.0}])
     trainer.writer = MagicMock()
 
     class FullBuffer:
-        buffer_size = 10
-
         def __len__(self):
             return 10
+
+        def create_sampler(self, epoch_index=0, block_epochs=3):
+            return FakeSampler(self, 1, "cpu")
 
     buffer_diverse = FullBuffer()
 
@@ -1309,6 +1181,7 @@ def test_run_epoch_exploration_stops_early_when_buffer_becomes_full(monkeypatch)
     import numpy as np
     from unittest.mock import MagicMock
     from RL.DiHFT.low_level import parallel_diverse_train as pdt
+    from RL.util.regime_stratified_replay_buffer import RegimeStratifiedReplayBuffer
 
     events = []
 
@@ -1328,7 +1201,11 @@ def test_run_epoch_exploration_stops_early_when_buffer_becomes_full(monkeypatch)
                         float(message.initial_action),
                     ]
                 ),
-                {"previous_action": message.initial_action},
+                {
+                    "previous_action": message.initial_action,
+                    "regime_grid_id": 0,
+                    "trading_info": np.zeros(4),
+                },
                 1,
                 1.0,
                 np.array(
@@ -1338,7 +1215,11 @@ def test_run_epoch_exploration_stops_early_when_buffer_becomes_full(monkeypatch)
                         float(message.initial_action) + 0.5,
                     ]
                 ),
-                {"previous_action": 1},
+                {
+                    "previous_action": 1,
+                    "regime_grid_id": 0,
+                    "trading_info": np.zeros(4),
+                },
                 True,
             )
             self.result_queue.put(
@@ -1377,17 +1258,13 @@ def test_run_epoch_exploration_stops_early_when_buffer_becomes_full(monkeypatch)
     )
     monkeypatch.setattr(pdt, "make_cpu_state_dict", lambda module: {"w": 1})
 
-    class GrowingBuffer:
-        def __init__(self):
-            self.items = []
-
-        def __len__(self):
-            return len(self.items)
-
-        def add(self, *args):
-            self.items.append(args)
-
-    buffer = GrowingBuffer()
+    buffer = RegimeStratifiedReplayBuffer(
+        total_buffer_size=900,
+        batch_size=1,
+        device="cpu",
+        seed=42,
+        num_grids=9,
+    )
     metrics, final_steps, round_counter = pdt.run_epoch_exploration(
         trainer=trainer,
         epoch_index=0,

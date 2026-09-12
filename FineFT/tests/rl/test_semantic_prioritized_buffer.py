@@ -6,6 +6,7 @@ from RL.DiHFT.low_level.parallel_diverse_train import (
     WorkerRoundResult,
     write_round_transitions_to_buffer,
 )
+from RL.util.regime_stratified_replay_buffer import RegimeStratifiedReplayBuffer
 
 
 def test_build_semantic_transition_key_ignores_qvalue_and_float_noise():
@@ -83,31 +84,24 @@ def test_worker_transition_record_supports_td_error():
 
 def test_write_round_transitions_semantic_dedup_and_td_error_replacement():
     """验证 write_round_transitions_to_buffer 基于语义键去重，并在新样本 TD-Error 更高时执行择优替换。"""
-    class MockBuffer:
-        def __init__(self):
-            self.added = []
-
-        def add(self, *transition):
-            self.added.append(transition)
-
-        def replace(self, index, *transition):
-            self.added[index] = transition
-
-        def __len__(self):
-            return len(self.added)
-
-    buffer = MockBuffer()
-    tracker = {}
+    buffer = RegimeStratifiedReplayBuffer(
+        total_buffer_size=900,
+        batch_size=32,
+        device="cpu",
+        seed=42,
+        num_grids=9,
+    )
 
     def make_transition(tag: str, q_val: float = 0.0, pnl_float: float = 0.0):
         # 相同语义：df_index=0, step_index=10, action=2, previous_action=0, pos_dir=1
         info = {
             "previous_action": 0,
+            "regime_grid_id": 0,
             "q_value": np.array([q_val, 0.0, 0.0]),
             "trading_info": np.array([1.0, pnl_float, 0.0, 0.05]),
             "tag": tag,
         }
-        return (np.array([1.0, 2.0]), info, 2, 0.5, np.array([1.5, 2.5]), {}, False)
+        return (np.array([1.0, 2.0]), info, 2, 0.5, np.array([1.5, 2.5]), dict(info), False)
 
     # 1. 插入第一条经验，td_error = 1.0
     t1 = make_transition("first", q_val=10.0, pnl_float=0.001)
@@ -122,10 +116,10 @@ def test_write_round_transitions_semantic_dedup_and_td_error_replacement():
         rollout_metrics=[],
         done=True,
     )
-    duplicates_1 = write_round_transitions_to_buffer(buffer, [round_1], tracker)
+    duplicates_1 = write_round_transitions_to_buffer(buffer, [round_1])
     assert duplicates_1 == 0
-    assert len(buffer.added) == 1
-    assert buffer.added[0][1]["tag"] == "first"
+    assert buffer.get_grid_lengths()[0] == 1
+    assert buffer.buffers[0].memory[0].info["tag"] == "first"
 
     # 2. 遇到相同语义的经验（不同 q_val 与 float），但 td_error = 0.4（更低），应丢弃
     t2 = make_transition("second_lower_td", q_val=999.0, pnl_float=0.009)
@@ -140,10 +134,10 @@ def test_write_round_transitions_semantic_dedup_and_td_error_replacement():
         rollout_metrics=[],
         done=True,
     )
-    duplicates_2 = write_round_transitions_to_buffer(buffer, [round_2], tracker)
+    duplicates_2 = write_round_transitions_to_buffer(buffer, [round_2])
     assert duplicates_2 == 1
-    assert len(buffer.added) == 1
-    assert buffer.added[0][1]["tag"] == "first"  # 保持原样
+    assert buffer.get_grid_lengths()[0] == 1
+    assert buffer.buffers[0].memory[0].info["tag"] == "first"  # 保持原样
 
     # 3. 遇到相同语义的经验，但 td_error = 2.8（更高），应就地替换旧样本
     t3 = make_transition("third_higher_td", q_val=-50.0, pnl_float=-0.002)
@@ -158,10 +152,10 @@ def test_write_round_transitions_semantic_dedup_and_td_error_replacement():
         rollout_metrics=[],
         done=True,
     )
-    duplicates_3 = write_round_transitions_to_buffer(buffer, [round_3], tracker)
+    duplicates_3 = write_round_transitions_to_buffer(buffer, [round_3])
     assert duplicates_3 == 0  # 替换不计为普通丢弃重复
-    assert len(buffer.added) == 1  # 长度不变
-    assert buffer.added[0][1]["tag"] == "third_higher_td"  # 成功替换为更高 TD-Error 的样本
+    assert buffer.get_grid_lengths()[0] == 1  # 长度不变
+    assert buffer.buffers[0].memory[0].info["tag"] == "third_higher_td"  # 成功替换为更高 TD-Error 的样本
 
 
 def test_multi_step_replay_buffer_multi_info_replace_in_place():

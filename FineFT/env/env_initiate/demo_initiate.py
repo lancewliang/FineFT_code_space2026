@@ -74,6 +74,7 @@ def initiate_demo_env(
     limit_down_bid_depth_ratio_5_array = df["limit_down_bid_depth_ratio_5"].values if "limit_down_bid_depth_ratio_5" in df.columns else None
     upper_limit_prices_array = df["UpperLimitPrice"].values if "UpperLimitPrice" in df.columns else None
     lower_limit_prices_array = df["LowerLimitPrice"].values if "LowerLimitPrice" in df.columns else None
+    regime_grid_ids_array = df["regime_grid_id"].values.astype(np.int64) if "regime_grid_id" in df.columns else None
 
     env = Demo_Env(
         state_array,
@@ -113,5 +114,6 @@ def initiate_demo_env(
         limit_stay_bonus=limit_stay_bonus,
         limit_reverse_penalty=limit_reverse_penalty,
         near_limit_threshold=near_limit_threshold,
+        regime_grid_ids_array=regime_grid_ids_array,
     )
     return env

@@ -205,8 +205,18 @@ def rebuild_train_slice_plan(manifest, chunk_length, early_stop):
 
 def write_train_slices(manifest):
     expected_index = 0
+    train_dir = Path(manifest.sets["train"].contracts[0].output_path).parent
+    regime_manifest_path = train_dir / "regime_thresholds.json"
+    regime_manifest = None
+    if regime_manifest_path.exists():
+        with regime_manifest_path.open("r", encoding="utf-8") as f:
+            regime_manifest = json.load(f)
+
     for contract in manifest.sets["train"].contracts:
         df = pd.read_feather(contract.output_path)
+        if regime_manifest is not None and "regime_grid_id" not in df.columns:
+            from RL.util.calibrate_regime_thresholds import ensure_regime_grid_id_column
+            df = ensure_regime_grid_id_column(df, manifest=regime_manifest)
         for slice_info in contract.slice_outputs:
             if int(slice_info.index) != expected_index:
                 raise ValueError("train slice indices must be continuous")

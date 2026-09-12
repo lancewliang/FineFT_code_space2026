@@ -108,6 +108,7 @@ class Base_Env(gym.Env):
         limit_stay_bonus=0.5,
         limit_reverse_penalty=1.5,
         near_limit_threshold=0.003,
+        regime_grid_ids_array=None,
     ):
         # trading setting
         self.max_holding_number = max_holding_number
@@ -135,6 +136,7 @@ class Base_Env(gym.Env):
         self.limit_stay_bonus = float(limit_stay_bonus)
         self.limit_reverse_penalty = float(limit_reverse_penalty)
         self.near_limit_threshold = float(near_limit_threshold)
+        self.regime_grid_ids_array = regime_grid_ids_array
         # RL setting
         self.single_side_action_num = int((position_choices - 1) / 2)
         self.action_space = spaces.Discrete(
@@ -329,6 +331,11 @@ class Base_Env(gym.Env):
                 field, ", ".join(INFO_DIAGNOSTIC_FIELDS)
             )
         )
+
+    def _get_current_regime_grid_id(self) -> int:
+        if self.regime_grid_ids_array is not None and self.day < len(self.regime_grid_ids_array):
+            return int(self.regime_grid_ids_array[self.day])
+        return -1
 
     def _reset_execution_metrics(self):
         self.commission_fee_step = 0
@@ -537,6 +544,7 @@ class Base_Env(gym.Env):
                 "bid_qyts": self.bid_qtys,
                 "single_holding_max_drawdown": self.single_holding_max_drawdown,
                 "trading_info": self._calculate_trading_info(0),
+                "regime_grid_id": self._get_current_regime_grid_id(),
             },
         )
 
@@ -699,6 +707,7 @@ class Base_Env(gym.Env):
                     "previous_action": self.env_map_position_leverage_to_action(
                         self.position, self.leverage
                     ),
+                    "regime_grid_id": self._get_current_regime_grid_id(),
                 },
             )
         else:
@@ -759,6 +768,7 @@ class Base_Env(gym.Env):
                         "previous_action": self.env_map_position_leverage_to_action(
                             self.position, self.leverage
                         ),
+                        "regime_grid_id": self._get_current_regime_grid_id(),
                     },
                 )
             self.day += 1
@@ -872,6 +882,7 @@ class Base_Env(gym.Env):
                         "previous_action": self.env_map_position_leverage_to_action(
                             self.position, self.leverage
                         ),
+                        "regime_grid_id": self._get_current_regime_grid_id(),
                     },
                 )
             else:
@@ -990,5 +1001,6 @@ class Base_Env(gym.Env):
                         "bid_qyts": self.bid_qtys,
                         "single_holding_max_drawdown": self.single_holding_max_drawdown,
                         "trading_info": trading_info,
+                        "regime_grid_id": self._get_current_regime_grid_id(),
                     },
                 )

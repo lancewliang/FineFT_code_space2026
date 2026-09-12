@@ -49,6 +49,7 @@ class Commodity_Env(Base_Env):
         limit_stay_bonus=0.5,
         limit_reverse_penalty=1.5,
         near_limit_threshold=0.003,
+        regime_grid_ids_array=None,
     ):
         funding_rate_array = np.zeros(len(timestamp_array), dtype=float)
         funding_timestamp_array = timestamp_array
@@ -86,6 +87,7 @@ class Commodity_Env(Base_Env):
             limit_stay_bonus=limit_stay_bonus,
             limit_reverse_penalty=limit_reverse_penalty,
             near_limit_threshold=near_limit_threshold,
+            regime_grid_ids_array=regime_grid_ids_array,
         )
 
     @staticmethod

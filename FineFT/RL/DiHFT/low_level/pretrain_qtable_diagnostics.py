@@ -605,7 +605,17 @@ def _load_existing_diagnostics(
             df_path = os.path.join(
                 train_data_path, "df_{}.feather".format(sample_item.df_index)
             )
-            train_df_cache[sample_item.df_index] = pd.read_feather(df_path)
+            loaded_df = pd.read_feather(df_path)
+            if "regime_grid_id" not in loaded_df.columns:
+                thresholds_path = os.path.join(train_data_path, "regime_thresholds.json")
+                if not os.path.exists(thresholds_path):
+                    thresholds_path = os.path.join(os.path.dirname(train_data_path.rstrip("/")), "regime_thresholds.json")
+                if os.path.exists(thresholds_path):
+                    with open(thresholds_path, "r", encoding="utf-8") as tf:
+                        reg_manifest = json.load(tf)
+                    from RL.util.calibrate_regime_thresholds import ensure_regime_grid_id_column
+                    loaded_df = ensure_regime_grid_id_column(loaded_df, reg_manifest)
+            train_df_cache[sample_item.df_index] = loaded_df
 
     return PretrainQTableDiagnosticsResult(
         sample_plan=sample_plan,

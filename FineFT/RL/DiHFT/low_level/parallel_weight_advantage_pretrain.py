@@ -102,6 +102,7 @@ def configure_logger(dataset_name: str, experiment_name: str) -> str:
 
 # RL util
 from RL.util.replay_buffer_DQN import Multi_step_ReplayBuffer_multi_info
+from RL.util.regime_stratified_replay_buffer import RegimeStratifiedReplayBuffer
 from RL.util.update import disable_gradients
 from RL.util.episode_selector import get_transformation_even_risk
 
@@ -366,6 +367,12 @@ parser.add_argument(
     help="number of epochs to complete epsilon and ada decay; defaults to num_epoch if not set",
 )
 parser.add_argument(
+    "--curriculum_block_epochs",
+    type=int,
+    default=3,
+    help="number of consecutive epochs per directional curriculum phase (at least 3)",
+)
+parser.add_argument(
     "--seed",
     type=int,
     default=12345,
@@ -596,6 +603,7 @@ class Weighted_Contexts_DQN:
         # replay buffer setting
         self.n_step = args.n_step
         self.buffer_size = args.buffer_size
+        self.curriculum_block_epochs = int(args.curriculum_block_epochs)
         # resample method
         self.priority_transformation = get_transformation_even_risk
         # general learning setting
@@ -767,13 +775,12 @@ class Weighted_Contexts_DQN:
             gamma=self.gamma,
             n_step=self.n_step,
         )
-        buffer_diverse = Multi_step_ReplayBuffer_multi_info(
-            buffer_size=self.buffer_size,
+        buffer_diverse = RegimeStratifiedReplayBuffer(
+            total_buffer_size=self.buffer_size,
             batch_size=self.batch_size,
             device=self.device,
             seed=self.seed,
-            gamma=self.gamma,
-            n_step=self.n_step,
+            num_grids=9,
         )
         step_counter_pretrain = 0
         step_counter_diverse = 0
