@@ -119,7 +119,7 @@ def test_write_round_transitions_semantic_dedup_and_td_error_replacement():
     duplicates_1 = write_round_transitions_to_buffer(buffer, [round_1])
     assert duplicates_1 == 0
     assert buffer.get_grid_lengths()[0] == 1
-    assert buffer.buffers[0].memory[0].info["tag"] == "first"
+    assert buffer.slots[0][0][1]["tag"] == "first"
 
     # 2. 遇到相同语义的经验（不同 q_val 与 float），但 td_error = 0.4（更低），应丢弃
     t2 = make_transition("second_lower_td", q_val=999.0, pnl_float=0.009)
@@ -137,7 +137,7 @@ def test_write_round_transitions_semantic_dedup_and_td_error_replacement():
     duplicates_2 = write_round_transitions_to_buffer(buffer, [round_2])
     assert duplicates_2 == 1
     assert buffer.get_grid_lengths()[0] == 1
-    assert buffer.buffers[0].memory[0].info["tag"] == "first"  # 保持原样
+    assert buffer.slots[0][0][1]["tag"] == "first"  # 保持原样
 
     # 3. 遇到相同语义的经验，但 td_error = 2.8（更高），应就地替换旧样本
     t3 = make_transition("third_higher_td", q_val=-50.0, pnl_float=-0.002)
@@ -155,7 +155,7 @@ def test_write_round_transitions_semantic_dedup_and_td_error_replacement():
     duplicates_3 = write_round_transitions_to_buffer(buffer, [round_3])
     assert duplicates_3 == 0  # 替换不计为普通丢弃重复
     assert buffer.get_grid_lengths()[0] == 1  # 长度不变
-    assert buffer.buffers[0].memory[0].info["tag"] == "third_higher_td"  # 成功替换为更高 TD-Error 的样本
+    assert buffer.slots[0][0][1]["tag"] == "third_higher_td"  # 成功替换为更高 TD-Error 的样本
 
 
 def test_multi_step_replay_buffer_multi_info_replace_in_place():
@@ -245,6 +245,8 @@ def test_explore_round_computes_td_error_on_transitions(monkeypatch):
         "position_list": [0.0],
         "initial_wallet_balance": 100.0,
         "initial_unrealized_pnL": 0.0,
+        "gamma": 0.99,
+        "n_step": 12,
     }
     runner = pdt.DfRolloutWorkerRunner(worker_config)
     runner.reset_task(pdt.ResetWorkerTask(df_index=0, epoch_index=0, context_index=0, initial_action=0))

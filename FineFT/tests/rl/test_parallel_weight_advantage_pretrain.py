@@ -653,21 +653,22 @@ def test_save_diverse_buffer_writes_tensor_snapshot(tmp_path):
         seed=42,
         num_grids=9,
     )
+    info1 = {
+        "previous_action": 0,
+        "regime_grid_id": 0,
+        "trading_info": np.zeros(4),
+        "avaliable_action": np.array([1, 1, 1]),
+        "funding_count_down_hour": 0.0,
+        "funding_count_down_minute": 0.0,
+        "q_value": np.array([1.0, 0.0, 0.0]),
+    }
     transition = (
         np.array([1.0, 2.0]),
-        {
-            "previous_action": 0,
-            "regime_grid_id": 0,
-            "trading_info": np.zeros(4),
-            "avaliable_action": np.array([1, 1, 1]),
-            "funding_count_down_hour": 0.0,
-            "funding_count_down_minute": 0.0,
-            "q_value": np.array([1.0, 0.0, 0.0]),
-        },
+        info1,
         3,
         1.5,
         np.array([3.0, 4.0]),
-        {"previous_action": 1, "regime_grid_id": 0, "trading_info": np.zeros(4)},
+        dict(info1),
         True,
     )
     buffer.add_transition(transition)
@@ -774,7 +775,6 @@ def test_run_parallel_rollout_task_completes_in_single_round_without_updates(
         buffer_diverse=buffer,
         step_counter_diverse=10,
         round_counter=5,
-        seen_fingerprints=set(),
     )
 
     assert round_counter == 6
@@ -806,21 +806,22 @@ def test_run_parallel_diverse_training_completes_exploration_before_training(
                 return
             episode_counter["count"] += 1
             idx = episode_counter["count"]
+            info2 = {
+                "previous_action": 0,
+                "regime_grid_id": 0,
+                "trading_info": np.zeros(4),
+                "avaliable_action": np.array([1, 1, 1]),
+                "funding_count_down_hour": 0.0,
+                "funding_count_down_minute": 0.0,
+                "q_value": np.array([1.0, 0.0, 0.0]),
+            }
             transition = (
                 np.array([float(idx)]),
-                {
-                    "previous_action": 0,
-                    "regime_grid_id": 0,
-                    "trading_info": np.zeros(4),
-                    "avaliable_action": np.array([1, 1, 1]),
-                    "funding_count_down_hour": 0.0,
-                    "funding_count_down_minute": 0.0,
-                    "q_value": np.array([1.0, 0.0, 0.0]),
-                },
+                info2,
                 1,
                 1.0,
                 np.array([float(idx) + 0.5]),
-                {"previous_action": 1, "regime_grid_id": 0, "trading_info": np.zeros(4)},
+                dict(info2),
                 True,
             )
             self.result_queue.put(
@@ -867,7 +868,7 @@ def test_run_parallel_diverse_training_completes_exploration_before_training(
     trainer.lr_min = 0.001
     trainer.batch_size = 1
     trainer.buffer_size = 10000
-    trainer.curriculum_block_epochs = 3
+    trainer.curriculum_block_epochs = 5
     trainer.update_times = 1
     trainer.n_step = 1
     trainer.gamma = 0.99
@@ -949,21 +950,22 @@ def test_run_parallel_diverse_training_skips_exploration_after_three_stale_epoch
         def put(self, message):
             if type(message).__name__ == "ResetWorkerTask":
                 return
+            info3 = {
+                "previous_action": 0,
+                "regime_grid_id": 0,
+                "trading_info": np.zeros(4),
+                "avaliable_action": np.array([1, 1, 1]),
+                "funding_count_down_hour": 0.0,
+                "funding_count_down_minute": 0.0,
+                "q_value": np.array([1.0, 0.0, 0.0]),
+            }
             transition = (
                 np.array([float(self.df_index)]),
-                {
-                    "previous_action": 0,
-                    "regime_grid_id": 0,
-                    "trading_info": np.zeros(4),
-                    "avaliable_action": np.array([1, 1, 1]),
-                    "funding_count_down_hour": 0.0,
-                    "funding_count_down_minute": 0.0,
-                    "q_value": np.array([1.0, 0.0, 0.0]),
-                },
+                info3,
                 1,
                 1.0,
                 np.array([float(self.df_index) + 0.5]),
-                {"previous_action": 1, "regime_grid_id": 0, "trading_info": np.zeros(4)},
+                dict(info3),
                 True,
             )
             self.result_queue.put(
@@ -999,7 +1001,7 @@ def test_run_parallel_diverse_training_skips_exploration_after_three_stale_epoch
     trainer.lr_min = 0.001
     trainer.batch_size = 1
     trainer.buffer_size = 10000
-    trainer.curriculum_block_epochs = 3
+    trainer.curriculum_block_epochs = 5
     trainer.update_times = 1
     trainer.n_step = 1
     trainer.gamma = 0.99
@@ -1118,6 +1120,7 @@ def test_run_parallel_diverse_training_skips_exploration_when_buffer_full(monkey
     trainer.update_times = 1
     trainer.n_step = 1
     trainer.buffer_size = 10
+    trainer.curriculum_block_epochs = 3
     trainer.update_counter = 0
     trainer.optimizer = types.SimpleNamespace(param_groups=[{"lr": 0.0}])
     trainer.writer = MagicMock()
@@ -1273,7 +1276,6 @@ def test_run_epoch_exploration_stops_early_when_buffer_becomes_full(monkeypatch)
         buffer_diverse=buffer,
         step_counter_diverse=0,
         round_counter=0,
-        seen_fingerprints=set(),
         diverse_rollout_latest_metrics_by_df={},
     )
 
@@ -1459,6 +1461,8 @@ def test_df_rollout_worker_runner_tracks_episodes_per_df(monkeypatch):
         "position_list": [0.0, 0.5, 1.0],
         "initial_wallet_balance": 10000.0,
         "initial_unrealized_pnL": 0.0,
+        "gamma": 0.99,
+        "n_step": 12,
     }
     runner = pdt.DfRolloutWorkerRunner(worker_config)
 

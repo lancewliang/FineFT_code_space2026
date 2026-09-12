@@ -109,12 +109,12 @@ def test_regime_stratified_buffer_priority_replacement():
     t2 = _make_dummy_transition(0, grid_id=0, reward=2.0)
     buffer.add_transition(t2, td_error=1.0)
     assert buffer.get_grid_lengths()[0] == 1
-    assert buffer.buffers[0].memory[0].reward == 1.0
+    assert buffer.slots[0][0][3] == 1.0
 
     t3 = _make_dummy_transition(0, grid_id=0, reward=9.0)
     buffer.add_transition(t3, td_error=3.0)
     assert buffer.get_grid_lengths()[0] == 1
-    assert buffer.buffers[0].memory[0].reward == 9.0
+    assert buffer.slots[0][0][3] == 9.0
 
 
 def test_stratified_stacked_sampler_balanced_sampling():

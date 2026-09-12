@@ -42,10 +42,7 @@ if TYPE_CHECKING:
         Weighted_Contexts_DQN,
     )
     from RL.util.replay_buffer_DQN import Multi_step_ReplayBuffer_multi_info
-    from RL.util.regime_stratified_replay_buffer import (
-        RegimeStratifiedReplayBuffer,
-        accumulate_trajectory_n_step,
-    )
+
 
 from model.low_level import ensemble_Qnet
 from RL.DiHFT.low_level.pretrain_qtable_diagnostics import (
@@ -70,6 +67,8 @@ from RL.DiHFT.low_level.weight_advantage_pretrain import (
 from RL.util.regime_stratified_replay_buffer import (
     RegimeStratifiedReplayBuffer,
     accumulate_trajectory_n_step,
+    build_semantic_transition_key,
+    get_active_grid_ids_for_epoch,
 )
 from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import (
     WorkerErrorMessage,
@@ -448,36 +447,6 @@ def _freeze_transition_value(value):
     return ("other", type(value).__name__, repr(value))
 
 
-def build_semantic_transition_key(
-    state: np.ndarray,
-    action: int,
-    info: dict[str, Any],
-) -> tuple[int, int, int, int, int]:
-    """提取经验的语义决策键，剔除浮点路径噪音、累计 reward 与 Teacher Q 值。
-
-    键由以下离散正交状态组成：
-    (state_hash, previous_action, action, pos_dir, dur_bucket)
-    """
-    state_hash = int.from_bytes(
-        hashlib.blake2b(state.tobytes(), digest_size=8).digest(), "big"
-    )
-
-    previous_action = int(info["previous_action"])
-    trading_info = info["trading_info"]
-    pos_dir = int(np.round(float(trading_info[0])))
-    raw_steps = int(float(trading_info[3]) * 180)
-    if raw_steps <= 2:
-        dur_bucket = 0
-    elif raw_steps <= 12:
-        dur_bucket = 1
-    elif raw_steps <= 36:
-        dur_bucket = 2
-    else:
-        dur_bucket = 3
-
-    return (state_hash, previous_action, int(action), pos_dir, dur_bucket)
-
-
 def build_transition_fingerprint(transition):
     """计算经验的內容指纹。
 
@@ -493,7 +462,6 @@ def build_transition_fingerprint(transition):
 def write_round_transitions_to_buffer(
     buffer_diverse: RegimeStratifiedReplayBuffer,
     round_results: list[WorkerRoundResult],
-    seen_fingerprints: Any = None,
 ) -> int:
     """按 (df_index, step_index) 顺序写入体制分层经验池，基于各格语义键与 TD-Error 择优保留。"""
     duplicate_count = 0
@@ -526,6 +494,12 @@ def run_diverse_training_phase(
         epoch_index=epoch_index,
         block_epochs=trainer.curriculum_block_epochs,
     )
+    if sampler is None:
+        logger.info(
+            "diverse training phase skipped | epoch_index=%d | active grids have 0 transitions",
+            epoch_index,
+        )
+        return None
     buffer_size = len(buffer_diverse)
 
     last_losses = None
@@ -653,8 +627,8 @@ class DfRolloutWorkerRunner:
         self.position_list = worker_config["position_list"]
         self.initial_wallet_balance = worker_config["initial_wallet_balance"]
         self.initial_unrealized_pnL = worker_config["initial_unrealized_pnL"]
-        self.gamma = float(worker_config.get("gamma", 0.99))
-        self.n_step = int(worker_config.get("n_step", 12))
+        self.gamma = float(worker_config["gamma"])
+        self.n_step = int(worker_config["n_step"])
         self.model = create_parallel_worker_model(worker_config).to(self.device)
         # df_index -> 该 df 当前探索任务的回合状态
         self.episodes = {}
@@ -981,10 +955,9 @@ def run_parallel_rollout_task(
     epoch_index: int,
     context_index: int,
     initial_action: int,
-    buffer_diverse: Multi_step_ReplayBuffer_multi_info,
+    buffer_diverse: RegimeStratifiedReplayBuffer,
     step_counter_diverse: int,
     round_counter: int,
-    seen_fingerprints: set[Any],
 ):
     """单个 (epoch, context, initial_action) 任务的完整探索，不执行任何参数更新。
 
@@ -1028,7 +1001,6 @@ def run_parallel_rollout_task(
     task_duplicate_count += write_round_transitions_to_buffer(
         buffer_diverse,
         round_results,
-        seen_fingerprints,
     )
     task_record_count += sum(
         len(result.transitions) for result in round_results
@@ -1153,10 +1125,9 @@ def run_epoch_exploration(
     epoch_index: int,
     train_df_cache: dict[int, pd.DataFrame],
     env_kwargs: dict[str, Any],
-    buffer_diverse: Multi_step_ReplayBuffer_multi_info,
+    buffer_diverse: RegimeStratifiedReplayBuffer,
     step_counter_diverse: int,
     round_counter: int,
-    seen_fingerprints: set[Any],
     diverse_rollout_latest_metrics_by_df: dict[int, Any],
 ):
     """一个 epoch 的完整探索阶段：创建全新子进程 -> 全任务探索 -> 彻底关闭。
@@ -1186,7 +1157,6 @@ def run_epoch_exploration(
                     buffer_diverse=buffer_diverse,
                     step_counter_diverse=step_counter_diverse,
                     round_counter=round_counter,
-                    seen_fingerprints=seen_fingerprints,
                 )
                 explored_task_count += 1
                 for metrics in task_metrics:
@@ -1248,7 +1218,6 @@ def run_parallel_diverse_training(
     if trainer.total_df_index_length <= 0:
         raise ValueError("parallel diverse training requires total_df_index_length > 0")
     round_counter = 0
-    seen_fingerprints = {}
     consecutive_no_new_experience_epochs = 0
     skip_exploration = False
     tensor_snapshot = None
@@ -1271,7 +1240,7 @@ def run_parallel_diverse_training(
             epoch_metrics = []
         else:
             # 阶段一：完整探索 —— 本轮探索创建全新子进程（上限 20），结束即彻底关闭
-            buffer_len_before_exploration = len(buffer_diverse)
+            added_before = buffer_diverse.total_added_count
             epoch_metrics, step_counter_diverse, round_counter = run_epoch_exploration(
                 trainer,
                 epoch_index,
@@ -1280,14 +1249,11 @@ def run_parallel_diverse_training(
                 buffer_diverse,
                 step_counter_diverse,
                 round_counter,
-                seen_fingerprints,
                 diverse_rollout_latest_metrics_by_df,
             )
             # 阶段二：保存经验池 —— 探索完成且经验已全部写入后，落盘最新快照
             tensor_snapshot = save_diverse_buffer(buffer_diverse, trainer.model_path)
-            new_experience_count = (
-                len(buffer_diverse) - buffer_len_before_exploration
-            )
+            new_experience_count = buffer_diverse.total_added_count - added_before
             if new_experience_count == 0:
                 consecutive_no_new_experience_epochs += 1
             else:

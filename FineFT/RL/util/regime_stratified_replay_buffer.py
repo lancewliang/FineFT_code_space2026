@@ -6,7 +6,6 @@ from typing import Any
 import numpy as np
 import torch
 
-from RL.util.replay_buffer_DQN import Multi_step_ReplayBuffer_multi_info
 from RL.DiHFT.low_level.parallel_pretrain import extract_stacked_tensor_dict
 
 logger = logging.getLogger(__name__)
@@ -24,7 +23,6 @@ def get_active_grid_ids_for_epoch(epoch_index: int, block_epochs: int = 3) -> li
         raise ValueError(f"block_epochs must be positive, got {block_epochs}")
     phase_index = (epoch_index // block_epochs) % 3
     return list(DIRECTIONAL_REGIME_PHASES[phase_index])
-
 
 
 def accumulate_trajectory_n_step(
@@ -78,7 +76,7 @@ def accumulate_trajectory_n_step(
     return accumulated
 
 
-def _build_semantic_transition_key(
+def build_semantic_transition_key(
     state: np.ndarray,
     action: int,
     info: dict[str, Any],
@@ -106,8 +104,8 @@ def _build_semantic_transition_key(
 class RegimeStratifiedReplayBuffer:
     """体制分层多步经验回放池（3x3 = 9 格）。
 
-    将总容量解耦为 9 个独立的环形队列，各队列独立维护容量配额、FIFO 淘汰与去重索引。
-    底层的各经验池以 n_step=1 初始化，因为时序多步累加已在轨迹层闭环。
+    将总容量解耦为 9 个独立的定长队列，各队列独立维护容量配额、精确 FIFO 淘汰与去重索引。
+    采用确定性槽位数组，消除 deque 移动索引导致的哈希位置错乱。
     """
 
     def __init__(
@@ -123,20 +121,13 @@ class RegimeStratifiedReplayBuffer:
         self.batch_size = batch_size
         self.device = device
 
-        self.buffers: dict[int, Multi_step_ReplayBuffer_multi_info] = {
-            g: Multi_step_ReplayBuffer_multi_info(
-                buffer_size=self.grid_capacity,
-                batch_size=batch_size,
-                device=device,
-                seed=seed + g,
-                gamma=1.0,
-                n_step=1,
-            )
-            for g in range(num_grids)
-        }
+        self.slots: dict[int, list[Any]] = {g: [] for g in range(num_grids)}
+        self.write_ptrs: dict[int, int] = {g: 0 for g in range(num_grids)}
+        self.keys_by_idx: dict[int, dict[int, Any]] = {g: {} for g in range(num_grids)}
         self.seen_fingerprints: dict[int, dict[Any, tuple[int, float]]] = {
             g: {} for g in range(num_grids)
         }
+        self.total_added_count = 0
 
     def route_transition(self, info: dict[str, Any]) -> int:
         """提取 info 中的体制网格 ID (0..8)。"""
@@ -148,38 +139,51 @@ class RegimeStratifiedReplayBuffer:
         td_error: float = 0.0,
     ) -> int:
         """按 Transition 起始步的体制将经验路由写入对应网格队列。"""
+        state = transition[0]
         info = transition[1]
-        grid_id = self.route_transition(info)
+        action = int(transition[2])
+        grid_id = int(info["regime_grid_id"])
         if grid_id < 0 or grid_id >= self.num_grids:
             return -1
 
-        buf = self.buffers[grid_id]
         tracker = self.seen_fingerprints[grid_id]
+        semantic_key = build_semantic_transition_key(state, action, info)
 
-        state = transition[0]
-        action = int(transition[2])
-        semantic_key = _build_semantic_transition_key(state, action, info)
+        s, info, a, r, s_, next_info, done = transition
+        entry = (s, info, a, r, s_, done, next_info)
 
         if semantic_key in tracker:
             old_idx, old_td_error = tracker[semantic_key]
             if td_error > old_td_error:
-                buf.replace(old_idx, *transition)
+                self.slots[grid_id][old_idx] = entry
                 tracker[semantic_key] = (old_idx, td_error)
-            else:
-                return -2
-        else:
-            curr_len = len(buf)
-            target_idx = curr_len if curr_len < self.grid_capacity else (self.grid_capacity - 1)
-            buf.add_transition(transition)
-            tracker[semantic_key] = (target_idx, td_error)
+                self.total_added_count += 1
+                return grid_id
+            return -2
 
+        slot_list = self.slots[grid_id]
+        if len(slot_list) < self.grid_capacity:
+            idx = len(slot_list)
+            slot_list.append(entry)
+            tracker[semantic_key] = (idx, td_error)
+            self.keys_by_idx[grid_id][idx] = semantic_key
+        else:
+            idx = self.write_ptrs[grid_id]
+            old_key = self.keys_by_idx[grid_id][idx]
+            del tracker[old_key]
+            slot_list[idx] = entry
+            tracker[semantic_key] = (idx, td_error)
+            self.keys_by_idx[grid_id][idx] = semantic_key
+            self.write_ptrs[grid_id] = (idx + 1) % self.grid_capacity
+
+        self.total_added_count += 1
         return grid_id
 
     def get_grid_lengths(self) -> dict[int, int]:
-        return {g: len(self.buffers[g]) for g in range(self.num_grids)}
+        return {g: len(self.slots[g]) for g in range(self.num_grids)}
 
     def total_len(self) -> int:
-        return sum(self.get_grid_lengths().values())
+        return sum(len(self.slots[g]) for g in range(self.num_grids))
 
     def __len__(self) -> int:
         return self.total_len()
@@ -194,9 +198,12 @@ class RegimeStratifiedReplayBuffer:
         if active_grid_ids is None:
             active_grid_ids = get_active_grid_ids_for_epoch(epoch_index, block_epochs=block_epochs)
         tensor_dicts = self.extract_stacked_tensor_dicts()
+        available_active = [g for g in active_grid_ids if tensor_dicts[g]["buffer_size"] > 0]
+        if not available_active:
+            return None
         return StratifiedStackedSampler(
             tensor_dicts=tensor_dicts,
-            active_grid_ids=active_grid_ids,
+            active_grid_ids=available_active,
             batch_size=self.batch_size,
             device=self.device,
         )
@@ -204,13 +211,13 @@ class RegimeStratifiedReplayBuffer:
     def extract_stacked_tensor_dicts(self) -> dict[int, dict[str, Any]]:
         """分池提取连续 Tensor 字典快照供 GPU 分层采样。"""
         return {
-            g: extract_stacked_tensor_dict(self.buffers[g])
+            g: extract_stacked_tensor_dict(self.slots[g])
             for g in range(self.num_grids)
         }
 
 
 class StratifiedStackedSampler:
-    """分层均衡采样器：从当前轮次激活的网格集合中按批次配额平衡采样。"""
+    """分层均衡采样器：严格从当前轮次激活的网格集合中按批次配额平衡采样。"""
 
     def __init__(
         self,
@@ -230,9 +237,10 @@ class StratifiedStackedSampler:
         base = batch_size // k
         remainder = batch_size % k
 
-        self.quotas: dict[int, int] = {}
-        for i, g in enumerate(self.active_grid_ids):
-            self.quotas[g] = base + (1 if i < remainder else 0)
+        self.quotas: dict[int, int] = {
+            g: base + (1 if i < remainder else 0)
+            for i, g in enumerate(self.active_grid_ids)
+        }
 
     def sample(self) -> tuple[
         torch.Tensor,
@@ -243,29 +251,6 @@ class StratifiedStackedSampler:
         dict[str, torch.Tensor],
         torch.Tensor,
     ]:
-        grid_counts = {
-            g: (self.tensor_dicts[g]["buffer_size"] if "buffer_size" in self.tensor_dicts[g] else self.tensor_dicts[g]["states"].shape[0])
-            for g in self.tensor_dicts
-        }
-
-        available_grids = [g for g in self.active_grid_ids if grid_counts[g] > 0]
-        if not available_grids:
-            available_grids = [
-                g for g in self.tensor_dicts
-                if (self.tensor_dicts[g]["buffer_size"] if "buffer_size" in self.tensor_dicts[g] else self.tensor_dicts[g]["states"].shape[0]) > 0
-            ]
-            if not available_grids:
-                raise ValueError("Entire replay buffer is empty; cannot sample")
-            logger.warning(
-                "All active grids %s are empty; falling back to available grids %s",
-                self.active_grid_ids,
-                available_grids,
-            )
-
-        k = len(available_grids)
-        base = self.batch_size // k
-        remainder = self.batch_size % k
-
         batch_states = []
         batch_actions = []
         batch_rewards = []
@@ -274,14 +259,27 @@ class StratifiedStackedSampler:
         batch_infos: dict[str, list[torch.Tensor]] = {}
         batch_next_infos: dict[str, list[torch.Tensor]] = {}
 
-        for i, g in enumerate(available_grids):
-            quota = base + (1 if i < remainder else 0)
+        for g in self.active_grid_ids:
+            quota = self.quotas[g]
             if quota <= 0:
                 continue
 
             grid_payload = self.tensor_dicts[g]
-            n_samples = grid_counts[g]
+            n_samples = grid_payload["buffer_size"]
+
+            if n_samples == 0:
+                raise ValueError(
+                    f"Active grid {g} has 0 transitions; cannot sample quota of {quota}"
+                )
+
             replace = n_samples < quota
+            if replace:
+                logger.warning(
+                    "Active grid %d has %d samples < quota %d; sampling with replacement",
+                    g,
+                    n_samples,
+                    quota,
+                )
 
             idx = np.random.choice(n_samples, size=quota, replace=replace)
 
