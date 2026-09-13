@@ -588,3 +588,115 @@ def test_weighted_trader_init_enables_matmul_precision_and_allow_tf32(monkeypatc
         if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
             assert torch.backends.cuda.matmul.allow_tf32 is True
 
+
+
+def test_resolve_device():
+    from RL.DiHFT.low_level import test_agent_index as tai
+
+    expected_default = "cuda" if torch.cuda.is_available() else "cpu"
+    assert tai.resolve_device(None) == expected_default
+    assert tai.resolve_device("cpu") == "cpu"
+    assert tai.resolve_device("CPU") == "cpu"
+    assert tai.resolve_device("gpu") == "cuda"
+    assert tai.resolve_device("GPU") == "cuda"
+    assert tai.resolve_device("cuda") == "cuda"
+    assert tai.resolve_device("CUDA") == "cuda"
+    assert tai.resolve_device("cuda:0") == "cuda:0"
+    assert tai.resolve_device("gpu:1") == "cuda:1"
+
+
+def test_parser_device_argument():
+    from RL.DiHFT.low_level import test_agent_index as tai
+
+    args_default = tai.parser.parse_args(["--label_type", "slope"])
+    assert args_default.device is None
+
+    args_cpu = tai.parser.parse_args(["--label_type", "slope", "--device", "cpu"])
+    assert args_cpu.device == "cpu"
+
+    args_gpu = tai.parser.parse_args(["--label_type", "slope", "--device", "gpu"])
+    assert args_gpu.device == "gpu"
+
+
+def test_weighted_trader_device_cpu(monkeypatch):
+    from RL.DiHFT.low_level import test_agent_index as tai
+
+    monkeypatch.setattr(tai, "build_serial_model_path", lambda *args: "/fake/model/path")
+    monkeypatch.setattr(
+        np,
+        "load",
+        lambda path, **kwargs: (
+            type("DummyDict", (), {"item": lambda self: {}})()
+            if "maintenance_margin" in str(path)
+            else np.array(["feat_1", "feat_2"])
+        ),
+    )
+    monkeypatch.setattr(torch, "load", lambda *args, **kwargs: {})
+    monkeypatch.setattr(tai.ensemble_Qnet, "load_state_dict", lambda self, sd: None)
+    monkeypatch.setattr(tai.ensemble_Qnet, "eval", lambda self: None)
+
+    args = tai.parser.parse_args([
+        "--base_path", "dataset/10min",
+        "--dataset_name", "fu",
+        "--label_type", "slope",
+        "--position_choices", "3",
+        "--device", "cpu",
+    ])
+    trader = tai.weighted_trader(args)
+    assert trader.device == "cpu"
+    assert next(trader.eval_net.parameters()).device.type == "cpu"
+
+    action = trader.act_test(
+        state=[0.0, 1.0],
+        info={
+            "previous_action": 0,
+            "avaliable_action": [1, 1, 1],
+            "funding_count_down_hour": 0,
+            "funding_count_down_minute": 0,
+            "trading_info": [0.0, 0.0, 0.0, 0.0],
+        },
+        context_index=0,
+    )
+    assert isinstance(action, (int, np.integer))
+
+
+def test_weighted_trader_device_gpu(monkeypatch):
+    from RL.DiHFT.low_level import test_agent_index as tai
+
+    class MockEnsembleNet:
+        def to(self, device):
+            return self
+        def load_state_dict(self, sd):
+            pass
+        def eval(self):
+            pass
+
+    monkeypatch.setattr(tai, "build_serial_model_path", lambda *args: "/fake/model/path")
+    monkeypatch.setattr(
+        np,
+        "load",
+        lambda path, **kwargs: (
+            type("DummyDict", (), {"item": lambda self: {}})()
+            if "maintenance_margin" in str(path)
+            else np.array([])
+        ),
+    )
+    monkeypatch.setattr(torch, "load", lambda *args, **kwargs: {})
+    monkeypatch.setattr(tai, "ensemble_Qnet", lambda **kwargs: MockEnsembleNet())
+
+    args = tai.parser.parse_args([
+        "--base_path", "dataset/10min",
+        "--dataset_name", "fu",
+        "--label_type", "slope",
+        "--device", "gpu",
+    ])
+    trader = tai.weighted_trader(args)
+    assert trader.device == "cuda"
+
+
+def test_test_util_fu_10_script_configuration():
+    script_path = FINEFT_ROOT / "script" / "test" / "DiHFT" / "low_level" / "test_util_fu_10.sh"
+    content = script_path.read_text(encoding="utf-8")
+    assert "numactl --cpunodebind=1 --preferred=1" in content
+    assert '--device "${device}"' in content
+    assert "DEVICE=${DEVICE:-cpu}" in content

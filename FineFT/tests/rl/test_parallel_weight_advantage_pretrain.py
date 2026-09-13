@@ -150,8 +150,22 @@ def test_compute_epoch_schedules_phase_cyclic_decay():
     assert p2_end.epsilon == pytest.approx(0.1)
     assert p2_end.ada == pytest.approx(0.0)
 
-    # Epoch 9-17: clamped to minimum
-    for ep in [9, 10, 15, 17]:
+    # Phase 3: 全量经验抽取，reset to max at epoch 9, decay to min at epoch 11
+    p3_start = pdt.compute_epoch_training_params(
+        epoch_index=9, num_epoch=18, epsilon_init=1.0, epsilon_min=0.1,
+        ada_init=256.0, ada_min=0.0, lr_init=0.005, lr_min=0.001, curriculum_block_epochs=3,
+    )
+    p3_end = pdt.compute_epoch_training_params(
+        epoch_index=11, num_epoch=18, epsilon_init=1.0, epsilon_min=0.1,
+        ada_init=256.0, ada_min=0.0, lr_init=0.005, lr_min=0.001, curriculum_block_epochs=3,
+    )
+    assert p3_start.epsilon == 1.0
+    assert p3_start.ada == 256.0
+    assert p3_end.epsilon == pytest.approx(0.1)
+    assert p3_end.ada == pytest.approx(0.0)
+
+    # Epoch 12-17: clamped to minimum
+    for ep in [12, 13, 15, 17]:
         p_late = pdt.compute_epoch_training_params(
             epoch_index=ep, num_epoch=18, epsilon_init=1.0, epsilon_min=0.1,
             ada_init=256.0, ada_min=0.0, lr_init=0.005, lr_min=0.001, curriculum_block_epochs=3,
@@ -352,7 +366,6 @@ def test_run_diverse_training_phase_runs_deferred_updates_with_stacked_sampler(
     buffer = Buffer()
 
     monkeypatch.setattr(pdt, "StackedTransitionSampler", fake_sampler_factory)
-    monkeypatch.setattr(pdt, "UPDATE_WINDOWS_PER_EPOCH", 1)
 
     update_calls = {"count": 0}
 

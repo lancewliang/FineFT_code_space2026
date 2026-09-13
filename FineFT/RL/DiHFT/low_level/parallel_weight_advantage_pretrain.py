@@ -610,10 +610,10 @@ class Weighted_Contexts_DQN:
         self.lr = self.lr_init
         self.num_sample = args.num_sample
         self.num_epoch = args.num_epoch if args.num_epoch is not None else args.num_sample
-        if self.num_epoch < 3 * self.curriculum_block_epochs:
+        if self.num_epoch < 4 * self.curriculum_block_epochs:
             raise ValueError(
-                f"num_epoch ({self.num_epoch}) must be at least 3 * curriculum_block_epochs "
-                f"({3 * self.curriculum_block_epochs}) to complete all 3 curriculum phases"
+                f"num_epoch ({self.num_epoch}) must be at least 4 * curriculum_block_epochs "
+                f"({4 * self.curriculum_block_epochs}) to complete all 4 curriculum phases"
             )
         # trading environment setting
         self.base_path = args.base_path

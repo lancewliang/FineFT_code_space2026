@@ -10,10 +10,14 @@ Under ADR-0012, Stage I diverse training adopted a 3-phase rotating curriculum (
 
 ## Decision
 
-1. **Phase-Cyclic Decay Topology**: Bind parameter decay directly to `curriculum_block_epochs` ($x$). For the first full rotation across the 3 directional regimes (epochs $0 \le e < 3x$):
-   - At intra-phase epoch $k = e \pmod x \in [0, x - 1]$, linearly anneal $\\epsilon$ from $\\epsilon_{\\text{init}}$ to $\\epsilon_{\\text{min}}$ and $\\alpha$ from $\\alpha_{\\text{init}}$ to $\\alpha_{\\text{min}}$ over $x$ epochs (i.e. reaching minimum exactly at $k = x - 1$).
-   - At phase entry points ($e = x$ and $e = 2x$), reset $\\epsilon$ and $\\alpha$ back to their respective initial maxima.
-2. **Post-3x Convergence Clamping**: For all subsequent epochs ($e \ge 3x$, such as epochs 9~17 when $x=3, \\text{num\\_epoch}=18$), clamp $\\epsilon = \\epsilon_{\\text{min}}$ and $\\alpha = \\alpha_{\\text{min}}$ while continuing the 3-phase directional regime rotation.
+1. **Phase-Cyclic Decay Topology**: Bind parameter decay directly to `curriculum_block_epochs` ($x$). For the 4-phase curriculum rotation (3 directional regime phases + 1 full experience extraction phase, epochs $0 \le e < 4x$):
+   - Phase 0 ($0 \le e < x$): Downtrend regime (grids [0, 3, 6]).
+   - Phase 1 ($x \le e < 2x$): Flat / range regime (grids [1, 4, 7]).
+   - Phase 2 ($2x \le e < 3x$): Uptrend regime (grids [2, 5, 8]).
+   - Phase 3 ($3x \le e < 4x$): Full experience extraction (all 9 grids [0..8]).
+   - At intra-phase epoch $k = e \pmod x \in [0, x - 1]$, linearly anneal $\\epsilon$ from $\\epsilon_{\\text{init}}$ to $\\epsilon_{\\text{min}}$ and $\\alpha$ from $\\alpha_{\\text{init}}$ to $\\alpha_{\\text{min}}$ over $x$ epochs (reaching minimum exactly at $k = x - 1$).
+   - At phase entry points ($e = x, 2x, 3x$), reset $\\epsilon$ and $\\alpha$ back to their respective initial maxima.
+2. **Post-4x Convergence Clamping**: For all subsequent epochs ($e \ge 4x$, such as epochs 12~17 when $x=3, \\text{num\\_epoch}=18$), clamp $\\epsilon = \\epsilon_{\\text{min}}$ and $\\alpha = \\alpha_{\\text{min}}$ while continuing the 4-phase regime rotation.
 3. **Global Learning Rate Monotonicity**: Keep optimizer learning rate `lr` on its existing global monotonic schedule across `num_epoch` (held for the first half, then linearly decayed to `lr_min`) without intra-phase resets, protecting representation stability and avoiding gradient destabilization.
-4. **Phase Entry Exploration Recovery**: At phase boundaries $e = x$ and $e = 2x$, reset `consecutive_no_new_experience_epochs = 0` and unmark `skip_exploration` (unless the replay buffer is physically full), ensuring newly activated regime phases have a full window to collect fresh samples.
-5. **Deprecation of `decay_epochs` and Validation Invariant**: Remove the obsolete `--decay_epochs` parameter from CLI and trainer state. Require $\\text{num\\_epoch} \ge 3 \times \\text{curriculum\\_block\\_epochs}$ to guarantee that every training session completes at least one full three-phase exploration cycle.
+4. **Phase Entry Exploration Recovery**: At phase boundaries $e = x, 2x, 3x$, reset `consecutive_no_new_experience_epochs = 0` and unmark `skip_exploration` (unless the replay buffer is physically full), ensuring newly activated regime phases have a full window to collect fresh samples.
+5. **Validation Invariant**: Require $\\text{num\\_epoch} \ge 4 \times \\text{curriculum\\_block\\_epochs}$ to guarantee that every training session completes all 4 curriculum phases.

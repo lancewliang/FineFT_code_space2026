@@ -6,13 +6,14 @@ function run_test_agent_index {
     local epoch_end=$4
     local base_path=$5
     local experiment_name=$6
+    local device=${7:-${DEVICE:-cpu}}
     local ensemble_number=${ENSEMBLE_NUMBER:-13}
     local label_types=("slope" "volatility")
     if [ -n "$LABEL_TYPE" ]; then
         label_types=("$LABEL_TYPE")
     fi
     local result_path=${RESULT_PATH:-result/DiHFT/low_level}
-    local max_parallel=${MAX_PARALLEL:-4}
+    local max_parallel=${MAX_PARALLEL:-12}
     ROOTPATH=${ROOTPATH:-$(pwd)}
     cd "$ROOTPATH"
     export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
@@ -29,7 +30,7 @@ function run_test_agent_index {
             log_dir="log/DiHFT/${dataset_name}/low_level/test/${experiment_name}/${label_type}"
             mkdir -p "${log_dir}"
 
-            nohup python FineFT/RL/DiHFT/low_level/test_agent_index.py \
+            nohup numactl --cpunodebind=1 --preferred=1 python FineFT/RL/DiHFT/low_level/test_agent_index.py \
                 --base_path "${base_path}" \
                 --dataset_name "${dataset_name}" --experiment_name "${experiment_name}" \
                 --result_path "${result_path}" \
@@ -37,6 +38,7 @@ function run_test_agent_index {
                 --epoch_num "${epoch}" --position_choices 3 --N "${ensemble_number}" --transcation_cost 0.0005 --short_estimated_rate 0 --long_estimated_rate 0 \
                 --allow_reverse_position \
                 --label_type "${label_type}" \
+                --device "${device}" \
                 --save_trading_detail_csv \
                 >"${log_dir}/epoch_${epoch}.log" 2>&1 &
             pids+=($!) # 将每个后台进程的PID添加到数组中
@@ -69,7 +71,7 @@ function run_test_agent_index {
 }
 
 function run_ddqn_context {
-    run_test_agent_index "$1" "$2" "$3" "$4" "$5" "$6" || return 1
+    run_test_agent_index "$1" "$2" "$3" "$4" "$5" "$6" "${7:-${DEVICE:-cpu}}" || return 1
 }
 
 function run_ddqn_average {
@@ -120,12 +122,13 @@ function run_ddqn_average {
 
 DATASET_NAME=${DATASET_NAME:-fu}
 MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-1}
-EPOCH_START=${EPOCH_START:-3}
-EPOCH_END=${EPOCH_END:-10}
+EPOCH_START=${EPOCH_START:-1}
+EPOCH_END=${EPOCH_END:-20}
 BASE_PATH=${BASE_PATH:-dataset/10min}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-10min_parallel}
+DEVICE=${DEVICE:-cpu}
 
-run_ddqn_context "${DATASET_NAME}" "${MAX_HOLDING_NUMBER}" "${EPOCH_START}" "${EPOCH_END}" "${BASE_PATH}" "${EXPERIMENT_NAME}"
+run_ddqn_context "${DATASET_NAME}" "${MAX_HOLDING_NUMBER}" "${EPOCH_START}" "${EPOCH_END}" "${BASE_PATH}" "${EXPERIMENT_NAME}" "${DEVICE}"
 
 # BTCUSDT
 # run_ddqn_context BTCUSDT 8 45 100

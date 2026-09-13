@@ -232,6 +232,23 @@ parser.add_argument(
     required=True,
     help="label type, e.g. slope or volatility",
 )
+parser.add_argument(
+    "--device",
+    type=str,
+    default=None,
+    help="computation device for test evaluation (e.g. cpu, gpu, cuda, cuda:0)",
+)
+
+
+def resolve_device(device: str | None) -> str:
+    if device is None:
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    dev = device.strip().lower()
+    if dev == "gpu":
+        return "cuda"
+    if dev.startswith("gpu:"):
+        return f"cuda:{dev.split(':', 1)[1]}"
+    return dev
 
 def build_serial_model_path(result_path: str, dataset_name: str, experiment_name: str) -> str:
     return os.path.join(
@@ -542,13 +559,11 @@ class weighted_trader:
     def __init__(self, args: argparse.Namespace):
 
         # device
-        if torch.cuda.is_available():
-            self.device = "cuda"
+        self.device = resolve_device(args.device)
+        if self.device.startswith("cuda"):
             torch.set_float32_matmul_precision("high")
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
-        else:
-            self.device = "cpu"
         # log path
         self.model_path = build_serial_model_path(
             args.result_path,

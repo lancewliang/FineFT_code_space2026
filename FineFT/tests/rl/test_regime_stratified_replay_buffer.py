@@ -189,7 +189,13 @@ def test_directional_regime_curriculum_rotation():
     assert get_active_grid_ids_for_epoch(7, block_epochs=3) == [2, 5, 8]
     assert get_active_grid_ids_for_epoch(8, block_epochs=3) == [2, 5, 8]
 
-    assert get_active_grid_ids_for_epoch(9, block_epochs=3) == [0, 3, 6]
+    # Phase 3: 全量经验抽取（覆盖全部 9 格）
+    assert get_active_grid_ids_for_epoch(9, block_epochs=3) == [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    assert get_active_grid_ids_for_epoch(10, block_epochs=3) == [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    assert get_active_grid_ids_for_epoch(11, block_epochs=3) == [0, 1, 2, 3, 4, 5, 6, 7, 8]
+
+    # 第 4 阶段之后周期轮转回到 Phase 0
+    assert get_active_grid_ids_for_epoch(12, block_epochs=3) == [0, 3, 6]
 
 
 def test_regime_stratified_buffer_create_sampler():
@@ -212,3 +218,6 @@ def test_regime_stratified_buffer_create_sampler():
 
     sampler_p2 = buffer.create_sampler(epoch_index=8, block_epochs=3)
     assert sampler_p2.active_grid_ids == [2, 5, 8]
+
+    sampler_p3 = buffer.create_sampler(epoch_index=9, block_epochs=3)
+    assert sampler_p3.active_grid_ids == [0, 1, 2, 3, 4, 5, 6, 7, 8]

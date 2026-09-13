@@ -14,14 +14,15 @@ DIRECTIONAL_REGIME_PHASES = {
     0: [0, 3, 6],  # Phase 0: 下跌趋势 (Downtrend / Bear)
     1: [1, 4, 7],  # Phase 1: 横盘震荡 (Range / Flat)
     2: [2, 5, 8],  # Phase 2: 上涨趋势 (Uptrend / Bull)
+    3: [0, 1, 2, 3, 4, 5, 6, 7, 8],  # Phase 3: 全量经验抽取 (All Regimes / Full Experience)
 }
 
 
 def get_active_grid_ids_for_epoch(epoch_index: int, block_epochs: int = 3) -> list[int]:
-    """计算给定 epoch 所属的纯方向阶段激活网格列表。"""
+    """计算给定 epoch 所属的阶段激活网格列表（共 4 个阶段：3 个纯方向阶段 + 1 个全量经验抽取阶段）。"""
     if block_epochs <= 0:
         raise ValueError(f"block_epochs must be positive, got {block_epochs}")
-    phase_index = (epoch_index // block_epochs) % 3
+    phase_index = (epoch_index // block_epochs) % 4
     return list(DIRECTIONAL_REGIME_PHASES[phase_index])
 
 
@@ -241,6 +242,16 @@ class StratifiedStackedSampler:
             g: base + (1 if i < remainder else 0)
             for i, g in enumerate(self.active_grid_ids)
         }
+        for g in self.active_grid_ids:
+            n_samples = self.tensor_dicts[g]["buffer_size"]
+            quota = self.quotas[g]
+            if n_samples < quota:
+                logger.warning(
+                    "Active grid %d has %d samples < quota %d; sampling with replacement",
+                    g,
+                    n_samples,
+                    quota,
+                )
 
     def sample(self) -> tuple[
         torch.Tensor,
@@ -274,30 +285,25 @@ class StratifiedStackedSampler:
 
             replace = n_samples < quota
             if replace:
-                logger.warning(
-                    "Active grid %d has %d samples < quota %d; sampling with replacement",
-                    g,
-                    n_samples,
-                    quota,
-                )
+                idx_th = torch.randint(0, n_samples, (quota,))
+            else:
+                idx_th = torch.randperm(n_samples)[:quota]
 
-            idx = np.random.choice(n_samples, size=quota, replace=replace)
-
-            batch_states.append(torch.as_tensor(grid_payload["states"][idx]).float())
-            batch_actions.append(torch.as_tensor(grid_payload["actions"][idx]).long())
-            batch_rewards.append(torch.as_tensor(grid_payload["rewards"][idx]).float())
-            batch_next_states.append(torch.as_tensor(grid_payload["next_states"][idx]).float())
-            batch_dones.append(torch.as_tensor(grid_payload["dones"][idx]).float())
+            batch_states.append(grid_payload["states"][idx_th])
+            batch_actions.append(grid_payload["actions"][idx_th])
+            batch_rewards.append(grid_payload["rewards"][idx_th])
+            batch_next_states.append(grid_payload["next_states"][idx_th])
+            batch_dones.append(grid_payload["dones"][idx_th])
 
             for k_info, v_info in grid_payload["infos"].items():
                 if k_info not in batch_infos:
                     batch_infos[k_info] = []
-                batch_infos[k_info].append(torch.as_tensor(v_info[idx]).float())
+                batch_infos[k_info].append(v_info[idx_th])
 
             for k_info, v_info in grid_payload["next_infos"].items():
                 if k_info not in batch_next_infos:
                     batch_next_infos[k_info] = []
-                batch_next_infos[k_info].append(torch.as_tensor(v_info[idx]).float())
+                batch_next_infos[k_info].append(v_info[idx_th])
 
         states = torch.cat(batch_states, dim=0).to(self.device)
         actions = torch.cat(batch_actions, dim=0).to(self.device)

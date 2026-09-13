@@ -82,8 +82,6 @@ from RL.DiHFT.low_level.evaluate_sub_agents import evaluates
 
 # 探索子进程数量上限（严格控制为 20）：df 数量更多时按 round-robin 分配给子进程
 MAX_EXPLORATION_WORKERS = 20
-# 每个 epoch 训练阶段的更新窗口数（每窗口执行 trainer.update_times 次参数更新）
-UPDATE_WINDOWS_PER_EPOCH = 30
 # 连续多少个 epoch 探索未新增任何经验后，后续 epoch 不再探索（仅训练）
 MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS = 5
 # 关闭子进程时 join 的超时秒数；超时未退出的进程以 terminate 兜底
@@ -354,7 +352,7 @@ def compute_epoch_training_params(
             f"curriculum_block_epochs must be positive, got {curriculum_block_epochs}"
         )
 
-    decay_boundary = 3 * curriculum_block_epochs
+    decay_boundary = 4 * curriculum_block_epochs
     if epoch_index >= decay_boundary:
         epsilon = float(epsilon_min)
         ada = float(ada_min)
@@ -520,48 +518,40 @@ def run_diverse_training_phase(
     buffer_size = len(buffer_diverse)
 
     last_losses = None
-    for _window in range(UPDATE_WINDOWS_PER_EPOCH):
-        logger.info(
-            "diverse training phase window | epoch_index=%d | window=%d | update_count=%d | "
-            "buffer_size=%d",
-            epoch_index,
-            _window,
-            update_count,
-            buffer_size,
+
+    for _ in range(update_count):
+        (
+            states,
+            infos,
+            actions,
+            rewards,
+            next_states,
+            next_infos,
+            dones,
+        ) = sampler.sample()
+        last_losses = update(
+            trainer,
+            states,
+            infos,
+            actions,
+            rewards,
+            next_states,
+            next_infos,
+            dones,
         )
-        for _ in range(update_count):
-            (
-                states,
-                infos,
-                actions,
-                rewards,
-                next_states,
-                next_infos,
-                dones,
-            ) = sampler.sample()
-            last_losses = update(
-                trainer,
-                states,
-                infos,
-                actions,
-                rewards,
-                next_states,
-                next_infos,
-                dones,
-            )
-            total_loss, KL_loss, td_loss = last_losses
-            trainer.writer.add_scalar("total_loss", total_loss, trainer.update_counter)
-            trainer.writer.add_scalar("KL_loss", KL_loss, trainer.update_counter)
-            trainer.writer.add_scalar("td_loss", td_loss, trainer.update_counter)
-        logger.info(
-            "diverse training phase complete | epoch_index=%d | update_count=%d | "
-            "total_loss=%.6f | KL_loss=%.6f | td_loss=%.6f",
-            epoch_index,
-            update_count,
-            last_losses[0],
-            last_losses[1],
-            last_losses[2],
-        )
+        total_loss, KL_loss, td_loss = last_losses
+        trainer.writer.add_scalar("total_loss", total_loss, trainer.update_counter)
+        trainer.writer.add_scalar("KL_loss", KL_loss, trainer.update_counter)
+        trainer.writer.add_scalar("td_loss", td_loss, trainer.update_counter)
+    logger.info(
+        "diverse training phase complete | epoch_index=%d | update_count=%d | "
+        "total_loss=%.6f | KL_loss=%.6f | td_loss=%.6f",
+        epoch_index,
+        update_count,
+        last_losses[0],
+        last_losses[1],
+        last_losses[2],
+    )
     return last_losses
 
 
@@ -1237,7 +1227,6 @@ def run_parallel_diverse_training(
     round_counter = 0
     consecutive_no_new_experience_epochs = 0
     skip_exploration = False
-    tensor_snapshot = None
     best_loss = float("inf")
     best_model_file = None
     best_epoch_index = -1
@@ -1245,6 +1234,7 @@ def run_parallel_diverse_training(
         is_new_phase_entry = epoch_index in (
             trainer.curriculum_block_epochs,
             2 * trainer.curriculum_block_epochs,
+            3 * trainer.curriculum_block_epochs,
         )
         if is_new_phase_entry:
             consecutive_no_new_experience_epochs = 0
@@ -1278,7 +1268,7 @@ def run_parallel_diverse_training(
                 diverse_rollout_latest_metrics_by_df,
             )
             # 阶段二：保存经验池 —— 探索完成且经验已全部写入后，落盘最新快照
-            tensor_snapshot = save_diverse_buffer(buffer_diverse, trainer.model_path)
+            save_diverse_buffer(buffer_diverse, trainer.model_path)
             new_experience_count = buffer_diverse.total_added_count - added_before
             if new_experience_count == 0:
                 consecutive_no_new_experience_epochs += 1
@@ -1311,12 +1301,9 @@ def run_parallel_diverse_training(
             )
 
         # 阶段三：完整训练 —— 经验池已冻结，且无任何探索子进程存活
-        training_source = (
-            tensor_snapshot if tensor_snapshot is not None else buffer_diverse
-        )
         last_losses = run_diverse_training_phase(
             trainer,
-            training_source,
+            buffer_diverse,
             trainer.update_times,
             epoch_index,
         )
@@ -1471,14 +1458,15 @@ def update(
     )
     trading_info_ = info_["trading_info"].float().to(trainer.device)
 
+    predict_action_distrbution = trainer.eval_net(
+        state=states,
+        time=time_input,
+        previous_action=previous_action,
+        avaliable_action=avaliable_action,
+        trading_info=trading_info,
+    )
     current_sa_quantiles = evaluate_quantile_at_action(
-        trainer.eval_net(
-            state=states,
-            time=time_input,
-            previous_action=previous_action,
-            avaliable_action=avaliable_action,
-            trading_info=trading_info,
-        ),
+        predict_action_distrbution,
         actions,
     )
     assert current_sa_quantiles.shape == (bs, trainer.N, 1)
@@ -1505,13 +1493,6 @@ def update(
     batch_weights, partial_td_error_loss = calculate_paper_partial_loss(
         td_errors,
         trainer.neighbor_size,
-    )
-    predict_action_distrbution = trainer.eval_net(
-        state=states,
-        time=time_input,
-        previous_action=previous_action,
-        avaliable_action=avaliable_action,
-        trading_info=trading_info,
     )
     assert predict_action_distrbution.shape == (
         trainer.batch_size,
