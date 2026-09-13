@@ -438,6 +438,13 @@ parser.add_argument(
     help="number of parallel worker processes for pretrain exploration/collection",
 )
 parser.add_argument(    
+    "--diverse_num_workers",
+    dest="diverse_num_workers",
+    type=int,
+    default=96,
+    help="number of parallel worker processes for diverse exploration task pool",
+)
+parser.add_argument(    
     "--eval_num_workers",
     dest="eval_num_workers",
     type=int,
@@ -489,41 +496,38 @@ def raise_for_worker_error(message: WorkerErrorMessage | Any) -> None:
 
 
 def df_rollout_worker(worker_config: dict[str, Any], input_queue: Any, result_queue: Any) -> None:
+    import torch
+    torch.set_num_threads(1)
     from RL.DiHFT.low_level.parallel_diverse_train import (
         DfRolloutWorkerRunner,
-        ExploreWorkerRound,
-        ResetWorkerTask,
+        ExploreTask,
     )
 
-    df_index = worker_config["df_index"]
     message = None
     try:
-        runner_factory = worker_config.get("runner_factory", DfRolloutWorkerRunner)
+        runner_factory = worker_config["runner_factory"]
         runner = runner_factory(worker_config)
         while True:
             message = input_queue.get()
             if isinstance(message, ShutdownWorker):
                 return
-            if isinstance(message, ResetWorkerTask):
-                runner.reset_task(message)
-                continue
-            if isinstance(message, ExploreWorkerRound):
-                result_queue.put(runner.explore_round(message))
+            if isinstance(message, ExploreTask):
+                result_queue.put(runner.run_task(message))
                 continue
             if isinstance(message, CollectPretrainEpisode):
                 result_queue.put(runner.collect_episode(message))
                 continue
             raise ValueError(
-                "unknown worker message type: {}".format(type(message).__name__)
+                f"unknown worker message type: {type(message).__name__}"
             )
     except Exception:
         result_queue.put(
             WorkerErrorMessage(
-                df_index=df_index,
-                epoch_index=getattr(message, "epoch_index", -1),
-                context_index=getattr(message, "context_index", -1),
-                initial_action=getattr(message, "initial_action", -1),
-                round_counter=getattr(message, "round_counter", -1),
+                df_index=message.df_index,
+                epoch_index=message.epoch_index,
+                context_index=message.context_index,
+                initial_action=message.initial_action,
+                round_counter=message.round_counter,
                 traceback=traceback.format_exc(),
             )
         )
@@ -702,6 +706,10 @@ class Weighted_Contexts_DQN:
         self.pretrain_num_workers = args.pretrain_num_workers
         if self.pretrain_num_workers <= 0:
             raise ValueError("pretrain_num_workers must be positive")
+        self.diverse_num_workers = args.diverse_num_workers
+        if self.diverse_num_workers <= 0:
+            raise ValueError("diverse_num_workers must be positive")
+        self.worker_task_queue = None
         self.eval_num_workers = args.eval_num_workers
         self.pretrain_eval_num_workers = self.eval_num_workers
         if self.eval_num_workers <= 0:

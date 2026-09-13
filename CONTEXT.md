@@ -325,6 +325,14 @@ _Avoid_: 专家路径、最优路径
 Stage I 中使用随机初始动作的探索训练阶段，与预训练 warmup 区分。
 _Avoid_: 探索训练、随机训练
 
+**多样化探索任务池 (Diverse Rollout Task Pool)**:
+低层多样化训练中将 (DF × Context × InitialAction) 空间解耦为无依赖独立任务、由通用 Worker 进程池流式竞争拉取执行的无屏障动态调度机制。
+_Avoid_: df 绑定的探索子进程、切片静态分发
+
+**解耦探索 Worker (Decoupled Exploration Worker)**:
+预加载全量训练切片数据并执行任意行情切片与子代理组合回合模拟的通用无状态低层探索子进程。
+_Avoid_: 专用 df 探索进程、切片绑定进程
+
 **体制分层经验回放池 (Regime Stratified Replay Buffer)**:
 按波动率与斜率正交分档解耦的多个独立经验队列集合，隔离存储不同市场体制样本以防止高频样本冲刷稀缺样本。
 _Avoid_: 九宫格经验池、多经验池
