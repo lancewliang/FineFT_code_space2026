@@ -206,6 +206,7 @@ def start_pretrain_collect_workers(
 ):
     from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import (
         build_effective_df_indices,
+        configure_logger,
         create_worker_context,
         df_rollout_worker,
     )
@@ -220,6 +221,7 @@ def start_pretrain_collect_workers(
         raise ValueError("pretrain_num_workers must be positive")
     num_workers = min(len(effective_df_indices), max_workers)
 
+    log_file_path = configure_logger(trainer.dataset_name, trainer.experiment_name)
     for worker_id in range(num_workers):
         assigned_df_indices = [
             df_index
@@ -242,6 +244,7 @@ def start_pretrain_collect_workers(
             "q_table": q_table_cache[assigned_df_indices[0]] if len(assigned_df_indices) == 1 else None,
             "q_table_by_df": {df: q_table_cache[df] for df in assigned_df_indices},
             "runner_factory": PretrainCollectRunner,
+            "log_file_path": log_file_path,
         }
         process = worker_context.Process(
             target=df_rollout_worker,

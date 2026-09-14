@@ -150,7 +150,7 @@ def test_compute_epoch_schedules_phase_cyclic_decay():
     assert p2_end.epsilon == pytest.approx(0.1)
     assert p2_end.ada == pytest.approx(0.0)
 
-    # Phase 3: 全量经验抽取，reset to max at epoch 9, decay to min at epoch 11
+    # Phase 3: 对角匹配体制，reset to max at epoch 9, decay to min at epoch 11
     p3_start = pdt.compute_epoch_training_params(
         epoch_index=9, num_epoch=18, epsilon_init=1.0, epsilon_min=0.1,
         ada_init=256.0, ada_min=0.0, lr_init=0.005, lr_min=0.001, curriculum_block_epochs=3,
@@ -164,8 +164,22 @@ def test_compute_epoch_schedules_phase_cyclic_decay():
     assert p3_end.epsilon == pytest.approx(0.1)
     assert p3_end.ada == pytest.approx(0.0)
 
-    # Epoch 12-17: clamped to minimum
-    for ep in [12, 13, 15, 17]:
+    # Phase 4: 全量经验抽取，reset to max at epoch 12, decay to min at epoch 14
+    p4_start = pdt.compute_epoch_training_params(
+        epoch_index=12, num_epoch=18, epsilon_init=1.0, epsilon_min=0.1,
+        ada_init=256.0, ada_min=0.0, lr_init=0.005, lr_min=0.001, curriculum_block_epochs=3,
+    )
+    p4_end = pdt.compute_epoch_training_params(
+        epoch_index=14, num_epoch=18, epsilon_init=1.0, epsilon_min=0.1,
+        ada_init=256.0, ada_min=0.0, lr_init=0.005, lr_min=0.001, curriculum_block_epochs=3,
+    )
+    assert p4_start.epsilon == 1.0
+    assert p4_start.ada == 256.0
+    assert p4_end.epsilon == pytest.approx(0.1)
+    assert p4_end.ada == pytest.approx(0.0)
+
+    # Epoch 15-17: clamped to minimum
+    for ep in [15, 16, 17]:
         p_late = pdt.compute_epoch_training_params(
             epoch_index=ep, num_epoch=18, epsilon_init=1.0, epsilon_min=0.1,
             ada_init=256.0, ada_min=0.0, lr_init=0.005, lr_min=0.001, curriculum_block_epochs=3,

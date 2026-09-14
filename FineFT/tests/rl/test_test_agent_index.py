@@ -700,3 +700,66 @@ def test_test_util_fu_10_script_configuration():
     assert "numactl --cpunodebind=1 --preferred=1" in content
     assert '--device "${device}"' in content
     assert "DEVICE=${DEVICE:-cpu}" in content
+
+
+def test_append_trading_detail_rows_to_csv_flushes_and_clears_buffer(tmp_path):
+    from RL.DiHFT.low_level import test_agent_index as tai
+
+    csv_file = tmp_path / "test_detail.csv"
+    chunk_1 = [
+        {"label": "label_0", "df_path": "path1", "action": 1, "timestep": 0},
+        {"label": "label_0", "df_path": "path1", "action": 2, "timestep": 1},
+    ]
+    tai.append_trading_detail_rows_to_csv(chunk_1, str(csv_file))
+    assert len(chunk_1) == 0
+    assert csv_file.exists()
+
+    df1 = pd.read_csv(csv_file)
+    assert len(df1) == 2
+    assert "标签" in df1.columns
+    assert "动作" in df1.columns
+
+    chunk_2 = [
+        {"label": "label_0", "df_path": "path2", "action": 0, "timestep": 2},
+    ]
+    tai.append_trading_detail_rows_to_csv(chunk_2, str(csv_file))
+    assert len(chunk_2) == 0
+
+    df2 = pd.read_csv(csv_file)
+    assert len(df2) == 3
+    assert list(df2["动作"]) == [1, 2, 0]
+
+
+def test_weighted_trader_streams_detail_rows_and_releases_memory(monkeypatch, tmp_path):
+    from RL.DiHFT.low_level import test_agent_index as tai
+
+    _write_valid_slice(tmp_path, "fu2507", "label_0", filename="df_0.feather", mark_prices=[100.0, 101.0], label_type="slope")
+    _write_valid_slice(tmp_path, "fu2507", "label_0", filename="df_1.feather", mark_prices=[100.0, 101.0], label_type="slope")
+
+    flush_calls = []
+    original_append = getattr(tai, "append_trading_detail_rows_to_csv", None)
+
+    def tracking_append(rows, path):
+        flush_calls.append(len(rows))
+        if original_append:
+            return original_append(rows, path)
+
+    release_calls = []
+    def tracking_release():
+        release_calls.append(1)
+
+    monkeypatch.setattr(tai, "append_trading_detail_rows_to_csv", tracking_append)
+    monkeypatch.setattr(tai, "release_memory_to_os", tracking_release)
+    monkeypatch.setattr(tai, "initiate_base_env", lambda **kwargs: DetailFakeEnv())
+    monkeypatch.setattr(tai, "map_action_to_position_leverage", lambda *args: (0, 1))
+
+    trader = _make_test_trader(tai, tmp_path, save_trading_detail_csv=True)
+    trader.act_test = lambda state, info, bin_index: 0
+    trader.test()
+
+    detail_csv = tmp_path / "slope" / "trading_action_detail_epoch_1.csv"
+    assert detail_csv.exists()
+    detail_df = pd.read_csv(detail_csv)
+    assert len(detail_df) == 4
+    assert len(flush_calls) >= 2
+    assert len(release_calls) >= 2

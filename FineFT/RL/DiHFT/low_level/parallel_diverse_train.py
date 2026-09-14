@@ -30,6 +30,8 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import pickle
+import tempfile
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -65,18 +67,20 @@ from RL.DiHFT.low_level.weight_advantage_pretrain import (
     calculate_paper_supervisor_kl_loss,
 )
 from RL.util.regime_stratified_replay_buffer import (
+    DIRECTIONAL_REGIME_PHASES,
     RegimeStratifiedReplayBuffer,
     accumulate_trajectory_n_step,
     build_semantic_transition_key,
     get_active_grid_ids_for_epoch,
 )
 from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import (
+    ShutdownWorker,
     WorkerErrorMessage,
     build_effective_df_indices,
+    configure_logger,
     create_worker_context,
     df_rollout_worker,
     raise_for_worker_error,
-    shutdown_workers,
 )
 from RL.DiHFT.low_level.evaluate_sub_agents import evaluates
 
@@ -361,10 +365,11 @@ def compute_epoch_training_params(
             f"curriculum_block_epochs must be positive, got {curriculum_block_epochs}"
         )
 
-    decay_boundary = 4 * curriculum_block_epochs
+    decay_boundary = len(DIRECTIONAL_REGIME_PHASES) * curriculum_block_epochs
     if epoch_index >= decay_boundary:
         epsilon = float(epsilon_min)
         ada = float(ada_min)
+        lr = float(lr_min)
     else:
         phase_epoch = epoch_index % curriculum_block_epochs
         epsilon = _linear_value(
@@ -374,7 +379,7 @@ def compute_epoch_training_params(
             ada_init, ada_min, phase_epoch, curriculum_block_epochs
         )
 
-    lr = _held_then_linear_value(lr_init, lr_min, epoch_index, num_epoch)
+        lr = _linear_value(lr_init, lr_min, epoch_index, num_epoch)
 
     return EpochTrainingParams(
         epsilon=epsilon,
@@ -638,7 +643,11 @@ class DfRolloutWorkerRunner:
     def __init__(self, worker_config):
         torch.set_num_threads(1)
         self.df_indices = worker_config["df_indices"]
-        self.train_df_by_df = worker_config["train_df_by_df"]
+        if "train_df_cache_path" in worker_config and worker_config["train_df_cache_path"]:
+            with open(worker_config["train_df_cache_path"], "rb") as f:
+                self.train_df_by_df = pickle.load(f)
+        else:
+            self.train_df_by_df = worker_config["train_df_by_df"]
         self.env_kwargs = worker_config["env_kwargs"]
         self.device = "cpu"
         self.leverage_choices = worker_config["leverage_choices"]
@@ -648,7 +657,11 @@ class DfRolloutWorkerRunner:
         self.gamma = float(worker_config["gamma"])
         self.n_step = int(worker_config["n_step"])
         self.model = create_parallel_worker_model(worker_config).to(self.device)
-        if "state_dict" in worker_config and worker_config["state_dict"]:
+        if "state_dict_path" in worker_config and worker_config["state_dict_path"]:
+            with open(worker_config["state_dict_path"], "rb") as f:
+                loaded_state_dict = pickle.load(f)
+            load_worker_state_dict(self.model, loaded_state_dict)
+        elif "state_dict" in worker_config and worker_config["state_dict"]:
             load_worker_state_dict(self.model, worker_config["state_dict"])
         # df_index -> 该 df 当前探索任务的回合状态
         self.episodes = {}
@@ -888,6 +901,9 @@ def start_parallel_workers(
     env_kwargs: dict[str, Any],
 ):
     """启动多样化探索通用子进程池（Diverse Rollout Task Pool）。"""
+    logger.info(
+            "diverse rollout worker pool start"        
+        )
     trainer.worker_processes = []
     worker_context = create_worker_context()
     task_queue = worker_context.Queue()
@@ -899,15 +915,33 @@ def start_parallel_workers(
     effective_df_indices = build_effective_df_indices(trainer.total_df_index_length)
     num_workers = trainer.diverse_num_workers
     state_dict = make_cpu_state_dict(trainer.eval_net)
+    log_file_path = configure_logger(trainer.dataset_name, trainer.experiment_name)
+
+    shm_dir = "/dev/shm" if os.path.exists("/dev/shm") else tempfile.gettempdir()
+    shm_df_cache_path = os.path.join(
+        shm_dir,
+        f"fineft_train_df_{os.getpid()}_{trainer.dataset_name}_{trainer.experiment_name}.pkl",
+    )
+    shm_model_path = os.path.join(
+        shm_dir,
+        f"fineft_model_state_{os.getpid()}_{trainer.dataset_name}_{trainer.experiment_name}.pkl",
+    )
+    with open(shm_df_cache_path, "wb") as f:
+        pickle.dump(train_df_cache, f, protocol=pickle.HIGHEST_PROTOCOL)
+    with open(shm_model_path, "wb") as f:
+        pickle.dump(state_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    trainer.shm_df_cache_path = shm_df_cache_path
+    trainer.shm_model_path = shm_model_path
 
     for worker_id in range(num_workers):
         worker_config = {
             "worker_id": worker_id,
             "df_indices": effective_df_indices,
-            "train_df_by_df": train_df_cache,
+            "train_df_cache_path": shm_df_cache_path,
+            "state_dict_path": shm_model_path,
             "env_kwargs": env_kwargs,
             "device": "cpu",
-            "state_dict": state_dict,
             "runner_factory": DfRolloutWorkerRunner,
             "leverage_choices": trainer.leverage_choices,
             "position_list": trainer.position_list,
@@ -920,6 +954,7 @@ def start_parallel_workers(
             "ensemble_number": trainer.N,
             "gamma": trainer.gamma,
             "n_step": trainer.n_step,
+            "log_file_path": log_file_path,
         }
         process = worker_context.Process(
             target=df_rollout_worker,
@@ -940,6 +975,7 @@ def start_parallel_workers(
 
 def shutdown_exploration_workers(trainer: Weighted_Contexts_DQN):
     """彻底关闭全部探索子进程，并逐一确认退出后才返回。"""
+    logger.info("exploration workers start to shut down")
     for _ in trainer.worker_processes:
         trainer.worker_task_queue.put(ShutdownWorker())
 
@@ -958,11 +994,27 @@ def shutdown_exploration_workers(trainer: Weighted_Contexts_DQN):
     trainer.worker_processes = []
     trainer.worker_task_queue = None
     trainer.worker_result_queue = None
+
+    if trainer.shm_df_cache_path is not None:
+        try:
+            if os.path.isfile(trainer.shm_df_cache_path):
+                os.remove(trainer.shm_df_cache_path)
+        except OSError:
+            pass
+        trainer.shm_df_cache_path = None
+    if trainer.shm_model_path is not None:
+        try:
+            if os.path.isfile(trainer.shm_model_path):
+                os.remove(trainer.shm_model_path)
+        except OSError:
+            pass
+        trainer.shm_model_path = None
+
     if alive_pids:
         raise RuntimeError(
             "exploration workers failed to terminate: pids={}".format(alive_pids)
         )
-    logger.info("exploration workers shut down")
+    logger.info("exploration workers end to shut down")
 
 
 def reset_worker_task(
@@ -1255,7 +1307,12 @@ def run_epoch_exploration(
                     )
                     round_counter += 1
                     total_tasks += 1
-
+        logger.info(
+            "total_tasks=%d | explored_task_count=%d | round_counter=%d",
+            total_tasks,
+            explored_task_count,
+            round_counter,
+        )
         context_metrics_by_context: dict[int, list[RolloutMetrics]] = {
             c: [] for c in range(trainer.N)
         }
@@ -1273,6 +1330,23 @@ def run_epoch_exploration(
                 )
 
             write_round_transitions_to_buffer(buffer_diverse, [result])
+            if result.rollout_metrics:
+                metric = result.rollout_metrics[0]
+                logger.info(
+                    "worker round finished | df_index=%d | steps=%d | "
+                    "reward_sum=%f | final_balance=%f | return_rate=%f",
+                    result.df_index,
+                    result.worker_steps,
+                    metric.reward_sum,
+                    metric.final_balance,
+                    metric.return_rate,
+                )
+            else:
+                logger.info(
+                    "worker round finished | df_index=%d | steps=%d",
+                    result.df_index,
+                    result.worker_steps,
+                )
             step_counter_diverse += result.worker_steps
 
             for metrics in result.rollout_metrics:
@@ -1316,6 +1390,9 @@ def run_epoch_exploration(
             step_counter_diverse - epoch_start_step_counter,
             len(buffer_diverse),
         )
+    except Exception as e:
+        logger.exception("epoch exploration failed: %s", e)
+        raise
     finally:
         shutdown_exploration_workers(trainer)
 
@@ -1352,11 +1429,11 @@ def run_parallel_diverse_training(
     best_model_file = None
     best_epoch_index = -1
     for epoch_index in range(trainer.num_epoch):
-        is_new_phase_entry = epoch_index in (
-            trainer.curriculum_block_epochs,
-            2 * trainer.curriculum_block_epochs,
-            3 * trainer.curriculum_block_epochs,
+        phase_entry_epochs = tuple(
+            i * trainer.curriculum_block_epochs
+            for i in range(1, len(DIRECTIONAL_REGIME_PHASES))
         )
+        is_new_phase_entry = epoch_index in phase_entry_epochs
         if is_new_phase_entry:
             consecutive_no_new_experience_epochs = 0
             if not is_buffer_full(buffer_diverse, trainer):

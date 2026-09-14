@@ -13,7 +13,7 @@ function run_test_agent_index {
         label_types=("$LABEL_TYPE")
     fi
     local result_path=${RESULT_PATH:-result/DiHFT/low_level}
-    local max_parallel=${MAX_PARALLEL:-12}
+    local max_parallel=${MAX_PARALLEL:-128}
     ROOTPATH=${ROOTPATH:-$(pwd)}
     cd "$ROOTPATH"
     export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
@@ -30,13 +30,13 @@ function run_test_agent_index {
             log_dir="log/DiHFT/${dataset_name}/low_level/test/${experiment_name}/${label_type}"
             mkdir -p "${log_dir}"
 
-            nohup numactl --cpunodebind=1 --preferred=1 python FineFT/RL/DiHFT/low_level/test_agent_index.py \
+            python FineFT/RL/DiHFT/low_level/test_agent_index.py \
                 --base_path "${base_path}" \
                 --dataset_name "${dataset_name}" --experiment_name "${experiment_name}" \
                 --result_path "${result_path}" \
                 --max_holding_number "${max_holding_number}" --initial_wallet_balance 6000 --order_book_depth 5 \
                 --epoch_num "${epoch}" --position_choices 3 --N "${ensemble_number}" --transcation_cost 0.0005 --short_estimated_rate 0 --long_estimated_rate 0 \
-                --allow_reverse_position \
+                --allow_reverse_position False \
                 --label_type "${label_type}" \
                 --device "${device}" \
                 --save_trading_detail_csv \
@@ -122,8 +122,8 @@ function run_ddqn_average {
 
 DATASET_NAME=${DATASET_NAME:-fu}
 MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-1}
-EPOCH_START=${EPOCH_START:-20}
-EPOCH_END=${EPOCH_END:-33}
+EPOCH_START=${EPOCH_START:-1}
+EPOCH_END=${EPOCH_END:-40}
 BASE_PATH=${BASE_PATH:-dataset/10min}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-10min_parallel}
 DEVICE=${DEVICE:-cpu}

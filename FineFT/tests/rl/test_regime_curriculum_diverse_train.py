@@ -58,12 +58,13 @@ def test_end_to_end_curriculum_phase_rotation_and_balanced_updates(monkeypatch):
 
     monkeypatch.setattr(pdt, "update", fake_update)
 
-    # 运行 12 个 epoch，block_epochs=3，共 4 个阶段
+    # 运行 15 个 epoch，block_epochs=3，共 5 个阶段
     # Epoch 0..2: Phase 0 [0, 3, 6] (Downtrend)
     # Epoch 3..5: Phase 1 [1, 4, 7] (Range/Flat)
     # Epoch 6..8: Phase 2 [2, 5, 8] (Uptrend)
-    # Epoch 9..11: Phase 3 [0, 1, 2, 3, 4, 5, 6, 7, 8] (Full Experience / All Regimes)
-    for epoch in range(12):
+    # Epoch 9..11: Phase 3 [0, 4, 8] (Diagonal Matched: s0v0, s1v1, s2v2)
+    # Epoch 12..14: Phase 4 [0, 1, 2, 3, 4, 5, 6, 7, 8] (Full Experience / All Regimes)
+    for epoch in range(15):
         pdt.run_diverse_training_phase(
             trainer=trainer,
             buffer_diverse=buffer,
@@ -71,7 +72,7 @@ def test_end_to_end_curriculum_phase_rotation_and_balanced_updates(monkeypatch):
             epoch_index=epoch,
         )
 
-    assert len(observed_active_grids) == 12
+    assert len(observed_active_grids) == 15
     for epoch in range(3):
         assert observed_active_grids[epoch] == [0, 3, 6]
 
@@ -82,16 +83,20 @@ def test_end_to_end_curriculum_phase_rotation_and_balanced_updates(monkeypatch):
         assert observed_active_grids[epoch] == [2, 5, 8]
 
     for epoch in range(9, 12):
+        assert observed_active_grids[epoch] == [0, 4, 8]
+
+    for epoch in range(12, 15):
         assert observed_active_grids[epoch] == [0, 1, 2, 3, 4, 5, 6, 7, 8]
 
 
 def test_phase_cyclic_parameter_decay_schedule_across_18_epochs():
-    """验证 4 个阶段（3个纯方向阶段+1个全量经验抽取阶段）的完整调度行为：
+    """验证 5 个阶段（3个纯方向阶段+1个对角匹配阶段+1个全量经验抽取阶段）的完整调度行为：
     epoch 0-2 从 max 衰减到最低 (Phase 0)
     epoch 3-5 从 max 衰减到最低 (Phase 1)
     epoch 6-8 从 max 衰减到最低 (Phase 2)
-    epoch 9-11 从 max 衰减到最低 (Phase 3: 全量经验抽取)
-    epoch 12-17 恒等于最低
+    epoch 9-11 从 max 衰减到最低 (Phase 3: 对角匹配体制)
+    epoch 12-14 从 max 衰减到最低 (Phase 4: 全量经验抽取)
+    epoch 15-17 恒等于最低
     学习率 lr 维持全局半程保持后线性衰减。
     """
     num_epoch = 18
@@ -113,21 +118,21 @@ def test_phase_cyclic_parameter_decay_schedule_across_18_epochs():
             curriculum_block_epochs=block_epochs,
         )
 
-        # 验证 4 个阶段的周期性重置与衰减
-        if ep in (0, 3, 6, 9):
+        # 验证 5 个阶段的周期性重置与衰减
+        if ep in (0, 3, 6, 9, 12):
             # 阶段起点：恢复至 max
             assert params.epsilon == pytest.approx(eps_init)
             assert params.ada == pytest.approx(ada_init)
-        elif ep in (1, 4, 7, 10):
+        elif ep in (1, 4, 7, 10, 13):
             # 阶段中点：线性中间值
             assert params.epsilon == pytest.approx((eps_init + eps_min) / 2.0)
             assert params.ada == pytest.approx((ada_init + ada_min) / 2.0)
-        elif ep in (2, 5, 8, 11):
+        elif ep in (2, 5, 8, 11, 14):
             # 阶段末点：严格达到 min
             assert params.epsilon == pytest.approx(eps_min)
             assert params.ada == pytest.approx(ada_min)
         else:
-            # ep >= 12: 剩余轮次恒等于最低值
+            # ep >= 15: 剩余轮次恒等于最低值
             assert params.epsilon == pytest.approx(eps_min)
             assert params.ada == pytest.approx(ada_min)
 
@@ -158,7 +163,7 @@ def test_phase_entry_resets_exploration_exhaustion_in_diverse_train(monkeypatch)
     trainer = MagicMock()
     trainer.total_df_index_length = 1
     trainer.update_times = 1
-    trainer.num_epoch = 12
+    trainer.num_epoch = 15
     trainer.curriculum_block_epochs = 3
     trainer.epsilon_init = 1.0
     trainer.epsilon_min = 0.1
@@ -216,6 +221,7 @@ def test_phase_entry_resets_exploration_exhaustion_in_diverse_train(monkeypatch)
     assert 3 in explored_epochs
     assert 6 in explored_epochs
     assert 9 in explored_epochs
+    assert 12 in explored_epochs
 
 
 def test_run_parallel_diverse_training_executes_training_phase_after_buffer_snapshot(tmp_path, monkeypatch):
@@ -278,8 +284,8 @@ def test_run_parallel_diverse_training_executes_training_phase_after_buffer_snap
     )
 
 
-def test_fourth_phase_full_experience_extraction_and_sampling():
-    """验证第 4 阶段（全量经验抽取阶段）正确激活全部 9 个格子并执行均衡采样。"""
+def test_fourth_and_fifth_phase_curriculum_sampling():
+    """验证第 4 阶段（对角匹配 [0, 4, 8]）与第 5 阶段（全量经验抽取全部 9 格）正确激活并均衡采样。"""
     buffer = RegimeStratifiedReplayBuffer(
         total_buffer_size=9000,
         batch_size=90,
@@ -288,15 +294,26 @@ def test_fourth_phase_full_experience_extraction_and_sampling():
         num_grids=9,
     )
     for g in range(9):
-        for i in range(20):
+        for i in range(35):
             buffer.add_transition(_make_dummy_transition(i, grid_id=g))
 
-    # Phase 3: epoch 9 (block_epochs=3) 激活全部 9 格
-    sampler = buffer.create_sampler(epoch_index=9, block_epochs=3)
-    assert sampler is not None
-    assert sorted(sampler.active_grid_ids) == list(range(9))
+    # Phase 3: epoch 9 (block_epochs=3) 激活对角匹配 [0, 4, 8]
+    sampler_p3 = buffer.create_sampler(epoch_index=9, block_epochs=3)
+    assert sampler_p3 is not None
+    assert sorted(sampler_p3.active_grid_ids) == [0, 4, 8]
+    s3, _, _, r3, _, _, _ = sampler_p3.sample()
+    assert s3.shape[0] == 90
+    rew3 = r3.squeeze().numpy().tolist()
+    assert rew3.count(0.0) == 30
+    assert rew3.count(4.0) == 30
+    assert rew3.count(8.0) == 30
 
-    states, infos, actions, rewards, next_states, next_infos, dones = sampler.sample()
+    # Phase 4: epoch 12 (block_epochs=3) 激活全部 9 格
+    sampler_p4 = buffer.create_sampler(epoch_index=12, block_epochs=3)
+    assert sampler_p4 is not None
+    assert sorted(sampler_p4.active_grid_ids) == list(range(9))
+
+    states, infos, actions, rewards, next_states, next_infos, dones = sampler_p4.sample()
     assert states.shape[0] == 90
     rew_list = rewards.squeeze().numpy().tolist()
     # 每格均衡采样 10 个样本
@@ -304,13 +321,13 @@ def test_fourth_phase_full_experience_extraction_and_sampling():
         assert rew_list.count(float(g)) == 10
 
 
-def test_parallel_weight_advantage_pretrain_rejects_less_than_four_blocks():
+def test_parallel_weight_advantage_pretrain_rejects_less_than_five_blocks():
     from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
 
     parser = pwap.parser
     args = parser.parse_args([
-        "--num_epoch", "11",
+        "--num_epoch", "14",
         "--curriculum_block_epochs", "3",
     ])
     # 模拟初始化校验
-    assert int(args.num_epoch) < 4 * int(args.curriculum_block_epochs)
+    assert int(args.num_epoch) < 5 * int(args.curriculum_block_epochs)

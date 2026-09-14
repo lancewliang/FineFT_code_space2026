@@ -14,15 +14,16 @@ DIRECTIONAL_REGIME_PHASES = {
     0: [0, 3, 6],  # Phase 0: 下跌趋势 (Downtrend / Bear)
     1: [1, 4, 7],  # Phase 1: 横盘震荡 (Range / Flat)
     2: [2, 5, 8],  # Phase 2: 上涨趋势 (Uptrend / Bull)
-    3: [0, 1, 2, 3, 4, 5, 6, 7, 8],  # Phase 3: 全量经验抽取 (All Regimes / Full Experience)
+    3: [0, 4, 8],  # Phase 3: 对角匹配体制 (Diagonal / Matched: s0v0, s1v1, s2v2)
+    4: [0, 1, 2, 3, 4, 5, 6, 7, 8],  # Phase 4: 全量经验抽取 (All Regimes / Full Experience)
 }
 
 
 def get_active_grid_ids_for_epoch(epoch_index: int, block_epochs: int = 3) -> list[int]:
-    """计算给定 epoch 所属的阶段激活网格列表（共 4 个阶段：3 个纯方向阶段 + 1 个全量经验抽取阶段）。"""
+    """计算给定 epoch 所属的阶段激活网格列表（共 5 个阶段：3 个纯方向阶段 + 1 个对角匹配阶段 + 1 个全量经验抽取阶段）。"""
     if block_epochs <= 0:
         raise ValueError(f"block_epochs must be positive, got {block_epochs}")
-    phase_index = (epoch_index // block_epochs) % 4
+    phase_index = (epoch_index // block_epochs) % len(DIRECTIONAL_REGIME_PHASES)
     return list(DIRECTIONAL_REGIME_PHASES[phase_index])
 
 

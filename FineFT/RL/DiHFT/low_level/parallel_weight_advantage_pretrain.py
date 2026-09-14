@@ -100,9 +100,36 @@ def configure_logger(dataset_name: str, experiment_name: str) -> str:
     return abs_log_path
 
 
+def configure_worker_logger(log_file_path: str, worker_id: int) -> None:
+    if not log_file_path:
+        return
+    log_dir = os.path.dirname(log_file_path)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+    abs_log_path = os.path.abspath(log_file_path)
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    formatter = logging.Formatter(
+        f"%(asctime)s [%(levelname)s] [worker-{worker_id}] %(message)s"
+    )
+    for handler in root_logger.handlers:
+        if isinstance(handler, logging.FileHandler) and handler.baseFilename == abs_log_path:
+            handler.setFormatter(formatter)
+            return
+
+    file_handler = logging.FileHandler(abs_log_path)
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(formatter)
+    root_logger.addHandler(file_handler)
+
+
 # RL util
 from RL.util.replay_buffer_DQN import Multi_step_ReplayBuffer_multi_info
-from RL.util.regime_stratified_replay_buffer import RegimeStratifiedReplayBuffer
+from RL.util.regime_stratified_replay_buffer import (
+    DIRECTIONAL_REGIME_PHASES,
+    RegimeStratifiedReplayBuffer,
+)
 from RL.util.update import disable_gradients
 from RL.util.episode_selector import get_transformation_even_risk
 
@@ -503,6 +530,24 @@ def df_rollout_worker(worker_config: dict[str, Any], input_queue: Any, result_qu
         ExploreTask,
     )
 
+    worker_id = worker_config["worker_id"] if "worker_id" in worker_config else -1
+    if "log_file_path" in worker_config and worker_config["log_file_path"]:
+        configure_worker_logger(worker_config["log_file_path"], worker_id)
+
+    def _handle_worker_uncaught_exception(exc_type, exc_val, exc_tb):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_val, exc_tb)
+            return
+        logger.critical(
+            "uncaught worker exception | worker_id=%d | error=%s",
+            worker_id,
+            exc_val,
+            exc_info=(exc_type, exc_val, exc_tb),
+        )
+        sys.__excepthook__(exc_type, exc_val, exc_tb)
+
+    sys.excepthook = _handle_worker_uncaught_exception
+
     message = None
     try:
         runner_factory = worker_config["runner_factory"]
@@ -512,7 +557,16 @@ def df_rollout_worker(worker_config: dict[str, Any], input_queue: Any, result_qu
             if isinstance(message, ShutdownWorker):
                 return
             if isinstance(message, ExploreTask):
-                result_queue.put(runner.run_task(message))
+                logger.info(
+                    "worker task started | df_index=%d | context_index=%d | "
+                    "initial_action=%d | round_counter=%d",
+                    message.df_index,
+                    message.context_index,
+                    message.initial_action,
+                    message.round_counter,
+                )
+                res = runner.run_task(message)
+                result_queue.put(res)
                 continue
             if isinstance(message, CollectPretrainEpisode):
                 result_queue.put(runner.collect_episode(message))
@@ -521,14 +575,25 @@ def df_rollout_worker(worker_config: dict[str, Any], input_queue: Any, result_qu
                 f"unknown worker message type: {type(message).__name__}"
             )
     except Exception:
+        tb = traceback.format_exc()
+        logger.error(
+            "worker error encountered | message=%s | traceback:\n%s",
+            type(message).__name__ if message is not None else "None",
+            tb,
+        )
+        df_index = message.df_index if message is not None else -1
+        epoch_index = message.epoch_index if message is not None else -1
+        context_index = message.context_index if message is not None else -1
+        initial_action = message.initial_action if message is not None else -1
+        round_counter = message.round_counter if message is not None else -1
         result_queue.put(
             WorkerErrorMessage(
-                df_index=message.df_index,
-                epoch_index=message.epoch_index,
-                context_index=message.context_index,
-                initial_action=message.initial_action,
-                round_counter=message.round_counter,
-                traceback=traceback.format_exc(),
+                df_index=df_index,
+                epoch_index=epoch_index,
+                context_index=context_index,
+                initial_action=initial_action,
+                round_counter=round_counter,
+                traceback=tb,
             )
         )
 
@@ -614,10 +679,11 @@ class Weighted_Contexts_DQN:
         self.lr = self.lr_init
         self.num_sample = args.num_sample
         self.num_epoch = args.num_epoch if args.num_epoch is not None else args.num_sample
-        if self.num_epoch < 4 * self.curriculum_block_epochs:
+        num_phases = len(DIRECTIONAL_REGIME_PHASES)
+        if self.num_epoch < num_phases * self.curriculum_block_epochs:
             raise ValueError(
-                f"num_epoch ({self.num_epoch}) must be at least 4 * curriculum_block_epochs "
-                f"({4 * self.curriculum_block_epochs}) to complete all 4 curriculum phases"
+                f"num_epoch ({self.num_epoch}) must be at least {num_phases} * curriculum_block_epochs "
+                f"({num_phases * self.curriculum_block_epochs}) to complete all {num_phases} curriculum phases"
             )
         # trading environment setting
         self.base_path = args.base_path
@@ -710,6 +776,8 @@ class Weighted_Contexts_DQN:
         if self.diverse_num_workers <= 0:
             raise ValueError("diverse_num_workers must be positive")
         self.worker_task_queue = None
+        self.shm_df_cache_path: str | None = None
+        self.shm_model_path: str | None = None
         self.eval_num_workers = args.eval_num_workers
         self.pretrain_eval_num_workers = self.eval_num_workers
         if self.eval_num_workers <= 0:
@@ -879,32 +947,33 @@ class Weighted_Contexts_DQN:
         elif not train_data_file_paths:
             logger.warning("跳过预训练子模型评估 | 未找到评估数据文件")
         else:
-            eval_metrics = evaluates(
-                logg_file_path=self.logg_file_path,
-                data_file_paths=train_data_file_paths,
-                model_path=pretrain_model_file,
-                tech_indicator_list_path=self.tech_indicator_list_path,
-                maintenance_margin_ratio_dict_path=self.maintenance_margin_ratio_dict_path,
-                transcation_cost=self.transcation_cost,
-                max_holding_number=self.max_holding_number,
-                position_choices=self.position_choices,
-                N=self.N,
-                time_info_dim=self.time_info_dim,
-                hidden_nodes=self.hidden_nodes,
-                leverage_choices=self.leverage_choices,
-                initial_leverage=self.initial_leverage,
-                initial_position=self.initial_position,
-                initial_wallet_balance=self.initial_wallet_balance,
-                order_book_depth=self.order_book_depth,
-                early_stop=self.early_stop,
-                enable_limit_reward=self.enable_limit_reward,
-                limit_hold_bonus=self.limit_hold_bonus,
-                limit_stay_bonus=self.limit_stay_bonus,
-                limit_reverse_penalty=self.limit_reverse_penalty,
-                near_limit_threshold=self.near_limit_threshold,
-                allow_reverse_position=self.allow_reverse_position,
-            )
-            logger.info(eval_metrics)
+            # eval_metrics = evaluates(
+            #     logg_file_path=self.logg_file_path,
+            #     data_file_paths=train_data_file_paths,
+            #     model_path=pretrain_model_file,
+            #     tech_indicator_list_path=self.tech_indicator_list_path,
+            #     maintenance_margin_ratio_dict_path=self.maintenance_margin_ratio_dict_path,
+            #     transcation_cost=self.transcation_cost,
+            #     max_holding_number=self.max_holding_number,
+            #     position_choices=self.position_choices,
+            #     N=self.N,
+            #     time_info_dim=self.time_info_dim,
+            #     hidden_nodes=self.hidden_nodes,
+            #     leverage_choices=self.leverage_choices,
+            #     initial_leverage=self.initial_leverage,
+            #     initial_position=self.initial_position,
+            #     initial_wallet_balance=self.initial_wallet_balance,
+            #     order_book_depth=self.order_book_depth,
+            #     early_stop=self.early_stop,
+            #     enable_limit_reward=self.enable_limit_reward,
+            #     limit_hold_bonus=self.limit_hold_bonus,
+            #     limit_stay_bonus=self.limit_stay_bonus,
+            #     limit_reverse_penalty=self.limit_reverse_penalty,
+            #     near_limit_threshold=self.near_limit_threshold,
+            #     allow_reverse_position=self.allow_reverse_position,
+            # )
+            # logger.info(eval_metrics)
+            pass
 
         # 预训练阶段已彻底结束（经验池已由 warmup 持久化到文件）：
         # 清空预训练经验池，释放其占用的内存后再开始多样化训练
@@ -938,12 +1007,21 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+def _handle_uncaught_exception(exc_type, exc_val, exc_tb):
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_val, exc_tb)
+        return
+    logger.critical("Uncaught exception in main process", exc_info=(exc_type, exc_val, exc_tb))
+    sys.__excepthook__(exc_type, exc_val, exc_tb)
+
+
 if __name__ == "__main__":
     torch.set_float32_matmul_precision("high")
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     args = parser.parse_args()
     configure_logger(args.dataset_name, args.experiment_name)
+    sys.excepthook = _handle_uncaught_exception
     logger.info('start')
     trainer = Weighted_Contexts_DQN(args)
     trainer.train()

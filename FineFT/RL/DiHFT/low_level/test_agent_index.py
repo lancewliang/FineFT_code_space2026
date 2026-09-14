@@ -6,6 +6,8 @@ import copy
 import os
 import random
 import argparse
+import ctypes
+import gc
 import json
 import re
 import sys
@@ -419,8 +421,35 @@ def trading_detail_csv_path(epoch_path: str, epoch_num: int, label_type: str | N
     return os.path.join(epoch_path, f"trading_action_detail_epoch_{epoch_num}.csv")
 
 
+def append_trading_detail_rows_to_csv(detail_rows: list[dict[str, Any]], csv_path: str) -> None:
+    if not detail_rows:
+        if not os.path.exists(csv_path):
+            os.makedirs(os.path.dirname(os.path.abspath(csv_path)), exist_ok=True)
+            pd.DataFrame([]).to_csv(csv_path, index=False)
+        return
+    os.makedirs(os.path.dirname(os.path.abspath(csv_path)), exist_ok=True)
+    file_exists = os.path.exists(csv_path)
+    chunk_df = _bilingual_csv_columns(pd.DataFrame(detail_rows))
+    chunk_df.to_csv(
+        csv_path,
+        mode="a" if file_exists else "w",
+        header=not file_exists,
+        index=False,
+    )
+    detail_rows.clear()
+
+
+def release_memory_to_os() -> None:
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
+
 def write_trading_detail_csv(detail_rows: list[dict[str, Any]], csv_path: str) -> None:
-    _bilingual_csv_columns(pd.DataFrame(detail_rows)).to_csv(csv_path, index=False)
+    append_trading_detail_rows_to_csv(detail_rows, csv_path)
+
 
 
 def _iter_valid_feather_files(root_dir: str) -> list[dict[str, Any]]:
@@ -702,6 +731,13 @@ class weighted_trader:
         overall_result = []
         trading_detail_rows = []
         self.eval_net.eval()
+        detail_csv_path = None
+        if self.save_trading_detail_csv:
+            detail_csv_path = trading_detail_csv_path(
+                self.epoch_path, self.epoch_num, self.label_type
+            )
+            if os.path.exists(detail_csv_path):
+                os.remove(detail_csv_path)
         df_entries = _iter_valid_feather_files(self.valid_data_path)
         label_list = sorted({entry["label"] for entry in df_entries})
         for label in label_list:
@@ -844,6 +880,10 @@ class weighted_trader:
                                         cumulative_trade_count=cumulative_trade_count,
                                     )
                                 )
+                                if len(trading_detail_rows) >= 5000 and detail_csv_path:
+                                    append_trading_detail_rows_to_csv(
+                                        trading_detail_rows, detail_csv_path
+                                    )
                             action_list.append(a)
                             reward_list.append(r)
                             position_after_list.append(position_after)
@@ -1029,6 +1069,13 @@ class weighted_trader:
                         single_label_initial_action_bin_index_limit_down_short_reward_sum_result.append(limit_down_short_reward_sum)
                         single_label_initial_action_bin_index_limit_up_reverse_short_ratio_result.append(limit_up_reverse_short_ratio)
                         single_label_initial_action_bin_index_limit_down_reverse_long_ratio_result.append(limit_down_reverse_long_ratio)
+                        if self.save_trading_detail_csv and detail_csv_path:
+                            append_trading_detail_rows_to_csv(
+                                trading_detail_rows, detail_csv_path
+                            )
+                        del test_env
+                        self.test_df = None
+                        release_memory_to_os()
                     _overall_result = {
                             "label": label,
                             "initial_action": initial_action,
@@ -1073,12 +1120,19 @@ class weighted_trader:
             os.path.join(save_dir, "analysis_result.csv"),
         )
         if self.save_trading_detail_csv:
-            write_trading_detail_csv(
-                trading_detail_rows,
-                trading_detail_csv_path(
+            if detail_csv_path:
+                if trading_detail_rows:
+                    append_trading_detail_rows_to_csv(
+                        trading_detail_rows, detail_csv_path
+                    )
+                elif not os.path.exists(detail_csv_path):
+                    append_trading_detail_rows_to_csv([], detail_csv_path)
+            else:
+                target_csv_path = trading_detail_csv_path(
                     self.epoch_path, self.epoch_num, self.label_type
-                ),
-            )
+                )
+                append_trading_detail_rows_to_csv(trading_detail_rows, target_csv_path)
+        release_memory_to_os()
 
 
 if __name__ == "__main__":
