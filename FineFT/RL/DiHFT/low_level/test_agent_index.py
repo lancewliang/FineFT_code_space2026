@@ -46,6 +46,15 @@ os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["F_ENABLE_ONEDNN_OPTS"] = "0"
 
 
+def str2bool(value: str) -> bool:
+    val = value.strip().lower()
+    if val in ("yes", "true", "t", "y", "1"):
+        return True
+    if val in ("no", "false", "f", "n", "0"):
+        return False
+    raise argparse.ArgumentTypeError(f"Boolean value expected, got {value}")
+
+
 parser = argparse.ArgumentParser()
 
 parser = argparse.ArgumentParser()
@@ -189,8 +198,17 @@ parser.add_argument(
 )
 parser.add_argument(
     "--allow_reverse_position",
-    action="store_true",
+    nargs="?",
+    const=True,
+    default=False,
+    type=str2bool,
     help="allow direct position reversal from long to short or vice versa",
+)
+parser.add_argument(
+    "--no_allow_reverse_position",
+    dest="allow_reverse_position",
+    action="store_false",
+    help="disable direct position reversal from long to short or vice versa",
 )
 parser.add_argument(
     "--enable_limit_reward",

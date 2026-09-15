@@ -655,3 +655,47 @@ def test_shm_cache_optimization_for_worker_pool(tmp_path, monkeypatch):
     assert not os.path.exists(model_path)
     assert trainer.shm_df_cache_path is None
     assert trainer.shm_model_path is None
+
+
+def test_df_rollout_worker_exits_on_foreign_module_shutdown_worker():
+    """df_rollout_worker must exit cleanly when ShutdownWorker comes from a foreign module (__main__)."""
+    import queue
+    from dataclasses import dataclass
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+
+    @dataclass(frozen=True)
+    class ForeignShutdownWorker:
+        pass
+    ForeignShutdownWorker.__name__ = "ShutdownWorker"
+
+    input_queue = queue.Queue()
+    result_queue = queue.Queue()
+    input_queue.put(ForeignShutdownWorker())
+
+    worker_config = {"runner_factory": lambda cfg: None}
+    pwap.df_rollout_worker(worker_config, input_queue, result_queue)
+    assert result_queue.empty()
+
+
+def test_df_rollout_worker_exception_handler_does_not_crash_on_message_without_df_index():
+    """If an exception occurs when message has no df_index, WorkerErrorMessage is created without AttributeError."""
+    import queue
+    from dataclasses import dataclass
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+
+    @dataclass(frozen=True)
+    class UnknownMessageWithoutDfIndex:
+        pass
+
+    input_queue = queue.Queue()
+    result_queue = queue.Queue()
+    input_queue.put(UnknownMessageWithoutDfIndex())
+
+    worker_config = {"runner_factory": lambda cfg: None}
+    pwap.df_rollout_worker(worker_config, input_queue, result_queue)
+
+    assert not result_queue.empty()
+    err = result_queue.get()
+    assert isinstance(err, pwap.WorkerErrorMessage)
+    assert err.df_index == -1
+    assert "unknown worker message type: UnknownMessageWithoutDfIndex" in err.traceback

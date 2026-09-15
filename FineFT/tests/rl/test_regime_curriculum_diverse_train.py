@@ -136,10 +136,10 @@ def test_phase_cyclic_parameter_decay_schedule_across_18_epochs():
             assert params.epsilon == pytest.approx(eps_min)
             assert params.ada == pytest.approx(ada_min)
 
-        # 验证学习率保持全局调度：前 9 轮保持 lr_init，后 9 轮线性衰减至 lr_min
-        if ep < 9:
+        # 验证学习率调度：epoch < decay_boundary (15) 线性衰减，>= 15 恒等于最低值 lr_min
+        if ep == 0:
             assert params.lr == pytest.approx(lr_init)
-        elif ep == 17:
+        elif ep >= 15:
             assert params.lr == pytest.approx(lr_min)
 
 

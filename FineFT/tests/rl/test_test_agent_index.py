@@ -459,6 +459,21 @@ def test_parser_allow_reverse_position_default_and_flag():
     args_flag = tai.parser.parse_args(["--allow_reverse_position", "--label_type", "slope"])
     assert args_flag.allow_reverse_position is True
 
+    args_explicit_false = tai.parser.parse_args(
+        ["--allow_reverse_position", "False", "--label_type", "slope"]
+    )
+    assert args_explicit_false.allow_reverse_position is False
+
+    args_explicit_true = tai.parser.parse_args(
+        ["--allow_reverse_position", "True", "--label_type", "slope"]
+    )
+    assert args_explicit_true.allow_reverse_position is True
+
+    args_no_flag = tai.parser.parse_args(
+        ["--no_allow_reverse_position", "--label_type", "slope"]
+    )
+    assert args_no_flag.allow_reverse_position is False
+
 
 def test_parser_label_type_required():
     from RL.DiHFT.low_level import test_agent_index as tai

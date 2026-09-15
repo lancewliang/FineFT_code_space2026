@@ -507,7 +507,7 @@ def build_effective_df_indices(total_df_index_length: int) -> list[int]:
 
 
 def raise_for_worker_error(message: WorkerErrorMessage | Any) -> None:
-    if not isinstance(message, WorkerErrorMessage):
+    if not isinstance(message, WorkerErrorMessage) and type(message).__name__ != "WorkerErrorMessage":
         return
     raise RuntimeError(
         "worker_error df_index={} epoch_index={} context_index={} "
@@ -554,9 +554,10 @@ def df_rollout_worker(worker_config: dict[str, Any], input_queue: Any, result_qu
         runner = runner_factory(worker_config)
         while True:
             message = input_queue.get()
-            if isinstance(message, ShutdownWorker):
+            msg_name = type(message).__name__
+            if msg_name == "ShutdownWorker" or isinstance(message, ShutdownWorker):
                 return
-            if isinstance(message, ExploreTask):
+            if msg_name == "ExploreTask" or isinstance(message, ExploreTask):
                 logger.info(
                     "worker task started | df_index=%d | context_index=%d | "
                     "initial_action=%d | round_counter=%d",
@@ -568,24 +569,38 @@ def df_rollout_worker(worker_config: dict[str, Any], input_queue: Any, result_qu
                 res = runner.run_task(message)
                 result_queue.put(res)
                 continue
-            if isinstance(message, CollectPretrainEpisode):
+            if msg_name == "CollectPretrainEpisode" or isinstance(message, CollectPretrainEpisode):
                 result_queue.put(runner.collect_episode(message))
                 continue
             raise ValueError(
-                f"unknown worker message type: {type(message).__name__}"
+                f"unknown worker message type: {msg_name}"
             )
     except Exception:
         tb = traceback.format_exc()
+        msg_name = type(message).__name__ if message is not None else "None"
         logger.error(
             "worker error encountered | message=%s | traceback:\n%s",
-            type(message).__name__ if message is not None else "None",
+            msg_name,
             tb,
         )
-        df_index = message.df_index if message is not None else -1
-        epoch_index = message.epoch_index if message is not None else -1
-        context_index = message.context_index if message is not None else -1
-        initial_action = message.initial_action if message is not None else -1
-        round_counter = message.round_counter if message is not None else -1
+        if msg_name == "ExploreTask":
+            df_index = message.df_index
+            epoch_index = message.epoch_index
+            context_index = message.context_index
+            initial_action = message.initial_action
+            round_counter = message.round_counter
+        elif msg_name == "CollectPretrainEpisode":
+            df_index = message.df_index
+            epoch_index = -1
+            context_index = -1
+            initial_action = message.initial_action
+            round_counter = message.rollout_index
+        else:
+            df_index = -1
+            epoch_index = -1
+            context_index = -1
+            initial_action = -1
+            round_counter = -1
         result_queue.put(
             WorkerErrorMessage(
                 df_index=df_index,
