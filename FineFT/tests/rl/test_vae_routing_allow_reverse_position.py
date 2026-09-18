@@ -14,35 +14,127 @@ from RL.DiHFT.high_level import vae_routing_util as vru
 from RL.DiHFT.high_level import vae_routing_optuna as vro
 
 
+from analysis.pick_agent.FineFT_two_dimensional_agent_selector import (
+    TwoDimensionalSelectionManifest,
+)
+
+
+def _sample_manifest_payload(num_labels: int = 3, **overrides) -> dict:
+    labels = [f"label_{i}" for i in range(num_labels)]
+    slot_count = num_labels * num_labels
+    payload = {
+        "schema_version": 1,
+        "selection_method": "two_dimensional_marginal_and_dual_context_lcb",
+        "candidate_root": "/path/to/candidates",
+        "valid_root": "/path/to/valid",
+        "axes": {
+            "volatility": labels,
+            "slope": labels,
+        },
+        "slot_count": slot_count,
+        "slot_index_formula": "volatility_index * num_labels + slope_index",
+        "null_policy": {
+            "logical_kind": "empty_model",
+            "intended_runtime_behavior": "flat_position",
+            "model_assembly_status": "built_as_flat_qnet",
+        },
+        "candidate_scope": {
+            "common_epochs": [1],
+            "discovered_candidate_count": 1,
+            "complete_candidate_count": 1,
+            "excluded_incomplete_candidate_count": 0,
+            "initial_actions": [0],
+        },
+        "selection_config": {},
+        "metric_definition": {
+            "return": "sum(reward) / transition_count",
+            "aggregation": "mean",
+            "lcb": "mean - z * se",
+            "pair_score": "min(lcb)",
+            "joint_context_note": "filtered by timestamp",
+        },
+        "artifacts": {
+            "model_assembly": "/path/to/model.pth",
+            "high_level_model_change": "not_performed",
+        },
+        "slots": [
+            {"slot_id": slot_id, "kind": "empty_model"}
+            for slot_id in range(slot_count)
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
 def test_load_two_dimensional_selection_manifest_validates_slot_layout(tmp_path):
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "axes": {
-                    "volatility": ["label_0", "label_1", "label_2"],
-                    "slope": ["label_0", "label_1", "label_2"],
-                },
-                "slot_count": 9,
-                "slot_index_formula": "volatility_index * num_labels + slope_index",
-                "slots": [
-                    {"slot_id": slot_id, "kind": "empty_model"}
-                    for slot_id in range(9)
-                ],
-            }
-        ),
+        json.dumps(_sample_manifest_payload(num_labels=3)),
         encoding="utf-8",
     )
 
     manifest = vru.load_two_dimensional_selection_manifest(manifest_path)
 
-    assert manifest["slot_count"] == 9
-    assert manifest["axes"]["volatility"] == [
+    assert isinstance(manifest, TwoDimensionalSelectionManifest)
+    assert manifest.slot_count == 9
+    assert manifest.axes.volatility == [
         "label_0",
         "label_1",
         "label_2",
     ]
+
+
+@pytest.mark.parametrize(
+    "override,match",
+    [
+        (
+            {"slot_count": 8},
+            "manifest slot_count does not match the two-dimensional axes",
+        ),
+        (
+            {"axes": {"volatility": ["label_0", "label_1"], "slope": ["label_0"]}},
+            "volatility and slope axes must have the same non-zero size",
+        ),
+        (
+            {"slot_index_formula": "invalid_formula"},
+            "unsupported two-dimensional slot index formula",
+        ),
+        (
+            {"slots": [{"slot_id": 0, "kind": "model"}]},
+            "manifest slots must contain every logical slot",
+        ),
+        (
+            {
+                "slots": [
+                    {"slot_id": 1, "kind": "model"},
+                    {"slot_id": 2, "kind": "empty_model"},
+                    {"slot_id": 3, "kind": "empty_model"},
+                    {"slot_id": 4, "kind": "empty_model"},
+                ]
+            },
+            "manifest slot_id values must be contiguous and start at zero",
+        ),
+        (
+            {
+                "slots": [
+                    {"slot_id": 0, "kind": "invalid_kind"},
+                    {"slot_id": 1, "kind": "model"},
+                    {"slot_id": 2, "kind": "empty_model"},
+                    {"slot_id": 3, "kind": "empty_model"},
+                ]
+            },
+            "manifest slot kind must be model or empty_model",
+        ),
+    ],
+)
+def test_load_two_dimensional_selection_manifest_rejections(tmp_path, override, match):
+    base_payload = _sample_manifest_payload(num_labels=2)
+    base_payload.update(override)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(base_payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=match):
+        vru.load_two_dimensional_selection_manifest(manifest_path)
 
 
 def test_two_dimensional_routing_maps_axis_labels_to_slot():
@@ -51,11 +143,16 @@ def test_two_dimensional_routing_maps_axis_labels_to_slot():
     routing.slot_count = 9
     routing.rule_base_threshold = 0.2
     routing.axis_thresholds = {"volatility": 0.2, "slope": 0.2}
-    routing.selection_manifest = {
-        "slots": [
-            {"slot_id": slot_id, "kind": "model"} for slot_id in range(9)
-        ]
-    }
+    routing.selection_manifest = (
+        TwoDimensionalSelectionManifest.from_dict(
+            _sample_manifest_payload(
+                num_labels=3,
+                slots=[
+                    {"slot_id": slot_id, "kind": "model"} for slot_id in range(9)
+                ],
+            )
+        )
+    )
     routing.action = 4
     routing.macro_action_history = []
     routing.calculate_axis_window_result = lambda axis: {
@@ -64,7 +161,7 @@ def test_two_dimensional_routing_maps_axis_labels_to_slot():
     }[axis]
     routing.agent_act = lambda state, info: 7
 
-    action = routing.get_action({}, np.array([0.0]))
+    action = routing.get_action({}, np.array([0.0]), 0.0, 5)
 
     assert action == 7
     assert routing.selected_agent_index == 5
@@ -77,15 +174,20 @@ def test_two_dimensional_empty_slot_uses_defensive_action(monkeypatch):
     routing.slot_count = 9
     routing.rule_base_threshold = 0.2
     routing.axis_thresholds = {"volatility": 0.2, "slope": 0.2}
-    routing.selection_manifest = {
-        "slots": [
-            {
-                "slot_id": slot_id,
-                "kind": "empty_model" if slot_id == 0 else "model",
-            }
-            for slot_id in range(9)
-        ]
-    }
+    routing.selection_manifest = (
+        TwoDimensionalSelectionManifest.from_dict(
+            _sample_manifest_payload(
+                num_labels=3,
+                slots=[
+                    {
+                        "slot_id": slot_id,
+                        "kind": "empty_model" if slot_id == 0 else "model",
+                    }
+                    for slot_id in range(9)
+                ],
+            )
+        )
+    )
     routing.zero_position_action = 4
     routing.leverage_choices = [5]
     routing.position_list = [-1, 0, 1]
@@ -99,7 +201,7 @@ def test_two_dimensional_empty_slot_uses_defensive_action(monkeypatch):
 
     routing.agent_act = fail_if_model_is_called
 
-    action = routing.get_action({}, np.array([0.0]))
+    action = routing.get_action({}, np.array([0.0]), 0.0, 5)
 
     assert action == 4
     assert routing.macro_action_history == [9]
@@ -111,11 +213,16 @@ def test_two_dimensional_routing_applies_axis_specific_thresholds(monkeypatch):
     routing.slot_count = 9
     routing.rule_base_threshold = 0.2
     routing.axis_thresholds = {"volatility": 0.8, "slope": 0.2}
-    routing.selection_manifest = {
-        "slots": [
-            {"slot_id": slot_id, "kind": "model"} for slot_id in range(9)
-        ]
-    }
+    routing.selection_manifest = (
+        TwoDimensionalSelectionManifest.from_dict(
+            _sample_manifest_payload(
+                num_labels=3,
+                slots=[
+                    {"slot_id": slot_id, "kind": "model"} for slot_id in range(9)
+                ],
+            )
+        )
+    )
     routing.zero_position_action = 4
     routing.leverage_choices = [5]
     routing.position_list = [-1, 0, 1]
@@ -128,7 +235,7 @@ def test_two_dimensional_routing_applies_axis_specific_thresholds(monkeypatch):
     monkeypatch.setattr(vru, "rule_based_close", lambda *args: 4)
     routing.agent_act = lambda state, info: 7
 
-    action = routing.get_action({}, np.array([0.0]))
+    action = routing.get_action({}, np.array([0.0]), 0.0, 5)
 
     assert action == 4
     assert routing.macro_action_history == [9]
@@ -189,20 +296,27 @@ def test_vae_routing_optuna_parser_configuration():
             "manifest.json",
             "--n_trials",
             "7",
-            "--n_jobs",
+            "--n_workers",
             "2",
         ]
     )
 
     assert args.selection_manifest == "manifest.json"
     assert args.n_trials == 7
-    assert args.n_jobs == 2
+    assert args.n_workers == 2
 
 
 def test_prepare_base_args_loads_two_dimensional_model_from_manifest(tmp_path):
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(
-        json.dumps({"artifacts": {"model_assembly": "assembled/model.pth"}}),
+        json.dumps(
+            _sample_manifest_payload(
+                artifacts={
+                    "model_assembly": "assembled/model.pth",
+                    "high_level_model_change": "not_performed",
+                }
+            )
+        ),
         encoding="utf-8",
     )
     args_1 = types.SimpleNamespace(
@@ -230,7 +344,14 @@ def test_prepare_base_args_loads_two_dimensional_model_from_manifest(tmp_path):
 def test_prepare_base_args_does_not_mutate_original_args(tmp_path):
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(
-        json.dumps({"artifacts": {"model_assembly": "model.pth"}}),
+        json.dumps(
+            _sample_manifest_payload(
+                artifacts={
+                    "model_assembly": "model.pth",
+                    "high_level_model_change": "not_performed",
+                }
+            )
+        ),
         encoding="utf-8",
     )
     args_1 = types.SimpleNamespace(
@@ -255,6 +376,65 @@ def test_prepare_base_args_does_not_mutate_original_args(tmp_path):
     assert prepared.experiment_name == "new_experiment"
     assert args_1.dataset_name == "old_dataset"
     assert args_1.experiment_name == "old_experiment"
+
+
+def test_prepare_base_args_rejects_missing_model_assembly(tmp_path):
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            _sample_manifest_payload(
+                artifacts={
+                    "model_assembly": "",
+                    "high_level_model_change": "not_performed",
+                }
+            )
+        ),
+        encoding="utf-8",
+    )
+    args_1 = types.SimpleNamespace(
+        dataset_name="BTCUSDT",
+        experiment_name="old",
+        max_holding_number=8,
+        order_book_depth=25,
+        allow_reverse_position=False,
+    )
+    args_2 = types.SimpleNamespace(
+        dataset_name="fu",
+        experiment_name="30min_multi",
+        max_holding_number=2,
+        order_book_depth=5,
+        allow_reverse_position=True,
+        selection_manifest=str(manifest_path),
+    )
+    with pytest.raises(
+        ValueError, match="two-dimensional manifest has no model_assembly artifact"
+    ):
+        vro.prepare_base_args(args_1, args_2)
+
+
+def test_prepare_base_args_validates_manifest_contract(tmp_path):
+    manifest_path = tmp_path / "manifest.json"
+    invalid_payload = _sample_manifest_payload(slot_count=999)
+    manifest_path.write_text(json.dumps(invalid_payload), encoding="utf-8")
+    args_1 = types.SimpleNamespace(
+        dataset_name="BTCUSDT",
+        experiment_name="old",
+        max_holding_number=8,
+        order_book_depth=25,
+        allow_reverse_position=False,
+    )
+    args_2 = types.SimpleNamespace(
+        dataset_name="fu",
+        experiment_name="30min_multi",
+        max_holding_number=2,
+        order_book_depth=5,
+        allow_reverse_position=True,
+        selection_manifest=str(manifest_path),
+    )
+    with pytest.raises(
+        ValueError, match="manifest slot_count does not match the two-dimensional axes"
+    ):
+        vro.prepare_base_args(args_1, args_2)
 
 
 def test_suggest_trial_parameters_uses_independent_axis_parameters():
@@ -351,6 +531,8 @@ def test_vae_routing_test_uses_contract_level_valid_features(tmp_path, monkeypat
         def __init__(self, df):
             self.reward = float(df["contract_reward"].iloc[0])
             self.required_money = float(df["required_money"].iloc[0])
+            self.position = 0.0
+            self.leverage = 5
             self.margine_balance_history = [100.0, 100.0 + self.reward]
             self.micro_action_history = []
             self.initial_margin_history = [self.required_money]
@@ -382,7 +564,9 @@ def test_vae_routing_test_uses_contract_level_valid_features(tmp_path, monkeypat
     routing.base_path = str(tmp_path / "dataset")
     routing.dataset_name = "fu"
     routing.test_data_path = str(dataset_root / "valid.feather")
-    routing.valid_data_path = str(valid_root)
+    routing.eval_stage = "valid"
+    routing.eval_stage_dir = str(valid_root)
+    routing.single_data_path = str(dataset_root / "valid.feather")
     routing.test_path = str(tmp_path / "result")
     routing.tech_indicator_list = []
     routing.max_holding_number = 8
@@ -396,6 +580,7 @@ def test_vae_routing_test_uses_contract_level_valid_features(tmp_path, monkeypat
     routing.initial_state = (100.0, 0.0, 0.0, 0.0, 5.0)
     routing.initial_wallet_balance = 100.0
     routing.allow_reverse_position = False
+    routing.order_book_depth = 25
     routing.num_labels = 3
     routing.window_length = 3
     routing.axis_window_lengths = {"slope": 3, "volatility": 3}
@@ -409,7 +594,7 @@ def test_vae_routing_test_uses_contract_level_valid_features(tmp_path, monkeypat
     )
     routing_start_states = []
 
-    def fake_get_action(self, info, s):
+    def fake_get_action(self, info, s, current_position, current_leverage):
         routing_start_states.append(
             (
                 self.action,
@@ -452,6 +637,8 @@ def test_vae_routing_test_passes_order_book_depth_to_base_env(tmp_path, monkeypa
     captured_kwargs = {}
 
     class FakeEnv:
+        position = 0.0
+        leverage = 5
         margine_balance_history = [100.0, 102.0]
         micro_action_history = []
         initial_margin_history = [10.0]
@@ -477,7 +664,9 @@ def test_vae_routing_test_passes_order_book_depth_to_base_env(tmp_path, monkeypa
     routing.base_path = str(tmp_path / "dataset")
     routing.dataset_name = "fu"
     routing.test_data_path = str(valid_path)
-    routing.valid_data_path = str(tmp_path / "dataset" / "fu" / "valid")
+    routing.eval_stage = "valid"
+    routing.eval_stage_dir = str(tmp_path / "dataset" / "fu" / "valid")
+    routing.single_data_path = str(valid_path)
     routing.test_path = str(tmp_path / "result")
     routing.tech_indicator_list = []
     routing.max_holding_number = 8
@@ -500,7 +689,7 @@ def test_vae_routing_test_passes_order_book_depth_to_base_env(tmp_path, monkeypa
         lambda self, env, s, info: (env, s, 0.0, False, info),
         routing,
     )
-    routing.get_action = types.MethodType(lambda self, info, s: 1, routing)
+    routing.get_action = types.MethodType(lambda self, info, s, current_position, current_leverage: 1, routing)
     routing.get_quantiles = types.MethodType(lambda self, s: None, routing)
 
     routing.test()

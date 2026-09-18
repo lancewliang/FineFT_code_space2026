@@ -1,18 +1,25 @@
 import copy
 import argparse
-import json
+import multiprocessing
 import os
 import random
 import sys
 
-import numpy as np
-import optuna
-import torch
+# keep every worker process single-threaded; must be set before importing torch
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
+import numpy as np  # noqa: E402
+import optuna  # noqa: E402
+import torch  # noqa: E402
 
 sys.path.append(".")
-from RL.DiHFT.high_level.vae_routing_util import vae_risk_aware_routing
+from RL.DiHFT.high_level.vae_routing_util import (  # noqa: E402
+    load_two_dimensional_selection_manifest,
+    vae_risk_aware_routing,
+)
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
 parser_all = argparse.ArgumentParser()
 # * Env setting
 parser_all.add_argument(
@@ -95,10 +102,11 @@ parser_all.add_argument(
     help="number of Optuna trials",
 )
 parser_all.add_argument(
-    "--n_jobs",
+    "--n_workers",
     type=int,
-    default=None,
-    help="parallel Optuna jobs; defaults to the available GPU count",
+    default=32,
+    help="number of parallel worker processes; each runs trials independently "
+    "on CPU with a single thread and shares the study via sqlite storage",
 )
 
 
@@ -121,17 +129,15 @@ def prepare_base_args(args_1, args_2):
     base_args.dataset_name = args_2.dataset_name
     base_args.max_holding_number = args_2.max_holding_number
     base_args.order_book_depth = args_2.order_book_depth
-    base_args.experiment_name = getattr(args_2, "experiment_name", "default") or getattr(
-        base_args, "experiment_name", "default"
+    base_args.experiment_name = (
+        args_2.experiment_name or base_args.experiment_name
     )
-    base_args.allow_reverse_position = getattr(
-        args_2, "allow_reverse_position", False
-    ) or getattr(base_args, "allow_reverse_position", False)
-    manifest_path = getattr(args_2, "selection_manifest", None)
-    manifest_path = manifest_path or default_selection_manifest_path(base_args)
-    with open(manifest_path, encoding="utf-8") as file:
-        manifest = json.load(file)
-    if not manifest.get("artifacts", {}).get("model_assembly"):
+    base_args.allow_reverse_position = (
+        args_2.allow_reverse_position or base_args.allow_reverse_position
+    )
+    manifest_path = args_2.selection_manifest or default_selection_manifest_path(base_args)
+    manifest = load_two_dimensional_selection_manifest(manifest_path)
+    if not manifest.artifacts.model_assembly:
         raise ValueError("two-dimensional manifest has no model_assembly artifact")
     base_args.selection_manifest = manifest_path
     return base_args
@@ -193,12 +199,64 @@ def seed_torch(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
-    if hasattr(torch, "set_float32_matmul_precision"):
-        torch.set_float32_matmul_precision("high")
-    if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
-        torch.backends.cuda.matmul.allow_tf32 = True
-    if hasattr(torch.backends, "cudnn"):
-        torch.backends.cudnn.allow_tf32 = True
+    torch.set_float32_matmul_precision("high")
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+
+
+def optuna_result_path(base_args):
+    return os.path.join(
+        "result/DiHFT/high_level/",
+        base_args.dataset_name,
+        base_args.experiment_name,
+        "vae_risk_aware_routing_optuna",
+    )
+
+
+def create_study_storage(base_args):
+    """Create a fresh sqlite storage shared by all worker processes."""
+    optunal_path = optuna_result_path(base_args)
+    os.makedirs(optunal_path, exist_ok=True)
+    storage_path = os.path.join(optunal_path, "optuna_study.db")
+    if os.path.exists(storage_path):
+        # each invocation tunes from scratch, matching the old in-memory study
+        os.remove(storage_path)
+    return "sqlite:///" + storage_path
+
+
+def make_rdb_storage(storage_url):
+    # 60s busy timeout so concurrent workers never fail on sqlite locks
+    return optuna.storages.RDBStorage(
+        url=storage_url,
+        engine_kwargs={"connect_args": {"timeout": 60}},
+    )
+
+
+def run_optuna_worker(base_args, args_2, study_name, storage_url, n_trials):
+    """Run n_trials Optuna trials in one process, reusing loaded models."""
+    seed_torch(12345)
+    torch.set_num_threads(1)
+    study = optuna.load_study(
+        study_name=study_name,
+        storage=make_rdb_storage(storage_url),
+    )
+    router = None
+
+    def objective(trial):
+        nonlocal router
+        trial_args = copy.deepcopy(base_args)
+        gpu_id = trial.number % max(torch.cuda.device_count(), 1)
+        trial_args.gpu_index = gpu_id
+        trial_args.trial_number = trial.number
+        print("gpu_id:", gpu_id)
+        trial_args = suggest_trial_parameters(trial, trial_args, args_2)
+        if router is None:
+            router = vae_risk_aware_routing(trial_args)
+        else:
+            router.reconfigure_routing(trial_args)
+        return router.test()
+
+    study.optimize(objective, n_trials=n_trials, n_jobs=1)
 
 
 def tune(args_1, args_2):
@@ -208,45 +266,59 @@ def tune(args_1, args_2):
     base_args = prepare_base_args(args_1, args_2)
     print("change parameters:", base_args, args_2)
 
-    def objective(trial):
-        trial_args = copy.deepcopy(base_args)
-        gpu_id = trial.number % max(torch.cuda.device_count(), 1)
-        trial_args.gpu_index = gpu_id
-        trial_args.trial_number = trial.number
-        print("gpu_id:", gpu_id)
-        trial_args = suggest_trial_parameters(trial, trial_args, args_2)
-        vae_routing = vae_risk_aware_routing(trial_args)
-        return_rate = vae_routing.test()
-        return return_rate
+    storage_url = create_study_storage(base_args)
+    study_name = "vae_risk_aware_routing"
+    optuna.create_study(
+        direction="maximize",
+        study_name=study_name,
+        storage=make_rdb_storage(storage_url),
+        load_if_exists=True,
+    )
 
-    print("define objective")
-    study = optuna.create_study(direction="maximize")
-    n_jobs = getattr(args_2, "n_jobs", None)
-    if n_jobs is None:
-        n_jobs = max(torch.cuda.device_count(), 1)
-    study.optimize(objective, n_trials=args_2.n_trials, n_jobs=n_jobs)
+    n_workers = min(args_2.n_workers, args_2.n_trials)
+    base_count, extra = divmod(args_2.n_trials, n_workers)
+    worker_trial_counts = [
+        base_count + (1 if worker_index < extra else 0)
+        for worker_index in range(n_workers)
+    ]
+    print(
+        "launching {} worker processes for {} trials".format(
+            n_workers, args_2.n_trials
+        )
+    )
 
+    if n_workers == 1:
+        run_optuna_worker(
+            base_args, args_2, study_name, storage_url, worker_trial_counts[0]
+        )
+    else:
+        spawn_context = multiprocessing.get_context("spawn")
+        processes = [
+            spawn_context.Process(
+                target=run_optuna_worker,
+                args=(base_args, args_2, study_name, storage_url, count),
+            )
+            for count in worker_trial_counts
+        ]
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join()
+
+    study = optuna.load_study(
+        study_name=study_name,
+        storage=make_rdb_storage(storage_url),
+    )
     print("Number of finished trials: ", len(study.trials))
     print("BEST TRAIL: ", study.best_trial.params)
     df = study.trials_dataframe()
-    optunal_path = os.path.join(
-            "result/DiHFT/high_level/",
-            base_args.dataset_name,
-            base_args.experiment_name,
-            "vae_risk_aware_routing_optuna",
-        )
+    optunal_path = optuna_result_path(base_args)
     if not os.path.exists(optunal_path):
         os.makedirs(optunal_path)
     df.to_csv(os.path.join(optunal_path, "optuna_results.csv"))
 
 
 if __name__ == "__main__":
-    if hasattr(torch, "set_float32_matmul_precision"):
-        torch.set_float32_matmul_precision("high")
-    if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
-        torch.backends.cuda.matmul.allow_tf32 = True
-    if hasattr(torch.backends, "cudnn"):
-        torch.backends.cudnn.allow_tf32 = True
     from RL.DiHFT.high_level.vae_routing_util import parser
 
     args_1, _ = parser.parse_known_args()

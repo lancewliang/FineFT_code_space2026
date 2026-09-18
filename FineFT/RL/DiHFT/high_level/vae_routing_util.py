@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import random
+import shutil
 import sys
 
 import numpy as np
@@ -29,6 +30,9 @@ from env.env_class.futures_util import (
 )
 from RL.DiHFT.VAE.vae import MLP_VAE, analyze_single_sample
 
+from analysis.pick_agent.FineFT_two_dimensional_agent_selector import (
+    TwoDimensionalSelectionManifest,
+)
 from model.low_level import ensemble_Qnet
 from model.high_level import RankBasedQNetwork
 from RL.util.update import disable_gradients, get_rank
@@ -226,6 +230,61 @@ parser.add_argument(
     help="two-dimensional low-level selection manifest",
 )
 parser.add_argument(
+    "--eval_stage",
+    type=str,
+    default="valid",
+    choices=["valid", "test"],
+    help="evaluation dataset stage (valid or test)",
+)
+parser.add_argument(
+    "--para_file",
+    type=str,
+    default=None,
+    help="path to high_level_agent_para.txt",
+)
+parser.add_argument(
+    "--optuna_csv",
+    type=str,
+    default=None,
+    help="path to optuna_results.csv",
+)
+parser.add_argument(
+    "--slope_window_length",
+    type=int,
+    default=None,
+    help="slope rolling window length",
+)
+parser.add_argument(
+    "--volatility_window_length",
+    type=int,
+    default=None,
+    help="volatility rolling window length",
+)
+parser.add_argument(
+    "--slope_gamma",
+    type=float,
+    default=None,
+    help="slope decay gamma",
+)
+parser.add_argument(
+    "--volatility_gamma",
+    type=float,
+    default=None,
+    help="volatility decay gamma",
+)
+parser.add_argument(
+    "--slope_rule_base_threshold",
+    type=float,
+    default=None,
+    help="slope rule base threshold",
+)
+parser.add_argument(
+    "--volatility_rule_base_threshold",
+    type=float,
+    default=None,
+    help="volatility rule base threshold",
+)
+parser.add_argument(
     "--trial_number",
     type=int,
     default=None,
@@ -249,51 +308,148 @@ def seed_torch(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
-    if hasattr(torch, "set_float32_matmul_precision"):
-        torch.set_float32_matmul_precision("high")
-    if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
-        torch.backends.cuda.matmul.allow_tf32 = True
-    if hasattr(torch.backends, "cudnn"):
-        torch.backends.cudnn.allow_tf32 = True
+    torch.set_float32_matmul_precision("high")
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
 
 
-def load_two_dimensional_selection_manifest(manifest_path):
+import re
+
+
+def resolve_routing_parameters(args):
+    """Resolve 6 dual-axis routing parameters from CLI arguments, para_file, or optuna_csv."""
+    slope_window_length = args.slope_window_length
+    volatility_window_length = args.volatility_window_length
+    slope_gamma = args.slope_gamma
+    volatility_gamma = args.volatility_gamma
+    slope_rule_base_threshold = args.slope_rule_base_threshold
+    volatility_rule_base_threshold = args.volatility_rule_base_threshold
+
+    para_file = args.para_file
+    optuna_csv = args.optuna_csv
+
+    para_str = ""
+    if para_file and os.path.exists(para_file):
+        with open(para_file, encoding="utf-8") as f:
+            para_str = f.readline().strip()
+
+    # 1. Try resolving via trial ID in optuna_csv
+    trial_match = re.search(r"trial_(\d+)", para_str)
+    if trial_match and optuna_csv and os.path.exists(optuna_csv):
+        trial_id = int(trial_match.group(1))
+        df = pd.read_csv(optuna_csv)
+        row = df[df["number"] == trial_id]
+        if not row.empty:
+            r = row.iloc[0]
+            if slope_window_length is None:
+                slope_window_length = int(r["params_slope_window_length"])
+            if volatility_window_length is None:
+                volatility_window_length = int(r["params_volatility_window_length"])
+            if slope_gamma is None:
+                slope_gamma = float(r["params_slope_gamma"])
+            if volatility_gamma is None:
+                volatility_gamma = float(r["params_volatility_gamma"])
+            if slope_rule_base_threshold is None:
+                slope_rule_base_threshold = float(r["params_slope_rule_base_threshold"])
+            if volatility_rule_base_threshold is None:
+                volatility_rule_base_threshold = float(r["params_volatility_rule_base_threshold"])
+
+    # 2. Try resolving via explicit ws_ / wv_ format in para_str
+    if para_str:
+        ws_match = re.search(r"ws_(\d+)", para_str)
+        wv_match = re.search(r"wv_(\d+)", para_str)
+        gs_match = re.search(r"gs_([0-9.]+)", para_str)
+        gv_match = re.search(r"gv_([0-9.]+)", para_str)
+        ts_match = re.search(r"ts_([0-9.]+)", para_str)
+        tv_match = re.search(r"tv_([0-9.]+)", para_str)
+
+        if ws_match and slope_window_length is None:
+            slope_window_length = int(ws_match.group(1))
+        if wv_match and volatility_window_length is None:
+            volatility_window_length = int(wv_match.group(1))
+        if gs_match and slope_gamma is None:
+            slope_gamma = float(gs_match.group(1))
+        if gv_match and volatility_gamma is None:
+            volatility_gamma = float(gv_match.group(1))
+        if ts_match and slope_rule_base_threshold is None:
+            slope_rule_base_threshold = float(ts_match.group(1))
+        if tv_match and volatility_rule_base_threshold is None:
+            volatility_rule_base_threshold = float(tv_match.group(1))
+
+    # 3. Fallback to single gamma_ / window_ / threshold_ format if present in para_str
+    if para_str:
+        gamma_m = re.search(r"gamma_([0-9.]+)", para_str)
+        window_m = re.search(r"window_([0-9]+)", para_str)
+        thresh_m = re.search(r"threshold_([0-9.]+)", para_str)
+        if slope_gamma is None and gamma_m:
+            slope_gamma = float(gamma_m.group(1))
+        if volatility_gamma is None and gamma_m:
+            volatility_gamma = float(gamma_m.group(1))
+        if slope_window_length is None and window_m:
+            slope_window_length = int(window_m.group(1))
+        if volatility_window_length is None and window_m:
+            volatility_window_length = int(window_m.group(1))
+        if slope_rule_base_threshold is None and thresh_m:
+            slope_rule_base_threshold = float(thresh_m.group(1))
+        if volatility_rule_base_threshold is None and thresh_m:
+            volatility_rule_base_threshold = float(thresh_m.group(1))
+
+    # 4. Final fallbacks to general args.window_length / args.gamma / args.rule_base_threshold
+    base_window = args.window_length
+    base_gamma = args.gamma
+    base_threshold = args.rule_base_threshold
+
+    args.slope_window_length = slope_window_length if slope_window_length is not None else base_window
+    args.volatility_window_length = volatility_window_length if volatility_window_length is not None else base_window
+    args.slope_gamma = slope_gamma if slope_gamma is not None else base_gamma
+    args.volatility_gamma = volatility_gamma if volatility_gamma is not None else base_gamma
+    args.slope_rule_base_threshold = slope_rule_base_threshold if slope_rule_base_threshold is not None else base_threshold
+    args.volatility_rule_base_threshold = volatility_rule_base_threshold if volatility_rule_base_threshold is not None else base_threshold
+
+    args.window_length = max(args.slope_window_length, args.volatility_window_length)
+    args.gamma = args.slope_gamma
+    args.rule_base_threshold = min(args.slope_rule_base_threshold, args.volatility_rule_base_threshold)
+
+    return args
+
+
+def load_two_dimensional_selection_manifest(
+    manifest_path: str | os.PathLike[str],
+) -> TwoDimensionalSelectionManifest:
     """Load and validate the logical slope/volatility slot contract."""
 
     with open(manifest_path, encoding="utf-8") as file:
-        manifest = json.load(file)
+        data = json.load(file)
 
-    axes = manifest.get("axes")
-    if not isinstance(axes, dict):
-        raise ValueError("two-dimensional manifest must contain an axes object")
-    volatility_labels = axes.get("volatility")
-    slope_labels = axes.get("slope")
-    if not isinstance(volatility_labels, list) or not isinstance(slope_labels, list):
-        raise ValueError("manifest axes must contain volatility and slope lists")
+    manifest = TwoDimensionalSelectionManifest.from_dict(data)
+
+    axes = manifest.axes
+    volatility_labels = axes.volatility
+    slope_labels = axes.slope
     if not volatility_labels or len(volatility_labels) != len(slope_labels):
         raise ValueError("volatility and slope axes must have the same non-zero size")
 
     num_labels = len(volatility_labels)
     expected_slot_count = num_labels * num_labels
-    if manifest.get("slot_count") != expected_slot_count:
+    if manifest.slot_count != expected_slot_count:
         raise ValueError(
             "manifest slot_count does not match the two-dimensional axes: "
-            f"expected {expected_slot_count}, got {manifest.get('slot_count')}"
+            f"expected {expected_slot_count}, got {manifest.slot_count}"
         )
-    if manifest.get("slot_index_formula") != (
+    if manifest.slot_index_formula != (
         "volatility_index * num_labels + slope_index"
     ):
         raise ValueError("unsupported two-dimensional slot index formula")
 
-    slots = manifest.get("slots")
-    if not isinstance(slots, list) or len(slots) != expected_slot_count:
+    slots = manifest.slots
+    if len(slots) != expected_slot_count:
         raise ValueError("manifest slots must contain every logical slot")
-    slot_ids = [slot.get("slot_id") for slot in slots]
+    slot_ids = [slot["slot_id"] for slot in slots]
     if sorted(slot_ids) != list(range(expected_slot_count)):
         raise ValueError("manifest slot_id values must be contiguous and start at zero")
-    if any(slot.get("kind") not in {"model", "empty_model"} for slot in slots):
+    if any(slot["kind"] not in {"model", "empty_model"} for slot in slots):
         raise ValueError("manifest slot kind must be model or empty_model")
-    manifest["slots"] = sorted(slots, key=lambda slot: slot["slot_id"])
+    manifest.slots = sorted(slots, key=lambda slot: slot["slot_id"])
 
     return manifest
 
@@ -308,63 +464,43 @@ class vae_risk_aware_routing:
         self.gamma = args.gamma
         self.rule_base_threshold = args.rule_base_threshold
         self.window_length = args.window_length
-        manifest_path = getattr(args, "selection_manifest", None)
+        manifest_path = args.selection_manifest
         if not manifest_path:
             raise ValueError("selection_manifest is required")
-        self.selection_manifest = load_two_dimensional_selection_manifest(
-            manifest_path
+        self.selection_manifest: TwoDimensionalSelectionManifest = (
+            load_two_dimensional_selection_manifest(manifest_path)
         )
-        self.num_labels = len(self.selection_manifest["axes"]["volatility"])
-        self.slot_count = self.selection_manifest["slot_count"]
+        self.num_labels = len(self.selection_manifest.axes.volatility)
+        self.slot_count = self.selection_manifest.slot_count
         self.axis_window_lengths = {
-            "slope": getattr(args, "slope_window_length", self.window_length),
-            "volatility": getattr(
-                args, "volatility_window_length", self.window_length
-            ),
+            "slope": args.slope_window_length,
+            "volatility": args.volatility_window_length,
         }
         self.axis_gammas = {
-            "slope": getattr(args, "slope_gamma", self.gamma),
-            "volatility": getattr(args, "volatility_gamma", self.gamma),
+            "slope": args.slope_gamma,
+            "volatility": args.volatility_gamma,
         }
         self.axis_thresholds = {
-            "slope": getattr(
-                args, "slope_rule_base_threshold", self.rule_base_threshold
-            ),
-            "volatility": getattr(
-                args,
-                "volatility_rule_base_threshold",
-                self.rule_base_threshold,
-            ),
+            "slope": args.slope_rule_base_threshold,
+            "volatility": args.volatility_rule_base_threshold,
         }
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
-        self.experiment_name = getattr(args, "experiment_name", "default")
-        self.model_path = os.path.join(
-                args.result_path,
-                args.dataset_name,
-                self.experiment_name,
-                "vae_risk_aware_routing",
-            )
-  
+        self.experiment_name = args.experiment_name
+        self.eval_stage = args.eval_stage
 
-        trial_number = getattr(args, "trial_number", None)
-        trial_suffix = "" if trial_number is None else f"_trial_{trial_number}"
-        self.test_path = os.path.join(
-            self.model_path,
-            "gamma_{}_window_{}_threshold_{}".format(
-                self.gamma, self.window_length, self.rule_base_threshold
-            ) + trial_suffix,
-        )
+        self.test_path = self._resolve_test_path(args)
         if not os.path.exists(self.test_path):
             os.makedirs(self.test_path, exist_ok=True)
             #
         # trading environment setting
         self.base_path = args.base_path
         self.dataset_name = args.dataset_name
-        self.allow_reverse_position = getattr(args, "allow_reverse_position", False)
-        self.valid_data_path = os.path.join(self.base_path, self.dataset_name, "valid")
-        self.test_data_path = os.path.join(
-            self.base_path, self.dataset_name, "valid.feather"
+        self.allow_reverse_position = args.allow_reverse_position
+        self.eval_stage_dir = os.path.join(self.base_path, self.dataset_name, self.eval_stage)
+        self.single_data_path = os.path.join(
+            self.base_path, self.dataset_name, f"{self.eval_stage}.feather"
         )
+        self.test_data_path = self.single_data_path
         self.tech_indicator_list = np.load(
             os.path.join(self.base_path, self.dataset_name, "state_features.npy")
         )
@@ -399,7 +535,7 @@ class vae_risk_aware_routing:
         self.initial_unrealized_pnL = args.initial_unrealized_pnL
         self.initial_position = args.initial_position
         self.initial_leverage = args.initial_leverage
-        self.order_book_depth = getattr(args, "order_book_depth", 25)
+        self.order_book_depth = args.order_book_depth
         self.initial_state = (
             self.initial_wallet_balance,
             self.initial_margin,
@@ -429,9 +565,7 @@ class vae_risk_aware_routing:
             TIME_INFO_DIM=self.time_info_dim,
             ensemble_number=self.N,
         ).to(self.device)
-        low_level_model_path = self.selection_manifest.get("artifacts", {}).get(
-            "model_assembly"
-        )
+        low_level_model_path = self.selection_manifest.artifacts.model_assembly
         if not low_level_model_path:
             raise ValueError("manifest has no model_assembly artifact")
         self.low_level_network.load_state_dict(
@@ -477,7 +611,9 @@ class vae_risk_aware_routing:
         self.in_ds_logpx = {}
         self.quantiles = {}
         for axis, root in vae_roots.items():
-            self.vae_models[axis], self.in_ds_logpx[axis] = load_vae_axis(root)
+            self.vae_models[axis], logpx_list = load_vae_axis(root)
+            # pre-sort once here so find_quantile only needs searchsorted per step
+            self.in_ds_logpx[axis] = [np.sort(logpx) for logpx in logpx_list]
             self.quantiles[axis] = [
                 deque(maxlen=self.axis_window_lengths[axis])
                 for _ in range(self.num_labels)
@@ -496,19 +632,72 @@ class vae_risk_aware_routing:
         self.action = self.zero_position_action
         self.macro_action_history = []
 
-    def valid_contract_files(self):
-        if not os.path.isdir(self.valid_data_path):
-            return []
-        contract_files = []
-        for filename in sorted(os.listdir(self.valid_data_path)):
-            path = os.path.join(self.valid_data_path, filename)
-            if os.path.isfile(path) and filename.endswith(".feather"):
-                contract_files.append((os.path.splitext(filename)[0], path))
-        return contract_files
+    def _resolve_test_path(self, args):
+        if self.eval_stage == "test" or args.result_path.endswith("final_result"):
+            return os.path.join(
+                args.result_path,
+                args.dataset_name,
+                self.experiment_name,
+            )
+        self.model_path = os.path.join(
+            args.result_path,
+            args.dataset_name,
+            self.experiment_name,
+            "vae_risk_aware_routing",
+        )
+        trial_suffix = "" if args.trial_number is None else f"_trial_{args.trial_number}"
+        return os.path.join(
+            self.model_path,
+            "gamma_{}_window_{}_threshold_{}".format(
+                self.gamma, self.window_length, self.rule_base_threshold
+            ) + trial_suffix,
+        )
 
-    def find_quantile(self, value, array):
-        sorted_array = np.sort(array)
+    def reconfigure_routing(self, args):
+        """Reset trial-dependent routing state while keeping loaded models.
 
+        Avoids reloading the low-level network and VAE models between Optuna
+        trials; only windows/gammas/thresholds, the output path and the
+        routing deques change from trial to trial.
+        """
+        self.gamma = args.gamma
+        self.rule_base_threshold = args.rule_base_threshold
+        self.window_length = args.window_length
+        self.axis_window_lengths = {
+            "slope": args.slope_window_length,
+            "volatility": args.volatility_window_length,
+        }
+        self.axis_gammas = {
+            "slope": args.slope_gamma,
+            "volatility": args.volatility_gamma,
+        }
+        self.axis_thresholds = {
+            "slope": args.slope_rule_base_threshold,
+            "volatility": args.volatility_rule_base_threshold,
+        }
+        self.initial_rollout_window_length = max(self.axis_window_lengths.values())
+        self.test_path = self._resolve_test_path(args)
+        if not os.path.exists(self.test_path):
+            os.makedirs(self.test_path, exist_ok=True)
+        self.reset_routing_state()
+
+    def find_contract_files(self):
+        stage = self.eval_stage
+        stage_dir = self.eval_stage_dir
+        if os.path.isdir(stage_dir):
+            contract_files = []
+            for filename in sorted(os.listdir(stage_dir)):
+                path = os.path.join(stage_dir, filename)
+                if os.path.isfile(path) and filename.endswith(".feather"):
+                    contract_files.append((os.path.splitext(filename)[0], path))
+            if contract_files:
+                return contract_files
+        if os.path.isfile(self.single_data_path):
+            return [(stage, self.single_data_path)]
+        return []
+
+    def find_quantile(self, value, sorted_array):
+        # sorted_array must be pre-sorted (see __init__: in_ds_logpx is sorted once)
         if value < sorted_array[0]:
             quantile = 0.0  # Value is below the minimum
         elif value > sorted_array[-1]:
@@ -558,30 +747,32 @@ class vae_risk_aware_routing:
             for quantile_deque in self.quantiles[axis]
         ]
 
-    def _defensive_action(self, info):
+    def _defensive_action(self, info, current_position, current_leverage):
         return rule_based_close(
             info,
             self.zero_position_action,
             self.leverage_choices,
             self.position_list,
+            current_position,
+            current_leverage,
         )
 
-    def get_action(self, info, s):
+    def get_action(self, info, s, current_position, current_leverage):
         volatility_weights = self.calculate_axis_window_result("volatility")
         slope_weights = self.calculate_axis_window_result("slope")
         if (
             max(volatility_weights) < self.axis_thresholds["volatility"]
             or max(slope_weights) < self.axis_thresholds["slope"]
         ):
-            action = self._defensive_action(info)
+            action = self._defensive_action(info, current_position, current_leverage)
             self.macro_action_history.append(self.slot_count)
         else:
             volatility_index = int(np.argmax(volatility_weights))
             slope_index = int(np.argmax(slope_weights))
             slot_id = volatility_index * self.num_labels + slope_index
-            slot = self.selection_manifest["slots"][slot_id]
+            slot = self.selection_manifest.slots[slot_id]
             if slot["kind"] == "empty_model":
-                action = self._defensive_action(info)
+                action = self._defensive_action(info, current_position, current_leverage)
                 self.macro_action_history.append(self.slot_count)
             else:
                 self.selected_agent_index = slot_id
@@ -644,7 +835,7 @@ class vae_risk_aware_routing:
             early_stop=self.early_stop,
             # initial_personal_state
             initial_state=self.initial_state,
-            order_book_depth=getattr(self, "order_book_depth", 25),
+            order_book_depth=self.order_book_depth,
             allow_reverse_position=self.allow_reverse_position,
         )
         logger.info(
@@ -660,7 +851,7 @@ class vae_risk_aware_routing:
         episode_reward_sum = 0
         env, s, r, done, info = self.initial_rollout(env, s, info)
         while not done:
-            action = self.get_action(info, s)
+            action = self.get_action(info, s, env.position, env.leverage)
             s_, r, done, info = env.step(action)
             self.get_quantiles(s_)
             episode_reward_sum += r
@@ -709,6 +900,10 @@ class vae_risk_aware_routing:
             os.path.join(save_path, "macro_action.npy"),
             self.macro_action_history,
         )
+        np.save(
+            os.path.join(save_path, "macro_action_history.npy"),
+            self.macro_action_history,
+        )
         require_money = calculate_required_money(
             np.array(env.initial_margin_history),
             np.array(env.maintain_marigine_history),
@@ -736,11 +931,11 @@ class vae_risk_aware_routing:
     def test(self):
         logger.info("[Test Start] Starting VAE routing test...")
         logger.info("[Test Config] Test path: %s", self.test_path)
-        contract_files = self.valid_contract_files()
+        contract_files = self.find_contract_files()
         if not contract_files:
             logger.info(
                 "[Test] Multi-contract directory not found in '%s', evaluating single dataset file: %s",
-                getattr(self, "valid_data_path", ""),
+                self.eval_stage_dir,
                 self.test_data_path,
             )
             self.reset_routing_state()
@@ -755,9 +950,9 @@ class vae_risk_aware_routing:
             return result["return_rate"]
 
         logger.info(
-            "[Test] Found %d contracts in '%s' to evaluate.",
+            "[Test] Found %d contracts to evaluate in stage '%s'.",
             len(contract_files),
-            self.valid_data_path,
+            self.eval_stage,
         )
         contract_results = []
         for idx, (contract, path) in enumerate(contract_files, start=1):
@@ -786,6 +981,12 @@ class vae_risk_aware_routing:
                 result["return_rate"],
             )
 
+        first_contract_dir = os.path.join(self.test_path, "contracts", contract_results[0]["contract"])
+        if os.path.isdir(first_contract_dir):
+            for f_name in os.listdir(first_contract_dir):
+                if f_name.endswith(".npy") or f_name.endswith(".csv"):
+                    shutil.copy2(os.path.join(first_contract_dir, f_name), os.path.join(self.test_path, f_name))
+
         result_df = pd.DataFrame(contract_results)
         result_df = result_df[
             [
@@ -802,8 +1003,7 @@ class vae_risk_aware_routing:
         logger.info("[Artifacts] Saved contract results summary to %s", csv_path)
 
         total_reward_sum = float(result_df["reward_sum"].sum())
-        initial_wallet = getattr(self, "initial_wallet_balance", 10000.0)
-        total_initial_capital = initial_wallet * len(contract_results)
+        total_initial_capital = self.initial_wallet_balance * len(contract_results)
         portfolio_return_rate = total_reward_sum / (total_initial_capital + 1e-12)
         win_rate = float((result_df["return_rate"] > 0).mean())
         self.return_rate = portfolio_return_rate * win_rate
@@ -836,15 +1036,15 @@ class vae_risk_aware_routing:
     def initial_rollout(self, env: Base_Env, s, info):
         done = False
         r = 0
-        rollout_window_length = getattr(
-            self, "initial_rollout_window_length", self.window_length
-        )
+        rollout_window_length = self.initial_rollout_window_length
         for i in range(rollout_window_length):
             action = rule_based_close(
                 info,
                 self.zero_position_action,
                 self.leverage_choices,
                 self.position_list,
+                env.position,
+                env.leverage,
             )
             s, r, done, info = env.step(action)
             self.get_quantiles(s)

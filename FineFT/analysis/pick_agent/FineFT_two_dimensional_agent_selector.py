@@ -91,6 +91,226 @@ class SelectionConfig:
     min_slice_steps: int = 0
 
 
+@dataclass(frozen=True)
+class SelectionAxes:
+    volatility: list[str]
+    slope: list[str]
+
+    def to_dict(self) -> dict[str, list[str]]:
+        return {
+            "volatility": list(self.volatility),
+            "slope": list(self.slope),
+        }
+
+
+@dataclass
+class SelectionNullPolicy:
+    logical_kind: str = "empty_model"
+    intended_runtime_behavior: str = "flat_position"
+    model_assembly_status: str = "not_built_by_this_script"
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "logical_kind": self.logical_kind,
+            "intended_runtime_behavior": self.intended_runtime_behavior,
+            "model_assembly_status": self.model_assembly_status,
+        }
+
+
+@dataclass(frozen=True)
+class CandidateCoverage:
+    discovered_candidate_count: int
+    complete_candidate_count: int
+    excluded_incomplete_candidate_count: int
+    initial_actions: list[int]
+
+
+@dataclass(frozen=True)
+class CandidateScope:
+    common_epochs: list[int]
+    discovered_candidate_count: int
+    complete_candidate_count: int
+    excluded_incomplete_candidate_count: int
+    initial_actions: list[int]
+
+    @classmethod
+    def from_coverage(
+        cls,
+        common_epochs: list[int],
+        coverage: CandidateCoverage,
+    ) -> CandidateScope:
+        return cls(
+            common_epochs=common_epochs,
+            discovered_candidate_count=coverage.discovered_candidate_count,
+            complete_candidate_count=coverage.complete_candidate_count,
+            excluded_incomplete_candidate_count=coverage.excluded_incomplete_candidate_count,
+            initial_actions=coverage.initial_actions,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "common_epochs": list(self.common_epochs),
+            "discovered_candidate_count": self.discovered_candidate_count,
+            "complete_candidate_count": self.complete_candidate_count,
+            "excluded_incomplete_candidate_count": self.excluded_incomplete_candidate_count,
+            "initial_actions": list(self.initial_actions),
+        }
+
+
+@dataclass(frozen=True)
+class SelectionMetricDefinition:
+    return_formula: str
+    aggregation: str
+    lcb: str
+    pair_score: str
+    joint_context_note: str
+
+    @classmethod
+    def default_for(cls, contract_weighting: str) -> SelectionMetricDefinition:
+        return cls(
+            return_formula=(
+                "sum(reward) / transition_count within contract and "
+                "initial position; transition_count = df_length - 1"
+            ),
+            aggregation=(
+                "initial-position mean within each contract, then "
+                f"{contract_weighting} mean across contracts"
+            ),
+            lcb="mean_return - lcb_z * contract_standard_error",
+            pair_score=(
+                "minimum LCB across volatility-run and slope-run joint subsets "
+                "when joint data exists; slope marginal LCB when no joint data exists"
+            ),
+            joint_context_note=(
+                "Joint rewards are filtered by timestamp from both existing "
+                "trading trajectories. They are kept separate because slice "
+                "reset points can differ."
+            ),
+        )
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "return": self.return_formula,
+            "aggregation": self.aggregation,
+            "lcb": self.lcb,
+            "pair_score": self.pair_score,
+            "joint_context_note": self.joint_context_note,
+        }
+
+
+@dataclass
+class SelectionManifestArtifacts:
+    model_assembly: str = "not_performed"
+    high_level_model_change: str = "not_performed"
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "model_assembly": self.model_assembly,
+            "high_level_model_change": self.high_level_model_change,
+        }
+
+
+@dataclass
+class TwoDimensionalSelectionManifest:
+    schema_version: int
+    selection_method: str
+    candidate_root: str
+    valid_root: str
+    axes: SelectionAxes
+    slot_count: int
+    slot_index_formula: str
+    null_policy: SelectionNullPolicy
+    candidate_scope: CandidateScope
+    selection_config: SelectionConfig
+    metric_definition: SelectionMetricDefinition
+    artifacts: SelectionManifestArtifacts
+    slots: list[dict[str, Any]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "selection_method": self.selection_method,
+            "candidate_root": self.candidate_root,
+            "valid_root": self.valid_root,
+            "axes": self.axes.to_dict(),
+            "slot_count": self.slot_count,
+            "slot_index_formula": self.slot_index_formula,
+            "null_policy": self.null_policy.to_dict(),
+            "candidate_scope": self.candidate_scope.to_dict(),
+            "selection_config": asdict(self.selection_config),
+            "metric_definition": self.metric_definition.to_dict(),
+            "artifacts": self.artifacts.to_dict(),
+            "slots": list(self.slots),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> TwoDimensionalSelectionManifest:
+        axes_data = data["axes"]
+        null_policy_data = data["null_policy"]
+        candidate_scope_data = data["candidate_scope"]
+        selection_config_data = data["selection_config"]
+        metric_def_data = data["metric_definition"]
+        artifacts_data = data["artifacts"]
+
+        return cls(
+            schema_version=int(data["schema_version"]),
+            selection_method=str(data["selection_method"]),
+            candidate_root=str(data["candidate_root"]),
+            valid_root=str(data["valid_root"]),
+            axes=SelectionAxes(
+                volatility=list(axes_data["volatility"]),
+                slope=list(axes_data["slope"]),
+            ),
+            slot_count=int(data["slot_count"]),
+            slot_index_formula=str(data["slot_index_formula"]),
+            null_policy=SelectionNullPolicy(
+                logical_kind=str(null_policy_data["logical_kind"]),
+                intended_runtime_behavior=str(
+                    null_policy_data["intended_runtime_behavior"]
+                ),
+                model_assembly_status=str(
+                    null_policy_data["model_assembly_status"]
+                ),
+            ),
+            candidate_scope=CandidateScope(
+                common_epochs=[
+                    int(epoch) for epoch in candidate_scope_data["common_epochs"]
+                ],
+                discovered_candidate_count=int(
+                    candidate_scope_data["discovered_candidate_count"]
+                ),
+                complete_candidate_count=int(
+                    candidate_scope_data["complete_candidate_count"]
+                ),
+                excluded_incomplete_candidate_count=int(
+                    candidate_scope_data["excluded_incomplete_candidate_count"]
+                ),
+                initial_actions=[
+                    int(action)
+                    for action in candidate_scope_data["initial_actions"]
+                ],
+            ),
+            selection_config=SelectionConfig(**selection_config_data),
+            metric_definition=SelectionMetricDefinition(
+                return_formula=str(metric_def_data["return"]),
+                aggregation=str(metric_def_data["aggregation"]),
+                lcb=str(metric_def_data["lcb"]),
+                pair_score=str(metric_def_data["pair_score"]),
+                joint_context_note=str(metric_def_data["joint_context_note"]),
+            ),
+            artifacts=SelectionManifestArtifacts(
+                model_assembly=str(artifacts_data["model_assembly"]),
+                high_level_model_change=str(
+                    artifacts_data["high_level_model_change"]
+                ),
+            ),
+            slots=list(data["slots"]),
+        )
+
+
+SelectionManifest = TwoDimensionalSelectionManifest
+
+
 @dataclass
 class SelectionArtifacts:
     """In-memory result returned through the module's selection interface."""
@@ -99,7 +319,7 @@ class SelectionArtifacts:
     joint_metrics: pl.DataFrame
     candidate_rankings: pl.DataFrame
     selected_slots: pl.DataFrame
-    manifest: dict[str, Any]
+    manifest: TwoDimensionalSelectionManifest
 
     def write(self, output_dir: Path) -> dict[str, Path]:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -116,7 +336,12 @@ class SelectionArtifacts:
         self.candidate_rankings.write_csv(paths["candidate_rankings"])
         self.selected_slots.write_csv(paths["selected_slots"])
         with paths["manifest"].open("w", encoding="utf-8") as file:
-            json.dump(_json_safe(self.manifest), file, ensure_ascii=False, indent=2)
+            json.dump(
+                _json_safe(self.manifest.to_dict()),
+                file,
+                ensure_ascii=False,
+                indent=2,
+            )
         return paths
 
 
@@ -388,7 +613,7 @@ class TwoDimensionalAgentSelector:
 
     def _keep_complete_candidates(
         self, rows: pl.DataFrame
-    ) -> tuple[pl.DataFrame, dict[str, Any]]:
+    ) -> tuple[pl.DataFrame, CandidateCoverage]:
         initial_actions = sorted(
             int(value) for value in rows["initial_action"].unique().to_list()
         )
@@ -418,16 +643,16 @@ class TwoDimensionalAgentSelector:
             raise ValueError("no candidate has complete two-dimensional label coverage")
         filtered = rows.filter(pl.col("candidate_id").is_in(complete_set))
         discovered_count = rows["candidate_id"].n_unique()
-        coverage = {
-            "discovered_candidate_count": discovered_count,
-            "complete_candidate_count": len(ordered_complete),
-            "excluded_incomplete_candidate_count": discovered_count - len(ordered_complete),
-            "initial_actions": initial_actions,
-        }
+        coverage = CandidateCoverage(
+            discovered_candidate_count=discovered_count,
+            complete_candidate_count=len(ordered_complete),
+            excluded_incomplete_candidate_count=discovered_count - len(ordered_complete),
+            initial_actions=initial_actions,
+        )
         print(
-            f"      Candidate coverage: {coverage['complete_candidate_count']} complete candidates kept "
-            f"({coverage['discovered_candidate_count']} discovered, "
-            f"{coverage['excluded_incomplete_candidate_count']} incomplete excluded).",
+            f"      Candidate coverage: {coverage.complete_candidate_count} complete candidates kept "
+            f"({coverage.discovered_candidate_count} discovered, "
+            f"{coverage.excluded_incomplete_candidate_count} incomplete excluded).",
             flush=True,
         )
         return filtered, coverage
@@ -1298,56 +1523,39 @@ class TwoDimensionalAgentSelector:
         candidate_root: Path,
         valid_root: Path,
         result_files: dict[int, dict[str, Path]],
-        coverage: dict[str, Any],
+        coverage: CandidateCoverage,
         slots: pl.DataFrame,
-    ) -> dict[str, Any]:
-        return {
-            "schema_version": 1,
-            "selection_method": "two_dimensional_marginal_and_dual_context_lcb",
-            "candidate_root": str(candidate_root),
-            "valid_root": str(valid_root),
-            "axes": {
-                "volatility": self.labels,
-                "slope": self.labels,
-            },
-            "slot_count": self.config.num_labels**2,
-            "slot_index_formula": "volatility_index * num_labels + slope_index",
-            "null_policy": {
-                "logical_kind": "empty_model",
-                "intended_runtime_behavior": "flat_position",
-                "model_assembly_status": "not_built_by_this_script",
-            },
-            "candidate_scope": {
-                "common_epochs": sorted(result_files),
-                **coverage,
-            },
-            "selection_config": asdict(self.config),
-            "metric_definition": {
-                "return": (
-                    "sum(reward) / transition_count within contract and "
-                    "initial position; transition_count = df_length - 1"
-                ),
-                "aggregation": (
-                    "initial-position mean within each contract, then "
-                    f"{self.config.contract_weighting} mean across contracts"
-                ),
-                "lcb": "mean_return - lcb_z * contract_standard_error",
-                "pair_score": (
-                    "minimum LCB across volatility-run and slope-run joint subsets "
-                    "when joint data exists; slope marginal LCB when no joint data exists"
-                ),
-                "joint_context_note": (
-                    "Joint rewards are filtered by timestamp from both existing "
-                    "trading trajectories. They are kept separate because slice "
-                    "reset points can differ."
-                ),
-            },
-            "artifacts": {
-                "model_assembly": "not_performed",
-                "high_level_model_change": "not_performed",
-            },
-            "slots": slots.to_dicts(),
-        }
+    ) -> TwoDimensionalSelectionManifest:
+        return TwoDimensionalSelectionManifest(
+            schema_version=1,
+            selection_method="two_dimensional_marginal_and_dual_context_lcb",
+            candidate_root=str(candidate_root),
+            valid_root=str(valid_root),
+            axes=SelectionAxes(
+                volatility=list(self.labels),
+                slope=list(self.labels),
+            ),
+            slot_count=self.config.num_labels**2,
+            slot_index_formula="volatility_index * num_labels + slope_index",
+            null_policy=SelectionNullPolicy(
+                logical_kind="empty_model",
+                intended_runtime_behavior="flat_position",
+                model_assembly_status="not_built_by_this_script",
+            ),
+            candidate_scope=CandidateScope.from_coverage(
+                common_epochs=sorted(result_files),
+                coverage=coverage,
+            ),
+            selection_config=self.config,
+            metric_definition=SelectionMetricDefinition.default_for(
+                contract_weighting=self.config.contract_weighting,
+            ),
+            artifacts=SelectionManifestArtifacts(
+                model_assembly="not_performed",
+                high_level_model_change="not_performed",
+            ),
+            slots=slots.to_dicts(),
+        )
 
     def _validate_label(self, label: str, source: Path) -> None:
         match = LABEL_PATTERN.fullmatch(label)
@@ -1665,18 +1873,16 @@ def main() -> None:
         time_info_dim=args.time_info_dim,
         trading_info_dim=args.trading_info_dim,
     )
-    artifacts.manifest["null_policy"]["model_assembly_status"] = (
+    artifacts.manifest.null_policy.model_assembly_status = (
         "built_as_flat_qnet"
     )
-    artifacts.manifest["artifacts"]["model_assembly"] = str(model_output_path)
+    artifacts.manifest.artifacts.model_assembly = str(model_output_path)
     print(f"Writing selection artifacts -> {output_dir}...", flush=True)
     paths = artifacts.write(output_dir)
     paths["model"] = model_output_path
     model_slots = int((artifacts.selected_slots["kind"] == "model").sum())
     null_slots = int((artifacts.selected_slots["kind"] == "empty_model").sum())
-    complete_count = artifacts.manifest["candidate_scope"][
-        "complete_candidate_count"
-    ]
+    complete_count = artifacts.manifest.candidate_scope.complete_candidate_count
     elapsed = time.time() - start_time
     print("=" * 60, flush=True)
     print(f"Selection completed in {elapsed:.1f}s ({elapsed/60:.2f} min)", flush=True)

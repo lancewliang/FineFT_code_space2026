@@ -8,8 +8,10 @@ import torch
 from analysis.pick_agent.FineFT_two_dimensional_agent_selector import (
     SelectionConfig,
     TwoDimensionalAgentSelector,
+    TwoDimensionalSelectionManifest,
     assemble_and_save_ensemble,
 )
+from RL.DiHFT.high_level import vae_routing_util as vru
 from model.low_level import ensemble_Qnet
 
 
@@ -861,3 +863,96 @@ def test_cross_data_vs_slope_marginal_selection(tmp_path: Path) -> None:
     assert slot_01["selection_reason"] == "fallback_from_slope_marginal"
     assert pytest.approx(slot_01["pair_score"], abs=1e-5) == 8.0
 
+
+
+def test_manifest_is_structured_object_and_roundtrips(tmp_path: Path) -> None:
+    candidate_root = tmp_path / "candidate"
+    valid_root = tmp_path / "valid"
+    epoch_path = candidate_root / "epoch_1"
+    (epoch_path / "trained_model.pkl").parent.mkdir(parents=True)
+    (epoch_path / "trained_model.pkl").write_bytes(b"checkpoint")
+
+    analysis_row = {
+        "标签": "label_0",
+        "初始动作": 0,
+        "分箱索引": 0,
+        "合约": json.dumps(["fu0001"]),
+        "数据文件": json.dumps(["fu0001/label_0/df_0.feather"]),
+        "奖励总和": json.dumps([2.5]),
+        "数据长度": json.dumps([2]),
+        "换手率": json.dumps([0.0]),
+    }
+    detail_row = {
+        "标签": "label_0",
+        "数据文件": "fu0001/label_0/df_0.feather",
+        "初始动作": 0,
+        "分箱索引": 0,
+        "时间戳": "2026-01-01 09:00:00",
+        "单步奖励": 2.5,
+    }
+    for label_type in ("volatility", "slope"):
+        result_path = epoch_path / label_type
+        result_path.mkdir(parents=True)
+        pl.DataFrame([analysis_row]).write_csv(result_path / "analysis_result.csv")
+        pl.DataFrame([detail_row]).write_csv(
+            result_path / "trading_action_detail_epoch_1.csv"
+        )
+        label_path = valid_root / label_type / "fu0001" / "label_0"
+        label_path.mkdir(parents=True)
+        pl.DataFrame(
+            {"timestamp": ["2026-01-01 09:00:00", "2026-01-01 09:30:00"]}
+        ).write_ipc(label_path / "df_0.feather")
+
+    artifacts = TwoDimensionalAgentSelector(
+        SelectionConfig(
+            num_labels=1,
+            min_marginal_contracts=1,
+            min_joint_contracts=1,
+        )
+    ).select(candidate_root, valid_root)
+
+    manifest = artifacts.manifest
+    assert isinstance(manifest, TwoDimensionalSelectionManifest)
+    assert manifest.schema_version == 1
+    assert manifest.selection_method == "two_dimensional_marginal_and_dual_context_lcb"
+    assert manifest.candidate_root == str(candidate_root)
+    assert manifest.valid_root == str(valid_root)
+    assert manifest.axes.volatility == ["label_0"]
+    assert manifest.axes.slope == ["label_0"]
+    assert manifest.slot_count == 1
+    assert manifest.slot_index_formula == "volatility_index * num_labels + slope_index"
+    assert manifest.null_policy.logical_kind == "empty_model"
+    assert manifest.null_policy.model_assembly_status == "not_built_by_this_script"
+    assert manifest.candidate_scope.common_epochs == [1]
+    assert manifest.candidate_scope.complete_candidate_count == 1
+    assert manifest.candidate_scope.discovered_candidate_count == 1
+    assert manifest.artifacts.model_assembly == "not_performed"
+    assert manifest.metric_definition.return_formula.startswith("sum(reward)")
+    assert len(manifest.slots) == 1
+
+    # Test roundtrip from_dict and to_dict
+    payload = manifest.to_dict()
+    assert payload["schema_version"] == 1
+    assert payload["axes"] == {"volatility": ["label_0"], "slope": ["label_0"]}
+    assert payload["metric_definition"]["return"].startswith("sum(reward)")
+
+    reconstructed = TwoDimensionalSelectionManifest.from_dict(payload)
+    assert reconstructed.schema_version == manifest.schema_version
+    assert reconstructed.axes.volatility == manifest.axes.volatility
+    assert reconstructed.null_policy.logical_kind == manifest.null_policy.logical_kind
+    assert (
+        reconstructed.candidate_scope.complete_candidate_count
+        == manifest.candidate_scope.complete_candidate_count
+    )
+    assert reconstructed.to_dict() == payload
+
+    # Test artifacts.write and validation with vru.load_two_dimensional_selection_manifest
+    output_dir = tmp_path / "manifest_out"
+    written_paths = artifacts.write(output_dir)
+    loaded_manifest = vru.load_two_dimensional_selection_manifest(
+        written_paths["manifest"]
+    )
+    assert isinstance(loaded_manifest, TwoDimensionalSelectionManifest)
+    assert loaded_manifest.schema_version == 1
+    assert loaded_manifest.slot_count == 1
+    assert len(loaded_manifest.slots) == 1
