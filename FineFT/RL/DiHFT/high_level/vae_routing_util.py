@@ -33,6 +33,11 @@ from RL.DiHFT.VAE.vae import MLP_VAE, analyze_single_sample
 from analysis.pick_agent.FineFT_two_dimensional_agent_selector import (
     TwoDimensionalSelectionManifest,
 )
+from common import (
+    ArtifactNames,
+    HistoryArtifactNames,
+    MetricColumns,
+)
 from model.low_level import ensemble_Qnet
 from model.high_level import RankBasedQNetwork
 from RL.util.update import disable_gradients, get_rank
@@ -867,33 +872,33 @@ class vae_risk_aware_routing:
 
         if not os.path.exists(save_path):
             os.makedirs(save_path, exist_ok=True)
-        np.save(os.path.join(save_path, "reward_history.npy"), reward_history)
+        np.save(os.path.join(save_path, HistoryArtifactNames.REWARD_HISTORY_NPY), reward_history)
         np.save(
-            os.path.join(save_path, "total_asset_history.npy"), total_asset_history
+            os.path.join(save_path, HistoryArtifactNames.TOTAL_ASSET_HISTORY_NPY), total_asset_history
         )
         np.save(
-            os.path.join(save_path, "micro_action_history.npy"),
+            os.path.join(save_path, HistoryArtifactNames.MICRO_ACTION_HISTORY_NPY),
             micro_action_history,
         )
-        np.save(os.path.join(save_path, "trading_info.npy"), trading_info)
+        np.save(os.path.join(save_path, ArtifactNames.TRADING_INFO_NPY), trading_info)
         np.save(
-            os.path.join(save_path, "initial_margin_history.npy"),
+            os.path.join(save_path, HistoryArtifactNames.INITIAL_MARGIN_HISTORY_NPY),
             env.initial_margin_history,
         )
         np.save(
-            os.path.join(save_path, "wallet_balance_history.npy"),
+            os.path.join(save_path, HistoryArtifactNames.WALLET_BALANCE_HISTORY_NPY),
             env.wallet_balance_history,
         )
         np.save(
-            os.path.join(save_path, "unrealized_pnl_history.npy"),
+            os.path.join(save_path, HistoryArtifactNames.UNREALIZED_PNL_HISTORY_NPY),
             env.unrealized_pnl_history,
         )
         np.save(
-            os.path.join(save_path, "maintain_marigine_history.npy"),
+            os.path.join(save_path, HistoryArtifactNames.MAINTAIN_MARGIN_HISTORY_NPY),
             env.maintain_marigine_history,
         )
         np.save(
-            os.path.join(save_path, "new_position_required_money_history.npy"),
+            os.path.join(save_path, HistoryArtifactNames.NEW_POSITION_REQUIRED_MONEY_HISTORY_NPY),
             env.new_position_required_money_history,
         )
         np.save(
@@ -901,7 +906,7 @@ class vae_risk_aware_routing:
             self.macro_action_history,
         )
         np.save(
-            os.path.join(save_path, "macro_action_history.npy"),
+            os.path.join(save_path, HistoryArtifactNames.MACRO_ACTION_HISTORY_NPY),
             self.macro_action_history,
         )
         require_money = calculate_required_money(
@@ -998,7 +1003,7 @@ class vae_risk_aware_routing:
                 "return_rate",
             ]
         ]
-        csv_path = os.path.join(self.test_path, "contract_results.csv")
+        csv_path = os.path.join(self.test_path, ArtifactNames.CONTRACT_RESULTS_CSV)
         result_df.to_csv(csv_path, index=False)
         logger.info("[Artifacts] Saved contract results summary to %s", csv_path)
 
@@ -1016,7 +1021,7 @@ class vae_risk_aware_routing:
             "aggregation": "option2_portfolio_return_times_win_rate",
             "contract_count": len(contract_results),
         }
-        trading_info_path = os.path.join(self.test_path, "trading_info.npy")
+        trading_info_path = os.path.join(self.test_path, ArtifactNames.TRADING_INFO_NPY)
         np.save(trading_info_path, trading_info)
         logger.info("[Artifacts] Saved aggregated trading info to %s", trading_info_path)
 

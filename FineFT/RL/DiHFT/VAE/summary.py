@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from common import ArtifactNames, get_ood_logpx_filename
 
 try:
     from .merge_vae_train import label_name_from_index, vae_data_dir
@@ -113,7 +114,7 @@ def write_contract_logpx_outputs(
     train_summary = None
     if train_baseline is not None:
         train_logpx = np.asarray(train_baseline.logpx, dtype=float).reshape(-1)
-        np.save(os.path.join(save_path, "id_logpx.npy"), train_logpx)
+        np.save(os.path.join(save_path, ArtifactNames.ID_LOGPX_NPY), train_logpx)
         train_summary = ContractLogpxSummary(
             source_file=train_baseline.source_file,
             summary=LogpxSummary(
@@ -134,12 +135,12 @@ def write_contract_logpx_outputs(
             if result.input_samples is not None
             else flat_logpx.size
         )
-        np.save(os.path.join(save_path, f"ood_logpx_{contract}.npy"), logpx)
+        np.save(os.path.join(save_path, get_ood_logpx_filename(contract, "npy")), logpx)
         rows = _logpx_rows(contract, source_file, logpx)
         pd.DataFrame(
             rows, columns=["contract", "source_file", "row_index", "logpx"]
         ).to_csv(
-            os.path.join(save_path, f"ood_logpx_{contract}.csv"),
+            os.path.join(save_path, get_ood_logpx_filename(contract, "csv")),
             index=False,
         )
         all_logpx.append(logpx)
@@ -154,10 +155,10 @@ def write_contract_logpx_outputs(
             summary=_logpx_summary(input_samples, flat_logpx, acceptance),
         )
     combined = np.concatenate(all_logpx, axis=0)
-    np.save(os.path.join(save_path, "ood_logpx_all.npy"), combined)
+    np.save(os.path.join(save_path, ArtifactNames.OOD_LOGPX_ALL_NPY), combined)
     pd.DataFrame(
         all_rows, columns=["contract", "source_file", "row_index", "logpx"]
-    ).to_csv(os.path.join(save_path, "ood_logpx_all.csv"), index=False)
+    ).to_csv(os.path.join(save_path, ArtifactNames.OOD_LOGPX_ALL_CSV), index=False)
     total_input_samples = sum(
         int(
             item.input_samples
@@ -180,7 +181,7 @@ def write_contract_logpx_outputs(
         test=LabelTestSummary(contracts=contract_summary, all=all_summary),
         train_baseline=train_summary,
     )
-    with open(os.path.join(save_path, "summary.json"), "w", encoding="utf-8") as file:
+    with open(os.path.join(save_path, ArtifactNames.SUMMARY_JSON), "w", encoding="utf-8") as file:
         json.dump(summary.to_dict(), file, ensure_ascii=False, indent=2)
     return summary
 
@@ -231,7 +232,7 @@ def write_routing_summary(
         contract_values = {
             path.stem.replace("ood_logpx_", ""): np.load(path).reshape(-1)
             for path in files
-            if path.name != "ood_logpx_all.npy"
+            if path.name != ArtifactNames.OOD_LOGPX_ALL_NPY
         }
         by_label[label] = contract_values
         names = set(contract_values)
@@ -266,7 +267,7 @@ def write_routing_summary(
         contracts=contract_summaries,
         all=_winner_summary(combined, labels, low_margin_threshold),
     )
-    with open(result_root / "routing_summary.json", "w", encoding="utf-8") as file:
+    with open(result_root / ArtifactNames.ROUTING_SUMMARY_JSON, "w", encoding="utf-8") as file:
         json.dump(summary.to_dict(), file, ensure_ascii=False, indent=2)
     return summary
 
@@ -281,7 +282,7 @@ def maybe_write_routing_summary_after_analysis(args):
     result_root = os.path.join(args.base_model_path, "vae_results", args.dataset_name, args.experiment_name)
     for label in labels:
         for contract in contracts:
-            logpx_path = os.path.join(result_root, label, f"ood_logpx_{contract}.npy")
+            logpx_path = os.path.join(result_root, label, get_ood_logpx_filename(contract, "npy"))
             if not os.path.exists(logpx_path):
                 return None
     return write_routing_summary(

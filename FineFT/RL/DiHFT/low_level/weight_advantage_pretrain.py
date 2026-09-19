@@ -13,6 +13,7 @@ import numpy as np
 import torch
 from torch import nn
 from torch.utils.tensorboard import SummaryWriter
+from common import ArtifactNames
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -54,10 +55,10 @@ def build_training_data_paths(base_path: str, dataset_name: str) -> dict[str, st
     train_data_path = train_slice_root if os.path.isdir(train_slice_root) else train_root
     return {
         "train_data_path": train_data_path,
-        "state_features_path": os.path.join(dataset_root, "state_features.npy"),
+        "state_features_path": os.path.join(dataset_root, ArtifactNames.STATE_FEATURES_NPY),
         "maintenance_margin_ratio_path": os.path.join(
             dataset_root,
-            "maintenance_margin_ratio_dict.npy",
+            ArtifactNames.MAINTENANCE_MARGIN_RATIO_DICT_NPY,
         ),
     }
 
@@ -1651,7 +1652,7 @@ class Weighted_Contexts_DQN:
                     os.makedirs(epoch_path)
                 torch.save(
                     self.eval_net.state_dict(),
-                    os.path.join(epoch_path, "trained_model.pkl"),
+                    os.path.join(epoch_path, ArtifactNames.TRAINED_MODEL_PKL),
                 )
                 log_diverse_rollout_latest_metrics(
                     epoch_index,

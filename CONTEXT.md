@@ -405,6 +405,26 @@ _Avoid_: 熔断器、强平保护
 
 ### Evaluation And Diagnostics
 
+**Pipeline Artifact (管道产出物)**:
+跨训练、测试、筛选与分析环节在磁盘上生成的标准化契约文件，包括模型权重、数据清单、指标汇总与超参配置。
+_Avoid_: 中间文件、临时产出、结果文件
+
+**History Vector (回测时序轨迹向量)**:
+测试与高层路由仿真过程中，按环境 Step 保存的单维度 NumPy 数值向量，包括收益、总资产、钱包余额、持仓保证金与动作时序。
+_Avoid_: 回测向量、时序数组、历史记录
+
+**Selection Manifest (选拔清单)**:
+低层 Agent 筛选后输出的标准化元数据 JSON，记录各动态 Label 最优 Agent 的 Epoch、模型路径、分桶与选拔指标。
+_Avoid_: 筛选结果、选择清单、model manifest
+
+**Metric Column (评估指标字段)**:
+在分析与评估汇总表格中用于量化策略绩效维度的标准化 DataFrame 列名，包含收益率、组合收益、最大回撤、夏普比率、卡玛比率与所需资金等。
+_Avoid_: 评测指标、表现字段、统计列
+
+**Trade Detail Column (交易明细字段)**:
+在逐步交易明细与动作跟踪表格中记录 Agent 行动与账户变化的标准化 DataFrame 列名，包含仓位、单步已实现盈亏、换手率与涨跌停状态等。
+_Avoid_: 逐步字段、交易列、明细列
+
 **Aggregate CSV**:
 低层测试后按 label-action-bin 聚合的验证结果 CSV，包含跨合约的 reward/turnover 统计。
 _Avoid_: 聚合结果、汇总 CSV

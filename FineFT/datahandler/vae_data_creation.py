@@ -2,6 +2,14 @@ import pandas as pd
 import numpy as np
 import os
 import argparse
+import sys
+from pathlib import Path
+
+FINEFT_ROOT = Path(__file__).resolve().parents[1]
+if str(FINEFT_ROOT) not in sys.path:
+    sys.path.insert(0, str(FINEFT_ROOT))
+
+from common import ArtifactNames, get_vae_test_filename
 
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
@@ -95,7 +103,7 @@ def make_data(args):
     else:
         valid_path = method_path
     state_name_path = os.path.join(
-        args.base_path, args.dataset_name, "state_features.npy"
+        args.base_path, args.dataset_name, ArtifactNames.STATE_FEATURES_NPY
     )
     state_features = np.load(state_name_path)
     vae_data_root = os.path.join(args.save_path, args.dataset_name, "VAE_data")
@@ -144,7 +152,7 @@ def make_data(args):
             if contract.startswith("df_"):
                 contract = contract[3:]
             np.save(
-                os.path.join(test_save_path, f"test_{contract}.npy"),
+                os.path.join(test_save_path, get_vae_test_filename(contract)),
                 df[state_features].values,
             )
 

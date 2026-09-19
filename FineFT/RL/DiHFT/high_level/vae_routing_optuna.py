@@ -15,6 +15,7 @@ import optuna  # noqa: E402
 import torch  # noqa: E402
 
 sys.path.append(".")
+from common import ArtifactNames
 from RL.DiHFT.high_level.vae_routing_util import (  # noqa: E402
     load_two_dimensional_selection_manifest,
     vae_risk_aware_routing,
@@ -118,7 +119,7 @@ def default_selection_manifest_path(args):
         args.dataset_name,
         args.experiment_name,
         "two_dimensional_selection",
-        "two_dimensional_selection_manifest.json",
+        ArtifactNames.TWO_DIMENSIONAL_SELECTION_MANIFEST_JSON,
     )
 
 
@@ -315,7 +316,7 @@ def tune(args_1, args_2):
     optunal_path = optuna_result_path(base_args)
     if not os.path.exists(optunal_path):
         os.makedirs(optunal_path)
-    df.to_csv(os.path.join(optunal_path, "optuna_results.csv"))
+    df.to_csv(os.path.join(optunal_path, ArtifactNames.OPTUNA_RESULTS_CSV))
 
 
 if __name__ == "__main__":

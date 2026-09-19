@@ -16,6 +16,7 @@ from process import (
     analyze_contract_tests,
     prepare_contract_dataset_loader_list,
 )
+from common import ArtifactNames, get_vae_label_filename
 from RL.DiHFT.VAE.manifests import (
     LabelTrainingManifest,
     TestContractSource,
@@ -212,7 +213,7 @@ class Piplineruner:
                 vae_data_dir(self.args.data_base_path, self.args.dataset_name)
                 / "train"
                 / labeling_method
-                / f"{label_name}.npy"
+                / get_vae_label_filename(label_name)
             )
             if not train_path.exists():
                 raise FileNotFoundError(f"missing materialized training data: {train_path}")
@@ -276,7 +277,7 @@ class Piplineruner:
     def analyze_contracts(self):
         model_path = os.path.join(
             self.single_label_save_path,
-            "model_latest.pth",
+            ArtifactNames.MODEL_LATEST_PTH,
         )
         self.model.load_state_dict(torch.load(model_path))
         train_dataset = One_Dim_Dataset(self.train_manifest.merged_path)

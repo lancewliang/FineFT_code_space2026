@@ -18,9 +18,16 @@ import argparse
 import json
 import shutil
 import uuid
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+FINEFT_ROOT = Path(__file__).resolve().parents[1]
+if str(FINEFT_ROOT) not in sys.path:
+    sys.path.insert(0, str(FINEFT_ROOT))
+
+from common import ArtifactNames, get_df_chunk_filename, get_valid_processed_filename
 
 import numpy as np
 import pandas as pd
@@ -406,7 +413,7 @@ def _build_contract_outputs(
         if end <= start:
             return
         label_name = f"label_{label}"
-        stage_path = contract_root / label_name / f"df_{counters[label]}.feather"
+        stage_path = contract_root / label_name / get_df_chunk_filename(counters[label])
         stage_path.parent.mkdir(parents=True, exist_ok=True)
         fit.prepared.iloc[start:end].reset_index(drop=True).to_feather(stage_path)
         final_path = output_root / fit.contract / label_name / stage_path.name
@@ -450,7 +457,7 @@ def _backup_published_outputs(
                 child.unlink()
             continue
         # 移动旧清单或旧切片文件夹到备份目录
-        if child.name == "slice_manifest.json" or child.is_dir():
+        if child.name == ArtifactNames.SLICE_MANIFEST_JSON or child.is_dir():
             shutil.move(str(child), str(backup_root / child.name))
 
 
@@ -518,7 +525,7 @@ def build_valid_dataset(
     output_root_existed = output_root.exists()
     output_root.mkdir(exist_ok=True)
     stage_root = output_root / f".valid-cross-contract-staging-{uuid.uuid4().hex}"
-    manifest_path = output_root / "slice_manifest.json"
+    manifest_path = output_root / ArtifactNames.SLICE_MANIFEST_JSON
     fits: list[_ContractFit] = []
     skipped: dict[str, SkippedContractManifest] = {}
     try:
@@ -535,7 +542,7 @@ def build_valid_dataset(
                 tic=tic,
             )
             processed_path = (
-                stage_root / "processed" / f"valid_processed_{contract}.feather"
+                stage_root / "processed" / get_valid_processed_filename(contract)
             )
             # 若数据长度小于等于滤波填充长度，无法稳定分割，记录为跳过合约
             if len(prepared) <= filter_padlen:

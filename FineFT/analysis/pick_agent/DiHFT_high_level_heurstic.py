@@ -1,6 +1,7 @@
 import pandas as pd
 import argparse
 import os
+import re
 import torch
 import shutil
 import matplotlib.pyplot as plt
@@ -18,6 +19,12 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 from analysis.calculate_metric.calculate_metric import (
     calculate_metric,
     calculate_required_money,
+)
+from common import (
+    ArtifactNames,
+    HistoryArtifactNames,
+    MetricColumns,
+    get_heuristic_plot_filename,
 )
 
 parser = argparse.ArgumentParser()
@@ -54,18 +61,86 @@ parser.add_argument(
     default=0,
     help="the number of initial_position",
 )
+parser.add_argument(
+    "--result_path",
+    type=str,
+    default="result/DiHFT/high_level",
+    help="base path of high_level results",
+)
+parser.add_argument(
+    "--optuna_csv",
+    type=str,
+    default=None,
+    help="path to optuna_results.csv",
+)
+parser.add_argument(
+    "--selection_metric",
+    type=str,
+    default="tr",
+    choices=["tr", "portfolio_tr", "annual_sr", "daily_cr", "daily_SoR"],
+    help="metric used to pick the best agent",
+)
 
 
 class Picker:
     def __init__(self, args) -> None:
-        self.base_path = getattr(args, "base_path", "dataset/30min")
+        self.base_path = args.base_path
         self.dataset_name = args.dataset_name
-        self.experiment_name = getattr(args, "experiment_name", "default")
+        self.experiment_name = args.experiment_name
         self.save_path = os.path.join(args.save_path, args.dataset_name, self.experiment_name)
         if not os.path.exists(self.save_path):
             os.makedirs(self.save_path, exist_ok=True)
 
         self.early_stop = args.early_stop
+        self.result_path = args.result_path
+        self.optuna_csv = args.optuna_csv
+        self.selection_metric = args.selection_metric
+        self.optuna_param_lookup = self._load_optuna_parameters()
+
+    def _find_optuna_csv(self) -> str | None:
+        if self.optuna_csv and os.path.exists(self.optuna_csv):
+            return self.optuna_csv
+        default_csv = os.path.join(
+            self.result_path,
+            self.dataset_name,
+            self.experiment_name,
+            "vae_risk_aware_routing_optuna",
+            ArtifactNames.OPTUNA_RESULTS_CSV,
+        )
+        if os.path.exists(default_csv):
+            return default_csv
+        return None
+
+    def _load_optuna_parameters(self) -> dict[int, dict[str, float | int]]:
+        csv_path = self._find_optuna_csv()
+        if not csv_path:
+            return {}
+        df = pd.read_csv(csv_path)
+        lookup = {}
+        for _, row in df.iterrows():
+            trial_id = int(row["number"])
+            if "params_slope_window_length" in df.columns:
+                lookup[trial_id] = {
+                    "slope_window_length": int(row["params_slope_window_length"]),
+                    "volatility_window_length": int(row["params_volatility_window_length"]),
+                    "slope_gamma": float(row["params_slope_gamma"]),
+                    "volatility_gamma": float(row["params_volatility_gamma"]),
+                    "slope_rule_base_threshold": float(row["params_slope_rule_base_threshold"]),
+                    "volatility_rule_base_threshold": float(row["params_volatility_rule_base_threshold"]),
+                }
+            elif "params_window_length" in df.columns:
+                w = int(row["params_window_length"])
+                g = float(row["params_gamma"])
+                t = float(row["params_rule_base_threshold"])
+                lookup[trial_id] = {
+                    "slope_window_length": w,
+                    "volatility_window_length": w,
+                    "slope_gamma": g,
+                    "volatility_gamma": g,
+                    "slope_rule_base_threshold": t,
+                    "volatility_rule_base_threshold": t,
+                }
+        return lookup
 
     def _get_contract_dirs(self, epoch_path):
         contracts_dir = os.path.join(epoch_path, "contracts")
@@ -88,26 +163,26 @@ class Picker:
 
         for data_dir in contract_dirs:
             initial_margin_history = np.load(
-                os.path.join(data_dir, "initial_margin_history.npy")
+                os.path.join(data_dir, HistoryArtifactNames.INITIAL_MARGIN_HISTORY_NPY)
             )
             maintain_marigine_history = np.load(
-                os.path.join(data_dir, "maintain_marigine_history.npy")
+                os.path.join(data_dir, HistoryArtifactNames.MAINTAIN_MARGIN_HISTORY_NPY)
             )
             new_position_required_money_history = np.load(
-                os.path.join(data_dir, "new_position_required_money_history.npy")
+                os.path.join(data_dir, HistoryArtifactNames.NEW_POSITION_REQUIRED_MONEY_HISTORY_NPY)
             )
             micro_action_history = np.load(
-                os.path.join(data_dir, "micro_action_history.npy")
+                os.path.join(data_dir, HistoryArtifactNames.MICRO_ACTION_HISTORY_NPY)
             )
-            reward_history = np.load(os.path.join(data_dir, "reward_history.npy"))
+            reward_history = np.load(os.path.join(data_dir, HistoryArtifactNames.REWARD_HISTORY_NPY))
             total_asset_history = np.load(
-                os.path.join(data_dir, "total_asset_history.npy")
+                os.path.join(data_dir, HistoryArtifactNames.TOTAL_ASSET_HISTORY_NPY)
             )
             unrealized_pnl_history = np.load(
-                os.path.join(data_dir, "unrealized_pnl_history.npy")
+                os.path.join(data_dir, HistoryArtifactNames.UNREALIZED_PNL_HISTORY_NPY)
             )
             wallet_balance_history = np.load(
-                os.path.join(data_dir, "wallet_balance_history.npy")
+                os.path.join(data_dir, HistoryArtifactNames.WALLET_BALANCE_HISTORY_NPY)
             )
             requred_money = calculate_required_money(
                 initial_margin_history,
@@ -163,8 +238,10 @@ class Picker:
     def analysis_all_epoch(self):
         result_list = []
         model_root_path = os.path.join(
-            "result/DiHFT/high_level", self.dataset_name, self.experiment_name, "vae_risk_aware_routing"
-        )        
+            self.result_path, self.dataset_name, self.experiment_name, "vae_risk_aware_routing"
+        )
+        if not os.path.exists(model_root_path):
+            raise FileNotFoundError(f"Model root path not found: {model_root_path}")
         parameter_list = os.listdir(model_root_path)
         for parameter in parameter_list:
             epoch_path = os.path.join(model_root_path, parameter)
@@ -173,45 +250,138 @@ class Picker:
             if not os.listdir(epoch_path):
                 continue
             result = self.analysis_single_epoch(epoch_path)
+
+            trial_match = re.search(r"trial_(\d+)", parameter)
+            trial_id = int(trial_match.group(1)) if trial_match else None
+            result["trial_id"] = trial_id
+
+            if trial_id is not None and trial_id in self.optuna_param_lookup:
+                result.update(self.optuna_param_lookup[trial_id])
+            else:
+                ws_m = re.search(r"ws_(\d+)", parameter)
+                wv_m = re.search(r"wv_(\d+)", parameter)
+                gs_m = re.search(r"gs_([0-9.]+)", parameter)
+                gv_m = re.search(r"gv_([0-9.]+)", parameter)
+                ts_m = re.search(r"ts_([0-9.]+)", parameter)
+                tv_m = re.search(r"tv_([0-9.]+)", parameter)
+                gamma_m = re.search(r"gamma_([0-9.]+)", parameter)
+                window_m = re.search(r"window_([0-9]+)", parameter)
+                thresh_m = re.search(r"threshold_([0-9.]+)", parameter)
+
+                result["slope_window_length"] = (
+                    int(ws_m.group(1)) if ws_m else (int(window_m.group(1)) if window_m else None)
+                )
+                result["volatility_window_length"] = (
+                    int(wv_m.group(1)) if wv_m else (int(window_m.group(1)) if window_m else None)
+                )
+                result["slope_gamma"] = (
+                    float(gs_m.group(1)) if gs_m else (float(gamma_m.group(1)) if gamma_m else None)
+                )
+                result["volatility_gamma"] = (
+                    float(gv_m.group(1)) if gv_m else (float(gamma_m.group(1)) if gamma_m else None)
+                )
+                result["slope_rule_base_threshold"] = (
+                    float(ts_m.group(1)) if ts_m else (float(thresh_m.group(1)) if thresh_m else None)
+                )
+                result["volatility_rule_base_threshold"] = (
+                    float(tv_m.group(1)) if tv_m else (float(thresh_m.group(1)) if thresh_m else None)
+                )
+
             result_list.append(result)
         result_df = pd.DataFrame(result_list)
         self.result_df = result_df
-        result_df.to_csv(os.path.join(self.save_path, "result.csv"), index=False)
+        result_df.to_csv(os.path.join(self.save_path, ArtifactNames.RESULT_CSV), index=False)
 
     def analysis_best_epoch(self):
         best_results = []
-        df_clean = self.result_df.dropna(subset=["tr"])
+        subset_metric = [self.selection_metric] if self.selection_metric in self.result_df.columns else ["tr"]
+        df_clean = self.result_df.dropna(subset=subset_metric)
         if df_clean.empty:
             df_clean = self.result_df.fillna(0.0)
-        for indicator in ["tr", "annual_sr", "daily_cr", "daily_SoR"]:
-            idx_series = df_clean[indicator].dropna()
-            best_idx = idx_series.idxmax() if not idx_series.empty else df_clean.index[0]
-            max_row = df_clean.loc[[best_idx]].copy()
-            max_row["indicator"] = indicator
-            best_results.append(max_row)
+
+        max_candidates = ["tr", "portfolio_tr", "annual_sr", "daily_cr", "daily_SoR"]
+        if self.selection_metric in max_candidates:
+            max_indicators = [self.selection_metric] + [
+                m for m in max_candidates if m != self.selection_metric
+            ]
+        else:
+            max_indicators = max_candidates
+
+        for indicator in max_indicators:
+            if indicator in df_clean.columns:
+                idx_series = df_clean[indicator].dropna()
+                best_idx = idx_series.idxmax() if not idx_series.empty else df_clean.index[0]
+                max_row = df_clean.loc[[best_idx]].copy()
+                max_row["indicator"] = indicator
+                best_results.append(max_row)
         for indicator in ["daily_vol", "mdd", "downside_deviation_daily"]:
-            idx_series = df_clean[indicator].dropna()
-            best_idx = idx_series.idxmin() if not idx_series.empty else df_clean.index[0]
-            min_row = df_clean.loc[[best_idx]].copy()
-            min_row["indicator"] = indicator
-            best_results.append(min_row)
+            if indicator in df_clean.columns:
+                idx_series = df_clean[indicator].dropna()
+                best_idx = idx_series.idxmin() if not idx_series.empty else df_clean.index[0]
+                min_row = df_clean.loc[[best_idx]].copy()
+                min_row["indicator"] = indicator
+                best_results.append(min_row)
         best_results_df = pd.concat(best_results)
         self.best_result_df = best_results_df
-        best_results_df.to_csv(os.path.join(self.save_path, "best_result.csv"), index=False)
+        best_results_df.to_csv(os.path.join(self.save_path, ArtifactNames.BEST_RESULT_CSV), index=False)
+
+    def _resolve_final_result_path(self) -> str:
+        if self.result_path.endswith("final_result"):
+            final_root = self.result_path
+        elif self.result_path.endswith("high_level"):
+            base = self.result_path[: -len("high_level")].rstrip("/" + "\\")
+            final_root = os.path.join(base, "final_result") if base else "result/DiHFT/final_result"
+        else:
+            final_root = os.path.join(self.result_path, "final_result")
+        return os.path.join(final_root, self.dataset_name, self.experiment_name)
+
+    def _get_best_row(self) -> pd.Series:
+        if "indicator" in self.best_result_df.columns:
+            metric_rows = self.best_result_df[self.best_result_df["indicator"] == self.selection_metric]
+            if not metric_rows.empty:
+                return metric_rows.iloc[0]
+        return self.best_result_df.iloc[0]
+
+    def _format_best_para_str(self, best_row: pd.Series) -> str:
+        keys = [
+            "slope_window_length",
+            "volatility_window_length",
+            "slope_gamma",
+            "volatility_gamma",
+            "slope_rule_base_threshold",
+            "volatility_rule_base_threshold",
+        ]
+        if all(k in best_row and pd.notna(best_row[k]) for k in keys):
+            ws = int(best_row["slope_window_length"])
+            wv = int(best_row["volatility_window_length"])
+            gs = best_row["slope_gamma"]
+            gv = best_row["volatility_gamma"]
+            ts = best_row["slope_rule_base_threshold"]
+            tv = best_row["volatility_rule_base_threshold"]
+            trial_id = (
+                best_row["trial_id"]
+                if ("trial_id" in best_row and pd.notna(best_row["trial_id"]))
+                else None
+            )
+            if trial_id is not None:
+                return f"trial_{int(trial_id)}_ws_{ws}_wv_{wv}_gs_{gs}_gv_{gv}_ts_{ts}_tv_{tv}"
+            return f"ws_{ws}_wv_{wv}_gs_{gs}_gv_{gv}_ts_{ts}_tv_{tv}"
+        return os.path.basename(best_row["path"])
 
     def create_best_agent(self):
-        path = self.best_result_df.iloc[0]["path"]
-        para = os.path.basename(path)
+        best_row = self._get_best_row()
+        path = best_row["path"]
+        para = self._format_best_para_str(best_row)
         
-        high_level_path = os.path.join("result/DiHFT/final_result", self.dataset_name, self.experiment_name)
+        high_level_path = self._resolve_final_result_path()
         
         if not os.path.exists(high_level_path):
             os.makedirs(high_level_path, exist_ok=True)
 
         with open(
-            os.path.join(high_level_path, "high_level_agent_para.txt"), "w"
+            os.path.join(high_level_path, ArtifactNames.HIGH_LEVEL_AGENT_PARA_TXT), "w", encoding="utf-8"
         ) as file:
-            file.write("%s\n" % para)
+            file.write(f"{para}\n")
 
         contract_dirs = self._get_contract_dirs(path)
         has_multi_contracts = len(contract_dirs) > 1 or (
@@ -255,7 +425,7 @@ class Picker:
         return []
 
     def plot(self):
-        high_level_path = os.path.join("result/DiHFT/final_result", self.dataset_name, self.experiment_name)
+        high_level_path = self._resolve_final_result_path()
         
         contract_files = self._find_valid_contract_files()
         if not contract_files:
@@ -270,15 +440,15 @@ class Picker:
             if not os.path.exists(c_result_dir):
                 c_result_dir = high_level_path
 
-            if not os.path.exists(os.path.join(c_result_dir, "reward_history.npy")):
+            if not os.path.exists(os.path.join(c_result_dir, HistoryArtifactNames.REWARD_HISTORY_NPY)):
                 continue
 
-            initial_margin_history = np.load(os.path.join(c_result_dir, "initial_margin_history.npy"))
-            maintain_marigine_history = np.load(os.path.join(c_result_dir, "maintain_marigine_history.npy"))
-            new_position_required_money_history = np.load(os.path.join(c_result_dir, "new_position_required_money_history.npy"))
-            reward_history = np.load(os.path.join(c_result_dir, "reward_history.npy"))
-            unrealized_pnl_history = np.load(os.path.join(c_result_dir, "unrealized_pnl_history.npy"))
-            wallet_balance_history = np.load(os.path.join(c_result_dir, "wallet_balance_history.npy"))
+            initial_margin_history = np.load(os.path.join(c_result_dir, HistoryArtifactNames.INITIAL_MARGIN_HISTORY_NPY))
+            maintain_marigine_history = np.load(os.path.join(c_result_dir, HistoryArtifactNames.MAINTAIN_MARGIN_HISTORY_NPY))
+            new_position_required_money_history = np.load(os.path.join(c_result_dir, HistoryArtifactNames.NEW_POSITION_REQUIRED_MONEY_HISTORY_NPY))
+            reward_history = np.load(os.path.join(c_result_dir, HistoryArtifactNames.REWARD_HISTORY_NPY))
+            unrealized_pnl_history = np.load(os.path.join(c_result_dir, HistoryArtifactNames.UNREALIZED_PNL_HISTORY_NPY))
+            wallet_balance_history = np.load(os.path.join(c_result_dir, HistoryArtifactNames.WALLET_BALANCE_HISTORY_NPY))
 
             requred_money = calculate_required_money(
                 initial_margin_history,
@@ -334,8 +504,8 @@ class Picker:
                 fontsize=14,
                 frameon=True,
             )
-            plt.savefig(os.path.join(self.save_path, f"best_result_{c_name}.pdf"), bbox_inches="tight")
-            plt.savefig(os.path.join(self.save_path, f"best_result_{c_name}.png"), bbox_inches="tight")
+            plt.savefig(os.path.join(self.save_path, get_heuristic_plot_filename(c_name, "pdf")), bbox_inches="tight")
+            plt.savefig(os.path.join(self.save_path, get_heuristic_plot_filename(c_name, "png")), bbox_inches="tight")
             plt.close()
 
         # Combined multi-panel figure for all contracts

@@ -13,6 +13,11 @@ os.environ["F_ENABLE_ONEDNN_OPTS"] = "0"
 import sys
 
 sys.path.append(".")
+from common import (
+    ArtifactNames,
+    MetricColumns,
+    TradeColumns,
+)
 from model.low_level import create_new_ensemble_qnet_from_different_save_path
 
 # * analysis the result of low level agent, consider the std along with the mean of the reward
@@ -90,8 +95,18 @@ parser.add_argument(
 )
 
 LABEL_PATTERN = re.compile(r"^label_(\d+)$")
-ARRAY_FIELDS = ["contract", "df_path", "reward_sum", "df_length", "turnover"]
-REQUIRED_RESULT_FIELDS = ["label", "initial_action", "bin_index"] + ARRAY_FIELDS
+ARRAY_FIELDS = [
+    MetricColumns.CONTRACT,
+    MetricColumns.DF_PATH,
+    MetricColumns.REWARD_SUM,
+    MetricColumns.DF_LENGTH,
+    MetricColumns.TURNOVER,
+]
+REQUIRED_RESULT_FIELDS = [
+    TradeColumns.LABEL,
+    TradeColumns.INITIAL_ACTION,
+    TradeColumns.BIN_INDEX,
+] + ARRAY_FIELDS
 
 class picker:
     def __init__(self, args) -> None:
@@ -230,7 +245,7 @@ class picker:
         epoch_path,
     ):
         result = np.load(
-            os.path.join(epoch_path, "analysis_result.npy"), allow_pickle=True
+            os.path.join(epoch_path, ArtifactNames.ANALYSIS_RESULT_NPY), allow_pickle=True
         )
         result = self.transform_single_epoch_result(result, epoch_path)
         result_best_single_agent = self.pick_best_index_from_single_epoch(
@@ -270,8 +285,8 @@ class picker:
 
         if not os.path.exists(os.path.join(self.save_path, self.dataset_name, self.experiment_name)):
             os.makedirs(os.path.join(self.save_path, self.dataset_name, self.experiment_name))
-        df_best.to_csv(os.path.join(self.save_path, self.dataset_name, self.experiment_name, "result.csv"))
-        df_all.to_csv(os.path.join(self.save_path, self.dataset_name, self.experiment_name, "result_all.csv"))
+        df_best.to_csv(os.path.join(self.save_path, self.dataset_name, self.experiment_name, ArtifactNames.RESULT_CSV))
+        df_all.to_csv(os.path.join(self.save_path, self.dataset_name, self.experiment_name, ArtifactNames.RESULT_ALL_CSV))
         self.result_df_best = df_best
         self.result_df_all = df_all
         return df_best, df_all
@@ -363,7 +378,7 @@ class picker:
             "selection_method": "sample_equal_current_picker_logic",
             "labels": labels,
         }
-        manifest_path = os.path.join(output_dir, "selection_manifest.json")
+        manifest_path = os.path.join(output_dir, ArtifactNames.SELECTION_MANIFEST_JSON)
         with open(manifest_path, "w", encoding="utf-8") as file:
             json.dump(manifest, file, ensure_ascii=False, indent=2)
         return manifest_path
@@ -371,7 +386,7 @@ class picker:
     def create_potential_result(self, best_agent_df):
         best_agent_df = self._ordered_best_agent_df(best_agent_df)
         n_state = len(
-            np.load(os.path.join(self.base_path, self.dataset_name, "state_features.npy"))
+            np.load(os.path.join(self.base_path, self.dataset_name, ArtifactNames.STATE_FEATURES_NPY))
         )
         n_action = self.position_choices
         n_hidden = self.hidden_nodes
@@ -419,11 +434,11 @@ if __name__ == "__main__":
     )
 
     df = pd.read_csv(
-        "analysis_result/DiHFT/low_level/{}/{}/result.csv".format(dataset_name, p.experiment_name),
+        f"analysis_result/DiHFT/low_level/{{}}/{{}}/{ArtifactNames.RESULT_CSV}".format(dataset_name, p.experiment_name),
         index_col=0,
     )
     df_all = pd.read_csv(
-        "analysis_result/DiHFT/low_level/{}/{}/result_all.csv".format(dataset_name, p.experiment_name),
+        f"analysis_result/DiHFT/low_level/{{}}/{{}}/{ArtifactNames.RESULT_ALL_CSV}".format(dataset_name, p.experiment_name),
         index_col=0,
     )
     best_agent_info = p.pick_best_agent_regarding_dynamics_bin_index_path(df_all)

@@ -34,6 +34,14 @@ from env.env_class.futures_util import (
     map_action_to_position_leverage,
 )
 from env.env_class.policy_util import get_close_element
+from common import (
+    AGGREGATE_JSON_COLUMNS,
+    CSV_HEADER_LABELS,
+    ArtifactNames,
+    HistoryArtifactNames,
+    TradeColumns,
+    get_trading_detail_csv_filename,
+)
 from RL.DiHFT.low_level.policy_diagnostics import (
     ZERO_POLICY_DIRECTION_METRICS,
     calculate_policy_direction_metrics,
@@ -432,11 +440,10 @@ def write_analysis_csv(overall_result: list[dict[str, Any]], csv_path: str) -> N
 
 
 def trading_detail_csv_path(epoch_path: str, epoch_num: int, label_type: str | None = None) -> str:
+    filename = get_trading_detail_csv_filename(epoch_num)
     if label_type:
-        return os.path.join(
-            epoch_path, label_type, f"trading_action_detail_epoch_{epoch_num}.csv"
-        )
-    return os.path.join(epoch_path, f"trading_action_detail_epoch_{epoch_num}.csv")
+        return os.path.join(epoch_path, label_type, filename)
+    return os.path.join(epoch_path, filename)
 
 
 def append_trading_detail_rows_to_csv(detail_rows: list[dict[str, Any]], csv_path: str) -> None:
@@ -628,7 +635,7 @@ class weighted_trader:
             self.base_path, self.dataset_name, "valid", self.label_type
         )
         self.tech_indicator_list = np.load(
-            os.path.join(self.base_path, self.dataset_name, "state_features.npy")
+            os.path.join(self.base_path, self.dataset_name, ArtifactNames.STATE_FEATURES_NPY)
         )
         self.maintenance_margin_ratio_dict = np.load(
             os.path.join(
@@ -697,7 +704,7 @@ class weighted_trader:
         )
         self.eval_net.load_state_dict(
             torch.load(
-                os.path.join(self.epoch_path, "trained_model.pkl"),
+                os.path.join(self.epoch_path, ArtifactNames.TRAINED_MODEL_PKL),
                 map_location=self.device,
             )
         )
@@ -1132,10 +1139,10 @@ class weighted_trader:
         save_dir = os.path.join(self.epoch_path, self.label_type)
         os.makedirs(save_dir, exist_ok=True)
 
-        np.save(os.path.join(save_dir, "analysis_result.npy"), overall_result)
+        np.save(os.path.join(save_dir, ArtifactNames.ANALYSIS_RESULT_NPY), overall_result)
         write_analysis_csv(
             overall_result,
-            os.path.join(save_dir, "analysis_result.csv"),
+            os.path.join(save_dir, ArtifactNames.ANALYSIS_RESULT_CSV),
         )
         if self.save_trading_detail_csv:
             if detail_csv_path:

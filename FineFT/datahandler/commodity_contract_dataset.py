@@ -6,6 +6,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from common import ArtifactNames, get_df_chunk_filename
+
 try:
     from .manifests import (
         DatasetContractManifest,
@@ -81,7 +83,7 @@ def _build_slice_plan(
                     / symbol
                     / "train"
                     / "slice"
-                    / f"df_{index}.feather"
+                    / get_df_chunk_filename(index)
                 ),
                 source_output=str(_stage_output(output_root, symbol, "train", contract)),
                 row_start=row_start,
@@ -109,7 +111,7 @@ def build_dataset_manifest(
         target_freq=target_freq,
         dataset_split_manifest_path=str(dataset_split_manifest_path),
         state_features_source_path=str(state_features_path),
-        state_features_path=str(Path(output_root) / symbol / "state_features.npy"),
+        state_features_path=str(Path(output_root) / symbol / ArtifactNames.STATE_FEATURES_NPY),
         sets={},
     )
 
@@ -155,7 +157,7 @@ def write_stage_datasets(manifest):
     state_features_source_path = Path(manifest.state_features_source_path)
     if not state_features_source_path.exists():
         raise FileNotFoundError(
-            f"Missing selected state_features.npy: {state_features_source_path}"
+            f"Missing selected {ArtifactNames.STATE_FEATURES_NPY}: {state_features_source_path}"
         )
     state_features = np.load(state_features_source_path, allow_pickle=True).tolist()
     if not state_features:
@@ -202,7 +204,7 @@ def rebuild_train_slice_plan(manifest, chunk_length, early_stop):
                 DatasetSliceOutput(
                     index=next_index,
                     contract=contract.contract,
-                    path=str(slice_dir / f"df_{next_index}.feather"),
+                    path=str(slice_dir / get_df_chunk_filename(next_index)),
                     source_output=str(output_path),
                     row_start=row_start,
                     row_end=row_end,
@@ -279,7 +281,7 @@ def calibrate_and_inject_train_regimes(
         ]
         regime_meta["key_indicator"] = key_indicator
 
-        regime_file = train_dir / "regime_thresholds.json"
+        regime_file = train_dir / ArtifactNames.REGIME_THRESHOLDS_JSON
         with regime_file.open("w", encoding="utf-8") as f:
             json.dump(regime_meta, f, indent=2)
 
@@ -302,7 +304,7 @@ def calibrate_and_inject_train_regimes(
 def write_train_slices(manifest):
     expected_index = 0
     train_dir = Path(manifest.sets["train"].contracts[0].output_path).parent
-    regime_manifest_path = train_dir / "regime_thresholds.json"
+    regime_manifest_path = train_dir / ArtifactNames.REGIME_THRESHOLDS_JSON
     regime_manifest = None
     if regime_manifest_path.exists():
         with regime_manifest_path.open("r", encoding="utf-8") as f:
@@ -360,7 +362,7 @@ def run_dataset_generation(
     calibrate_and_inject_train_regimes(manifest)
     rebuild_train_slice_plan(manifest, chunk_length=chunk_length, early_stop=early_stop)
     write_train_slices(manifest)
-    (dataset_root / "dataset_manifest.json").write_text(
+    (dataset_root / ArtifactNames.DATASET_MANIFEST_JSON).write_text(
         json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
