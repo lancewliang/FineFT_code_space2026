@@ -1071,6 +1071,279 @@ run_commodity_maintenance_margin_dict() { echo "maintenance stdout"; }
     assert (tmp_path / "log_futures/merge/5min/fu/fu2601/2026-01-05.log").exists()
 
 
+def test_commodity_full_process_runs_contract_pipelines_in_parallel(tmp_path):
+    script_dir = _copy_commodity_script_tree(tmp_path)
+    script = script_dir / "fu_full_process.sh"
+    original = script.read_text(encoding="utf-8")
+    script.write_text(
+        original
+        + """
+
+run_commodity_stitch_main_contract() {
+    mkdir -p "${ROOTPATH}/PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu"
+    python - <<'INNER'
+import json
+import os
+from pathlib import Path
+root = Path(os.environ["ROOTPATH"])
+summary = root / "PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu/main_contract_summary.json"
+summary.write_text(
+    json.dumps(
+        {
+            "symbol": "fu",
+            "commodity_name": "燃料油",
+            "start_date": "2026-01-05",
+            "end_date": "2026-01-07",
+            "selection_rule": "monthly_top_2_by_sum_daily_volume_delta",
+            "contracts": [
+                {
+                    "contract": "fu2601",
+                    "start_trading_day": "20260105",
+                    "end_trading_day": "20260105",
+                    "trading_day_count": 1,
+                    "last_trading_day": "20260105",
+                    "total_trading_day_count": 1,
+                    "selected_months": ["2026-01"],
+                    "trading_days": [
+                        {
+                            "trading_day": "20260105",
+                            "date": "2026-01-05",
+                            "source_file": "a.csv",
+                            "daily_volume": 100.0,
+                        }
+                    ],
+                },
+                {
+                    "contract": "fu2605",
+                    "start_trading_day": "20260105",
+                    "end_trading_day": "20260105",
+                    "trading_day_count": 1,
+                    "last_trading_day": "20260105",
+                    "total_trading_day_count": 1,
+                    "selected_months": ["2026-01"],
+                    "trading_days": [
+                        {
+                            "trading_day": "20260105",
+                            "date": "2026-01-05",
+                            "source_file": "b.csv",
+                            "daily_volume": 100.0,
+                        }
+                    ],
+                },
+            ],
+        }
+    ),
+    encoding="utf-8",
+)
+INNER
+}
+run_commodity_downscale_continuous_by_trading_day() { echo "downscale ok"; }
+run_commodity_cross_section_process() {
+    local contract=$7
+    local sync_dir="${ROOTPATH}/sync"
+    mkdir -p "${sync_dir}"
+    touch "${sync_dir}/${contract}.started"
+    local other="fu2605"
+    if [ "${contract}" = "fu2605" ]; then
+        other="fu2601"
+    fi
+    local waited=0
+    while [ ! -f "${sync_dir}/${other}.started" ]; do
+        sleep 0.05
+        waited=$((waited + 1))
+        if [ "${waited}" -ge 20 ]; then
+            echo "Timed out waiting for concurrent contract ${other}" >&2
+            return 88
+        fi
+    done
+    echo "cross_section ok for ${contract}"
+}
+run_commodity_daily_base_feature_process() { echo "daily base feature stdout"; }
+run_commodity_weekly_base_feature_process() { echo "weekly base feature stdout"; }
+run_commodity_cross_month_feature_process() { echo "cross month feature stdout"; }
+run_commodity_daily_mixed_frequency_feature_process() { echo "daily mixed frequency feature stdout"; }
+run_commodity_weekly_mixed_frequency_feature_process() { echo "weekly mixed frequency feature stdout"; }
+run_commodity_mixed_frequency_feature_process() { echo "mixed frequency feature stdout"; }
+run_commodity_merge_process() { echo "merge stdout"; }
+run_commodity_concat_process() { echo "concat stdout"; }
+run_commodity_time_feature() { echo "time feature stdout"; }
+run_commodity_merge_and_clean() { echo "merge clean stdout"; }
+run_commodity_feature_selection() { echo "feature selection stdout"; }
+run_commodity_scale_save() { echo "scale save stdout"; }
+run_commodity_maintenance_margin_dict() { echo "maintenance margin dict stdout"; }
+run_commodity_dataset_split() {
+    local step_dir="${ROOTPATH}/log_futures/ticker_result/commodity/steps"
+    if [ ! -f "${step_dir}/fu_fu2601_5min_2026-01-05_2026-01-07_merge_clean.log" ] || \
+       [ ! -f "${step_dir}/fu_fu2605_5min_2026-01-05_2026-01-07_merge_clean.log" ]; then
+        echo "dataset_split ran before all contracts completed merge_clean" >&2
+        return 89
+    fi
+    echo "dataset split ok"
+}
+""",
+        encoding="utf-8",
+    )
+
+    env = {
+        **os.environ,
+        "ROOTPATH": str(tmp_path),
+        "START_DATE": "2026-01-05",
+        "END_DATE": "2026-01-07",
+        "TARGET_FREQ": "5min",
+        "SYMBOL": "fu",
+        "COMMODITY_NAME": "燃料油",
+        "MAX_PROCESSES": "2",
+        "PYTHONPATH": str(REPO_ROOT / "data_preprocess"),
+    }
+    subprocess.run(
+        ["bash", str(script_dir / "main.sh")],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+    )
+
+    step_dir = tmp_path / "log_futures/ticker_result/commodity/steps"
+    for contract in ("fu2601", "fu2605"):
+        for step in (
+            "cross_section",
+            "daily_base_feature",
+            "weekly_base_feature",
+            "cross_month_feature",
+            "daily_mixed_frequency_feature",
+            "weekly_mixed_frequency_feature",
+            "mixed_frequency_feature",
+            "merge",
+            "concat",
+            "time_feature",
+            "merge_clean",
+        ):
+            assert (
+                step_dir / f"fu_{contract}_5min_2026-01-05_2026-01-07_{step}.log"
+            ).exists()
+    assert (tmp_path / "sync/fu2601.started").exists()
+    assert (tmp_path / "sync/fu2605.started").exists()
+
+
+def test_commodity_full_process_propagates_contract_pipeline_failure(tmp_path):
+    script_dir = _copy_commodity_script_tree(tmp_path)
+    script = script_dir / "fu_full_process.sh"
+    original = script.read_text(encoding="utf-8")
+    script.write_text(
+        original
+        + """
+
+run_commodity_stitch_main_contract() {
+    mkdir -p "${ROOTPATH}/PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu"
+    python - <<'INNER'
+import json
+import os
+from pathlib import Path
+root = Path(os.environ["ROOTPATH"])
+summary = root / "PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/fu/main_contract_summary.json"
+summary.write_text(
+    json.dumps(
+        {
+            "symbol": "fu",
+            "commodity_name": "燃料油",
+            "start_date": "2026-01-05",
+            "end_date": "2026-01-07",
+            "selection_rule": "monthly_top_2_by_sum_daily_volume_delta",
+            "contracts": [
+                {
+                    "contract": "fu2601",
+                    "start_trading_day": "20260105",
+                    "end_trading_day": "20260105",
+                    "trading_day_count": 1,
+                    "last_trading_day": "20260105",
+                    "total_trading_day_count": 1,
+                    "selected_months": ["2026-01"],
+                    "trading_days": [
+                        {
+                            "trading_day": "20260105",
+                            "date": "2026-01-05",
+                            "source_file": "a.csv",
+                            "daily_volume": 100.0,
+                        }
+                    ],
+                },
+                {
+                    "contract": "fu2605",
+                    "start_trading_day": "20260105",
+                    "end_trading_day": "20260105",
+                    "trading_day_count": 1,
+                    "last_trading_day": "20260105",
+                    "total_trading_day_count": 1,
+                    "selected_months": ["2026-01"],
+                    "trading_days": [
+                        {
+                            "trading_day": "20260105",
+                            "date": "2026-01-05",
+                            "source_file": "b.csv",
+                            "daily_volume": 100.0,
+                        }
+                    ],
+                },
+            ],
+        }
+    ),
+    encoding="utf-8",
+)
+INNER
+}
+run_commodity_downscale_continuous_by_trading_day() { echo "downscale ok"; }
+run_commodity_cross_section_process() {
+    local contract=$7
+    if [ "${contract}" = "fu2605" ]; then
+        echo "fu2605 cross_section failed" >&2
+        return 42
+    fi
+    echo "cross_section ok for ${contract}"
+}
+run_commodity_daily_base_feature_process() { echo "daily base feature stdout"; }
+run_commodity_weekly_base_feature_process() { echo "weekly base feature stdout"; }
+run_commodity_cross_month_feature_process() { echo "cross month feature stdout"; }
+run_commodity_daily_mixed_frequency_feature_process() { echo "daily mixed frequency feature stdout"; }
+run_commodity_weekly_mixed_frequency_feature_process() { echo "weekly mixed frequency feature stdout"; }
+run_commodity_mixed_frequency_feature_process() { echo "mixed frequency feature stdout"; }
+run_commodity_merge_process() { echo "merge stdout"; }
+run_commodity_concat_process() { echo "concat stdout"; }
+run_commodity_time_feature() { echo "time feature stdout"; }
+run_commodity_merge_and_clean() { echo "merge clean stdout"; }
+run_commodity_dataset_split() {
+    echo "unexpected dataset_split called after contract failure" >&2
+    return 99
+}
+run_commodity_feature_selection() { echo "unexpected feature selection"; }
+run_commodity_scale_save() { echo "unexpected scale save"; }
+run_commodity_maintenance_margin_dict() { echo "unexpected margin dict"; }
+""",
+        encoding="utf-8",
+    )
+
+    env = {
+        **os.environ,
+        "ROOTPATH": str(tmp_path),
+        "START_DATE": "2026-01-05",
+        "END_DATE": "2026-01-07",
+        "TARGET_FREQ": "5min",
+        "SYMBOL": "fu",
+        "COMMODITY_NAME": "燃料油",
+        "MAX_PROCESSES": "2",
+        "PYTHONPATH": str(REPO_ROOT / "data_preprocess"),
+    }
+    result = subprocess.run(
+        ["bash", str(script_dir / "main.sh")],
+        cwd=tmp_path,
+        env=env,
+    )
+
+    assert result.returncode != 0
+    step_dir = tmp_path / "log_futures/ticker_result/commodity/steps"
+    failed_log = step_dir / "fu_fu2605_5min_2026-01-05_2026-01-07_cross_section.log"
+    assert failed_log.exists()
+    assert "fu2605 cross_section failed" in failed_log.read_text(encoding="utf-8")
+    assert not (step_dir / "fu_5min_2026-01-05_2026-01-07_dataset_split.log").exists()
+
 def test_commodity_full_process_step_logging_fails_fast(tmp_path):
     script_dir = _copy_commodity_script_tree(tmp_path)
     script = script_dir / "fu_full_process.sh"
