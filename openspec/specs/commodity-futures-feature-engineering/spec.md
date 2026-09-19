@@ -134,7 +134,7 @@
 
 ---
 
-### 3.6 基础时间编码状态特征 (BASE_TIME_FEATURE)
+### 3.6 基础时间与合约状态编码特征 (BASE_TIME_FEATURE)
 
 强制保留作为状态特征，跳过 Feature Selection 筛选和 Robust Scaler 缩放。
 
@@ -150,6 +150,7 @@
 9. `contract_month_sin`: 合约交割月份的正弦周期编码。
 10. `contract_month_cos`: 合约交割月份的余弦周期编码。
 11. `contract_life_remaining_ratio`: 合约剩余交易日生命周期比例 $[0, 1]$。
+12. `prev_day_contract_role_tier`: 当前合约在前一个交易日的流动性角色三档档位（$1.0$ 为主力，$0.5$ 为次主力，$0.0$ 为非主力或无历史记录）。
 
 #### 数学公式
 - **月份周期编码**:
@@ -158,6 +159,9 @@
   $$\text{progress} = \min\left(1.0, \max\left(0.0, \frac{\text{Timestamp} - \text{SessionStart}}{\text{SessionEnd} - \text{SessionStart}}\right)\right)$$
 - **剩余生命周期比例**:
   $$\text{contract\_life\_remaining\_ratio} = \frac{\max(\text{busday\_count}(\text{CurrentDate}, \text{LastTradingDay}) + 1, 1)}{\text{TotalTradingDayCount}}$$
+- **前一交易日合约角色档位**:
+  $$\text{prev\_day\_contract\_role\_tier} = \begin{cases} 1.0, & \text{if } \text{Role}_{t-1}(\text{Contract}) = \text{"main"} \\ 0.5, & \text{if } \text{Role}_{t-1}(\text{Contract}) = \text{"sub"} \\ 0.0, & \text{otherwise} \end{cases}$$
+  其中 $\text{Role}_{t-1}$ 从 `main_contract_summary.json` 的 `main_sub_roles` 中按 $\max\{d \in \text{TradingDays} \mid d < \text{CurrentTradingDay}\}$ 获取；若不存在历史前序交易日（冷启动/样本边界），则取 $0.0$。
 
 ---
 

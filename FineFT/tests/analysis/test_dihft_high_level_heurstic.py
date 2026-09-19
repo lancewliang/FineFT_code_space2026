@@ -306,3 +306,19 @@ def test_selection_metric_prioritizes_metric_and_picks_best_agent(tmp_path: Path
 
     assert "trial_0" in para_file.read_text(encoding="utf-8")
     assert picker_tr.best_result_df.iloc[0]["indicator"] == "tr"
+
+
+def test_high_level_heurstic_fu_10_script_configuration():
+    script_path = Path(__file__).resolve().parents[2] / "script" / "analysis" / "pick_agent" / "high_level_heurstic_fu_10.sh"
+    assert script_path.exists()
+    content = script_path.read_text(encoding="utf-8")
+
+    assert "BASE_PATH=${BASE_PATH:-dataset/10min}" in content
+    assert "DATASET_NAME=${DATASET_NAME:-fu}" in content
+    assert "EXPERIMENT_NAME=${EXPERIMENT_NAME:-10min_parallel}" in content
+    assert "RESULT_PATH=${RESULT_PATH:-result/DiHFT/high_level}" in content
+    assert "SELECTION_METRIC=${SELECTION_METRIC:-tr}" in content
+    assert "EARLY_STOP=${EARLY_STOP:-0}" in content
+    assert "FOREGROUND=${FOREGROUND:-0}" in content
+    assert "--selection_metric" in content
+    assert "FineFT/analysis/pick_agent/DiHFT_high_level_heurstic.py" in content

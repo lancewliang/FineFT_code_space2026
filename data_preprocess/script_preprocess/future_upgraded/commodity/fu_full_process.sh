@@ -220,6 +220,7 @@ BASE_TIME_FEATURE_COLUMNS=(
     contract_month_sin
     contract_month_cos
     contract_life_remaining_ratio
+    prev_day_contract_role_tier
 )
 
 CROSS_MONTH_FEATURE_COLUMNS=(

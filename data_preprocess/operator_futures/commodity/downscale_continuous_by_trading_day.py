@@ -1,6 +1,6 @@
 import argparse
 from datetime import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 import multiprocessing as mp
 from pathlib import Path
@@ -79,6 +79,7 @@ class DownscaleTask:
     depth: int
     last_trading_day: str
     total_trading_day_count: int
+    main_sub_roles: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 def iter_summary_trading_days(
@@ -115,6 +116,7 @@ def _write_downscaled_day(
     last_trading_day: str = "20260101",
     total_trading_day_count: int = 1,
     source_file: str | None = None,
+    main_sub_roles: dict[str, dict[str, str]] | None = None,
 ) -> str:
     trading_days = (
         day_frame.select(pl.col("TradingDay").cast(pl.Utf8).unique().sort())
@@ -142,6 +144,7 @@ def _write_downscaled_day(
         trading_day=trading_day,
         last_trading_day=last_trading_day,
         total_trading_day_count=total_trading_day_count,
+        main_sub_roles=main_sub_roles,
     )
     outputs = {
         "DOWNSCALE_DERTIC": downscale_derivative_reference(
@@ -190,6 +193,7 @@ def _downscale_task(task: DownscaleTask) -> tuple[str, str]:
         last_trading_day=task.last_trading_day,
         total_trading_day_count=task.total_trading_day_count,
         source_file=str(task.source_file),
+        main_sub_roles=task.main_sub_roles,
     )
     return task.contract, trading_day
 
@@ -258,6 +262,7 @@ def downscale_continuous_by_trading_day(
             depth=depth,
             last_trading_day=item.last_trading_day,
             total_trading_day_count=item.total_trading_day_count,
+            main_sub_roles=summary.main_sub_roles,
         )
         for item in iter_summary_trading_days(summary, contract)
     ]

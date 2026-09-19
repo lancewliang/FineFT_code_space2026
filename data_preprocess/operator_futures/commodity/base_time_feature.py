@@ -6,6 +6,7 @@ import numpy as np
 import polars as pl
 
 from .config import TradingSession, get_commodity_config
+from .main_contract import load_main_contract_summary
 
 
 BASE_TIME_FEATURE_COLUMNS: list[str] = [
@@ -20,6 +21,7 @@ BASE_TIME_FEATURE_COLUMNS: list[str] = [
     "contract_month_sin",
     "contract_month_cos",
     "contract_life_remaining_ratio",
+    "prev_day_contract_role_tier",
 ]
 
 
@@ -70,6 +72,7 @@ def generate_base_time_features(
     trading_day: str | date | datetime,
     last_trading_day: str | date | datetime,
     total_trading_day_count: int,
+    main_sub_roles: dict[str, dict[str, str]] | None = None,
 ) -> pl.DataFrame:
     if "timestamp" not in base_df.columns:
         raise ValueError("base_df must contain 'timestamp' column")
@@ -175,6 +178,26 @@ def generate_base_time_features(
         for row_index in row_indices[-2:]:
             session_last_bar_list[row_index] = 1.0
 
+    if main_sub_roles:
+        target_day_str = str(trading_day).replace("-", "")[:8]
+        prior_days = sorted(
+            day for day in main_sub_roles
+            if str(day).replace("-", "")[:8] < target_day_str
+        )
+        if prior_days:
+            roles = main_sub_roles[prior_days[-1]]
+            role = roles.get(contract, "other")
+            if role == "main":
+                role_tier = 1.0
+            elif role == "sub":
+                role_tier = 0.5
+            else:
+                role_tier = 0.0
+        else:
+            role_tier = 0.0
+    else:
+        role_tier = 0.0
+
     result = pl.DataFrame({
         "timestamp": base_df["timestamp"],
         "trading_minute_progress": progress_list,
@@ -188,6 +211,7 @@ def generate_base_time_features(
         "contract_month_sin": [float(sin_val)] * n,
         "contract_month_cos": [float(cos_val)] * n,
         "contract_life_remaining_ratio": [float(remaining_ratio)] * n,
+        "prev_day_contract_role_tier": [float(role_tier)] * n,
     })
     return result
 
@@ -201,6 +225,8 @@ def generate_and_write_base_time_feature(
     date: str,
     last_trading_day: str,
     total_trading_day_count: int,
+    summary_path: str | Path | None = None,
+    main_sub_roles: dict[str, dict[str, str]] | None = None,
 ) -> Path:
     if isinstance(base_feature_path, (str, Path)):
         path = Path(base_feature_path)
@@ -210,6 +236,10 @@ def generate_and_write_base_time_feature(
     else:
         base_df = base_feature_path
 
+    if summary_path is not None and main_sub_roles is None:
+        summary = load_main_contract_summary(Path(summary_path))
+        main_sub_roles = summary.main_sub_roles
+
     res = generate_base_time_features(
         base_df=base_df,
         symbol=symbol,
@@ -217,6 +247,7 @@ def generate_and_write_base_time_feature(
         trading_day=date,
         last_trading_day=last_trading_day,
         total_trading_day_count=total_trading_day_count,
+        main_sub_roles=main_sub_roles,
     )
     out_dir = output_root / "BASE_TIME_FEATURE" / symbol / contract / target_freq
     out_dir.mkdir(parents=True, exist_ok=True)

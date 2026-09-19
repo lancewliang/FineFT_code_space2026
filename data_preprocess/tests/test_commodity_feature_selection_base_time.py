@@ -42,6 +42,7 @@ def test_feature_selection_excludes_base_time_from_metrics_and_appends_to_final(
         "contract_month_sin": [0.5] * n,
         "contract_month_cos": [0.5] * n,
         "contract_life_remaining_ratio": [0.8] * n,
+        "prev_day_contract_role_tier": [1.0] * n,
     })
     df.write_ipc(split_dir / "fu2601.feather")
 

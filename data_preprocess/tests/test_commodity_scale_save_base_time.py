@@ -51,6 +51,7 @@ def test_scale_save_passthrough_base_time_features(tmp_path):
         "contract_month_sin": [0.5] * n,
         "contract_month_cos": [0.5] * n,
         "contract_life_remaining_ratio": [0.8] * n,
+        "prev_day_contract_role_tier": [1.0] * n,
     })
     df.write_ipc(split_dir / "fu2601.feather")
 
@@ -97,3 +98,4 @@ def test_scale_save_passthrough_base_time_features(tmp_path):
         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0,
     ]
     assert np.allclose(out_df["contract_life_remaining_ratio"].to_list(), [0.8] * n)
+    assert np.allclose(out_df["prev_day_contract_role_tier"].to_list(), [1.0] * n)

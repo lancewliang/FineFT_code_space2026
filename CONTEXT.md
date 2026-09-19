@@ -10,6 +10,10 @@ FineFT is the futures-trading research context for the three-stage risk-aware en
 按自然月成交量最高的前 2 个合约加上高成交量天数入选合约的并集，用于拼接连续主力数据。
 _Avoid_: 主力连续、连续合约
 
+**日度主力合约 (Daily Main Contract)**:
+在单日 `TradingDay` 截面上按日成交量降序（日持仓量平局修正）排序排在第 1 位的合约，由 `main_sub_roles` 记录。
+_Avoid_: 月度主力合约、连续主力合约
+
 **主力合约日文件 (Main Contract Daily File)**:
 按 `TradingDay` 拆分的主力合约 CSV 文件，路径格式为 `CONTINUOUS_RAW/{symbol}/{YYYY-MM-DD}.csv`。
 _Avoid_: 连续主力文件、日度连续数据
@@ -69,8 +73,12 @@ _Avoid_: NaN 检查、空值校验
 _Avoid_: 横截面特征、快照特征
 
 **Base_Time_feature**:
-与 Base Feature 平级的商品期货时间编码特征产物，描述交易时间分钟、早盘/下午盘/夜间盘、开收盘半小时、Session 首尾 Bar、合约所在月份和合约剩余生命周期；属于必须保留的 State Feature，不能被 Feature Selection 过滤掉，也不参与 Scale Save 缩放。
+与 Base Feature 平级的商品期货时间与合约状态编码特征产物，描述交易时间分钟、早盘/下午盘/夜间盘、开收盘半小时、Session 首尾 Bar、合约所在月份、合约剩余生命周期以及前一交易日合约角色档位；属于必须保留的 State Feature，不能被 Feature Selection 过滤掉，也不参与 Scale Save 缩放。
 _Avoid_: 时间滚动窗口特征、绝对时间特征、日历特征
+
+**前一交易日合约角色档位 (Previous-Day Contract Role Tier)**:
+三档状态特征（`prev_day_contract_role_tier`），指示当前合约在上一 `TradingDay` 的市场流动性地位：主力为 1.0，次主力为 0.5，非主力及冷启动缺省为 0.0；归属于 `Base_Time_feature` 并保持未缩放直通。
+_Avoid_: 前一交易日主力状态、主力标记、二值主力指示
 
 **Session 首尾 Bar 标记 (Session Boundary Bar Flag)**:
 `is_session_first_bar` 标记每个 Trading Session 实际存在的前两根 Bar，`is_session_last_bar` 标记实际存在的最后两根 Bar；只有一根 Bar 时两个标记均成立。

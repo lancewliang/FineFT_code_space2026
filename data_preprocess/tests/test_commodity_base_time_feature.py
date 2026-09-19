@@ -22,6 +22,7 @@ def test_base_time_feature_columns_constant():
         "contract_month_sin",
         "contract_month_cos",
         "contract_life_remaining_ratio",
+        "prev_day_contract_role_tier",
     ]
     assert BASE_TIME_FEATURE_COLUMNS == expected
 
@@ -148,3 +149,143 @@ def test_session_boundary_features_mark_first_and_last_two_observed_bars():
         1.0,
         0.0, 0.0, 0.0, 1.0, 1.0,
     ]
+
+
+def test_generate_base_time_features_previous_day_role_tier():
+    timestamps = [
+        datetime(2026, 1, 5, 9, 0, 0),
+        datetime(2026, 1, 5, 9, 30, 0),
+    ]
+    base_df = pl.DataFrame({"timestamp": timestamps})
+
+    # 1. Main role -> 1.0
+    roles_main = {
+        "20260102": {"fu2605": "main", "fu2609": "sub"},
+    }
+    res_main = generate_base_time_features(
+        base_df=base_df,
+        symbol="fu",
+        contract="fu2605",
+        trading_day="20260105",
+        last_trading_day="20260116",
+        total_trading_day_count=10,
+        main_sub_roles=roles_main,
+    )
+    assert res_main["prev_day_contract_role_tier"].to_list() == [1.0, 1.0]
+
+    # 2. Sub role -> 0.5
+    roles_sub = {
+        "20260102": {"fu2601": "main", "fu2605": "sub"},
+    }
+    res_sub = generate_base_time_features(
+        base_df=base_df,
+        symbol="fu",
+        contract="fu2605",
+        trading_day="20260105",
+        last_trading_day="20260116",
+        total_trading_day_count=10,
+        main_sub_roles=roles_sub,
+    )
+    assert res_sub["prev_day_contract_role_tier"].to_list() == [0.5, 0.5]
+
+    # 3. Other role -> 0.0
+    roles_other = {
+        "20260102": {"fu2601": "main", "fu2609": "sub", "fu2605": "other"},
+    }
+    res_other = generate_base_time_features(
+        base_df=base_df,
+        symbol="fu",
+        contract="fu2605",
+        trading_day="20260105",
+        last_trading_day="20260116",
+        total_trading_day_count=10,
+        main_sub_roles=roles_other,
+    )
+    assert res_other["prev_day_contract_role_tier"].to_list() == [0.0, 0.0]
+
+    # 4. Unrecorded contract in roles -> 0.0
+    roles_unrecorded = {
+        "20260102": {"fu2601": "main", "fu2609": "sub"},
+    }
+    res_unrecorded = generate_base_time_features(
+        base_df=base_df,
+        symbol="fu",
+        contract="fu2605",
+        trading_day="20260105",
+        last_trading_day="20260116",
+        total_trading_day_count=10,
+        main_sub_roles=roles_unrecorded,
+    )
+    assert res_unrecorded["prev_day_contract_role_tier"].to_list() == [0.0, 0.0]
+
+    # 5. Cold start / no prior days -> 0.0
+    res_cold_start = generate_base_time_features(
+        base_df=base_df,
+        symbol="fu",
+        contract="fu2605",
+        trading_day="20260105",
+        last_trading_day="20260116",
+        total_trading_day_count=10,
+        main_sub_roles=None,
+    )
+    assert res_cold_start["prev_day_contract_role_tier"].to_list() == [0.0, 0.0]
+
+
+def test_generate_and_write_base_time_feature_with_summary_json(tmp_path):
+    import json
+    from operator_futures.commodity.base_time_feature import generate_and_write_base_time_feature
+
+    # Setup base feature feather
+    timestamps = [datetime(2026, 1, 5, 9, 0, 0)]
+    base_df = pl.DataFrame({"timestamp": timestamps})
+    base_path = tmp_path / "base.feather"
+    base_df.write_ipc(base_path)
+
+    # Setup dummy summary JSON with main_sub_roles
+    summary_data = {
+        "symbol": "fu",
+        "commodity_name": "燃料油",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-31",
+        "contracts": [
+            {
+                "contract": "fu2605",
+                "trading_day_count": 1,
+                "selected_months": ["2026-01"],
+                "last_trading_day": "20260116",
+                "total_trading_day_count": 10,
+                "trading_days": [
+                    {
+                        "trading_day": "20260105",
+                        "date": "2026-01-05",
+                        "source_file": str(tmp_path / "dummy.csv"),
+                        "daily_volume": 1000.0,
+                    }
+                ],
+            }
+        ],
+        "main_sub_roles": {
+            "20260102": {
+                "fu2605": "main",
+                "fu2609": "sub",
+            }
+        },
+    }
+    summary_file = tmp_path / "main_contract_summary.json"
+    summary_file.write_text(json.dumps(summary_data), encoding="utf-8")
+
+    out_path = generate_and_write_base_time_feature(
+        base_feature_path=base_path,
+        output_root=tmp_path / "output",
+        symbol="fu",
+        contract="fu2605",
+        target_freq="5min",
+        date="2026-01-05",
+        last_trading_day="20260116",
+        total_trading_day_count=10,
+        summary_path=summary_file,
+    )
+
+    written_df = pl.read_ipc(out_path)
+    assert "prev_day_contract_role_tier" in written_df.columns
+    assert written_df["prev_day_contract_role_tier"].to_list() == [1.0]

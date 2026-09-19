@@ -11,11 +11,12 @@ from RL.DiHFT.low_level.parallel_pretrain import extract_stacked_tensor_dict
 logger = logging.getLogger(__name__)
 
 DIRECTIONAL_REGIME_PHASES = {
-    0: [0, 3, 6],  # Phase 0: 下跌趋势 (Downtrend / Bear)
-    1: [1, 4, 7],  # Phase 1: 横盘震荡 (Range / Flat)
-    2: [2, 5, 8],  # Phase 2: 上涨趋势 (Uptrend / Bull)
-    3: [0, 4, 8],  # Phase 3: 对角匹配体制 (Diagonal / Matched: s0v0, s1v1, s2v2)
-    4: [0, 1, 2, 3, 4, 5, 6, 7, 8],  # Phase 4: 全量经验抽取 (All Regimes / Full Experience)
+    0: [8],        # Phase 4: 上涨趋势
+    1: [2, 5, 8],  # Phase 2: 上涨趋势 (Uptrend / Bull)
+    2: [1, 4, 7],  # Phase 1: 横盘震荡 (Range / Flat)
+    3: [0, 3, 6],  # Phase 0: 下跌趋势 (Downtrend / Bear)        
+    4: [0, 4, 8],  # Phase 5: 对角匹配体制 (Diagonal / Matched: s0v0, s1v1, s2v2)     
+    5: [0, 1, 2, 3, 4, 5, 6, 7, 8],  # Phase 6: 全量经验抽取 (All Regimes / Full Experience)
 }
 
 
