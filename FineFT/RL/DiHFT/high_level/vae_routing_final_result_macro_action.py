@@ -4,6 +4,7 @@ import sys
 import torch
 
 sys.path.append(".")
+from common import ArtifactNames
 from RL.DiHFT.high_level.vae_routing_util import (
     parser as base_parser,
     resolve_routing_parameters,
@@ -32,7 +33,7 @@ def parse_and_prepare_args(args_list=None):
             args.dataset_name,
             args.experiment_name,
             "vae_risk_aware_routing_optuna",
-            "optuna_results.csv",
+            ArtifactNames.OPTUNA_RESULTS_CSV,
         )
         if os.path.exists(default_optuna_csv):
             args.optuna_csv = default_optuna_csv
@@ -45,7 +46,7 @@ def parse_and_prepare_args(args_list=None):
             "final_result",
             args.dataset_name,
             args.experiment_name,
-            "high_level_agent_para.txt",
+            ArtifactNames.HIGH_LEVEL_AGENT_PARA_TXT,
         )
         if os.path.exists(default_para_file):
             args.para_file = default_para_file
@@ -62,7 +63,7 @@ def parse_and_prepare_args(args_list=None):
             args.dataset_name,
             args.experiment_name,
             "two_dimensional_selection",
-            "two_dimensional_selection_manifest.json",
+            ArtifactNames.TWO_DIMENSIONAL_SELECTION_MANIFEST_JSON,
         )
         if os.path.exists(default_manifest):
             args.selection_manifest = default_manifest

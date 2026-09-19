@@ -36,6 +36,7 @@ FINEFT_ROOT = Path(__file__).resolve().parents[2]
 if str(FINEFT_ROOT) not in sys.path:
     sys.path.insert(0, str(FINEFT_ROOT))
 
+from common import ArtifactNames, get_trading_detail_csv_filename
 from model.low_level import ensemble_Qnet
 
 
@@ -324,12 +325,11 @@ class SelectionArtifacts:
     def write(self, output_dir: Path) -> dict[str, Path]:
         output_dir.mkdir(parents=True, exist_ok=True)
         paths = {
-            "marginal_metrics": output_dir / "two_dimensional_marginal_metrics.csv",
-            "joint_metrics": output_dir / "two_dimensional_joint_metrics.csv",
-            "candidate_rankings": output_dir
-            / "two_dimensional_candidate_rankings.csv",
-            "selected_slots": output_dir / "two_dimensional_selection.csv",
-            "manifest": output_dir / "two_dimensional_selection_manifest.json",
+            "marginal_metrics": output_dir / ArtifactNames.TWO_DIMENSIONAL_MARGINAL_METRICS_CSV,
+            "joint_metrics": output_dir / ArtifactNames.TWO_DIMENSIONAL_JOINT_METRICS_CSV,
+            "candidate_rankings": output_dir / ArtifactNames.TWO_DIMENSIONAL_CANDIDATE_RANKINGS_CSV,
+            "selected_slots": output_dir / ArtifactNames.TWO_DIMENSIONAL_SELECTION_CSV,
+            "manifest": output_dir / ArtifactNames.TWO_DIMENSIONAL_SELECTION_MANIFEST_JSON,
         }
         self.marginal_metrics.write_csv(paths["marginal_metrics"])
         self.joint_metrics.write_csv(paths["joint_metrics"])
@@ -461,7 +461,7 @@ class TwoDimensionalAgentSelector:
             if max_epoch is not None and epoch_number > max_epoch:
                 continue
             files = {
-                label_type: epoch_path / label_type / "analysis_result.csv"
+                label_type: epoch_path / label_type / ArtifactNames.ANALYSIS_RESULT_CSV
                 for label_type in LABEL_TYPES
             }
             if all(path.is_file() for path in files.values()):
@@ -469,14 +469,14 @@ class TwoDimensionalAgentSelector:
                     detail_path = (
                         epoch_path
                         / label_type
-                        / f"trading_action_detail_epoch_{epoch_number}.csv"
+                        / get_trading_detail_csv_filename(epoch_number)
                     )
                     if not detail_path.is_file():
                         raise FileNotFoundError(
                             f"missing trading detail for common epoch: {detail_path}"
                         )
                     files[f"{label_type}_detail"] = detail_path
-                model_path = epoch_path / "trained_model.pkl"
+                model_path = epoch_path / ArtifactNames.TRAINED_MODEL_PKL
                 if not model_path.is_file():
                     raise FileNotFoundError(
                         f"missing checkpoint for common epoch: {model_path}"
@@ -507,7 +507,7 @@ class TwoDimensionalAgentSelector:
         zero_transition_rows: list[dict[str, Any]] = []
         for epoch_number, files in result_files.items():
             epoch_path = files["slope"].parent.parent
-            model_path = epoch_path / "trained_model.pkl"
+            model_path = epoch_path / ArtifactNames.TRAINED_MODEL_PKL
             for label_type in LABEL_TYPES:
                 frame = pl.read_csv(files[label_type])
                 missing = set(ANALYSIS_COLUMNS) - set(frame.columns)
@@ -765,7 +765,7 @@ class TwoDimensionalAgentSelector:
         for idx, (epoch_number, files) in enumerate(result_files.items(), 1):
             epoch_t0 = time.time()
             epoch_path = files["slope"].parent.parent
-            model_path = epoch_path / "trained_model.pkl"
+            model_path = epoch_path / ArtifactNames.TRAINED_MODEL_PKL
             print(
                 f"        [{idx}/{total_epochs}] Processing epoch_{epoch_number}...",
                 end="",
@@ -1856,9 +1856,9 @@ def main() -> None:
     model_output_path = (
         Path(args.model_output_path)
         if args.model_output_path
-        else output_dir / "model.pth"
+        else output_dir / ArtifactNames.MODEL_PTH
     )
-    state_features_path = valid_root.parent / "state_features.npy"
+    state_features_path = valid_root.parent / ArtifactNames.STATE_FEATURES_NPY
     n_states = len(np.load(state_features_path))
     print(
         f"Assembling ensemble model (n_states={n_states}, n_actions={args.position_choices}) -> {model_output_path}...",

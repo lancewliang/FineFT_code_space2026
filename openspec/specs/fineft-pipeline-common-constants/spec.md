@@ -29,7 +29,7 @@ From the developer and researcher's perspective, this architecture presents seve
 
 ## Solution
 
-Establish a centralized, typed, modular constant package under `FineFT/common/` that cleanly partitions constants into three dedicated modules, unified under a top-level facade:
+Establish a centralized, typed, modular constant package under `FineFT/common/` that cleanly partitions constants into four dedicated modules, unified under a top-level facade:
 
 1. **`FineFT/common/artifacts.py`**:
    - `ArtifactNames`: Static file artifact identifiers with explicit extension suffixes (`DATASET_MANIFEST_JSON`, `TRAINED_MODEL_PKL`, `ANALYSIS_RESULT_CSV`, `ANALYSIS_RESULT_NPY`, `SELECTION_MANIFEST_JSON`, `TWO_DIMENSIONAL_SELECTION_MANIFEST_JSON`, `OPTUNA_RESULTS_CSV`, `CONTRACT_RESULTS_CSV`, `TRADING_INFO_NPY`, `RESULT_CSV`, `RESULT_ALL_CSV`, `BEST_RESULT_CSV`, `HIGH_LEVEL_AGENT_PARA_TXT`).
@@ -72,6 +72,7 @@ The new package will consist of exactly four files:
 - `FineFT/common/artifacts.py`
 - `FineFT/common/metric_columns.py`
 - `FineFT/common/trade_columns.py`
+- `FineFT/common/routing_params.py`
 
 ### 2. Interface Shapes and Constant Specifications
 
@@ -187,6 +188,26 @@ The new package will consist of exactly four files:
 - **Mappings**:
   - `CSV_HEADER_LABELS: dict[str, str]`
   - `AGGREGATE_JSON_COLUMNS: list[str]`
+
+
+#### `FineFT/common/routing_params.py`
+- **Class `RoutingParamColumns`**:
+  - `SLOPE_WINDOW_LENGTH: str = "slope_window_length"`
+  - `VOLATILITY_WINDOW_LENGTH: str = "volatility_window_length"`
+  - `SLOPE_GAMMA: str = "slope_gamma"`
+  - `VOLATILITY_GAMMA: str = "volatility_gamma"`
+  - `SLOPE_RULE_BASE_THRESHOLD: str = "slope_rule_base_threshold"`
+  - `VOLATILITY_RULE_BASE_THRESHOLD: str = "volatility_rule_base_threshold"`
+  - `PARAMS_SLOPE_WINDOW_LENGTH: str = "params_slope_window_length"`
+  - `PARAMS_VOLATILITY_WINDOW_LENGTH: str = "params_volatility_window_length"`
+  - `PARAMS_SLOPE_GAMMA: str = "params_slope_gamma"`
+  - `PARAMS_VOLATILITY_GAMMA: str = "params_volatility_gamma"`
+  - `PARAMS_SLOPE_RULE_BASE_THRESHOLD: str = "params_slope_rule_base_threshold"`
+  - `PARAMS_VOLATILITY_RULE_BASE_THRESHOLD: str = "params_volatility_rule_base_threshold"`
+  - `PARAMS_WINDOW_LENGTH: str = "params_window_length"`
+  - `PARAMS_GAMMA: str = "params_gamma"`
+  - `PARAMS_RULE_BASE_THRESHOLD: str = "params_rule_base_threshold"`
+  - `NUMBER: str = "number"`
 
 ### 3. File Refactoring Targets Across Steps 2~8
 

@@ -24,6 +24,7 @@ from common import (
     ArtifactNames,
     HistoryArtifactNames,
     MetricColumns,
+    RoutingParamColumns,
     get_heuristic_plot_filename,
 )
 
@@ -76,8 +77,14 @@ parser.add_argument(
 parser.add_argument(
     "--selection_metric",
     type=str,
-    default="tr",
-    choices=["tr", "portfolio_tr", "annual_sr", "daily_cr", "daily_SoR"],
+    default=MetricColumns.TR,
+    choices=[
+        MetricColumns.TR,
+        MetricColumns.PORTFOLIO_TR,
+        MetricColumns.ANNUAL_SR,
+        MetricColumns.DAILY_CR,
+        MetricColumns.DAILY_SOR,
+    ],
     help="metric used to pick the best agent",
 )
 
@@ -118,27 +125,39 @@ class Picker:
         df = pd.read_csv(csv_path)
         lookup = {}
         for _, row in df.iterrows():
-            trial_id = int(row["number"])
-            if "params_slope_window_length" in df.columns:
+            trial_id = int(row[RoutingParamColumns.NUMBER])
+            if RoutingParamColumns.PARAMS_SLOPE_WINDOW_LENGTH in df.columns:
                 lookup[trial_id] = {
-                    "slope_window_length": int(row["params_slope_window_length"]),
-                    "volatility_window_length": int(row["params_volatility_window_length"]),
-                    "slope_gamma": float(row["params_slope_gamma"]),
-                    "volatility_gamma": float(row["params_volatility_gamma"]),
-                    "slope_rule_base_threshold": float(row["params_slope_rule_base_threshold"]),
-                    "volatility_rule_base_threshold": float(row["params_volatility_rule_base_threshold"]),
+                    RoutingParamColumns.SLOPE_WINDOW_LENGTH: int(
+                        row[RoutingParamColumns.PARAMS_SLOPE_WINDOW_LENGTH]
+                    ),
+                    RoutingParamColumns.VOLATILITY_WINDOW_LENGTH: int(
+                        row[RoutingParamColumns.PARAMS_VOLATILITY_WINDOW_LENGTH]
+                    ),
+                    RoutingParamColumns.SLOPE_GAMMA: float(
+                        row[RoutingParamColumns.PARAMS_SLOPE_GAMMA]
+                    ),
+                    RoutingParamColumns.VOLATILITY_GAMMA: float(
+                        row[RoutingParamColumns.PARAMS_VOLATILITY_GAMMA]
+                    ),
+                    RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD: float(
+                        row[RoutingParamColumns.PARAMS_SLOPE_RULE_BASE_THRESHOLD]
+                    ),
+                    RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD: float(
+                        row[RoutingParamColumns.PARAMS_VOLATILITY_RULE_BASE_THRESHOLD]
+                    ),
                 }
-            elif "params_window_length" in df.columns:
-                w = int(row["params_window_length"])
-                g = float(row["params_gamma"])
-                t = float(row["params_rule_base_threshold"])
+            elif RoutingParamColumns.PARAMS_WINDOW_LENGTH in df.columns:
+                w = int(row[RoutingParamColumns.PARAMS_WINDOW_LENGTH])
+                g = float(row[RoutingParamColumns.PARAMS_GAMMA])
+                t = float(row[RoutingParamColumns.PARAMS_RULE_BASE_THRESHOLD])
                 lookup[trial_id] = {
-                    "slope_window_length": w,
-                    "volatility_window_length": w,
-                    "slope_gamma": g,
-                    "volatility_gamma": g,
-                    "slope_rule_base_threshold": t,
-                    "volatility_rule_base_threshold": t,
+                    RoutingParamColumns.SLOPE_WINDOW_LENGTH: w,
+                    RoutingParamColumns.VOLATILITY_WINDOW_LENGTH: w,
+                    RoutingParamColumns.SLOPE_GAMMA: g,
+                    RoutingParamColumns.VOLATILITY_GAMMA: g,
+                    RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD: t,
+                    RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD: t,
                 }
         return lookup
 
@@ -253,7 +272,7 @@ class Picker:
 
             trial_match = re.search(r"trial_(\d+)", parameter)
             trial_id = int(trial_match.group(1)) if trial_match else None
-            result["trial_id"] = trial_id
+            result[MetricColumns.TRIAL_ID] = trial_id
 
             if trial_id is not None and trial_id in self.optuna_param_lookup:
                 result.update(self.optuna_param_lookup[trial_id])
@@ -268,22 +287,22 @@ class Picker:
                 window_m = re.search(r"window_([0-9]+)", parameter)
                 thresh_m = re.search(r"threshold_([0-9.]+)", parameter)
 
-                result["slope_window_length"] = (
+                result[RoutingParamColumns.SLOPE_WINDOW_LENGTH] = (
                     int(ws_m.group(1)) if ws_m else (int(window_m.group(1)) if window_m else None)
                 )
-                result["volatility_window_length"] = (
+                result[RoutingParamColumns.VOLATILITY_WINDOW_LENGTH] = (
                     int(wv_m.group(1)) if wv_m else (int(window_m.group(1)) if window_m else None)
                 )
-                result["slope_gamma"] = (
+                result[RoutingParamColumns.SLOPE_GAMMA] = (
                     float(gs_m.group(1)) if gs_m else (float(gamma_m.group(1)) if gamma_m else None)
                 )
-                result["volatility_gamma"] = (
+                result[RoutingParamColumns.VOLATILITY_GAMMA] = (
                     float(gv_m.group(1)) if gv_m else (float(gamma_m.group(1)) if gamma_m else None)
                 )
-                result["slope_rule_base_threshold"] = (
+                result[RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD] = (
                     float(ts_m.group(1)) if ts_m else (float(thresh_m.group(1)) if thresh_m else None)
                 )
-                result["volatility_rule_base_threshold"] = (
+                result[RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD] = (
                     float(tv_m.group(1)) if tv_m else (float(thresh_m.group(1)) if thresh_m else None)
                 )
 
@@ -294,12 +313,18 @@ class Picker:
 
     def analysis_best_epoch(self):
         best_results = []
-        subset_metric = [self.selection_metric] if self.selection_metric in self.result_df.columns else ["tr"]
+        subset_metric = [self.selection_metric] if self.selection_metric in self.result_df.columns else [MetricColumns.TR]
         df_clean = self.result_df.dropna(subset=subset_metric)
         if df_clean.empty:
             df_clean = self.result_df.fillna(0.0)
 
-        max_candidates = ["tr", "portfolio_tr", "annual_sr", "daily_cr", "daily_SoR"]
+        max_candidates = [
+            MetricColumns.TR,
+            MetricColumns.PORTFOLIO_TR,
+            MetricColumns.ANNUAL_SR,
+            MetricColumns.DAILY_CR,
+            MetricColumns.DAILY_SOR,
+        ]
         if self.selection_metric in max_candidates:
             max_indicators = [self.selection_metric] + [
                 m for m in max_candidates if m != self.selection_metric
@@ -312,14 +337,18 @@ class Picker:
                 idx_series = df_clean[indicator].dropna()
                 best_idx = idx_series.idxmax() if not idx_series.empty else df_clean.index[0]
                 max_row = df_clean.loc[[best_idx]].copy()
-                max_row["indicator"] = indicator
+                max_row[MetricColumns.INDICATOR] = indicator
                 best_results.append(max_row)
-        for indicator in ["daily_vol", "mdd", "downside_deviation_daily"]:
+        for indicator in [
+            MetricColumns.DAILY_VOL,
+            MetricColumns.MDD,
+            MetricColumns.DOWNSIDE_DEVIATION_DAILY,
+        ]:
             if indicator in df_clean.columns:
                 idx_series = df_clean[indicator].dropna()
                 best_idx = idx_series.idxmin() if not idx_series.empty else df_clean.index[0]
                 min_row = df_clean.loc[[best_idx]].copy()
-                min_row["indicator"] = indicator
+                min_row[MetricColumns.INDICATOR] = indicator
                 best_results.append(min_row)
         best_results_df = pd.concat(best_results)
         self.best_result_df = best_results_df
@@ -344,23 +373,23 @@ class Picker:
 
     def _format_best_para_str(self, best_row: pd.Series) -> str:
         keys = [
-            "slope_window_length",
-            "volatility_window_length",
-            "slope_gamma",
-            "volatility_gamma",
-            "slope_rule_base_threshold",
-            "volatility_rule_base_threshold",
+            RoutingParamColumns.SLOPE_WINDOW_LENGTH,
+            RoutingParamColumns.VOLATILITY_WINDOW_LENGTH,
+            RoutingParamColumns.SLOPE_GAMMA,
+            RoutingParamColumns.VOLATILITY_GAMMA,
+            RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD,
+            RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD,
         ]
         if all(k in best_row and pd.notna(best_row[k]) for k in keys):
-            ws = int(best_row["slope_window_length"])
-            wv = int(best_row["volatility_window_length"])
-            gs = best_row["slope_gamma"]
-            gv = best_row["volatility_gamma"]
-            ts = best_row["slope_rule_base_threshold"]
-            tv = best_row["volatility_rule_base_threshold"]
+            ws = int(best_row[RoutingParamColumns.SLOPE_WINDOW_LENGTH])
+            wv = int(best_row[RoutingParamColumns.VOLATILITY_WINDOW_LENGTH])
+            gs = best_row[RoutingParamColumns.SLOPE_GAMMA]
+            gv = best_row[RoutingParamColumns.VOLATILITY_GAMMA]
+            ts = best_row[RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD]
+            tv = best_row[RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD]
             trial_id = (
-                best_row["trial_id"]
-                if ("trial_id" in best_row and pd.notna(best_row["trial_id"]))
+                best_row[MetricColumns.TRIAL_ID]
+                if (MetricColumns.TRIAL_ID in best_row and pd.notna(best_row[MetricColumns.TRIAL_ID]))
                 else None
             )
             if trial_id is not None:

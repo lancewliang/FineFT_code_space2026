@@ -13,6 +13,7 @@ from common.artifacts import (
 
 def test_artifact_names_literals() -> None:
     assert ArtifactNames.DATASET_MANIFEST_JSON == "dataset_manifest.json"
+    assert ArtifactNames.DATASET_SPLIT_MANIFEST_JSON == "dataset_split_manifest.json"
     assert ArtifactNames.SLICE_MANIFEST_JSON == "slice_manifest.json"
     assert ArtifactNames.REGIME_THRESHOLDS_JSON == "regime_thresholds.json"
     assert ArtifactNames.STATE_FEATURES_NPY == "state_features.npy"
@@ -29,6 +30,22 @@ def test_artifact_names_literals() -> None:
         ArtifactNames.TWO_DIMENSIONAL_SELECTION_MANIFEST_JSON
         == "two_dimensional_selection_manifest.json"
     )
+    assert (
+        ArtifactNames.TWO_DIMENSIONAL_MARGINAL_METRICS_CSV
+        == "two_dimensional_marginal_metrics.csv"
+    )
+    assert (
+        ArtifactNames.TWO_DIMENSIONAL_JOINT_METRICS_CSV
+        == "two_dimensional_joint_metrics.csv"
+    )
+    assert (
+        ArtifactNames.TWO_DIMENSIONAL_CANDIDATE_RANKINGS_CSV
+        == "two_dimensional_candidate_rankings.csv"
+    )
+    assert (
+        ArtifactNames.TWO_DIMENSIONAL_SELECTION_CSV
+        == "two_dimensional_selection.csv"
+    )
     assert ArtifactNames.OPTUNA_RESULTS_CSV == "optuna_results.csv"
     assert ArtifactNames.CONTRACT_RESULTS_CSV == "contract_results.csv"
     assert ArtifactNames.TRADING_INFO_NPY == "trading_info.npy"
@@ -36,6 +53,13 @@ def test_artifact_names_literals() -> None:
     assert ArtifactNames.RESULT_ALL_CSV == "result_all.csv"
     assert ArtifactNames.BEST_RESULT_CSV == "best_result.csv"
     assert ArtifactNames.HIGH_LEVEL_AGENT_PARA_TXT == "high_level_agent_para.txt"
+    assert ArtifactNames.MODEL_PTH == "model.pth"
+    assert (
+        ArtifactNames.BEST_INDEX_INFO_CSV
+        == "best_index_info_by_dynamics_with_different_position.csv"
+    )
+    assert ArtifactNames.TEST_FEATHER == "test.feather"
+    assert ArtifactNames.TEST_NPY == "test.npy"
     assert ArtifactNames.SUMMARY_JSON == "summary.json"
     assert ArtifactNames.ROUTING_SUMMARY_JSON == "routing_summary.json"
     assert ArtifactNames.ID_LOGPX_NPY == "id_logpx.npy"
@@ -66,6 +90,7 @@ def test_history_artifact_names_literals_and_typo_compatibility() -> None:
     )
     assert HistoryArtifactNames.MICRO_ACTION_HISTORY_NPY == "micro_action_history.npy"
     assert HistoryArtifactNames.MACRO_ACTION_HISTORY_NPY == "macro_action_history.npy"
+    assert HistoryArtifactNames.MACRO_ACTION_NPY == "macro_action.npy"
 
 
 def test_dynamic_filename_builders() -> None:

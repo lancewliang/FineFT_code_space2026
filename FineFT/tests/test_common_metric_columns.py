@@ -29,3 +29,8 @@ def test_metric_columns_literals() -> None:
     assert MetricColumns.SHORT_STEP_RATIO == "short_step_ratio"
     assert MetricColumns.FLAT_STEP_RATIO == "flat_step_ratio"
     assert MetricColumns.RETURN_RATE == "return_rate"
+    assert MetricColumns.SCORE == "score"
+    assert MetricColumns.REQUIRE_MONEY == "require_money"
+    assert MetricColumns.SOURCE_FILE == "source_file"
+    assert MetricColumns.ROWS == "rows"
+    assert MetricColumns.INDICATOR == "indicator"

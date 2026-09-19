@@ -29,3 +29,8 @@ class MetricColumns:
     SHORT_STEP_RATIO: str = "short_step_ratio"
     FLAT_STEP_RATIO: str = "flat_step_ratio"
     RETURN_RATE: str = "return_rate"
+    SCORE: str = "score"
+    REQUIRE_MONEY: str = "require_money"
+    SOURCE_FILE: str = "source_file"
+    ROWS: str = "rows"
+    INDICATOR: str = "indicator"

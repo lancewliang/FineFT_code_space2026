@@ -9,7 +9,7 @@ FINEFT_ROOT = Path(__file__).resolve().parents[1]
 if str(FINEFT_ROOT) not in sys.path:
     sys.path.insert(0, str(FINEFT_ROOT))
 
-from common import ArtifactNames, get_vae_test_filename
+from common import ArtifactNames, get_vae_label_filename, get_vae_test_filename
 
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
@@ -112,7 +112,7 @@ def make_data(args):
     valid_files = _collect_valid_label_files(valid_path)
     for label, df_paths in valid_files["legacy_labels"].items():
         if not _save_label_array(
-            df_paths, state_features, os.path.join(method_save_path, "{}.npy".format(label))
+            df_paths, state_features, os.path.join(method_save_path, get_vae_label_filename(label))
         ):
             print(f"skip empty label: {label}")
     for contract, labels in valid_files["contracts"].items():
@@ -122,17 +122,17 @@ def make_data(args):
             if not _save_label_array(
                 df_paths,
                 state_features,
-                os.path.join(contract_save_path, "{}.npy".format(label)),
+                os.path.join(contract_save_path, get_vae_label_filename(label)),
             ):
                 print(f"skip empty label: {contract}/{label}")
-    test_path = os.path.join(args.base_path, args.dataset_name, "test.feather")
+    test_path = os.path.join(args.base_path, args.dataset_name, ArtifactNames.TEST_FEATHER)
     if os.path.exists(test_path):
         test_frames = [pd.read_feather(test_path)]
         test_data = np.concatenate(
             [df[state_features].values for df in test_frames],
             axis=0,
         )
-        np.save(os.path.join(vae_data_root, "test.npy"), test_data)
+        np.save(os.path.join(vae_data_root, ArtifactNames.TEST_NPY), test_data)
     else:
         test_dir = os.path.join(args.base_path, args.dataset_name, "test")
         test_files = [

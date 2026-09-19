@@ -37,6 +37,7 @@ from common import (
     ArtifactNames,
     HistoryArtifactNames,
     MetricColumns,
+    RoutingParamColumns,
 )
 from model.low_level import ensemble_Qnet
 from model.high_level import RankBasedQNetwork
@@ -343,21 +344,21 @@ def resolve_routing_parameters(args):
     if trial_match and optuna_csv and os.path.exists(optuna_csv):
         trial_id = int(trial_match.group(1))
         df = pd.read_csv(optuna_csv)
-        row = df[df["number"] == trial_id]
+        row = df[df[RoutingParamColumns.NUMBER] == trial_id]
         if not row.empty:
             r = row.iloc[0]
             if slope_window_length is None:
-                slope_window_length = int(r["params_slope_window_length"])
+                slope_window_length = int(r[RoutingParamColumns.PARAMS_SLOPE_WINDOW_LENGTH])
             if volatility_window_length is None:
-                volatility_window_length = int(r["params_volatility_window_length"])
+                volatility_window_length = int(r[RoutingParamColumns.PARAMS_VOLATILITY_WINDOW_LENGTH])
             if slope_gamma is None:
-                slope_gamma = float(r["params_slope_gamma"])
+                slope_gamma = float(r[RoutingParamColumns.PARAMS_SLOPE_GAMMA])
             if volatility_gamma is None:
-                volatility_gamma = float(r["params_volatility_gamma"])
+                volatility_gamma = float(r[RoutingParamColumns.PARAMS_VOLATILITY_GAMMA])
             if slope_rule_base_threshold is None:
-                slope_rule_base_threshold = float(r["params_slope_rule_base_threshold"])
+                slope_rule_base_threshold = float(r[RoutingParamColumns.PARAMS_SLOPE_RULE_BASE_THRESHOLD])
             if volatility_rule_base_threshold is None:
-                volatility_rule_base_threshold = float(r["params_volatility_rule_base_threshold"])
+                volatility_rule_base_threshold = float(r[RoutingParamColumns.PARAMS_VOLATILITY_RULE_BASE_THRESHOLD])
 
     # 2. Try resolving via explicit ws_ / wv_ format in para_str
     if para_str:
@@ -507,11 +508,11 @@ class vae_risk_aware_routing:
         )
         self.test_data_path = self.single_data_path
         self.tech_indicator_list = np.load(
-            os.path.join(self.base_path, self.dataset_name, "state_features.npy")
+            os.path.join(self.base_path, self.dataset_name, ArtifactNames.STATE_FEATURES_NPY)
         )
         self.maintenance_margin_ratio_dict = np.load(
             os.path.join(
-                self.base_path, self.dataset_name, "maintenance_margin_ratio_dict.npy"
+                self.base_path, self.dataset_name, ArtifactNames.MAINTENANCE_MARGIN_RATIO_DICT_NPY
             ),
             allow_pickle=True,
         ).item()
@@ -588,8 +589,8 @@ class vae_risk_aware_routing:
             model_list = []
             logpx_list = []
             for label in label_list:
-                path = os.path.join(root, label, "model_latest.pth")
-                id_path = os.path.join(root, label, "id_logpx.npy")
+                path = os.path.join(root, label, ArtifactNames.MODEL_LATEST_PTH)
+                id_path = os.path.join(root, label, ArtifactNames.ID_LOGPX_NPY)
                 vae_model = MLP_VAE(
                     INPUT_DIM=len(self.tech_indicator_list),
                     Z_DIM=args.z_dim,
@@ -902,7 +903,7 @@ class vae_risk_aware_routing:
             env.new_position_required_money_history,
         )
         np.save(
-            os.path.join(save_path, "macro_action.npy"),
+            os.path.join(save_path, HistoryArtifactNames.MACRO_ACTION_NPY),
             self.macro_action_history,
         )
         np.save(
@@ -995,28 +996,28 @@ class vae_risk_aware_routing:
         result_df = pd.DataFrame(contract_results)
         result_df = result_df[
             [
-                "contract",
-                "source_file",
-                "rows",
-                "reward_sum",
-                "require_money",
-                "return_rate",
+                MetricColumns.CONTRACT,
+                MetricColumns.SOURCE_FILE,
+                MetricColumns.ROWS,
+                MetricColumns.REWARD_SUM,
+                MetricColumns.REQUIRE_MONEY,
+                MetricColumns.RETURN_RATE,
             ]
         ]
         csv_path = os.path.join(self.test_path, ArtifactNames.CONTRACT_RESULTS_CSV)
         result_df.to_csv(csv_path, index=False)
         logger.info("[Artifacts] Saved contract results summary to %s", csv_path)
 
-        total_reward_sum = float(result_df["reward_sum"].sum())
+        total_reward_sum = float(result_df[MetricColumns.REWARD_SUM].sum())
         total_initial_capital = self.initial_wallet_balance * len(contract_results)
         portfolio_return_rate = total_reward_sum / (total_initial_capital + 1e-12)
-        win_rate = float((result_df["return_rate"] > 0).mean())
+        win_rate = float((result_df[MetricColumns.RETURN_RATE] > 0).mean())
         self.return_rate = portfolio_return_rate * win_rate
         trading_info = {
             "return_rate": self.return_rate,
             "portfolio_return_rate": portfolio_return_rate,
             "win_rate": win_rate,
-            "equal_weighted_mean_return": float(result_df["return_rate"].mean()),
+            "equal_weighted_mean_return": float(result_df[MetricColumns.RETURN_RATE].mean()),
             "total_reward_sum": total_reward_sum,
             "aggregation": "option2_portfolio_return_times_win_rate",
             "contract_count": len(contract_results),

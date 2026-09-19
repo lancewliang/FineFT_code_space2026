@@ -148,7 +148,7 @@ class picker:
                 f"analysis_result record missing fields {missing_fields}; "
                 "rerun test_agent_index.py to generate the new schema"
             )
-        label = single_result["label"]
+        label = single_result[TradeColumns.LABEL]
         if "/" in str(label) or "\\" in str(label):
             raise ValueError(
                 f"legacy label schema {label}; rerun test_agent_index.py "
@@ -158,15 +158,15 @@ class picker:
         lengths = {field: len(single_result[field]) for field in ARRAY_FIELDS}
         if len(set(lengths.values())) != 1:
             raise ValueError(f"aligned array fields have mismatched lengths: {lengths}")
-        if lengths["reward_sum"] == 0:
+        if lengths[MetricColumns.REWARD_SUM] == 0:
             raise ValueError(f"record for {label} has no validation samples")
-        reward_sum = np.asarray(single_result["reward_sum"], dtype=float)
-        df_length = np.asarray(single_result["df_length"], dtype=float)
+        reward_sum = np.asarray(single_result[MetricColumns.REWARD_SUM], dtype=float)
+        df_length = np.asarray(single_result[MetricColumns.DF_LENGTH], dtype=float)
         if np.any(df_length <= 0):
             raise ValueError(f"record for {label} has non-positive df_length")
         if not np.all(np.isfinite(reward_sum)):
             raise ValueError(f"record for {label} has non-finite reward_sum")
-        if len(set(single_result["df_path"])) != len(single_result["df_path"]):
+        if len(set(single_result[MetricColumns.DF_PATH])) != len(single_result[MetricColumns.DF_PATH]):
             raise ValueError(f"record for {label} has duplicate df_path values")
 
     def _validate_label_coverage(self, labels):
@@ -184,21 +184,21 @@ class picker:
         for single_result in result:
             single_result = dict(single_result)
             self._validate_result_record(single_result)
-            reward_sum = np.asarray(single_result["reward_sum"], dtype=float)
-            df_length = np.asarray(single_result["df_length"], dtype=float)
-            single_result["normalized_reward"] = reward_sum / df_length
-            single_result["trans_reward_mean"] = np.mean(
-                single_result["normalized_reward"]
+            reward_sum = np.asarray(single_result[MetricColumns.REWARD_SUM], dtype=float)
+            df_length = np.asarray(single_result[MetricColumns.DF_LENGTH], dtype=float)
+            single_result[MetricColumns.NORMALIZED_REWARD] = reward_sum / df_length
+            single_result[MetricColumns.TRANS_REWARD_MEAN] = np.mean(
+                single_result[MetricColumns.NORMALIZED_REWARD]
             )
-            single_result["trans_reward_std"] = np.std(
-                single_result["normalized_reward"]
+            single_result[MetricColumns.TRANS_REWARD_STD] = np.std(
+                single_result[MetricColumns.NORMALIZED_REWARD]
             )
-            single_result["mean_turnover"] = np.mean(single_result["turnover"])
+            single_result[MetricColumns.MEAN_TURNOVER] = np.mean(single_result[MetricColumns.TURNOVER])
             # single_result.pop("normalized_reward")
             # single_result.pop("reward_sum")
             # single_result.pop("df_length")
             # single_result.pop("turnover")
-            single_result["epoch_path"] = epoch_path
+            single_result[TradeColumns.EPOCH_PATH] = epoch_path
             new_result.append(single_result)
         return new_result
 
@@ -225,18 +225,18 @@ class picker:
                 single_condition_result = []
                 for single_result in result:
                     if (
-                        single_result["initial_action"] == initial_action
-                        and single_result["label"] == label
+                        single_result[TradeColumns.INITIAL_ACTION] == initial_action
+                        and single_result[TradeColumns.LABEL] == label
                     ):
                         single_condition_result.append(single_result)
                 if not single_condition_result:
                     continue
                 max_item = max(
                     single_condition_result,
-                    key=lambda x: x["trans_reward_mean"]
-                    - self.std_preference * x["trans_reward_std"],
+                    key=lambda x: x[MetricColumns.TRANS_REWARD_MEAN]
+                    - self.std_preference * x[MetricColumns.TRANS_REWARD_STD],
                 )
-                max_item["epoch_path"] = epoch_path
+                max_item[TradeColumns.EPOCH_PATH] = epoch_path
                 max_result.append(max_item)
         return max_result
 
@@ -273,15 +273,15 @@ class picker:
         )
         df_best = pd.DataFrame(all_parameter_result_best)
         df_all = pd.DataFrame(all_parameter_result)
-        df_all["epoch_number"] = (
-            df_all["epoch_path"].str.extract(r"epoch_(\d+)").astype(int)
+        df_all[TradeColumns.EPOCH_NUMBER] = (
+            df_all[TradeColumns.EPOCH_PATH].str.extract(r"epoch_(\d+)").astype(int)
         )
 
         df_all = df_all.sort_values(
-            by=["epoch_number", "label", "initial_action", "bin_index"],
+            by=[TradeColumns.EPOCH_NUMBER, TradeColumns.LABEL, TradeColumns.INITIAL_ACTION, TradeColumns.BIN_INDEX],
             ascending=[True, True, True, True],
         )
-        df_all = df_all.drop(columns="epoch_number")
+        df_all = df_all.drop(columns=TradeColumns.EPOCH_NUMBER)
 
         if not os.path.exists(os.path.join(self.save_path, self.dataset_name, self.experiment_name)):
             os.makedirs(os.path.join(self.save_path, self.dataset_name, self.experiment_name))
@@ -292,18 +292,18 @@ class picker:
         return df_best, df_all
 
     def pick_best_agent_regarding_dynamics_bin_index_path(self, result_all):
-        self._validate_label_coverage(result_all["label"].unique())
+        self._validate_label_coverage(result_all[TradeColumns.LABEL].unique())
         label_list = []
         epoch_path_list = []
         bin_index_list = []
         reward_max_list = []
         source_rows_list = []
-        for label in result_all["label"].unique():
+        for label in result_all[TradeColumns.LABEL].unique():
             print(label)
-            selected_df = result_all[result_all["label"] == label]
+            selected_df = result_all[result_all[TradeColumns.LABEL] == label]
             reward_mean_info = (
-                selected_df.groupby(["label", "bin_index", "epoch_path"])[
-                    "trans_reward_mean"
+                selected_df.groupby([TradeColumns.LABEL, TradeColumns.BIN_INDEX, TradeColumns.EPOCH_PATH])[
+                    MetricColumns.TRANS_REWARD_MEAN
                 ]
                 .agg(["mean", "count"])
                 .dropna()
@@ -327,31 +327,31 @@ class picker:
             source_rows_list.append(source_rows)
         best_agent_info = pd.DataFrame(
             {
-                "label": label_list,
-                "epoch_path": epoch_path_list,
-                "bin_index": bin_index_list,
-                "reward_max": reward_max_list,
-                "source_rows": source_rows_list,
+                TradeColumns.LABEL: label_list,
+                TradeColumns.EPOCH_PATH: epoch_path_list,
+                TradeColumns.BIN_INDEX: bin_index_list,
+                MetricColumns.REWARD_MAX: reward_max_list,
+                TradeColumns.SOURCE_ROWS: source_rows_list,
             }
         )
-        self._validate_label_coverage(best_agent_info["label"].tolist())
+        self._validate_label_coverage(best_agent_info[TradeColumns.LABEL].tolist())
         best_agent_info.to_csv(
             os.path.join(
                 self.save_path,
                 self.dataset_name,
                 self.experiment_name,
-                "best_index_info_by_dynamics_with_different_position.csv",
+                ArtifactNames.BEST_INDEX_INFO_CSV,
             )
         )
         return best_agent_info
 
     def _ordered_best_agent_df(self, best_agent_df):
-        labels = best_agent_df["label"].tolist()
+        labels = best_agent_df[TradeColumns.LABEL].tolist()
         self._validate_label_coverage(labels)
-        if best_agent_df["label"].duplicated().any():
+        if best_agent_df[TradeColumns.LABEL].duplicated().any():
             raise ValueError("each label must have exactly one selected agent")
         ordered_df = best_agent_df.copy()
-        ordered_df["_label_index"] = ordered_df["label"].apply(self._label_sort_key)
+        ordered_df["_label_index"] = ordered_df[TradeColumns.LABEL].apply(self._label_sort_key)
         ordered_df = ordered_df.sort_values("_label_index").drop(columns="_label_index")
         return ordered_df
 
@@ -361,15 +361,15 @@ class picker:
         os.makedirs(output_dir, exist_ok=True)
         labels = []
         for row in ordered_df.to_dict("records"):
-            model_path = os.path.join(row["epoch_path"], "trained_model.pkl")
+            model_path = os.path.join(row[TradeColumns.EPOCH_PATH], ArtifactNames.TRAINED_MODEL_PKL)
             labels.append(
                 {
-                    "label": row["label"],
-                    "epoch_path": row["epoch_path"],
-                    "model_path": model_path,
-                    "bin_index": int(row["bin_index"]),
-                    "score": float(row["reward_max"]),
-                    "source_rows": int(row.get("source_rows", 0)),
+                    TradeColumns.LABEL: row[TradeColumns.LABEL],
+                    TradeColumns.EPOCH_PATH: row[TradeColumns.EPOCH_PATH],
+                    TradeColumns.MODEL_PATH: model_path,
+                    TradeColumns.BIN_INDEX: int(row[TradeColumns.BIN_INDEX]),
+                    MetricColumns.SCORE: float(row[MetricColumns.REWARD_MAX]),
+                    TradeColumns.SOURCE_ROWS: int(row.get(TradeColumns.SOURCE_ROWS, 0)),
                 }
             )
         manifest = {
@@ -390,13 +390,13 @@ class picker:
         )
         n_action = self.position_choices
         n_hidden = self.hidden_nodes
-        label_list = best_agent_df["label"].unique().tolist()
-        epoch_path_list = best_agent_df["epoch_path"].tolist()
+        label_list = best_agent_df[TradeColumns.LABEL].unique().tolist()
+        epoch_path_list = best_agent_df[TradeColumns.EPOCH_PATH].tolist()
         epoch_path_list = [
-            os.path.join(epoch_path, "trained_model.pkl")
+            os.path.join(epoch_path, ArtifactNames.TRAINED_MODEL_PKL)
             for epoch_path in epoch_path_list
         ]
-        bin_index_list = best_agent_df["bin_index"].tolist()
+        bin_index_list = best_agent_df[TradeColumns.BIN_INDEX].tolist()
         assert len(label_list) == len(epoch_path_list) == len(bin_index_list)
         # print(label_list)
         # print(epoch_path_list)        
@@ -414,7 +414,7 @@ class picker:
             os.makedirs(self.model_save_path)
         torch.save(
             new_ensemble.state_dict(),
-            os.path.join(self.model_save_path, "model.pth"),
+            os.path.join(self.model_save_path, ArtifactNames.MODEL_PTH),
         )
         self.write_selection_manifest(best_agent_df)
 

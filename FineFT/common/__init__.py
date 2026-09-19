@@ -10,6 +10,7 @@ from common.artifacts import (
     get_valid_processed_filename,
 )
 from common.metric_columns import MetricColumns
+from common.routing_params import RoutingParamColumns
 from common.trade_columns import (
     AGGREGATE_JSON_COLUMNS,
     CSV_HEADER_LABELS,
@@ -20,6 +21,7 @@ __all__ = [
     "ArtifactNames",
     "HistoryArtifactNames",
     "MetricColumns",
+    "RoutingParamColumns",
     "TradeColumns",
     "CSV_HEADER_LABELS",
     "AGGREGATE_JSON_COLUMNS",

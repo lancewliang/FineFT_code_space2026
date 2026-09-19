@@ -7,6 +7,9 @@ class TradeColumns:
     PREVIOUS_ACTION: str = "previous_action"
     AVALIABLE_ACTION: str = "avaliable_action"
     BIN_INDEX: str = "bin_index"
+    EPOCH_PATH: str = "epoch_path"
+    TIMESTEP: str = "timestep"
+    TIMESTAMP: str = "timestamp"
     LABEL: str = "label"
     EPOCH_NUMBER: str = "epoch_number"
     REALIZED_PNL_STEP: str = "realized_pnl_step"
@@ -35,6 +38,12 @@ class TradeColumns:
     POSITION_FORWARD_RETURN_CORR: str = "position_forward_return_corr"
     LONG_FORWARD_RETURN_MEAN: str = "long_forward_return_mean"
     SHORT_FORWARD_RETURN_MEAN: str = "short_forward_return_mean"
+    OPEN: str = "open"
+    HIGH: str = "high"
+    LOW: str = "low"
+    VOLUME: str = "volume"
+    SOURCE_ROWS: str = "source_rows"
+    MODEL_PATH: str = "model_path"
 
 
 CSV_HEADER_LABELS: dict[str, str] = {

@@ -15,7 +15,7 @@ import optuna  # noqa: E402
 import torch  # noqa: E402
 
 sys.path.append(".")
-from common import ArtifactNames
+from common import ArtifactNames, RoutingParamColumns
 from RL.DiHFT.high_level.vae_routing_util import (  # noqa: E402
     load_two_dimensional_selection_manifest,
     vae_risk_aware_routing,
@@ -148,34 +148,34 @@ def suggest_trial_parameters(trial, trial_args, search_args):
     """Apply independent slope and volatility parameters to one trial."""
 
     trial_args.slope_window_length = trial.suggest_int(
-        "slope_window_length",
+        RoutingParamColumns.SLOPE_WINDOW_LENGTH,
         search_args.window_length_min,
         search_args.window_length_max,
     )
     trial_args.volatility_window_length = trial.suggest_int(
-        "volatility_window_length",
+        RoutingParamColumns.VOLATILITY_WINDOW_LENGTH,
         search_args.window_length_min,
         search_args.window_length_max,
     )
     trial_args.slope_gamma = trial.suggest_float(
-        "slope_gamma",
+        RoutingParamColumns.SLOPE_GAMMA,
         search_args.gamma_min,
         search_args.gamma_max,
         log=True,
     )
     trial_args.volatility_gamma = trial.suggest_float(
-        "volatility_gamma",
+        RoutingParamColumns.VOLATILITY_GAMMA,
         search_args.gamma_min,
         search_args.gamma_max,
         log=True,
     )
     trial_args.slope_rule_base_threshold = trial.suggest_float(
-        "slope_rule_base_threshold",
+        RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD,
         search_args.rule_base_threshold_min,
         search_args.rule_base_threshold_max,
     )
     trial_args.volatility_rule_base_threshold = trial.suggest_float(
-        "volatility_rule_base_threshold",
+        RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD,
         search_args.rule_base_threshold_min,
         search_args.rule_base_threshold_max,
     )

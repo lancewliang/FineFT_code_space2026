@@ -510,8 +510,21 @@ def _iter_valid_feather_files(root_dir: str) -> list[dict[str, Any]]:
     return entries
 
 
-DETAIL_REQUIRED_MARKET_COLUMNS = ["timestamp", "close", "volume", "mark_price"]
-DETAIL_MARKET_COLUMNS = ["timestamp", "open", "high", "low", "close", "volume", "mark_price"]
+DETAIL_REQUIRED_MARKET_COLUMNS = [
+    TradeColumns.TIMESTAMP,
+    TradeColumns.CLOSE,
+    TradeColumns.VOLUME,
+    TradeColumns.MARK_PRICE,
+]
+DETAIL_MARKET_COLUMNS = [
+    TradeColumns.TIMESTAMP,
+    TradeColumns.OPEN,
+    TradeColumns.HIGH,
+    TradeColumns.LOW,
+    TradeColumns.CLOSE,
+    TradeColumns.VOLUME,
+    TradeColumns.MARK_PRICE,
+]
 
 
 def _market_fields(test_df: pd.DataFrame, timestep: int) -> dict[str, Any]:
@@ -639,7 +652,7 @@ class weighted_trader:
         )
         self.maintenance_margin_ratio_dict = np.load(
             os.path.join(
-                self.base_path, self.dataset_name, "maintenance_margin_ratio_dict.npy"
+                self.base_path, self.dataset_name, ArtifactNames.MAINTENANCE_MARGIN_RATIO_DICT_NPY
             ),
             allow_pickle=True,
         ).item()

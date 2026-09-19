@@ -17,10 +17,12 @@
    重构仅作用于 `FineFT/` 目录下的 Python 脚本相互引用；`data_preprocess/` 算子库维持原有解耦状态，其产出物（如 `dataset_split_manifest.json`、`state_features.npy`）在 FineFT 侧以标准化输入契约形式引用。
 
 2. **分类分文件独立存储 (`FineFT/common/`)**：
-   在 `FineFT/common/` 目录下按关注点划分为 3 个独立的 Python 常量文件：
+   在 `FineFT/common/` 目录下按关注点划分为 4 个独立的 Python 常量文件：
    - `artifacts.py`：管理所有磁盘静态产出物文件名（`ArtifactNames`，如 `TRAINED_MODEL_PKL`、`DATASET_MANIFEST_JSON`、`ANALYSIS_RESULT_CSV`、`SELECTION_MANIFEST_JSON`、`OPTUNA_RESULTS_CSV`、`HIGH_LEVEL_AGENT_PARA_TXT`）、仿真历史向量文件名（`HistoryArtifactNames`，如 `REWARD_HISTORY_NPY`、`WALLET_BALANCE_HISTORY_NPY` 等）以及动态文件名的纯函数构造器（如 `get_df_chunk_filename`、`get_trading_detail_csv_filename` 等）。
    - `metric_columns.py`：管理所有财务绩效、选拔评估与 Optuna 调优相关的 DataFrame 列名（`MetricColumns`，如 `TR = "tr"`、`PORTFOLIO_TR = "portfolio_tr"`、`MDD = "mdd"`、`ANNUAL_SR = "annual_sr"`、`DAILY_CR = "daily_cr"`、`REQUIRED_MONEY = "required_money"` 等）。
    - `trade_columns.py`：管理所有单 Step 执行、持仓动作、交易明细与行情约束列名（`TradeColumns`，如 `POSITION = "position"`、`TURNOVER = "turnover"`、`REALIZED_PNL_STEP = "realized_pnl_step"`、`IS_LIMIT_UP = "is_limit_up"` 等），并集中维护双语导出字典 `CSV_HEADER_LABELS`。
+
+   - `routing_params.py`：管理高层路由超参数寻优与评估策略字段（`RoutingParamColumns`，如 `SLOPE_WINDOW_LENGTH`、`VOLATILITY_WINDOW_LENGTH`、`SLOPE_GAMMA`、`VOLATILITY_GAMMA`、`SLOPE_RULE_BASE_THRESHOLD`、`VOLATILITY_RULE_BASE_THRESHOLD` 以及带有 Optuna 前缀的 `PARAMS_*` 列和 `NUMBER`）。
 
 3. **门面统一导出 (Facade Export)**：
    `FineFT/common/__init__.py` 统一暴露上述命名空间类及关键构造辅助函数，既支持直观的顶层门面导入（`from common import ArtifactNames, MetricColumns`），又完全支持精准按子模块导入（`from common.artifacts import ArtifactNames`）。

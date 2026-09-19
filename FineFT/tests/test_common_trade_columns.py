@@ -11,6 +11,9 @@ def test_trade_columns_literals() -> None:
     assert TradeColumns.PREVIOUS_ACTION == "previous_action"
     assert TradeColumns.AVALIABLE_ACTION == "avaliable_action"
     assert TradeColumns.BIN_INDEX == "bin_index"
+    assert TradeColumns.EPOCH_PATH == "epoch_path"
+    assert TradeColumns.TIMESTEP == "timestep"
+    assert TradeColumns.TIMESTAMP == "timestamp"
     assert TradeColumns.LABEL == "label"
     assert TradeColumns.EPOCH_NUMBER == "epoch_number"
     assert TradeColumns.REALIZED_PNL_STEP == "realized_pnl_step"
@@ -54,6 +57,12 @@ def test_trade_columns_literals() -> None:
         TradeColumns.SHORT_FORWARD_RETURN_MEAN
         == "short_forward_return_mean"
     )
+    assert TradeColumns.OPEN == "open"
+    assert TradeColumns.HIGH == "high"
+    assert TradeColumns.LOW == "low"
+    assert TradeColumns.VOLUME == "volume"
+    assert TradeColumns.SOURCE_ROWS == "source_rows"
+    assert TradeColumns.MODEL_PATH == "model_path"
 
 
 def test_csv_header_labels_and_json_columns() -> None:

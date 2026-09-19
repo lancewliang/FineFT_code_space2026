@@ -1,5 +1,6 @@
 import common
 from common import (
+    RoutingParamColumns,
     AGGREGATE_JSON_COLUMNS,
     CSV_HEADER_LABELS,
     ArtifactNames,
@@ -21,6 +22,7 @@ def test_common_facade_exports() -> None:
     assert HistoryArtifactNames is not None
     assert MetricColumns is not None
     assert TradeColumns is not None
+    assert RoutingParamColumns is not None
     assert isinstance(CSV_HEADER_LABELS, dict)
     assert isinstance(AGGREGATE_JSON_COLUMNS, list)
     assert callable(get_df_chunk_filename)
@@ -33,3 +35,4 @@ def test_common_facade_exports() -> None:
     assert hasattr(common, "ArtifactNames")
     assert hasattr(common, "MetricColumns")
     assert hasattr(common, "TradeColumns")
+    assert hasattr(common, "RoutingParamColumns")
