@@ -40,7 +40,7 @@ if [ "${FOREGROUND}" = "1" ]; then
 else
     nohup python -u FineFT/analysis/pick_agent/DiHFT_high_level_heurstic.py \
         "${CMD_ARGS[@]}" \
-        >"log/analysis/pick_agent/DiHFT/${DATASET_NAME}/high_level_heurstic/${EXPERIMENT_NAME}.log" 2>&1 &
+        >"log/analysis/pick_agent/DiHFT/${DATASET_NAME}/high_level_heurstic/${EXPERIMENT_NAME}.log" 2>&1
     PID=$!
     echo "Started DiHFT_high_level_heurstic (PID: ${PID}) -> log/analysis/pick_agent/DiHFT/${DATASET_NAME}/high_level_heurstic/${EXPERIMENT_NAME}.log"
 fi

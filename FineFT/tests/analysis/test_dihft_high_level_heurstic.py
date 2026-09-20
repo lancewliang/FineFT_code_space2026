@@ -322,3 +322,23 @@ def test_high_level_heurstic_fu_10_script_configuration():
     assert "FOREGROUND=${FOREGROUND:-0}" in content
     assert "--selection_metric" in content
     assert "FineFT/analysis/pick_agent/DiHFT_high_level_heurstic.py" in content
+
+
+def test_calculate_metric_zero_activity_returns_finite_zeros():
+    from analysis.calculate_metric.calculate_metric import calculate_metric
+    import warnings
+
+    reward_list = [0.0] * 100
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        tr, daily_vol, mdd, downside_deviation_daily, annual_sr, daily_cr, daily_SoR = (
+            calculate_metric(6000.0, reward_list, freq=12)
+        )
+
+    assert tr == 0.0
+    assert daily_vol == 0.0
+    assert mdd == 0.0
+    assert downside_deviation_daily == 0.0
+    assert annual_sr == 0.0
+    assert daily_cr == 0.0
+    assert daily_SoR == 0.0

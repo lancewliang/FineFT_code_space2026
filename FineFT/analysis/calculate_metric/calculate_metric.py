@@ -85,16 +85,20 @@ def calculate_metric(required_money, reward_list, freq=6 * 60 * 24):
         reward_sum_list.append(reward_sum_list[-1] + reward_list[i])
     total_asset_value_list = (required_money + np.array(reward_sum_list)).tolist()
     return_rate_list = [
-        total_asset_value_list[i + 1] / (total_asset_value_list[i] + 1e-12) - 1
+        (total_asset_value_list[i + 1] - total_asset_value_list[i])
+        / (total_asset_value_list[i] + 1e-12)
         for i in range(len(new_func(total_asset_value_list)) - 1)
     ]
     daily_return_rate_list = [
-        total_asset_value_list[i + freq] / (total_asset_value_list[i] + 1e-12) - 1
+        (total_asset_value_list[i + freq] - total_asset_value_list[i])
+        / (total_asset_value_list[i] + 1e-12)
         for i in range(0, len(total_asset_value_list) - freq, freq)
     ]
-    tr = total_asset_value_list[-1] / (total_asset_value_list[0] + 1e-12) - 1
-    vol = np.std(return_rate_list)
-    daily_vol = np.std(daily_return_rate_list)
+    tr = (total_asset_value_list[-1] - total_asset_value_list[0]) / (
+        total_asset_value_list[0] + 1e-12
+    )
+    vol = np.std(return_rate_list) if len(return_rate_list) > 0 else 0.0
+    daily_vol = np.std(daily_return_rate_list) if len(daily_return_rate_list) > 0 else 0.0
     mdd = 0
     peak = total_asset_value_list[0]
     for value in total_asset_value_list:
@@ -104,17 +108,33 @@ def calculate_metric(required_money, reward_list, freq=6 * 60 * 24):
         if dd > mdd:
             mdd = dd
     negative_second_return_rate_list = [x for x in return_rate_list if x < 0]
-    downside_deviation = np.std(negative_second_return_rate_list)
-    daily_negative_second_return_rate = [x for x in daily_return_rate_list if x < 0]
-    downside_deviation_daily = np.std(daily_negative_second_return_rate)
-    sr = np.mean(return_rate_list) / np.std(return_rate_list)
-    annual_sr = (
-        np.mean(daily_return_rate_list) / np.std(daily_return_rate_list) * np.sqrt(365)
+    downside_deviation = (
+        np.std(negative_second_return_rate_list)
+        if len(negative_second_return_rate_list) > 0
+        else 0.0
     )
-    cr = np.mean(return_rate_list) / mdd
-    daily_cr = np.mean(daily_return_rate_list) * 365 / mdd
-    SoR = np.mean(return_rate_list) / downside_deviation
-    daily_SoR = tr / downside_deviation_daily
+    daily_negative_second_return_rate = [x for x in daily_return_rate_list if x < 0]
+    downside_deviation_daily = (
+        np.std(daily_negative_second_return_rate)
+        if len(daily_negative_second_return_rate) > 0
+        else 0.0
+    )
+    sr = np.mean(return_rate_list) / vol if vol > 1e-12 else 0.0
+    annual_sr = (
+        np.mean(daily_return_rate_list) / daily_vol * np.sqrt(365)
+        if daily_vol > 1e-12
+        else 0.0
+    )
+    cr = np.mean(return_rate_list) / mdd if mdd > 1e-12 else 0.0
+    daily_cr = np.mean(daily_return_rate_list) * 365 / mdd if mdd > 1e-12 else 0.0
+    SoR = (
+        np.mean(return_rate_list) / downside_deviation
+        if downside_deviation > 1e-12
+        else 0.0
+    )
+    daily_SoR = (
+        tr / downside_deviation_daily if downside_deviation_daily > 1e-12 else 0.0
+    )
     return tr, daily_vol, mdd, downside_deviation_daily, annual_sr, daily_cr, daily_SoR
 
 
