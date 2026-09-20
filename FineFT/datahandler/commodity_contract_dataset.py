@@ -3,6 +3,11 @@ import json
 import shutil
 import sys
 from pathlib import Path
+
+FINEFT_ROOT = Path(__file__).resolve().parents[1]
+if str(FINEFT_ROOT) not in sys.path:
+    sys.path.insert(0, str(FINEFT_ROOT))
+
 import numpy as np
 import pandas as pd
 
@@ -22,9 +27,6 @@ try:
         extract_contract_segments,
     )
 except ImportError:
-    datahandler_parent = Path(__file__).resolve().parents[1]
-    if str(datahandler_parent) not in sys.path:
-        sys.path.insert(0, str(datahandler_parent))
     from datahandler.manifests import (
         DatasetContractManifest,
         DatasetManifest,

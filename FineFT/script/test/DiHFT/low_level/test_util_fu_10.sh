@@ -13,7 +13,7 @@ function run_test_agent_index {
         label_types=("$LABEL_TYPE")
     fi
     local result_path=${RESULT_PATH:-result/DiHFT/low_level}
-    local max_parallel=${MAX_PARALLEL:-168}
+    local max_parallel=${MAX_PARALLEL:-96}
     ROOTPATH=${ROOTPATH:-$(pwd)}
     cd "$ROOTPATH"
     export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
@@ -123,7 +123,7 @@ function run_ddqn_average {
 DATASET_NAME=${DATASET_NAME:-fu}
 MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-1}
 EPOCH_START=${EPOCH_START:-1}
-EPOCH_END=${EPOCH_END:-60}
+EPOCH_END=${EPOCH_END:-75}
 BASE_PATH=${BASE_PATH:-dataset/10min}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-10min_parallel}
 DEVICE=${DEVICE:-cpu}

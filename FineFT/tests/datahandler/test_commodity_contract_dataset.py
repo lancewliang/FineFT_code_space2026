@@ -1,4 +1,5 @@
 import sys
+import subprocess
 import json
 from pathlib import Path
 
@@ -720,3 +721,18 @@ def test_calibrate_and_inject_train_regimes_fails_fast_on_missing_mark_price(tmp
 
     with pytest.raises(ValueError, match="missing required key_indicator column: mark_price"):
         calibrate_and_inject_train_regimes(manifest, key_indicator="mark_price")
+
+
+def test_commodity_contract_dataset_cli_help():
+    script_path = (
+        Path(__file__).resolve().parents[2]
+        / "datahandler"
+        / "commodity_contract_dataset.py"
+    )
+    result = subprocess.run(
+        [sys.executable, str(script_path), "--help"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "--dataset_split_manifest_path" in result.stdout
