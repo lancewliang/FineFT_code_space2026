@@ -411,6 +411,10 @@ _Avoid_: 元路由器、路由选择器
 当单合约累计最大回撤率超过 15% 时强行切断 Agent 路由，全量降级为规则平仓 (`macro_action = 5`)。
 _Avoid_: 熔断器、强平保护
 
+**非主力合约门控防御 (Non-Main Contract Defensive Gating)**:
+在高层路由中基于前一交易日合约角色档位（`prev_day_contract_role_tier < 0.5`）对非主力及非次主力合约实施规则平仓并保持空仓的保护策略，避免浅盘口低流动性合约扭曲多合约验证集评估与 Optuna 门控超参遴选；支持通过参数进行退化消融测试。
+_Avoid_: 非主力过滤、角色熔断、合约降级
+
 ### Evaluation And Diagnostics
 
 **Pipeline Artifact (管道产出物)**:

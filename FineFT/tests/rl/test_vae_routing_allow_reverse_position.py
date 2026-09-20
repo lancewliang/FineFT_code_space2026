@@ -325,6 +325,7 @@ def test_prepare_base_args_loads_two_dimensional_model_from_manifest(tmp_path):
         max_holding_number=8,
         order_book_depth=25,
         allow_reverse_position=False,
+        enable_non_main_contract_defense=False,
     )
     args_2 = types.SimpleNamespace(
         dataset_name="fu",
@@ -332,6 +333,7 @@ def test_prepare_base_args_loads_two_dimensional_model_from_manifest(tmp_path):
         max_holding_number=2,
         order_book_depth=5,
         allow_reverse_position=True,
+        enable_non_main_contract_defense=False,
         selection_manifest=str(manifest_path),
     )
 
@@ -360,6 +362,7 @@ def test_prepare_base_args_does_not_mutate_original_args(tmp_path):
         max_holding_number=8,
         order_book_depth=25,
         allow_reverse_position=False,
+        enable_non_main_contract_defense=False,
     )
     args_2 = types.SimpleNamespace(
         dataset_name="new_dataset",
@@ -367,6 +370,7 @@ def test_prepare_base_args_does_not_mutate_original_args(tmp_path):
         max_holding_number=2,
         order_book_depth=5,
         allow_reverse_position=False,
+        enable_non_main_contract_defense=False,
         selection_manifest=str(manifest_path),
     )
 
@@ -397,6 +401,7 @@ def test_prepare_base_args_rejects_missing_model_assembly(tmp_path):
         max_holding_number=8,
         order_book_depth=25,
         allow_reverse_position=False,
+        enable_non_main_contract_defense=False,
     )
     args_2 = types.SimpleNamespace(
         dataset_name="fu",
@@ -404,6 +409,7 @@ def test_prepare_base_args_rejects_missing_model_assembly(tmp_path):
         max_holding_number=2,
         order_book_depth=5,
         allow_reverse_position=True,
+        enable_non_main_contract_defense=False,
         selection_manifest=str(manifest_path),
     )
     with pytest.raises(
@@ -422,6 +428,7 @@ def test_prepare_base_args_validates_manifest_contract(tmp_path):
         max_holding_number=8,
         order_book_depth=25,
         allow_reverse_position=False,
+        enable_non_main_contract_defense=False,
     )
     args_2 = types.SimpleNamespace(
         dataset_name="fu",
@@ -429,6 +436,7 @@ def test_prepare_base_args_validates_manifest_contract(tmp_path):
         max_holding_number=2,
         order_book_depth=5,
         allow_reverse_position=True,
+        enable_non_main_contract_defense=False,
         selection_manifest=str(manifest_path),
     )
     with pytest.raises(

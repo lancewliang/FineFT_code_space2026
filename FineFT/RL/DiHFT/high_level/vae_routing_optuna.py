@@ -97,6 +97,12 @@ parser_all.add_argument(
     help="two-dimensional low-level selection manifest",
 )
 parser_all.add_argument(
+    "--enable_non_main_contract_defense",
+    action="store_true",
+    default=False,
+    help="enable defensive gating on non-main and non-sub-main contracts",
+)
+parser_all.add_argument(
     "--n_trials",
     type=int,
     default=128,
@@ -135,6 +141,10 @@ def prepare_base_args(args_1, args_2):
     )
     base_args.allow_reverse_position = (
         args_2.allow_reverse_position or base_args.allow_reverse_position
+    )
+    base_args.enable_non_main_contract_defense = (
+        args_2.enable_non_main_contract_defense
+        or base_args.enable_non_main_contract_defense
     )
     manifest_path = args_2.selection_manifest or default_selection_manifest_path(base_args)
     manifest = load_two_dimensional_selection_manifest(manifest_path)

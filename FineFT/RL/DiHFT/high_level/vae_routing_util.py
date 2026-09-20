@@ -236,6 +236,12 @@ parser.add_argument(
     help="two-dimensional low-level selection manifest",
 )
 parser.add_argument(
+    "--enable_non_main_contract_defense",
+    action="store_true",
+    default=False,
+    help="enable defensive gating on non-main and non-sub-main contracts",
+)
+parser.add_argument(
     "--eval_stage",
     type=str,
     default="valid",
@@ -461,6 +467,9 @@ def load_two_dimensional_selection_manifest(
 
 
 class vae_risk_aware_routing:
+    enable_non_main_contract_defense: bool = False
+    role_tier_index: int | None = None
+
     def __init__(self, args) -> None:
         # device
         if torch.cuda.is_available():
@@ -509,6 +518,13 @@ class vae_risk_aware_routing:
         self.test_data_path = self.single_data_path
         self.tech_indicator_list = np.load(
             os.path.join(self.base_path, self.dataset_name, ArtifactNames.STATE_FEATURES_NPY)
+        )
+        self.enable_non_main_contract_defense = args.enable_non_main_contract_defense
+        role_tier_indices = np.where(
+            self.tech_indicator_list == "prev_day_contract_role_tier"
+        )[0]
+        self.role_tier_index = (
+            int(role_tier_indices[0]) if len(role_tier_indices) > 0 else None
         )
         self.maintenance_margin_ratio_dict = np.load(
             os.path.join(
@@ -682,6 +698,7 @@ class vae_risk_aware_routing:
             "volatility": args.volatility_rule_base_threshold,
         }
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
+        self.enable_non_main_contract_defense = args.enable_non_main_contract_defense
         self.test_path = self._resolve_test_path(args)
         if not os.path.exists(self.test_path):
             os.makedirs(self.test_path, exist_ok=True)
@@ -764,6 +781,16 @@ class vae_risk_aware_routing:
         )
 
     def get_action(self, info, s, current_position, current_leverage):
+        if (
+            self.enable_non_main_contract_defense
+            and self.role_tier_index is not None
+            and float(s[self.role_tier_index]) < 0.5
+        ):
+            action = self._defensive_action(info, current_position, current_leverage)
+            self.macro_action_history.append(self.slot_count)
+            self.action = action
+            return action
+
         volatility_weights = self.calculate_axis_window_result("volatility")
         slope_weights = self.calculate_axis_window_result("slope")
         if (
