@@ -89,13 +89,13 @@ parser.add_argument("--base", type=float, default=10, help="scaling log base")
 parser.add_argument(
     "--clip_min",
     type=float,
-    default=-20.0,
+    default=-5.0,
     help="minimum clipped robust-scaled value",
 )
 parser.add_argument(
     "--clip_max",
     type=float,
-    default=20.0,
+    default=5.0,
     help="maximum clipped robust-scaled value",
 )
 parser.add_argument(

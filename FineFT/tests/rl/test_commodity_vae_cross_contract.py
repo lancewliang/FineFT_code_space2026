@@ -818,7 +818,7 @@ def test_fu_10_vae_shell_passes_log_dir_and_outputs_log_files(tmp_path):
     os.chmod(bin_dir / "python", 0o755)
 
     env = os.environ.copy()
-    env["PATH"] = f"{bin_dir}{os.pathsep}{env[PATH]}"
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
     env["ROOTPATH"] = str(FINEFT_ROOT.parent)
     env["LABEL_COUNT"] = "2"
     env["MAX_PARALLEL_JOBS"] = "2"
@@ -842,3 +842,27 @@ def test_fu_10_vae_shell_passes_log_dir_and_outputs_log_files(tmp_path):
     assert len(invocations) == 4
     assert any("--log_dir" in inv for inv in invocations)
     assert any(str(log_base_dir) in inv for inv in invocations)
+
+
+def test_vae_train_and_test_emit_logger_info(caplog):
+    import torch
+    from torch.utils.data import TensorDataset, DataLoader
+    import RL.DiHFT.VAE.vae as VAEs
+
+    model = VAEs.MLP_VAE(INPUT_DIM=4, Z_DIM=2, hidden_dims=[8, 4])
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    dataset = [torch.randn(4) for _ in range(10)]
+    loader = DataLoader(dataset, batch_size=5)
+
+    class MockArgs:
+        log_interval = 1
+        save_interval = 100
+        single_label_save_path = "/tmp"
+
+    with caplog.at_level("INFO"):
+        VAEs.train(model, loader, optimizer, torch.device("cpu"), epoch=1, args=MockArgs())
+        VAEs.test(model, loader, loader, torch.device("cpu"), epoch=1, args=MockArgs())
+
+    assert "Train Epoch: 1" in caplog.text
+    assert "Average loss:" in caplog.text
+    assert "Test set loss: ID" in caplog.text

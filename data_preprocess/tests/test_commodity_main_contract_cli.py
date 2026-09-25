@@ -1784,3 +1784,31 @@ def test_validate_features_checks_feature_union_outputs():
     assert "FEATURE_UNION" in text
     assert "feature_union_manifest.json" in text
     assert "state_features.npy" in text
+
+
+def test_commodity_full_process_shell_excludes_ood_features_and_enforces_clipping():
+    script = (
+        REPO_ROOT
+        / "data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
+    )
+    text = script.read_text(encoding="utf-8")
+
+    # Blacklist must contain ADR-0022 OOD features
+    assert "contract_life_remaining_ratio" in text
+    assert "imin_192_origin" in text
+    assert "imin_192" in text
+    assert "imax_192_origin" in text
+    assert "imax_192" in text
+
+    # contract_life_remaining_ratio must be removed from BASE_TIME_FEATURE_COLUMNS
+    base_time_start = text.index("BASE_TIME_FEATURE_COLUMNS=(")
+    base_time_end = text.index(")", base_time_start)
+    base_time_def = text[base_time_start:base_time_end]
+    assert "contract_life_remaining_ratio" not in base_time_def
+
+    # run_commodity_scale_save must pass [-5.0, 5.0] clip bounds
+    scale_save_start = text.index("run_commodity_scale_save()")
+    scale_save_end = text.index("\n}", scale_save_start)
+    scale_save_def = text[scale_save_start:scale_save_end]
+    assert "--clip_min -5.0" in scale_save_def
+    assert "--clip_max 5.0" in scale_save_def

@@ -125,6 +125,12 @@ COMMODITY_FU_FEATURE_BLACKLIST=(
     prev_5_day_open_interest_change_quantile_rank
     prev_15_day_trade_imbalance_quantile_rank
     prev_10_day_trade_imbalance_quantile_rank
+    # Blacklisted OOD features (ADR-0022)
+    contract_life_remaining_ratio
+    imin_192_origin
+    imin_192
+    imax_192_origin
+    imax_192
 )
 
 run_commodity_logged_step() {
@@ -306,7 +312,6 @@ BASE_TIME_FEATURE_COLUMNS=(
     is_closing_30m
     is_session_first_bar
     is_session_last_bar
-    contract_life_remaining_ratio
     prev_day_contract_role_tier
 )
 
@@ -391,6 +396,8 @@ run_commodity_scale_save() {
         --save_path "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/" \
         --market_type commodity_futures \
         --orderbook_depth 5 \
+        --clip_min -5.0 \
+        --clip_max 5.0 \
         --feature_list_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/${target_freq}/${symbol}/train/state_features.npy" \
         --passthrough_features "${BASE_TIME_FEATURE_COLUMNS[@]}"
 }
@@ -758,15 +765,15 @@ run_commodity_full_process() {
 
     local log_dir="${LOG_DIR:-${root_path}/log_futures/ticker_result/commodity}"
 
-    run_commodity_logged_step \
-        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-        "stitch_main_contract" \
-        run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$start_date" "$end_date" "$symbol"
+    # run_commodity_logged_step \
+    #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+    #     "stitch_main_contract" \
+    #     run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$start_date" "$end_date" "$symbol"
     local summary_path="${root_path}/PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/${symbol}/main_contract_summary.json"
-    run_commodity_logged_step \
-        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-        "downscale_continuous_by_trading_day" \
-        run_commodity_downscale_continuous_by_trading_day "$root_path" "$summary_path" "$target_freq" "$symbol"
+    # run_commodity_logged_step \
+    #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+    #     "downscale_continuous_by_trading_day" \
+    #     run_commodity_downscale_continuous_by_trading_day "$root_path" "$summary_path" "$target_freq" "$symbol"
 
     local max_contract_workers=${MAX_CONTRACT_PROCESSES:-${max_processes:-3}}
     local -a contract_pids=()

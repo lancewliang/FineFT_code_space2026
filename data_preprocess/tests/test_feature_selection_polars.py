@@ -656,12 +656,12 @@ def test_multi_contract_scale_save_cli_uses_train_only_robust_scaler(tmp_path):
     expected_wap = (2849.5 - 2800.0) / 250.0
     assert abs(float(test_output["wap_1"].median()) - expected_wap) < 1e-9
     assert abs(float(test_output["awap"].median()) - expected_wap) < 1e-9
-    assert float(test_output["spike_feature"].max()) == 20.0
+    assert float(test_output["spike_feature"].max()) == 5.0
     assert manifest["scaler_version"] == "robust_v1"
     assert manifest["fit_scope"] == "train_all_contracts"
     assert manifest["clip"]["enabled"] is True
-    assert manifest["clip"]["min"] == -20.0
-    assert manifest["clip"]["max"] == 20.0
+    assert manifest["clip"]["min"] == -5.0
+    assert manifest["clip"]["max"] == 5.0
     assert {item["feature"] for item in manifest["features"]} == {
         "wap_1",
         "awap",

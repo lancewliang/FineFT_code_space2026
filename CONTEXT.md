@@ -117,8 +117,12 @@ _Avoid_: 主力合约窗口结束日、样本结束日
 _Avoid_: 主力窗口交易日数量、样本交易日数量
 
 **合约剩余生命周期比例 (Contract Life Remaining Ratio)**:
-当前 `TradingDay` 到合约最后交易日的剩余交易日数量除以合约完整交易日数量得到的非绝对生命周期特征。
+当前 `TradingDay` 到合约最后交易日的剩余交易日数量除以合约完整交易日数量得到的非绝对生命周期特征；在下采样与基础时间特征中计算保留，但在特征选择与状态输入中被特征黑名单强制剔除（ADR-0022），以防验证集与测试集分布漂移引起 VAE 似然崩溃。
 _Avoid_: 剩余天数、自然日倒计时
+
+**微观深度增量长尾截断 (Microstructure Depth Increments Truncation)**:
+在 RobustScaler 缩放后对微观深度增量（如 `ask_size_topk_size_5_increments`、`bid_size_topk_size_5_increments`）及全部状态特征施加 `[-5.0, 5.0]` 的硬截断，将极端偏态与流动性冲击离群值约束在 5 个尺度内，防止 VAE 产生高斯负对数似然 (NLL) 崩溃。
+_Avoid_: 原始深度差值截断、无界缩放
 
 **滚动窗口特征 (Rolling Window Feature)**:
 基于历史窗口滚动计算的衍生特征，如移动平均、波动率等。
