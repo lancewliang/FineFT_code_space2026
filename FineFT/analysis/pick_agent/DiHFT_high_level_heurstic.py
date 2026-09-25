@@ -203,23 +203,41 @@ class Picker:
             wallet_balance_history = np.load(
                 os.path.join(data_dir, HistoryArtifactNames.WALLET_BALANCE_HISTORY_NPY)
             )
-            requred_money = calculate_required_money(
-                initial_margin_history,
-                maintain_marigine_history,
-                new_position_required_money_history,
-                unrealized_pnl_history,
-                wallet_balance_history,
-            )
-            steps = len(reward_history)
-            freq_calc = 12 if steps >= 24 else max(1, steps // 2)
-            try:
-                tr, daily_vol, mdd, downside_deviation_daily, annual_sr, daily_cr, daily_SoR = (
-                    calculate_metric(requred_money, reward_history, freq=freq_calc)
+            is_defensive_skipped = bool(
+                np.all(micro_action_history == 1)
+                and np.all(reward_history == 0.0)
+                and (
+                    np.all(initial_margin_history == 0.0)
+                    or (
+                        os.path.exists(os.path.join(data_dir, HistoryArtifactNames.MACRO_ACTION_HISTORY_NPY))
+                        and np.all(
+                            np.load(os.path.join(data_dir, HistoryArtifactNames.MACRO_ACTION_HISTORY_NPY)) == 9
+                        )
+                    )
                 )
-            except Exception:
+            )
+
+            if is_defensive_skipped:
+                requred_money = 0.0
                 tr, daily_vol, mdd, downside_deviation_daily, annual_sr, daily_cr, daily_SoR = (
                     0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
                 )
+            else:
+                requred_money = (
+                    float(total_asset_history[0])
+                    if len(total_asset_history) > 0 and float(total_asset_history[0]) > 0
+                    else (float(wallet_balance_history[0]) if len(wallet_balance_history) > 0 else 6000.0)
+                )
+                steps = len(reward_history)
+                freq_calc = 12 if steps >= 24 else max(1, steps // 2)
+                try:
+                    tr, daily_vol, mdd, downside_deviation_daily, annual_sr, daily_cr, daily_SoR = (
+                        calculate_metric(requred_money, reward_history, freq=freq_calc)
+                    )
+                except Exception:
+                    tr, daily_vol, mdd, downside_deviation_daily, annual_sr, daily_cr, daily_SoR = (
+                        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+                    )
             
             c_name = os.path.basename(data_dir)
             per_contract_metrics.append({
@@ -479,12 +497,20 @@ class Picker:
             unrealized_pnl_history = np.load(os.path.join(c_result_dir, HistoryArtifactNames.UNREALIZED_PNL_HISTORY_NPY))
             wallet_balance_history = np.load(os.path.join(c_result_dir, HistoryArtifactNames.WALLET_BALANCE_HISTORY_NPY))
 
-            requred_money = calculate_required_money(
-                initial_margin_history,
-                maintain_marigine_history,
-                new_position_required_money_history,
-                unrealized_pnl_history,
-                wallet_balance_history,
+            total_asset_history = np.load(os.path.join(c_result_dir, HistoryArtifactNames.TOTAL_ASSET_HISTORY_NPY))
+            micro_action_history = np.load(os.path.join(c_result_dir, HistoryArtifactNames.MICRO_ACTION_HISTORY_NPY))
+            is_defensive_skipped = bool(
+                np.all(micro_action_history == 1)
+                and np.all(reward_history == 0.0)
+                and (
+                    np.all(initial_margin_history == 0.0)
+                    or (
+                        os.path.exists(os.path.join(c_result_dir, HistoryArtifactNames.MACRO_ACTION_HISTORY_NPY))
+                        and np.all(
+                            np.load(os.path.join(c_result_dir, HistoryArtifactNames.MACRO_ACTION_HISTORY_NPY)) == 9
+                        )
+                    )
+                )
             )
 
             df = pd.read_feather(feather_path)
@@ -498,7 +524,15 @@ class Picker:
             accummulative_reward_sum = [reward_history[0]]
             for i in range(len(reward_history) - 1):
                 accummulative_reward_sum.append(accummulative_reward_sum[-1] + reward_history[i + 1])
-            result_dict["DiHFT"] = np.array(accummulative_reward_sum) / (requred_money + 1e-12)
+            if is_defensive_skipped:
+                result_dict["DiHFT"] = np.zeros(len(accummulative_reward_sum))
+            else:
+                requred_money = (
+                    float(total_asset_history[0])
+                    if len(total_asset_history) > 0 and float(total_asset_history[0]) > 0
+                    else 6000.0
+                )
+                result_dict["DiHFT"] = np.array(accummulative_reward_sum) / (requred_money + 1e-12)
 
             all_contract_data.append((c_name, df, result_dict))
 

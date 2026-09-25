@@ -213,7 +213,7 @@ def _create_custom_contract_dir(contract_dir: Path, reward_val: float, req_val: 
     np.save(contract_dir / "maintain_marigine_history.npy", np.ones(n) * req_val)
     np.save(contract_dir / "new_position_required_money_history.npy", np.ones(n) * req_val)
     np.save(contract_dir / "micro_action_history.npy", np.ones(n, dtype=int))
-    np.save(contract_dir / "total_asset_history.npy", np.ones(n) * 1000.0)
+    np.save(contract_dir / "total_asset_history.npy", np.ones(n) * req_val)
     np.save(contract_dir / "unrealized_pnl_history.npy", np.zeros(n))
     np.save(contract_dir / "wallet_balance_history.npy", np.ones(n) * req_val)
 
@@ -342,3 +342,53 @@ def test_calculate_metric_zero_activity_returns_finite_zeros():
     assert annual_sr == 0.0
     assert daily_cr == 0.0
     assert daily_SoR == 0.0
+
+
+def test_defensive_skipped_contract_requires_zero_capital_and_traded_counts_initial_capital(tmp_path: Path):
+    model_root = tmp_path / "result" / "DiHFT" / "high_level" / "fu" / "10min" / "vae_risk_aware_routing"
+    trial_dir = model_root / "trial_0"
+    n = 30
+
+    # Traded contract (fu2507): initial capital 6000, profit 600
+    traded_dir = trial_dir / "contracts" / "fu2507"
+    traded_dir.mkdir(parents=True, exist_ok=True)
+    np.save(traded_dir / "reward_history.npy", np.ones(n) * 20.0)
+    np.save(traded_dir / "initial_margin_history.npy", np.ones(n) * 600.0)
+    np.save(traded_dir / "maintain_marigine_history.npy", np.ones(n) * 300.0)
+    np.save(traded_dir / "new_position_required_money_history.npy", np.ones(n) * 50.0)
+    np.save(traded_dir / "micro_action_history.npy", np.array([0, 2] * (n // 2), dtype=int))
+    np.save(traded_dir / "total_asset_history.npy", np.ones(n) * 6000.0)
+    np.save(traded_dir / "unrealized_pnl_history.npy", np.zeros(n))
+    np.save(traded_dir / "wallet_balance_history.npy", np.ones(n) * 6000.0)
+
+    # Defensive-skipped contract (fu2412): 0 trades, 0 capital required
+    skipped_dir = trial_dir / "contracts" / "fu2412"
+    skipped_dir.mkdir(parents=True, exist_ok=True)
+    np.save(skipped_dir / "reward_history.npy", np.zeros(n))
+    np.save(skipped_dir / "initial_margin_history.npy", np.zeros(n))
+    np.save(skipped_dir / "maintain_marigine_history.npy", np.zeros(n))
+    np.save(skipped_dir / "new_position_required_money_history.npy", np.zeros(n))
+    np.save(skipped_dir / "micro_action_history.npy", np.ones(n, dtype=int))
+    np.save(skipped_dir / "total_asset_history.npy", np.ones(n) * 6000.0)
+    np.save(skipped_dir / "unrealized_pnl_history.npy", np.zeros(n))
+    np.save(skipped_dir / "wallet_balance_history.npy", np.ones(n) * 6000.0)
+    np.save(skipped_dir / "macro_action_history.npy", np.ones(n, dtype=int) * 9)
+
+    save_path = tmp_path / "analysis_result"
+    args = types.SimpleNamespace(
+        base_path=str(tmp_path / "dataset"),
+        dataset_name="fu",
+        experiment_name="10min",
+        save_path=str(save_path),
+        optuna_csv=None,
+        early_stop=0,
+        selection_metric="portfolio_tr",
+        result_path=str(tmp_path / "result" / "DiHFT" / "high_level"),
+    )
+    picker = Picker(args)
+    result = picker.analysis_single_epoch(str(trial_dir))
+
+    # Required money of portfolio should only include the traded contract (6000.0), NOT skipped (0.0)
+    assert result["required_money"] == pytest.approx(6000.0)
+    # Total reward = 20 * 30 = 600.0. Portfolio return = 600.0 / 6000.0 = 0.10 (10%)
+    assert result["portfolio_tr"] == pytest.approx(0.10)

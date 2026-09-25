@@ -64,6 +64,12 @@ def calculate_required_money(
         == len(unrealized_pnl_history)
         == len(wallet_balance_history)
     )
+    if len(initial_margin_history) == 0:
+        return 0.0
+    if np.all(np.array(initial_margin_history) == 0.0) and np.all(
+        np.array(new_position_required_moeny_history) == 0.0
+    ):
+        return 0.0
     if len(initial_margin_history) < 2:
         return float(wallet_balance_history[0]) if len(wallet_balance_history) > 0 else 0.0
     margine_balance_history = wallet_balance_history + unrealized_pnl_history

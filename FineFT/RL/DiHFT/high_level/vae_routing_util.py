@@ -1036,7 +1036,13 @@ class vae_risk_aware_routing:
         logger.info("[Artifacts] Saved contract results summary to %s", csv_path)
 
         total_reward_sum = float(result_df[MetricColumns.REWARD_SUM].sum())
-        total_initial_capital = self.initial_wallet_balance * len(contract_results)
+        traded_mask = (result_df[MetricColumns.REWARD_SUM] != 0) | (result_df[MetricColumns.RETURN_RATE] != 0)
+        traded_count = int(traded_mask.sum())
+        total_initial_capital = (
+            self.initial_wallet_balance * traded_count
+            if traded_count > 0
+            else self.initial_wallet_balance * len(contract_results)
+        )
         portfolio_return_rate = total_reward_sum / (total_initial_capital + 1e-12)
         win_rate = float((result_df[MetricColumns.RETURN_RATE] > 0).mean())
         self.return_rate = portfolio_return_rate * win_rate
