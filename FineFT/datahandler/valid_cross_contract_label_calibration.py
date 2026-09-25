@@ -642,12 +642,18 @@ def build_valid_dataset(
                 raise ValueError(f"{fit.source_path} failed output row accounting")
 
         # 第四阶段：构建完整的 SliceManifest 对象并规格化
+        target_name = valid_root.name
+        fit_scope = (
+            f"{target_name}_all_contracts"
+            if target_name in {"train", "valid", "test"}
+            else "valid_all_contracts"
+        )
         manifest = SliceManifest(
             valid_path=str(output_root),
             contracts=contracts,
             skipped_contracts=skipped,
             calibration={
-                "fit_scope": "valid_all_contracts",
+                "fit_scope": fit_scope,
                 "participating_contracts": sorted(contracts),
                 "skipped_contracts": sorted(skipped),
                 "skipped_contract_details": [

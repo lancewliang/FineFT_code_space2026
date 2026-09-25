@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import os
+import shutil
 import argparse
 import sys
 from pathlib import Path
@@ -39,6 +40,12 @@ parser.add_argument(
     help="the number of transcation we store in one memory",
 )
 parser.add_argument(
+    "--source_split",
+    choices=("train", "valid"),
+    default="train",
+    help="dataset split to read sliced labels from (default: train)",
+)
+parser.add_argument(
     "--labeling_method",
     choices=("slope", "volatility"),
     default="slope",
@@ -46,23 +53,23 @@ parser.add_argument(
 )
 
 
-def _collect_valid_label_files(valid_path):
-    valid_files = {"legacy_labels": {}, "contracts": {}}
-    if not os.path.exists(valid_path):
-        raise FileNotFoundError(f"missing valid path: {valid_path}")
+def _collect_label_files(source_path):
+    label_files = {"legacy_labels": {}, "contracts": {}}
+    if not os.path.exists(source_path):
+        raise FileNotFoundError(f"missing split path: {source_path}")
 
-    for name in sorted(os.listdir(valid_path)):
-        path = os.path.join(valid_path, name)
-        if not os.path.isdir(path) or name == "processed":
+    for name in sorted(os.listdir(source_path)):
+        path = os.path.join(source_path, name)
+        if not os.path.isdir(path) or name in ("processed", "slice"):
             continue
         if name.startswith("label_"):
-            valid_files["legacy_labels"][name] = [
+            label_files["legacy_labels"][name] = [
                 os.path.join(path, file_name)
                 for file_name in sorted(os.listdir(path))
                 if file_name.endswith(".feather")
             ]
             continue
-        contract_labels = valid_files["contracts"].setdefault(name, {})
+        contract_labels = label_files["contracts"].setdefault(name, {})
         for label in sorted(os.listdir(path)):
             label_path = os.path.join(path, label)
             if not os.path.isdir(label_path) or not label.startswith("label_"):
@@ -75,8 +82,11 @@ def _collect_valid_label_files(valid_path):
             if df_paths:
                 contract_labels[label] = df_paths
         if not contract_labels:
-            valid_files["contracts"].pop(name, None)
-    return valid_files
+            label_files["contracts"].pop(name, None)
+    return label_files
+
+
+_collect_valid_label_files = _collect_label_files
 
 
 def _save_label_array(df_paths, state_features, output_path):
@@ -93,29 +103,35 @@ def _save_label_array(df_paths, state_features, output_path):
 
 
 def make_data(args):
-    valid_root = os.path.join(args.base_path, args.dataset_name, "valid")
-    labeling_method = getattr(args, "labeling_method", "slope")
-    method_path = os.path.join(valid_root, labeling_method)
+    source_split = args.source_split
+    split_root = os.path.join(args.base_path, args.dataset_name, source_split)
+    labeling_method = args.labeling_method
+    method_path = os.path.join(split_root, labeling_method)
     if os.path.isdir(method_path):
-        valid_path = method_path
+        source_path = method_path
     elif labeling_method == "slope":
-        valid_path = valid_root
+        source_path = split_root
     else:
-        valid_path = method_path
+        source_path = method_path
     state_name_path = os.path.join(
         args.base_path, args.dataset_name, ArtifactNames.STATE_FEATURES_NPY
     )
     state_features = np.load(state_name_path)
     vae_data_root = os.path.join(args.save_path, args.dataset_name, "VAE_data")
     method_save_path = os.path.join(vae_data_root, labeling_method)
+    if os.path.isdir(method_save_path):
+        for item in os.listdir(method_save_path):
+            item_path = os.path.join(method_save_path, item)
+            if os.path.isdir(item_path) and item not in ("train", "test", "processed"):
+                shutil.rmtree(item_path)
     os.makedirs(method_save_path, exist_ok=True)
-    valid_files = _collect_valid_label_files(valid_path)
-    for label, df_paths in valid_files["legacy_labels"].items():
+    label_files = _collect_label_files(source_path)
+    for label, df_paths in label_files["legacy_labels"].items():
         if not _save_label_array(
             df_paths, state_features, os.path.join(method_save_path, get_vae_label_filename(label))
         ):
             print(f"skip empty label: {label}")
-    for contract, labels in valid_files["contracts"].items():
+    for contract, labels in label_files["contracts"].items():
         contract_save_path = os.path.join(method_save_path, contract)
         os.makedirs(contract_save_path, exist_ok=True)
         for label, df_paths in labels.items():

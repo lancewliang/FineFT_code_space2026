@@ -532,3 +532,27 @@ def test_valid_slices_contain_2d_regime_grid_id_columns(tmp_path):
         assert "volatility_label" in df.columns
         assert not (df["regime_grid_id"] < 0).any()
         assert (df["regime_grid_id"] <= 8).all()
+
+
+def test_build_valid_dataset_adapts_fit_scope_for_train_split(tmp_path):
+    from datahandler import valid_cross_contract_label_calibration as calibration
+
+    train_dir = tmp_path / "train"
+    train_dir.mkdir()
+    _write_contract(train_dir, "fu2305", 100.0, rows=96)
+    _write_contract(train_dir, "fu2309", 110.0, rows=96)
+
+    manifest = calibration.build_valid_dataset(
+        train_dir,
+        labeling_method="slope",
+        dynamic_number=3,
+        threshold_method="global_segment_quantile",
+        timestamp="timestamp",
+        min_length_limit=4,
+        filter_padlen=5,
+        merging_threshold=-1.0,
+    )
+
+    assert manifest.calibration["fit_scope"] == "train_all_contracts"
+    assert (train_dir / "slope" / "slice_manifest.json").exists()
+    assert (train_dir / "slope" / "fu2305" / "label_0").exists()

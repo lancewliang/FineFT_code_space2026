@@ -287,6 +287,11 @@ _Avoid_: 跳过合约、缺失合约
 从 train 阶段合约数据按 chunk_length 切分的连续编号训练片段，不跨合约。
 _Avoid_: 训练切片、训练分块
 
+**Train 动态切片 (Train Dynamic Slice)**:
+对 train 集合全部合约按宏观转折点与跨合约全局分位数阈值执行波段切片，并原子发布 `train/slope/<contract>/label_*/df_*.feather` 与 `train/volatility/<contract>/label_*/df_*.feather`，专门供 VAE 模型训练提取多体制状态特征；与强化学习环境连续推进行情时序使用的 `Train Slice` 物理隔离。
+_Avoid_: 训练分块、训练时序切片、Train Slice（当指波段切片时）
+
+
 **Valid 动态切片 (Valid Dynamic Slice)**:
 对 valid 集合的全部合约执行市场动态分片和全合约 Label 定标，并原子发布 `valid/<contract>/label_*/df_*.feather`；valid 合约集合变化时必须重建全部产物。
 _Avoid_: 验证切片、验证分块、逐合约增量 Label 更新
