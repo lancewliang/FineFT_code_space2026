@@ -68,6 +68,63 @@ COMMODITY_FU_FEATURE_BLACKLIST=(
     prev_day_limit_down_single_sided_ratio
     prev_2_day_limit_up_single_sided_ratio
     prev_2_day_limit_down_single_sided_ratio
+    # Blacklisted OOD features (ADR-0020)
+    # Price Limit Indicators (state blacklist, preserved in reward/execution schema)
+    limit_up_single_sided_ratio
+    limit_down_single_sided_ratio
+    limit_up_ask_depth_ratio_5
+    limit_down_bid_depth_ratio_5
+    limit_depth_imbalance_ratio_5
+    # Orderbook Spread Discrete Log Return Pulses
+    buy_spread_oe_max_log_return_2
+    sell_spread_oe_max_log_return_2
+    # Cross Month Open Interest Share
+    cm_m1_m2_open_interest_share_m2
+    cm_m2_m3_open_interest_share_m3
+    # ROC Standardized Normalization Spurious Ratios
+    roc_6_std_norm_origin
+    roc_12_std_norm_origin
+    roc_24_std_norm_origin
+    roc_48_std_norm_origin
+    roc_96_std_norm_origin
+    roc_192_std_norm_origin
+    roc_6_std_norm
+    roc_12_std_norm
+    roc_24_std_norm
+    roc_48_std_norm
+    roc_96_std_norm
+    roc_192_std_norm
+    # Multi-Day / Multi-Week Lagging Quantile Ranks
+    prev_5_day_trade_imbalance_quantile_rank
+    prev_2_day_trade_down_ratio_quantile_rank
+    prev_5_day_trade_up_ratio_quantile_rank
+    prev_15_day_trade_down_ratio_quantile_rank
+    prev_week_body_to_range_quantile_rank
+    prev_10_day_trade_up_ratio_quantile_rank
+    prev_day_upper_shadow_pct_quantile_rank
+    prev_30_day_trade_down_ratio_quantile_rank
+    prev_4_week_trade_up_ratio_quantile_rank
+    prev_15_day_turnover_rate_quantile_rank
+    prev_2_day_trade_imbalance_quantile_rank
+    prev_2_week_open_interest_change_quantile_rank
+    prev_4_week_turnover_rate_quantile_rank
+    prev_week_trade_down_ratio_quantile_rank
+    prev_30_day_open_interest_change_quantile_rank
+    prev_30_day_turnover_rate_quantile_rank
+    prev_week_twap_deviation_pct_quantile_rank
+    prev_2_week_turnover_rate_quantile_rank
+    prev_week_open_interest_change_quantile_rank
+    prev_30_day_trade_imbalance_quantile_rank
+    prev_6_week_trade_down_ratio_quantile_rank
+    prev_day_close_position_quantile_rank
+    prev_15_day_open_interest_change_quantile_rank
+    prev_6_week_turnover_rate_quantile_rank
+    prev_2_day_turnover_rate_quantile_rank
+    prev_week_lower_shadow_to_range_quantile_rank
+    prev_day_trade_up_ratio_quantile_rank
+    prev_5_day_open_interest_change_quantile_rank
+    prev_15_day_trade_imbalance_quantile_rank
+    prev_10_day_trade_imbalance_quantile_rank
 )
 
 run_commodity_logged_step() {

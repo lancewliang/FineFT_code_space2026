@@ -627,15 +627,19 @@ def downscale_base_features(
             (pl.col("second_volume") > 0)
             .fill_null(False)
             .sum()
+            .cast(pl.Float64)
             .alias("ntrade_estimated"),
             (pl.col("direction_estimated") == "buy_estimated")
             .sum()
+            .cast(pl.Float64)
             .alias("ntrade_up_estimated"),
             (pl.col("direction_estimated") == "sell_estimated")
             .sum()
+            .cast(pl.Float64)
             .alias("ntrade_down_estimated"),
             (pl.col("direction_estimated") == "flat")
             .sum()
+            .cast(pl.Float64)
             .alias("ntrade_flat_estimated"),
             pl.col("_limit_up_single_sided").mean().alias("limit_up_single_sided_ratio"),
             pl.col("_limit_down_single_sided").mean().alias("limit_down_single_sided_ratio"),

@@ -84,15 +84,15 @@ def process_ohlcv_single_window(df: pd.DataFrame, w: int):
     volume_std = volume_rolling.std() + min_value
 
     df_feature["roc_{}".format(w)] = close_shift / df["close"]
-    df_feature["roc_{}_std_norm".format(w)] = close_shift / close_std
+    df_feature["roc_{}_std_norm".format(w)] = (df["close"] - close_shift) / close_std
 
     df_feature["ma_{}".format(w)] = close_rolling.mean() / df["close"]
     df_feature["ma_{}_std_norm".format(w)] = close_rolling.mean() / close_std
 
     df_feature["std_{}".format(w)] = close_rolling.std() / df["close"]
 
-    df_feature["beta_{}".format(w)] = (close_shift - df["close"]) / (w * df["close"])
-    df_feature["beta_{}_std_norm".format(w)] = (close_shift - df["close"]) / (
+    df_feature["beta_{}".format(w)] = (df["close"] - close_shift) / (w * df["close"])
+    df_feature["beta_{}_std_norm".format(w)] = (df["close"] - close_shift) / (
         w * close_std
     )
 
@@ -185,15 +185,15 @@ def process_ohlc_single_window(df: pd.DataFrame, w: int):
     close_rolling = df["close"].rolling(w)
     close_std = close_rolling.std() + min_value
     df_feature["roc_{}".format(w)] = close_shift / df["close"]
-    df_feature["roc_{}_std_norm".format(w)] = close_shift / close_std
+    df_feature["roc_{}_std_norm".format(w)] = (df["close"] - close_shift) / close_std
 
     df_feature["ma_{}".format(w)] = close_rolling.mean() / df["close"]
     df_feature["ma_{}_std_norm".format(w)] = close_rolling.mean() / close_std
 
     df_feature["std_{}".format(w)] = close_rolling.std() / df["close"]
 
-    df_feature["beta_{}".format(w)] = (close_shift - df["close"]) / (w * df["close"])
-    df_feature["beta_{}_std_norm".format(w)] = (close_shift - df["close"]) / (
+    df_feature["beta_{}".format(w)] = (df["close"] - close_shift) / (w * df["close"])
+    df_feature["beta_{}_std_norm".format(w)] = (df["close"] - close_shift) / (
         w * close_std
     )
     df_feature["max_{}".format(w)] = close_rolling.max() / df["close"]

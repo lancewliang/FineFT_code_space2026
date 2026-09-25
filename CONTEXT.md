@@ -68,6 +68,10 @@ _Avoid_: NaN 检查、空值校验
 
 ### Feature Engineering
 
+**环境执行与奖励特征 (Reward & Execution Features)**:
+存在于最终 Feather 数据集中供 RL 环境、回测模拟器及状态转移约束使用的物理变量（如价格上下限、涨跌停挂单比率 `limit_up/down_single_sided_ratio` 等）；即使被特征黑名单排除在 VAE 及 Policy 的观测输入向量之外，也必须由 Scale Save 完整保留。
+_Avoid_: 状态特征、观察特征
+
 **特征黑名单 (Feature Blacklist)**:
 在特征选择与状态输入构建中被强制剔除的特征集合，具有最高裁决优先级，优先于任何默认、候选或强制特征规则。
 _Avoid_: 排除特征、屏蔽特征

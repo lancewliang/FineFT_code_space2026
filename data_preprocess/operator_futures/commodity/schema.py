@@ -56,5 +56,6 @@ def get_reward_execution_columns(depth: int) -> List[str]:
         "tradeval",
         *build_orderbook_columns(depth),
         *PRICE_LIMIT_COLUMNS,
+        *PRICE_LIMIT_RATIO_FEATURE_COLUMNS,
         *DERIVATIVE_REFERENCE_COLUMNS,
     ]

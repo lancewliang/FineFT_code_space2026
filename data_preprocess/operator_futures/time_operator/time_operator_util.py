@@ -479,11 +479,20 @@ def process_enhanced_state_features(df: pl.DataFrame) -> pl.DataFrame:
     exprs = []
 
     # Ticket 03: Trade Direction & Spread Z-Score
-    up = pl.col("ntrade_up_estimated") if "ntrade_up_estimated" in frame.columns else pl.lit(0.0)
-    down = pl.col("ntrade_down_estimated") if "ntrade_down_estimated" in frame.columns else pl.lit(0.0)
+    up = (
+        pl.col("ntrade_up_estimated").cast(pl.Float64)
+        if "ntrade_up_estimated" in frame.columns
+        else pl.lit(0.0)
+    )
+    down = (
+        pl.col("ntrade_down_estimated").cast(pl.Float64)
+        if "ntrade_down_estimated" in frame.columns
+        else pl.lit(0.0)
+    )
     net_ratio = (up - down) / (up + down + 1e-8)
-    exprs.append(net_ratio.clip(-1.0, 1.0).alias("trade_direction_net_ratio_5m"))
-    exprs.append(net_ratio.ewm_mean(span=20).fill_null(0.0).alias("trade_direction_persistence_20m"))
+    net_ratio_clipped = net_ratio.clip(-1.0, 1.0)
+    exprs.append(net_ratio_clipped.alias("trade_direction_net_ratio_5m"))
+    exprs.append(net_ratio_clipped.ewm_mean(span=20).fill_null(0.0).alias("trade_direction_persistence_20m"))
 
     if "relative_bid_ask_spread" in frame.columns:
         spread = pl.col("relative_bid_ask_spread")

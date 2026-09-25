@@ -460,7 +460,9 @@ def _merge_feature_frames(
     delivery_columns = [
         column
         for column in delivery_features.columns
-        if column.startswith("cm_m")
+        if column.startswith("cm_m1_m2")
+        or column.startswith("cm_m2_m3")
+        or column.startswith("cm_m1_m2_m3")
     ]
     return main_sub_features.drop(delivery_columns).join(
         delivery_features.select(["timestamp"] + delivery_columns),

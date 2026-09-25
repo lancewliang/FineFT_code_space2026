@@ -549,29 +549,33 @@ def normalize_feature_cross_section(df, features: list, method: str) -> pl.DataF
     elif method == "up_down_flat":
         assert len(features) in [3, 4]
         all_feature, up, down = features[:3]
+        up_col = pl.col(up).cast(pl.Float64)
+        down_col = pl.col(down).cast(pl.Float64)
+        all_col = pl.col(all_feature).cast(pl.Float64)
         expressions.extend(
             [
-                (pl.col(up) / (pl.col(all_feature) + minium)).alias(
+                (up_col / (all_col + minium)).alias(
                     f"{all_feature}_up_udnorm"
                 ),
-                (pl.col(down) / (pl.col(all_feature) + minium)).alias(
+                (down_col / (all_col + minium)).alias(
                     f"{all_feature}_down_udnorm"
                 ),
-                ((pl.col(up) - pl.col(down)) / (pl.col(all_feature) + minium)).alias(
+                ((up_col - down_col) / (all_col + minium)).alias(
                     f"{all_feature}_updown_imbalance_udnorm"
                 ),
             ]
         )
         if len(features) == 4:
             flat = features[3]
+            flat_col = pl.col(flat).cast(pl.Float64)
             expressions.extend(
                 [
-                    (pl.col(flat) / (pl.col(all_feature) + minium)).alias(
+                    (flat_col / (all_col + minium)).alias(
                         f"{all_feature}_flat_udnorm"
                     ),
                     (
-                        (pl.col(up) + pl.col(down) - pl.col(flat))
-                        / (pl.col(all_feature) + minium)
+                        (up_col + down_col - flat_col)
+                        / (all_col + minium)
                     ).alias(f"{all_feature}_updownflat_vol_udnorm"),
                 ]
             )
