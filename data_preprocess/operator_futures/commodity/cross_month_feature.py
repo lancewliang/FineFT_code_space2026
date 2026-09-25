@@ -46,6 +46,7 @@ _ALLOWED_PRICE_PATTERNS: tuple[str, ...] = (
     "relative_price_spread",
     "butterfly_ratio",
     "spread_zscore",
+    "spread_rolling_zscore",
     "spread_velocity",
 )
 

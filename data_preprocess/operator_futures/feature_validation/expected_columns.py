@@ -771,7 +771,17 @@ ENHANCED_FEATURE_COLUMNS = [
     "price_oi_vol_interaction_10m",
     "oi_change_rate_norm_10m",
     "cm_main_sub_log_price_spread_velocity_10m",
+    "cm_current_main_log_price_spread_velocity_10m",
+    "cm_current_sub_log_price_spread_velocity_10m",
     "cm_open_interest_shift_speed_10m",
+    "cm_spread_rolling_zscore_48",
+    "cm_spread_rolling_zscore_192",
+    "cm_current_main_spread_rolling_zscore_48",
+    "cm_current_main_spread_rolling_zscore_192",
+    "cm_current_sub_spread_rolling_zscore_48",
+    "cm_current_sub_spread_rolling_zscore_192",
+    "cm_main_sub_spread_rolling_zscore_48",
+    "cm_main_sub_spread_rolling_zscore_192",
 ]
 
 TIME_FEATURE_COLUMNS = _build_time_feature_columns()

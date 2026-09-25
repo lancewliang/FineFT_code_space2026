@@ -558,3 +558,125 @@ def test_realized_volatility_features():
     assert (res["realized_vol_term_ratio_12_48"].to_numpy() >= 0.0).all()
 
 
+
+
+def test_cross_month_spread_rolling_zscores_and_velocity():
+    steps = np.arange(250, dtype=float)
+    df = pl.DataFrame(
+        {
+            "timestamp": steps.astype(int),
+            "cm_current_main_relative_price_spread": np.sin(steps / 20.0) * 0.05,
+            "cm_current_sub_relative_price_spread": np.cos(steps / 20.0) * 0.05,
+            "cm_main_sub_relative_price_spread": np.sin(steps / 30.0) * 0.02,
+            "cm_current_main_log_price_ratio": np.sin(steps / 20.0) * 0.05,
+            "cm_current_sub_log_price_ratio": np.cos(steps / 20.0) * 0.05,
+        }
+    )
+    res = process_enhanced_state_features(df)
+
+    expected_cols = [
+        "cm_current_main_spread_rolling_zscore_48",
+        "cm_current_main_spread_rolling_zscore_192",
+        "cm_current_sub_spread_rolling_zscore_48",
+        "cm_current_sub_spread_rolling_zscore_192",
+        "cm_main_sub_spread_rolling_zscore_48",
+        "cm_main_sub_spread_rolling_zscore_192",
+        "cm_spread_rolling_zscore_48",
+        "cm_spread_rolling_zscore_192",
+        "cm_current_main_log_price_spread_velocity_10m",
+        "cm_current_sub_log_price_spread_velocity_10m",
+    ]
+    for col in expected_cols:
+        assert col in res.columns
+        assert np.isfinite(res[col].to_numpy()).all()
+
+    # Verify alias equality
+    np.testing.assert_allclose(
+        res["cm_spread_rolling_zscore_48"].to_numpy(),
+        res["cm_current_main_spread_rolling_zscore_48"].to_numpy(),
+    )
+    np.testing.assert_allclose(
+        res["cm_spread_rolling_zscore_192"].to_numpy(),
+        res["cm_current_main_spread_rolling_zscore_192"].to_numpy(),
+    )
+
+    DataQualityValidator.validate_no_illegal_values(
+        res,
+        stage="test_cross_month_spread_rolling_zscores",
+        contract="fu2601",
+        trading_day="2026-01-05",
+        columns=expected_cols,
+    )
+
+
+def test_cross_month_spread_rolling_zscore_boundary_reset():
+    steps = np.arange(200, dtype=float)
+    df = pl.DataFrame(
+        {
+            "timestamp": steps.astype(int),
+            "contract": ["fu2601"] * 100 + ["fu2605"] * 100,
+            "cm_current_main_relative_price_spread": np.concatenate(
+                [np.sin(np.arange(100) / 10.0), np.full(100, 0.05)]
+            ),
+        }
+    )
+    res = process_enhanced_state_features(df)
+    c2_rows = res.filter(pl.col("contract") == "fu2605")
+    # Constant spread should yield 0 z-score
+    assert (c2_rows["cm_current_main_spread_rolling_zscore_48"].to_numpy() == 0.0).all()
+
+
+def test_rolling_quantile_rank_for_multiday_features():
+    from operator_futures.time_operator.time_operator_util import compute_rolling_quantile_rank
+
+    steps = np.arange(300, dtype=float)
+    df = pl.DataFrame(
+        {
+            "timestamp": steps.astype(int),
+            "prev_week_open_interest_change": np.random.randn(300),
+            "prev_day_trade_imbalance": np.random.randn(300),
+            "prev_2_day_turnover_rate": np.abs(np.random.randn(300)),
+            "prev_day_contract_role_tier": np.zeros(300),
+        }
+    )
+    res = process_enhanced_state_features(df)
+
+    assert "prev_week_open_interest_change_quantile_rank" in res.columns
+    assert "prev_day_trade_imbalance_quantile_rank" in res.columns
+    assert "prev_2_day_turnover_rate_quantile_rank" in res.columns
+    # prev_day_contract_role_tier must NOT be quantile-ranked
+    assert "prev_day_contract_role_tier_quantile_rank" not in res.columns
+
+    for col in (
+        "prev_week_open_interest_change_quantile_rank",
+        "prev_day_trade_imbalance_quantile_rank",
+        "prev_2_day_turnover_rate_quantile_rank",
+    ):
+        arr = res[col].to_numpy()
+        assert np.isfinite(arr).all()
+        assert (arr >= 0.0).all()
+        assert (arr <= 1.0).all()
+        # Warmup period check
+        assert (arr[:191] == 0.0).all()
+        # Mature values are strictly bounded in [0, 1] and positive
+        assert (arr[191:] > 0.0).all()
+
+    # Direct function test with smaller window
+    small_series = pl.Series("test_feature", np.arange(50, dtype=float))
+    ranked_small = compute_rolling_quantile_rank(small_series, window=10)
+    arr_small = ranked_small.to_numpy()
+    assert (arr_small[:9] == 0.0).all()
+    # In strictly increasing sequence, the latest value is the largest in window: (9 + 0.5) / 10 = 0.95
+    assert arr_small[9] == pytest.approx(0.95)
+
+    DataQualityValidator.validate_no_illegal_values(
+        res,
+        stage="test_rolling_quantile_rank",
+        contract="fu2601",
+        trading_day="2026-01-05",
+        columns=[
+            "prev_week_open_interest_change_quantile_rank",
+            "prev_day_trade_imbalance_quantile_rank",
+            "prev_2_day_turnover_rate_quantile_rank",
+        ],
+    )

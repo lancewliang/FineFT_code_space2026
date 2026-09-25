@@ -8,6 +8,35 @@ import time
 _MARKET_STATE_ANCHOR_EPSILON = 1e-8
 
 
+def _rolling_quantile_rank(arr: np.ndarray, window: int = 192) -> np.ndarray:
+    n = len(arr)
+    out = np.zeros(n, dtype=float)
+    if n < window:
+        return out
+    windows = np.lib.stride_tricks.sliding_window_view(arr, window)
+    curr = windows[:, -1:]
+    less = np.count_nonzero(windows < curr, axis=1)
+    equal = np.count_nonzero(windows == curr, axis=1)
+    ranks = (less + 0.5 * equal) / window
+    out[window - 1 :] = ranks
+    return out
+
+
+def compute_rolling_quantile_rank(
+    series: pl.Series,
+    contracts: np.ndarray | None = None,
+    window: int = 192,
+) -> pl.Series:
+    values = np.nan_to_num(series.to_numpy(), nan=0.0, posinf=0.0, neginf=0.0)
+    if contracts is None:
+        return pl.Series(series.name, _rolling_quantile_rank(values, window=window))
+    out = np.zeros(len(values), dtype=float)
+    for contract in dict.fromkeys(contracts.tolist()):
+        mask = contracts == contract
+        out[mask] = _rolling_quantile_rank(values[mask], window=window)
+    return pl.Series(series.name, out)
+
+
 def _rolling_log_price_anchors(
     close_values: np.ndarray,
 ) -> dict[str, np.ndarray]:
@@ -783,6 +812,92 @@ def process_enhanced_state_features(df: pl.DataFrame) -> pl.DataFrame:
     if "cm_main_sub_open_interest_share_sub" in frame.columns:
         cm_shift = pl.col("cm_main_sub_open_interest_share_sub").diff(10).fill_null(0.0)
         exprs.append(cm_shift.alias("cm_open_interest_shift_speed_10m"))
+
+    # ADR-0019: Cross-Month Rolling Stationary Basis (Z-Score) & Velocities
+    has_contract = "contract" in frame.columns
+    spread_zscore_aliases_added = False
+    for pair in ("current_main", "current_sub", "main_sub"):
+        spread_col = f"cm_{pair}_relative_price_spread"
+        if spread_col in frame.columns:
+            spread = pl.col(spread_col)
+            for window in (48, 192):
+                spread_mean = (
+                    spread.rolling_mean(window).over("contract")
+                    if has_contract
+                    else spread.rolling_mean(window)
+                )
+                spread_std = (
+                    spread.rolling_std(window).over("contract").fill_null(0.0)
+                    if has_contract
+                    else spread.rolling_std(window).fill_null(0.0)
+                )
+                zscore = (
+                    pl.when(spread_std > 1e-8)
+                    .then((spread - spread_mean) / spread_std)
+                    .otherwise(0.0)
+                )
+                exprs.append(
+                    zscore.fill_null(0.0)
+                    .fill_nan(0.0)
+                    .alias(f"cm_{pair}_spread_rolling_zscore_{window}")
+                )
+                if not spread_zscore_aliases_added and (
+                    pair == "current_main"
+                    or "cm_current_main_relative_price_spread" not in frame.columns
+                ):
+                    exprs.append(
+                        zscore.fill_null(0.0)
+                        .fill_nan(0.0)
+                        .alias(f"cm_spread_rolling_zscore_{window}")
+                    )
+            if pair == "current_main":
+                spread_zscore_aliases_added = True
+
+        log_ratio_col = f"cm_{pair}_log_price_ratio"
+        if log_ratio_col in frame.columns and pair != "main_sub":
+            vel = pl.col(log_ratio_col).diff(10).fill_null(0.0)
+            exprs.append(vel.alias(f"cm_{pair}_log_price_spread_velocity_10m"))
+
+    if "cm_spread" in frame.columns and not spread_zscore_aliases_added:
+        spread = pl.col("cm_spread")
+        for window in (48, 192):
+            spread_mean = (
+                spread.rolling_mean(window).over("contract")
+                if has_contract
+                else spread.rolling_mean(window)
+            )
+            spread_std = (
+                spread.rolling_std(window).over("contract").fill_null(0.0)
+                if has_contract
+                else spread.rolling_std(window).fill_null(0.0)
+            )
+            zscore = (
+                pl.when(spread_std > 1e-8)
+                .then((spread - spread_mean) / spread_std)
+                .otherwise(0.0)
+            )
+            exprs.append(
+                zscore.fill_null(0.0)
+                .fill_nan(0.0)
+                .alias(f"cm_spread_rolling_zscore_{window}")
+            )
+
+    # ADR-0019: Quantile Rank Transformation for Multi-Day Lagging Features
+    contracts_arr = (
+        frame.get_column("contract").to_numpy() if has_contract else None
+    )
+    for col in frame.columns:
+        if (
+            col.startswith("prev_")
+            and col != "prev_day_contract_role_tier"
+            and not col.endswith("_quantile_rank")
+        ):
+            ranked_series = compute_rolling_quantile_rank(
+                frame.get_column(col),
+                contracts=contracts_arr,
+                window=192,
+            ).alias(f"{col}_quantile_rank")
+            exprs.append(ranked_series)
 
     if not exprs:
         return frame
