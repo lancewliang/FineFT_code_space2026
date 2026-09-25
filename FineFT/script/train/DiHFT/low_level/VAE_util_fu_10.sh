@@ -10,6 +10,7 @@ DATA_BASE_PATH=${DATA_BASE_PATH:-dataset/10min}
 LABEL_COUNT=${LABEL_COUNT:-3}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-10min_parallel}
 MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS:-2}
+LOG_BASE_DIR=${LOG_BASE_DIR:-log/DiHFT}
 LABELING_METHODS=("slope" "volatility")
 if [ -n "${LABELING_METHOD:-}" ]; then
     LABELING_METHODS=("${LABELING_METHOD}")
@@ -49,10 +50,12 @@ prune_finished_jobs() {
 
 for method in "${LABELING_METHODS[@]}"; do
     method_exp_name="${EXPERIMENT_NAME}/${method}"
-    log_dir="log/DiHFT/${DATASET_NAME}/VAE/${EXPERIMENT_NAME}/${method}"
+    log_dir="${LOG_BASE_DIR}/${DATASET_NAME}/VAE/${EXPERIMENT_NAME}/${method}"
     mkdir -p "${log_dir}"
 
     for label_index in $(seq 0 $((LABEL_COUNT - 1))); do
+        log_file="${log_dir}/train_label_${label_index}.log"
+        echo "Starting VAE training: dataset=${DATASET_NAME} method=${method} label=${label_index} -> log: ${log_file}"
         wait_for_available_slot
         nohup python -u FineFT/RL/DiHFT/VAE/main.py \
             --dataset_name "${DATASET_NAME}" \
@@ -61,8 +64,9 @@ for method in "${LABELING_METHODS[@]}"; do
             --total_label_number "${LABEL_COUNT}" \
             --experiment_name "${method_exp_name}" \
             --labeling_method "${method}" \
+            --log_dir "${log_dir}" \
             --train \
-            >"${log_dir}/train_label_${label_index}.log" 2>&1 &
+            >"${log_file}" 2>&1 &
         pids+=("$!")
     done
 done

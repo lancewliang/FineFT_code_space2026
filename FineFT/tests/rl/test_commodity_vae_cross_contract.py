@@ -736,3 +736,109 @@ def test_fu_vae_half_shell_trains_both_slope_and_volatility(tmp_path):
     assert any("--labeling_method slope" in inv and "--experiment_name 30min_multi/slope" in inv for inv in invocations)
     assert any("--labeling_method volatility" in inv and "--experiment_name 30min_multi/volatility" in inv for inv in invocations)
 
+
+
+def test_piplineruner_logs_training_file_and_contracts(tmp_path, caplog):
+    vae_dir = _vae_dir(tmp_path)
+    _save(vae_dir / "slope" / "fu2505" / "label_0.npy", [[1.0, 2.0], [3.0, 4.0]])
+    _save(vae_dir / "slope" / "fu2509" / "label_0.npy", [[5.0, 6.0]])
+    (vae_dir / "test").mkdir(parents=True, exist_ok=True)
+    _save(vae_dir / "test" / "test_fu2509.npy", [[7.0, 8.0]])
+
+    args = vae_main.parser.parse_args([
+        "--train",
+        "--data_base_path", str(_dataset_root(tmp_path)),
+        "--dataset_name", "fu",
+        "--label_index", "0",
+        "--epochs", "1",
+        "--z_dim", "2",
+        "--base_model_path", str(tmp_path / "result"),
+        "--log_dir", str(tmp_path / "custom_logs"),
+    ])
+    with caplog.at_level("INFO"):
+        runner = vae_main.Piplineruner(args)
+
+    assert "Materialized and using training data file" in caplog.text
+    assert "fu2505" in caplog.text
+    assert "fu2509" in caplog.text
+    assert "Configured log directory:" in caplog.text
+    assert "VAE model checkpoint save path:" in caplog.text
+
+
+def test_configure_logger_creates_file_handler_when_not_redirected(tmp_path):
+    log_dir = tmp_path / "test_logs"
+    vae_main.configure_logger(log_dir=str(log_dir), label_index=2)
+    expected_log_file = log_dir / "train_label_2.log"
+    assert log_dir.exists()
+    import logging
+    root_logger = logging.getLogger()
+    assert any(
+        isinstance(h, logging.FileHandler) and h.baseFilename == str(expected_log_file.resolve())
+        for h in root_logger.handlers
+    )
+
+
+def test_fu_10_vae_shell_passes_log_dir_and_outputs_log_files(tmp_path):
+    script_path = (
+        FINEFT_ROOT
+        / "script"
+        / "train"
+        / "DiHFT"
+        / "low_level"
+        / "VAE_util_fu_10.sh"
+    )
+    bin_dir = tmp_path / "bin"
+    conda_base = tmp_path / "conda"
+    state_dir = tmp_path / "state"
+    log_base_dir = tmp_path / "custom_vae_logs"
+    bin_dir.mkdir()
+    (conda_base / "etc" / "profile.d").mkdir(parents=True)
+    state_dir.mkdir()
+    (conda_base / "etc" / "profile.d" / "conda.sh").write_text(
+        "conda() { :; }\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "conda").write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1\" == \"info\" && \"$2\" == \"--base\" ]]; then\n"
+        f"  echo \"{conda_base}\"\n"
+        "else\n"
+        "  exit 0\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "python").write_text(
+        "#!/usr/bin/env bash\n"
+        "state_dir=${FAKE_VAE_STATE_DIR:?}\n"
+        "echo \"$@\" >> \"${state_dir}/invocations.txt\"\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    os.chmod(bin_dir / "conda", 0o755)
+    os.chmod(bin_dir / "python", 0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env[PATH]}"
+    env["ROOTPATH"] = str(FINEFT_ROOT.parent)
+    env["LABEL_COUNT"] = "2"
+    env["MAX_PARALLEL_JOBS"] = "2"
+    env["LOG_BASE_DIR"] = str(log_base_dir)
+    env["FAKE_VAE_STATE_DIR"] = str(state_dir)
+
+    result = subprocess.run(
+        ["bash", str(script_path)],
+        cwd=FINEFT_ROOT.parent,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Starting VAE training: dataset=fu method=slope label=0" in result.stdout
+    assert "custom_vae_logs" in result.stdout
+
+    invocations = (state_dir / "invocations.txt").read_text().strip().splitlines()
+    assert len(invocations) == 4
+    assert any("--log_dir" in inv for inv in invocations)
+    assert any(str(log_base_dir) in inv for inv in invocations)

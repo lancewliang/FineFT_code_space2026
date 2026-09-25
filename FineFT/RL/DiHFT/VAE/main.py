@@ -1,4 +1,5 @@
 import argparse
+import logging
 import numpy as np
 import sys
 import os
@@ -25,6 +26,58 @@ from RL.DiHFT.VAE.manifests import (
 from RL.DiHFT.VAE.summary import maybe_write_routing_summary_after_analysis
 import RL.DiHFT.VAE.vae as VAEs
 from datahandler.vae_dataset import One_Dim_Dataset
+
+logger = logging.getLogger(__name__)
+
+
+def configure_logger(log_dir: str | None = None, label_index: int = 0) -> None:
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+
+    has_stream_handler = False
+    for handler in root_logger.handlers:
+        if isinstance(handler, logging.StreamHandler) and not isinstance(
+            handler, logging.FileHandler
+        ):
+            handler.setFormatter(formatter)
+            has_stream_handler = True
+
+    if not has_stream_handler:
+        stream_handler = logging.StreamHandler(sys.stdout)
+        stream_handler.setLevel(logging.INFO)
+        stream_handler.setFormatter(formatter)
+        root_logger.addHandler(stream_handler)
+
+    if log_dir is not None:
+        os.makedirs(log_dir, exist_ok=True)
+        log_file_path = os.path.abspath(
+            os.path.join(log_dir, f"train_label_{label_index}.log")
+        )
+        try:
+            stdout_stat = os.fstat(sys.stdout.fileno())
+            if os.path.exists(log_file_path):
+                file_stat = os.stat(log_file_path)
+                if (
+                    stdout_stat.st_ino == file_stat.st_ino
+                    and stdout_stat.st_dev == file_stat.st_dev
+                ):
+                    return
+        except Exception:
+            pass
+
+        for handler in root_logger.handlers:
+            if (
+                isinstance(handler, logging.FileHandler)
+                and handler.baseFilename == log_file_path
+            ):
+                return
+
+        file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+
 
 parser = argparse.ArgumentParser(
     description="PyTorch implementation of VAE for fitting 1d data"
@@ -69,6 +122,12 @@ parser.add_argument(
     type=str,
     default="slope",
     help="dynamic labeling method to consume for training data (default: slope)",
+)
+parser.add_argument(
+    "--log_dir",
+    type=str,
+    default=None,
+    help="directory for training log files",
 )
 # log
 parser.add_argument(
@@ -200,7 +259,9 @@ class Piplineruner:
             label_name,
         )
         self.args.single_label_save_path = self.single_label_save_path
-        labeling_method = getattr(self.args, "labeling_method", "slope")
+        if self.args.log_dir is not None:
+            logger.info(f"Configured log directory: {self.args.log_dir}")
+        labeling_method = self.args.labeling_method
         if self.args.train:
             train_manifest = materialize_label_training_data(
                 self.args.data_base_path,
@@ -208,6 +269,19 @@ class Piplineruner:
                 self.args.label_index,
                 labeling_method=labeling_method,
             )
+            logger.info(
+                f"Materialized and using training data file: {train_manifest.merged_path} "
+                f"(total_samples={train_manifest.total_samples}, feature_dim={train_manifest.feature_dim})"
+            )
+            for contract_source in train_manifest.included_contracts:
+                logger.info(
+                    f"  Source contract array: contract={contract_source.contract}, "
+                    f"file={contract_source.source_file}, samples={contract_source.sample_count}"
+                )
+            if train_manifest.missing_contracts:
+                logger.warning(
+                    f"  Missing contract arrays for {self.label_name}: {train_manifest.missing_contracts}"
+                )
         else:
             train_path = (
                 vae_data_dir(self.args.data_base_path, self.args.dataset_name)
@@ -229,7 +303,12 @@ class Piplineruner:
                 included_contracts=[],
                 missing_contracts=[],
             )
+            logger.info(
+                f"Using existing training baseline data file: {train_path} "
+                f"(total_samples={train_manifest.total_samples}, feature_dim={train_manifest.feature_dim})"
+            )
         self.train_manifest = train_manifest
+        logger.info(f"VAE model checkpoint save path: {self.single_label_save_path}")
         train_data_path = train_manifest.merged_path
         hidden_dims = self.args.hidden_dims
         z_dim = self.args.z_dim
@@ -264,6 +343,10 @@ class Piplineruner:
         )
 
     def train(self):
+        logger.info(
+            f"Starting VAE training for {self.label_name} using {self.train_manifest.merged_path} "
+            f"on device {self.device} (epochs={self.args.epochs}, batch_size={self.args.batch_size})"
+        )
         train_test(
             self.args,
             self.model,
@@ -278,6 +361,10 @@ class Piplineruner:
         model_path = os.path.join(
             self.single_label_save_path,
             ArtifactNames.MODEL_LATEST_PTH,
+        )
+        logger.info(
+            f"Starting contract analysis for {self.label_name} using model {model_path} "
+            f"against {len(self.contract_loader_list)} test contracts"
         )
         self.model.load_state_dict(torch.load(model_path))
         train_dataset = One_Dim_Dataset(self.train_manifest.merged_path)
@@ -315,6 +402,7 @@ if __name__ == "__main__":
     if hasattr(torch.backends, "cudnn"):
         torch.backends.cudnn.allow_tf32 = True
     args = parser.parse_args()
+    configure_logger(args.log_dir, args.label_index)
     if args.train and args.analyze_only:
         parser.error("--train and --analyze-only are mutually exclusive")
     if not args.train and not args.analyze_only:

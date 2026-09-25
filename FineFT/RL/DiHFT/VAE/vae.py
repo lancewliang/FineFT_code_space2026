@@ -3,6 +3,7 @@ Reference: https://github.com/pytorch/examples/blob/master/vae/main.py,
            https://github.com/hwalsuklee/tensorflow-mnist-VAE
 """
 
+import logging
 import os
 import torch
 import torch.utils.data
@@ -15,6 +16,8 @@ import pandas as pd
 
 sys.path.append(".")
 from RL.DiHFT.VAE.util import ensure_tensor_2d
+
+logger = logging.getLogger(__name__)
 
 
 # --- some utils ----------- #
@@ -152,7 +155,7 @@ def train(model, train_loader, optimizer, device, epoch, args):
         train_loss += cur_loss
         optimizer.step()
         if batch_idx % args.log_interval == 0:
-            print(
+            logger.info(
                 "Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}".format(
                     epoch,
                     batch_idx * len(data),
@@ -179,7 +182,7 @@ def train(model, train_loader, optimizer, device, epoch, args):
                 "model_latest.pth",
             ),
         )
-    print(
+    logger.info(
         "====> Epoch: {} Average loss: {:.4f}".format(
             epoch, train_loss / len(train_loader.dataset)
         )
@@ -219,7 +222,7 @@ def test(model, test_loader, ood_test_loader, device, epoch, args):
 
     test_loss /= len(test_loader.dataset)
     ood_test_loss /= len(ood_test_loader.dataset)
-    print(
+    logger.info(
         "====> Test set loss: ID {:.4f} / OOD {:.4f} ".format(test_loss, ood_test_loss)
     )
 
