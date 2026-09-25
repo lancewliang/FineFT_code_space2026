@@ -74,7 +74,7 @@ def test_feature_selection_excludes_base_time_from_metrics_and_appends_to_final(
     assert manifest["mandatory_state_features"] == BASE_TIME_FEATURE_COLUMNS
 
 
-def test_feature_selection_rejects_blacklist_targeting_base_time(tmp_path):
+def test_feature_selection_allows_blacklist_to_override_mandatory_base_time(tmp_path):
     split_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train"
     split_dir.mkdir(parents=True, exist_ok=True)
 
@@ -105,15 +105,18 @@ def test_feature_selection_rejects_blacklist_targeting_base_time(tmp_path):
         "contract_month_sin": [0.5] * n,
         "contract_month_cos": [0.5] * n,
         "contract_life_remaining_ratio": [0.8] * n,
+        "prev_day_contract_role_tier": [1.0] * n,
     })
     df.write_ipc(split_dir / "fu2601.feather")
 
-    with pytest.raises(ValueError, match="blacklist"):
-        run_feature_selection(
-            root_path=tmp_path,
-            symbol="fu",
-            target_freq="5min",
-            stage="train",
-            feature_blacklist=["trading_minute_progress"],
-            mandatory_state_features=list(BASE_TIME_FEATURE_COLUMNS),
-        )
+    res = run_feature_selection(
+        root_path=tmp_path,
+        symbol="fu",
+        target_freq="5min",
+        stage="train",
+        feature_blacklist=["trading_minute_progress"],
+        mandatory_state_features=list(BASE_TIME_FEATURE_COLUMNS),
+    )
+    manifest = res.manifest
+    assert "trading_minute_progress" not in manifest.selected_features
+    assert "trading_minute_progress" in manifest.filter_results["Feature Blacklist Dropped"]

@@ -4,7 +4,7 @@
 
 推荐串联运行顺序：
 
-`main_30min_fu.sh` -> `commodity_data_handler_30min_fu.sh` -> `train_commodity_fu_30.sh` -> `test_util_fu_30.sh` -> `low_level_fu_30.sh` -> `VAE_util_fu_30.sh` -> `vae_optuna_fu_30.sh` -> `high_level_heurstic_fu_30_half.sh`
+`main_30min_fu.sh` -> `commodity_data_handler_30min_fu.sh` -> `train_commodity_fu_30.sh` -> `test_util_fu_30.sh` -> `low_level_fu_30.sh` -> `VAE_util_fu_30.sh` -> `vae_optuna_fu_30.sh` -> `high_level_heurstic_fu_30_half.sh` -> `final_result_fu_10_p.sh`
 
 > **提示**：30min 专属脚本（`train_commodity_fu_30.sh`、`test_util_fu_30.sh`、`low_level_fu_30.sh`、`VAE_util_fu_30.sh`、`vae_optuna_fu_30.sh`）内部默认的 `EXPERIMENT_NAME` 均为 `30min`，保证了实验路径的一致性。
 
@@ -271,6 +271,47 @@
     - `log/analysis/pick_agent/DiHFT/fu/high_level_heurstic/30min_multi.log`（筛选与画图控制台日志）
 - **位置**：完成高层路由策略筛选与分析评估。
 
+## 9. 高层路由测试集最终回测与评估 (Final Result)
+
+### `FineFT/script/test/DiHFT/high_level/final_result_fu_10_p.sh`
+
+- **作用**：加载步骤 8 筛选出的高层最优路由超参数与步骤 5 筛选出的低层 Agent 组合，在测试集（test stage）全量合约上运行最终的风险感知 VAE 宏观路由与微观交易回测评估，记录逐合约与整体投资组合的最终收益表现与动作历史，并开启非主力合约防御机制。
+- **依赖输入物**（前置各步骤联合依赖）：
+  - **高层最优超参数配置**（由步骤 8 产出）：`result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/high_level_agent_para.txt`
+  - **Optuna 寻优结果表**（由步骤 7 产出）：`result/DiHFT/high_level/${DATASET_NAME}/${EXPERIMENT_NAME}/vae_risk_aware_routing_optuna/optuna_results.csv`
+  - **低层 Agent 筛选清单**（由步骤 5 产出）：`analysis_result/DiHFT/low_level/${DATASET_NAME}/${EXPERIMENT_NAME}/two_dimensional_selection/two_dimensional_selection_manifest.json`（或 `selection_manifest.json`）
+  - **已训练好的 VAE 模型**（由步骤 6 产出）：`result/DiHFT/vae_results/${DATASET_NAME}/${EXPERIMENT_NAME}/` 下各 Label 的模型权重
+  - **测试集 Feather 行情与特征**（由步骤 2 产出）：`dataset/${FREQ}/${DATASET_NAME}/test/*.feather`、`state_features.npy` 与 `maintenance_margin_ratio_dict.npy`
+  - **最终评估 Python 脚本**：`FineFT/RL/DiHFT/high_level/vae_routing_final_result_macro_action.py`
+- **默认参数**：
+  - `ROOTPATH=$(pwd)`
+  - `DATASET_NAME=fu`
+  - `BASE_PATH=dataset/10min`（支持通过环境变量传入覆盖，如切换为 `dataset/30min`）
+  - `EXPERIMENT_NAME=10min_parallel`（支持通过环境变量传入覆盖，如切换为 `30min` 或 `30min_multi`）
+  - `MAX_HOLDING_NUMBER=1`
+  - `POSITION_CHOICES=3`
+  - `ORDER_BOOK_DEPTH=5`
+  - `TRANSACTION_COST=0.0005`
+  - `PARA_FILE=result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/high_level_agent_para.txt`
+  - `OPTUNA_CSV=result/DiHFT/high_level/${DATASET_NAME}/${EXPERIMENT_NAME}/vae_risk_aware_routing_optuna/optuna_results.csv`
+  - `SELECTION_MANIFEST=analysis_result/DiHFT/low_level/${DATASET_NAME}/${EXPERIMENT_NAME}/two_dimensional_selection/two_dimensional_selection_manifest.json`
+- **固定执行参数**：
+  - `--eval_stage test`
+  - `--initial_wallet_balance 5000`
+  - `--short_estimated_rate 0`
+  - `--long_estimated_rate 0`
+  - `--enable_non_main_contract_defense`
+- **关键产出物**：
+  - **`result/` 最终测试集回测评估与轨迹产出目录 (`result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/`)**：
+    - `contract_results.csv`（测试集各合约绩效明细汇总，包含 `contract`, `source_file`, `rows`, `reward_sum`, `require_money`, `return_rate`）
+    - `trading_info.npy`（测试集综合投资组合绩效字典，包含 `return_rate`, `portfolio_return_rate`, `win_rate`, `equal_weighted_mean_return`, `total_reward_sum`, `contract_count` 等）
+    - **分合约测试细节与动作向量 (`contracts/<contract>/`)**：
+      - `reward_history.npy`（每步测试收益历史）、`total_asset_history.npy`（总资产变化历史）、`wallet_balance_history.npy`（钱包余额历史）、`initial_margin_history.npy`（初始保证金历史）、`unrealized_pnl_history.npy`（未实现盈亏历史）、`maintain_marigine_history.npy`（维持保证金历史）、`new_position_required_money_history.npy`（新开仓所需资金历史）
+      - `micro_action_history.npy`（低层 Agent 微观动作历史）、`macro_action.npy` / `macro_action_history.npy`（高层 VAE 路由宏观选择 Label 历史）以及分合约 `trading_info.npy`
+  - **`log/` 最终回测日志**：
+    - `log/DiHFT/${DATASET_NAME}/high_level/final_result/${EXPERIMENT_NAME}/final_result.log`（记录测试集各合约评估进度、逐合约结算与最终组合收益率的执行日志）
+- **位置**：承接高层启发式筛选的最优超参和低层模型，是整个 DiHFT 算法体系在测试集（OOS）上的终检评估出口。
+
 ## 总结：全流程依赖输入与产出对照表
 
 | 阶段 / 步骤 | 核心执行脚本 | 核心依赖输入物 | 关键产出物目录与核心文件 |
@@ -283,3 +324,4 @@
 | **6. VAE 训练与评估** | `VAE_util_fu_30.sh` | 步骤 2 产出的 `VAE_data/<labeling_method>/<contract>/label_*.npy` + 步骤 5 的 Label 划分 | `result/DiHFT/vae_results/fu/30min/`<br>(`label_*/model_latest.pth`, `summary.json`, `ood_logpx_*.csv`, `routing_summary.json`) |
 | **7. 高层 Optuna 寻优** | `vae_optuna_fu_30.sh` | 步骤 3/5 筛选的 Agent 模型 + 步骤 6 的 VAE 模型 + 步骤 2 的 `valid/` 数据 | `result/DiHFT/high_level/fu/30min/`<br>(`vae_risk_aware_routing_optuna/optuna_results.csv`, `vae_risk_aware_routing/.../contract_results.csv`, `trading_info.npy`, `macro_action.npy`) |
 | **8. 高层路由筛选与可视化** | `high_level_heurstic_fu_30_half.sh` | 步骤 7 产出的 `vae_risk_aware_routing/` 诊断数据 + 步骤 2 的 `valid/*.feather` | `analysis_result/DiHFT/high_level_heurstic/fu/30min_multi/`<br>(`result.csv`, `best_result.csv`, `best_result_*.png/pdf`)<br>`result/DiHFT/final_result/fu/30min_multi/`<br>(`high_level_agent_para.txt`, 最终路由诊断向量 `.npy`/`.csv`) |
+| **9. 最终测试与评估** | `final_result_fu_10_p.sh` | 步骤 8 产出的 `high_level_agent_para.txt` + 步骤 7 产出的 `optuna_results.csv` + 步骤 5 的 `selection_manifest.json` + 步骤 2 的 `test/*.feather` | `result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/`<br>(`contract_results.csv`, `trading_info.npy`, `contracts/<contract>/` 轨迹向量)<br>`log/DiHFT/${DATASET_NAME}/high_level/final_result/${EXPERIMENT_NAME}/final_result.log` |

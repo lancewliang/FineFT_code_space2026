@@ -7,6 +7,7 @@ from operator_futures.feature_selection.muti_contract.regime_audit import (
 )
 
 import argparse
+import logging
 import json
 import math
 import re
@@ -24,6 +25,8 @@ from operator_futures.feature_selection.muti_contract.metrics import (
     aggregate_metric_frames,
     calculate_metric_frame,
 )
+logger = logging.getLogger(__name__)
+
 from operator_futures.feature_selection.manifests import (
     FeatureSelectionContractRecord,
     FeatureSelectionManifest,
@@ -491,12 +494,19 @@ def run_feature_selection(
 
     mandatory_features = list(mandatory_state_features or [])
     feature_ablation_patterns = tuple(feature_ablation_patterns or ())
+    blacklisted_mandatory: list[str] = []
     if feature_blacklist and mandatory_features:
-        conflict = sorted(set(feature_blacklist).intersection(mandatory_features))
-        if conflict:
-            raise ValueError(
-                f"feature blacklist contains mandatory state feature column(s): {conflict}"
+        blacklisted_mandatory = sorted(set(feature_blacklist).intersection(mandatory_features))
+        if blacklisted_mandatory:
+            logger.info(
+                "Feature blacklist overrides mandatory state feature(s): %s",
+                blacklisted_mandatory,
             )
+            mandatory_features = [
+                feature
+                for feature in mandatory_features
+                if feature not in set(blacklisted_mandatory)
+            ]
     ablation_conflict = [
         feature
         for feature in mandatory_features
@@ -671,14 +681,15 @@ def run_feature_selection(
     selected_features, blacklisted_features = _apply_feature_blacklist(
         selected_features, feature_blacklist
     )
-    if feature_blacklist and not selected_features:
+    all_blacklisted_dropped = sorted(set(blacklisted_features).union(blacklisted_mandatory))
+    if feature_blacklist and not selected_features and not mandatory_features:
         raise ValueError(
             "feature selection produced an empty list after Feature Blacklist"
         )
-    if blacklisted_features:
+    if all_blacklisted_dropped:
         filter_results = {
             **filter_results,
-            "Feature Blacklist Dropped": blacklisted_features,
+            "Feature Blacklist Dropped": all_blacklisted_dropped,
         }
     normal_selected = [f for f in selected_features if f not in mandatory_features]
     if enable_conditional_anchors and retained_anchors:

@@ -36,6 +36,38 @@ COMMODITY_FU_FEATURE_BLACKLIST=(
     sell_wap
     buy_volume_oe
     sell_volume_oe
+    # Blacklisted OOD features (ADR-0019)
+    contract_month_sin
+    contract_month_cos
+    cm_current_main_log_price_ratio
+    cm_current_main_relative_price_spread
+    cm_current_sub_log_price_ratio
+    cm_current_sub_relative_price_spread
+    cm_main_sub_log_price_ratio
+    cm_main_sub_relative_price_spread
+    prev_2_day_trade_up_ratio
+    prev_day_lower_shadow_to_range
+    prev_5_day_trade_imbalance
+    prev_2_day_trade_imbalance
+    prev_2_day_turnover_rate
+    prev_day_body_to_range
+    prev_week_twap_deviation_pct
+    prev_15_day_turnover_rate
+    prev_day_range_pct
+    prev_day_body_pct
+    prev_day_upper_shadow_pct
+    prev_30_day_trade_down_ratio
+    prev_10_day_trade_imbalance
+    prev_week_body_to_range
+    prev_week_upper_shadow_to_range
+    prev_week_open_interest_change
+    prev_15_day_open_interest_change
+    prev_week_range_pct
+    prev_6_week_open_interest_change
+    prev_day_limit_up_single_sided_ratio
+    prev_day_limit_down_single_sided_ratio
+    prev_2_day_limit_up_single_sided_ratio
+    prev_2_day_limit_down_single_sided_ratio
 )
 
 run_commodity_logged_step() {
@@ -217,8 +249,6 @@ BASE_TIME_FEATURE_COLUMNS=(
     is_closing_30m
     is_session_first_bar
     is_session_last_bar
-    contract_month_sin
-    contract_month_cos
     contract_life_remaining_ratio
     prev_day_contract_role_tier
 )
@@ -227,16 +257,10 @@ CROSS_MONTH_FEATURE_COLUMNS=(
     cm_contract_role_main
     cm_contract_role_sub
     cm_contract_role_other
-    cm_current_main_log_price_ratio
-    cm_current_main_relative_price_spread
     cm_current_main_volume_share_current
     cm_current_main_open_interest_share_current
-    cm_current_sub_log_price_ratio
-    cm_current_sub_relative_price_spread
     cm_current_sub_volume_share_current
     cm_current_sub_open_interest_share_current
-    cm_main_sub_log_price_ratio
-    cm_main_sub_relative_price_spread
     cm_main_sub_volume_share_sub
     cm_main_sub_open_interest_share_sub
     cm_m1_m2_open_interest_share_m2

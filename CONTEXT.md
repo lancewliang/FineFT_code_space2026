@@ -68,6 +68,18 @@ _Avoid_: NaN 检查、空值校验
 
 ### Feature Engineering
 
+**特征黑名单 (Feature Blacklist)**:
+在特征选择与状态输入构建中被强制剔除的特征集合，具有最高裁决优先级，优先于任何默认、候选或强制特征规则。
+_Avoid_: 排除特征、屏蔽特征
+
+**跨期稳态基差 (Cross-Month Rolling Stationary Basis)**:
+基于局部滚动时间窗口对跨期绝对价差进行去中心化与局部波动归一化（如滚动 Z-Score）得到的无量纲平稳化特征。
+_Avoid_: 跨期绝对价差、跨期价差比率
+
+**分位数稳态统计特征 (Quantile-Rank Stationary Feature)**:
+将多日持仓变动、资金流失衡等高偏态长尾时序统计量映射到局部历史经验分位数 `[0, 1]` 区间的平稳化状态特征。
+_Avoid_: 原始持仓变化率、绝对失衡率
+
 **截面特征 (Cross-section Feature)**:
 从单条快照或单 bar 数据直接计算的 KLINE、QUOTE 和 SNAPSHOT 特征。
 _Avoid_: 横截面特征、快照特征
