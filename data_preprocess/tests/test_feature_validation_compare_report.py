@@ -26,7 +26,7 @@ def test_expected_columns_are_fixed_docs_derived_lists():
     assert len(EXPECTED_COLUMNS_BY_DOC["base_feature"]) == 112
     assert len(EXPECTED_COLUMNS_BY_DOC["kline_feature"]) == 216
     assert len(EXPECTED_COLUMNS_BY_DOC["quotes_feature"]) == 69
-    assert len(EXPECTED_COLUMNS_BY_DOC["snapshot_feature"]) == 84
+    assert len(EXPECTED_COLUMNS_BY_DOC["snapshot_feature"]) == 94
     assert len(EXPECTED_COLUMNS_BY_DOC["reward_environment"]) == 108
     assert len(EXPECTED_COLUMNS_BY_DOC["time_feature"]) == 2825
     assert "ohlcv_feature_1" not in EXPECTED_COLUMNS_BY_DOC["time_feature"]

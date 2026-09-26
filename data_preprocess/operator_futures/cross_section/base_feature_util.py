@@ -35,7 +35,7 @@ def normalize_feature_cross_section(df: pd.DataFrame, features: list, method: st
 
             up_norm = up / (all + minium)
             down_norm = down / (all + minium)
-            imbalance_norm = (up - down) / (all + minium)
+            imbalance_norm = (up - down) / (all + 10.0)
             pd_new["{}_up_udnorm".format(features[0])] = up_norm
             pd_new["{}_down_udnorm".format(features[0])] = down_norm
             pd_new["{}_updown_imbalance_udnorm".format(features[0])] = imbalance_norm
@@ -46,7 +46,7 @@ def normalize_feature_cross_section(df: pd.DataFrame, features: list, method: st
             up_norm = up / (all + minium)
             down_norm = down / (all + minium)
             flat_norm = flat / (all + minium)
-            imbalance_norm = (up - down) / (all + minium)
+            imbalance_norm = (up - down) / (all + 10.0)
             vol_norm = (up + down - flat) / (all + minium)
             pd_new["{}_up_udnorm".format(features[0])] = up_norm
             pd_new["{}_down_udnorm".format(features[0])] = down_norm
@@ -458,25 +458,48 @@ def process_snapshot_features(df: pd.DataFrame, topk=5, depth=25):
     price_related_df["sell_spread_oe_max"] = np.abs(
         df["ask1_price"] - df[f"ask{depth}_price"]
     ).clip(0.0, 50.0)
-    topk_related_df = pd.DataFrame(
-        columns=["ask_price_topk_size_{}_increments".format(i + 1) for i in range(topk)]
-        + ["bid_price_topk_size_{}_increments".format(i + 1) for i in range(topk)]
-        + ["ask_size_topk_size_{}_increments".format(i + 1) for i in range(topk)]
-        + ["bid_size_topk_size_{}_increments".format(i + 1) for i in range(topk)],index=df.index
+    topk_ask_sum = np.sum(ask_size_topk_size, axis=1, keepdims=True)
+    topk_bid_sum = np.sum(bid_size_topk_size, axis=1, keepdims=True)
+    ask_share = np.divide(
+        ask_size_topk_size,
+        topk_ask_sum,
+        out=np.zeros_like(ask_size_topk_size, dtype=float),
+        where=topk_ask_sum > 0,
     )
+    bid_share = np.divide(
+        bid_size_topk_size,
+        topk_bid_sum,
+        out=np.zeros_like(bid_size_topk_size, dtype=float),
+        where=topk_bid_sum > 0,
+    )
+    topk_columns = []
     for i in range(topk):
-        topk_related_df["ask_price_topk_size_{}_increments".format(i + 1)] = (
+        topk_columns.extend(
+            [
+                f"ask_price_topk_size_{i + 1}_increments",
+                f"bid_price_topk_size_{i + 1}_increments",
+                f"ask_size_topk_size_{i + 1}_increments",
+                f"bid_size_topk_size_{i + 1}_increments",
+                f"ask_size_topk_size_{i + 1}_share",
+                f"bid_size_topk_size_{i + 1}_share",
+            ]
+        )
+    topk_related_df = pd.DataFrame(columns=topk_columns, index=df.index)
+    for i in range(topk):
+        topk_related_df[f"ask_price_topk_size_{i + 1}_increments"] = (
             ask_price_topk_size[:, i] - best_ask_price_array
         )
-        topk_related_df["bid_price_topk_size_{}_increments".format(i + 1)] = (
+        topk_related_df[f"bid_price_topk_size_{i + 1}_increments"] = (
             bid_price_topk_size[:, i] - best_bid_price_array
         )
-        topk_related_df["ask_size_topk_size_{}_increments".format(i + 1)] = np.clip(
+        topk_related_df[f"ask_size_topk_size_{i + 1}_increments"] = np.clip(
             ask_size_topk_size[:, i] - best_ask_size_array, -5000.0, 5000.0
         )
-        topk_related_df["bid_size_topk_size_{}_increments".format(i + 1)] = np.clip(
+        topk_related_df[f"bid_size_topk_size_{i + 1}_increments"] = np.clip(
             bid_size_topk_size[:, i] - best_bid_size_array, -5000.0, 5000.0
         )
+        topk_related_df[f"ask_size_topk_size_{i + 1}_share"] = ask_share[:, i]
+        topk_related_df[f"bid_size_topk_size_{i + 1}_share"] = bid_share[:, i]
     price_related_df = pd.concat([price_related_df, topk_related_df], axis=1)
 
     # volume related features
@@ -560,7 +583,7 @@ def normalize_feature_cross_section(df, features: list, method: str) -> pl.DataF
                 (down_col / (all_col + minium)).alias(
                     f"{all_feature}_down_udnorm"
                 ),
-                ((up_col - down_col) / (all_col + minium)).alias(
+                ((up_col - down_col) / (all_col + 10.0)).alias(
                     f"{all_feature}_updown_imbalance_udnorm"
                 ),
             ]
@@ -745,11 +768,27 @@ def process_snapshot_features(df, topk=5, depth=25) -> pl.DataFrame:
     data["buy_sell_wap_spread"] = data["buy_wap"] - data["sell_wap"]
     data["buy_spread_oe_max"] = np.clip(np.abs(df["bid1_price"].to_numpy() - df[f"bid{depth}_price"].to_numpy()), 0.0, 50.0)
     data["sell_spread_oe_max"] = np.clip(np.abs(df["ask1_price"].to_numpy() - df[f"ask{depth}_price"].to_numpy()), 0.0, 50.0)
+    topk_ask_sum = np.sum(ask_size_topk_size, axis=1, keepdims=True)
+    topk_bid_sum = np.sum(bid_size_topk_size, axis=1, keepdims=True)
+    ask_share = np.divide(
+        ask_size_topk_size,
+        topk_ask_sum,
+        out=np.zeros_like(ask_size_topk_size, dtype=float),
+        where=topk_ask_sum > 0,
+    )
+    bid_share = np.divide(
+        bid_size_topk_size,
+        topk_bid_sum,
+        out=np.zeros_like(bid_size_topk_size, dtype=float),
+        where=topk_bid_sum > 0,
+    )
     for i in range(topk):
         data[f"ask_price_topk_size_{i + 1}_increments"] = ask_price_topk_size[:, i] - best_ask_price_array
         data[f"bid_price_topk_size_{i + 1}_increments"] = bid_price_topk_size[:, i] - best_bid_price_array
         data[f"ask_size_topk_size_{i + 1}_increments"] = np.clip(ask_size_topk_size[:, i] - best_ask_size_array, -5000.0, 5000.0)
         data[f"bid_size_topk_size_{i + 1}_increments"] = np.clip(bid_size_topk_size[:, i] - best_bid_size_array, -5000.0, 5000.0)
+        data[f"ask_size_topk_size_{i + 1}_share"] = ask_share[:, i]
+        data[f"bid_size_topk_size_{i + 1}_share"] = bid_share[:, i]
     data["buy_volume_oe"] = bid_total
     data["sell_volume_oe"] = ask_total
     data["imblance_volume_oe"] = (

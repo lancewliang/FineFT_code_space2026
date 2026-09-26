@@ -39,6 +39,9 @@ CROSS_MONTH_FEATURE_COLUMNS: list[str] = [
     "cm_m1_m2_log_price_spread_velocity_10m",
     "cm_m2_m3_log_price_spread_velocity_10m",
     "cm_m1_m2_m3_butterfly_spread_velocity_10m",
+    "cm_current_main_spread_rolling_zscore_48",
+    "cm_current_sub_spread_rolling_zscore_48",
+    "cm_main_sub_spread_rolling_zscore_48",
 ]
 
 _ALLOWED_PRICE_PATTERNS: tuple[str, ...] = (
@@ -161,7 +164,20 @@ def generate_main_sub_cross_month_features(
         )
         rows.append(row)
 
-    return pl.DataFrame(rows).select(["timestamp"] + CROSS_MONTH_FEATURE_COLUMNS)
+    df = pl.DataFrame(rows)
+    for pair in ("current_main", "current_sub", "main_sub"):
+        ratio_col = f"cm_{pair}_log_price_ratio"
+        zscore_col = f"cm_{pair}_spread_rolling_zscore_48"
+        rolling_mean = pl.col(ratio_col).rolling_mean(window_size=48, min_samples=1)
+        rolling_std = pl.col(ratio_col).rolling_std(window_size=48, min_samples=2)
+        df = df.with_columns(
+            pl.when(rolling_std > 1e-6)
+            .then((pl.col(ratio_col) - rolling_mean) / rolling_std)
+            .otherwise(0.0)
+            .fill_null(0.0)
+            .alias(zscore_col)
+        )
+    return df.select(["timestamp"] + CROSS_MONTH_FEATURE_COLUMNS)
 
 
 def generate_delivery_month_sequence_features(

@@ -40,6 +40,9 @@ def test_cross_month_feature_contract_exposes_stable_columns_and_pairing_modes()
         "cm_m1_m2_log_price_spread_velocity_10m",
         "cm_m2_m3_log_price_spread_velocity_10m",
         "cm_m1_m2_m3_butterfly_spread_velocity_10m",
+        "cm_current_main_spread_rolling_zscore_48",
+        "cm_current_sub_spread_rolling_zscore_48",
+        "cm_main_sub_spread_rolling_zscore_48",
     ]
     assert validate_cross_month_feature_columns(CROSS_MONTH_FEATURE_COLUMNS) == list(
         CROSS_MONTH_FEATURE_COLUMNS
@@ -449,3 +452,44 @@ def test_write_cross_month_feature_for_day_fallback_when_no_prior_roles(tmp_path
     assert out["cm_contract_role_other"].to_list() == [0.0, 0.0]
     assert out["cm_current_main_log_price_ratio"].to_list() == [0.0, 0.0]
     assert out["cm_current_sub_log_price_ratio"].to_list() == [0.0, 0.0]
+
+
+def test_cross_month_feature_rolling_zscore_finite_and_bounded():
+    current = pl.DataFrame(
+        {
+            "timestamp": list(range(100)),
+            "close": [100.0 + float(i) * 0.1 for i in range(100)],
+            "volume": [10.0] * 100,
+            "open_interest": [100.0] * 100,
+        }
+    )
+    main = pl.DataFrame(
+        {
+            "timestamp": list(range(100)),
+            "close": [105.0] * 100,
+            "volume": [30.0] * 100,
+            "open_interest": [300.0] * 100,
+        }
+    )
+    sub = pl.DataFrame(
+        {
+            "timestamp": list(range(100)),
+            "close": [95.0] * 100,
+            "volume": [60.0] * 100,
+            "open_interest": [600.0] * 100,
+        }
+    )
+    features = generate_main_sub_cross_month_features(
+        current_contract="fu2603",
+        current_bars=current,
+        main_contract="fu2601",
+        main_bars=main,
+        sub_contract="fu2602",
+        sub_bars=sub,
+        current_role="other",
+    )
+    zscore = features["cm_current_main_spread_rolling_zscore_48"].to_numpy()
+    assert np.all(np.isfinite(zscore))
+    assert zscore[0] == 0.0
+    # Over 48 samples, Z-score should be bounded and mean near 0
+    assert np.all(np.abs(zscore) < 5.0)

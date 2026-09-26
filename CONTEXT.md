@@ -80,6 +80,22 @@ _Avoid_: 排除特征、屏蔽特征
 基于局部滚动时间窗口对跨期绝对价差进行去中心化与局部波动归一化（如滚动 Z-Score）得到的无量纲平稳化特征。
 _Avoid_: 跨期绝对价差、跨期价差比率
 
+**盘口深度相对份额 (Orderbook Depth Share)**:
+订单簿指定买卖档位挂单手数占前 K 档总挂单手数的无量纲相对比率（如 `ask_size_topk_size_k_share`），用于替代随市场整体做市规模膨胀的绝对挂单增量，值域严格在 `[0, 1]` 之间。
+_Avoid_: 盘口增量、挂单手数差、深度绝对值
+
+**相对强弱极值位 (Relative Strength Value, RSV)**:
+当前价格在历史滚动时间窗口极值区间（High-Low Range）内的无量纲相对百分比位置，用于替代强趋势下在边界持续死锁的极值时间索引（`imin`/`imax`），值域严格有界在 `[0, 1]` 之间。
+_Avoid_: 极值索引、滚动极值位置、时间索引
+
+**拉普拉斯平滑成交失衡 (Laplace-Smoothed Trade Imbalance)**:
+在成交笔数方向失衡计算中引入固定伪计数先验（Pseudo-counts）的有偏收缩估计，在夜盘与非活跃低成交量时段自动收缩至 0，消除离散跳变断层。
+_Avoid_: 原始成交笔数失衡、离散成交比率
+
+**选择性解禁准则 (Selective Unblacklisting Principle)**:
+黑名单移出约束准则：仅当某特征完成无量纲尺度不变性平稳化改造或由严格平稳的语义新特征替代，且通过数值有界性检验后，方可从特征黑名单中移出；未完成改造或替代的特征必须永久留在黑名单中。
+_Avoid_: 全量解禁、静默解禁
+
 **分位数稳态统计特征 (Quantile-Rank Stationary Feature)**:
 将多日持仓变动、资金流失衡等高偏态长尾时序统计量映射到局部历史经验分位数 `[0, 1]` 区间的平稳化状态特征。
 _Avoid_: 原始持仓变化率、绝对失衡率
@@ -120,9 +136,9 @@ _Avoid_: 主力窗口交易日数量、样本交易日数量
 当前 `TradingDay` 到合约最后交易日的剩余交易日数量除以合约完整交易日数量得到的非绝对生命周期特征；在下采样与基础时间特征中计算保留，但在特征选择与状态输入中被特征黑名单强制剔除（ADR-0022），以防验证集与测试集分布漂移引起 VAE 似然崩溃。
 _Avoid_: 剩余天数、自然日倒计时
 
-**微观深度增量长尾截断 (Microstructure Depth Increments Truncation)**:
-在 RobustScaler 缩放后对微观深度增量（如 `ask_size_topk_size_5_increments`、`bid_size_topk_size_5_increments`）及全部状态特征施加 `[-5.0, 5.0]` 的硬截断，将极端偏态与流动性冲击离群值约束在 5 个尺度内，防止 VAE 产生高斯负对数似然 (NLL) 崩溃。
-_Avoid_: 原始深度差值截断、无界缩放
+**微观深度增量与非平稳挂单量黑名单 (Microstructure Depth Increments Blacklist)**:
+微观深度挂单差值（如 `ask_size_topk_size_5_increments`、`bid_size_topk_size_5_increments`）因属于绝对手数差值，在跨合约跨年份流动性增长中发生不可逆的均值漂移与分布崩塌；在 ADR-0023 中与原始成交笔数（`ntrade_estimated` 及相关比率）一并列入 `COMMODITY_FU_FEATURE_BLACKLIST` 彻底剔除，下游状态仅保留价差 Tick 增量与相对占比特征。
+_Avoid_: 原始绝对挂单增量、无界缩放
 
 **算子物理边界约束 (Operator Physical Bounding)**:
 在底层算子计算层（Tier 1）对存在近零除零风险的特征（`vstd_{window}` 分母下限取 1.0 并截断至 `[0.0, 10.0]`）、跨期差分跳变特征（`cm_*_spread_velocity_10m` 截断至 `[-0.05, 0.05]`、`cm_open_interest_shift_speed_10m` 截断至 `[-0.1, 0.1]`）以及微观深度特征施加的物理有效定义域硬边界（ADR-0023），防止极端离群值在算子层发生数值发散。

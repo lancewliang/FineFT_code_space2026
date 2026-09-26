@@ -145,7 +145,8 @@ COMMODITY_FU_FEATURE_BLACKLIST=(
     ntrade_estimated
     ntrade_estimated_up_udnorm
     ntrade_estimated_down_udnorm
-    ntrade_estimated_updown_imbalance_udnorm
+    ntrade_estimated_flat_udnorm
+    ntrade_estimated_updownflat_vol_udnorm
 )
 
 run_commodity_logged_step() {
