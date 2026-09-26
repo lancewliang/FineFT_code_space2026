@@ -56,6 +56,11 @@ We adopt a two-phase selective remediation architecture governed by the **Select
 6. **Statistical Competition over Mandatory Inclusion**:
    - Remediated and new features enter the standard feature selection pool and must compete via Rank IC, IC-IR, and correlation filtering. They are not forced into `mandatory_state_features`.
 
+7. **Blacklisting Non-Stationary Long-Period Macro Volatility**:
+   - Following empirical VAE validation on 10min data, 5 new scale-invariant features entered `state_features.npy` with strictly negative delta NLL (zero OOD drift).
+   - A single residual feature, `parkinson_volatility_96`, accounted for 72.18% of positive test delta NLL (+0.72) due to macro market volatility collapse in test contracts shifting the mean by 0.416 standard deviations against a high-confidence volatility regime model.
+   - Blacklist `parkinson_volatility_96` and `parkinson_volatility_192` in `COMMODITY_FU_FEATURE_BLACKLIST`, relying on stationary short/medium volatility estimators (`garman_klass_volatility_16`, `rolling_volatility_48`, `realized_volatility_192`).
+
 ## Consequences
 
 - Fully protects the VAE state space from drastic price level and trading volume expansions.

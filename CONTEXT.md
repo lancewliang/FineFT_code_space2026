@@ -96,6 +96,22 @@ _Avoid_: 原始成交笔数失衡、离散成交比率
 黑名单移出约束准则：仅当某特征完成无量纲尺度不变性平稳化改造或由严格平稳的语义新特征替代，且通过数值有界性检验后，方可从特征黑名单中移出；未完成改造或替代的特征必须永久留在黑名单中。
 _Avoid_: 全量解禁、静默解禁
 
+**主次合约相对基准强度 (Main-Sub Relative Benchmark Strength)**:
+以主力合约（Main Contract）为绝对基准计算当前合约在持仓量、成交量或换手率上的对数差值或相对份额（如 `rel_to_main_oi_share`、`rel_to_main_volume_share`），替代在小样本活跃合约集合上粗粒度离散的跨合约序数排名。
+_Avoid_: 截面绝对排名、小截面分位数、离散合约排位
+
+**高频滑动宏观动量 (Continuous Multi-Bar Macro Momentum)**:
+在 Bar 级别直接维护长周期滑动窗口（如 240 根 10m Bar 对应 5 个交易日）计算累积成交失衡、对数换手率与持仓变动率，逐 Bar 平滑更新，彻底消除日度低频广播带来的水平常数阶梯与开盘跳跃脉冲。
+_Avoid_: 日度滞后广播、静态多日统计、日间跳跃脉冲
+
+**高斯正态化分位数映射 (Gaussian Probit Quantile Mapping)**:
+将有界分位数 $p \in [\epsilon, 1-\epsilon]$ 通过逆高斯累积分布函数（Probit / ErfInv）映射到标准正态分布 $\mathcal{N}(0, 1)$，严格对齐 VAE 隐空间连续重构的高斯先验分布假设。
+_Avoid_: 线性百分比分位数、离散台阶分位数、均匀分布直通
+
+**核心低频三支柱精简准则 (Core Macro Trio Pruning Principle)**:
+宏观多日特征提炼原则：仅保留资金流方向失衡（Trade Imbalance）、对数换手率（Turnover Rate）、持仓变动率（OI Change）三大核心经济学动力学支柱，其余高噪声日K线形态指标（如实体占比、上下影线占比）永久封存在黑名单中。
+_Avoid_: 全量日线形态保留、高噪声K线衍生
+
 **分位数稳态统计特征 (Quantile-Rank Stationary Feature)**:
 将多日持仓变动、资金流失衡等高偏态长尾时序统计量映射到局部历史经验分位数 `[0, 1]` 区间的平稳化状态特征。
 _Avoid_: 原始持仓变化率、绝对失衡率
@@ -139,6 +155,10 @@ _Avoid_: 剩余天数、自然日倒计时
 **微观深度增量与非平稳挂单量黑名单 (Microstructure Depth Increments Blacklist)**:
 微观深度挂单差值（如 `ask_size_topk_size_5_increments`、`bid_size_topk_size_5_increments`）因属于绝对手数差值，在跨合约跨年份流动性增长中发生不可逆的均值漂移与分布崩塌；在 ADR-0023 中与原始成交笔数（`ntrade_estimated` 及相关比率）一并列入 `COMMODITY_FU_FEATURE_BLACKLIST` 彻底剔除，下游状态仅保留价差 Tick 增量与相对占比特征。
 _Avoid_: 原始绝对挂单增量、无界缩放
+
+**长周期宏观波动率黑名单 (Long-Period Macro Volatility Blacklist)**:
+基于绝对极值价格差的长周期波动率特征（如 `parkinson_volatility_96`、`parkinson_volatility_192`），在跨年份跨市场体制迁移中极易发生宏观波动率坍塌或剧增导致均值漂移；在 ADR-0024 中列入 `COMMODITY_FU_FEATURE_BLACKLIST` 剔除，下游状态依赖自适应平稳的短周期 Garman-Klass、滚动波幅与已实现波动率。
+_Avoid_: 绝对波动率水平、无基准长波
 
 **算子物理边界约束 (Operator Physical Bounding)**:
 在底层算子计算层（Tier 1）对存在近零除零风险的特征（`vstd_{window}` 分母下限取 1.0 并截断至 `[0.0, 10.0]`）、跨期差分跳变特征（`cm_*_spread_velocity_10m` 截断至 `[-0.05, 0.05]`、`cm_open_interest_shift_speed_10m` 截断至 `[-0.1, 0.1]`）以及微观深度特征施加的物理有效定义域硬边界（ADR-0023），防止极端离群值在算子层发生数值发散。

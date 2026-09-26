@@ -22,18 +22,31 @@ def _rolling_quantile_rank(arr: np.ndarray, window: int = 192) -> np.ndarray:
     return out
 
 
+def _rolling_probit_rank(arr: np.ndarray, window: int = 192, epsilon: float = 1e-4) -> np.ndarray:
+    ranks = _rolling_quantile_rank(arr, window=window)
+    out = np.zeros(len(ranks), dtype=float)
+    if len(ranks) < window:
+        return out
+    import scipy.special as sp
+    clipped = np.clip(ranks[window - 1 :], epsilon, 1.0 - epsilon)
+    out[window - 1 :] = sp.ndtri(clipped)
+    return out
+
+
 def compute_rolling_quantile_rank(
     series: pl.Series,
     contracts: np.ndarray | None = None,
     window: int = 192,
+    method: str = "uniform",
 ) -> pl.Series:
     values = np.nan_to_num(series.to_numpy(), nan=0.0, posinf=0.0, neginf=0.0)
+    rank_func = _rolling_probit_rank if method == "probit" else _rolling_quantile_rank
     if contracts is None:
-        return pl.Series(series.name, _rolling_quantile_rank(values, window=window))
+        return pl.Series(series.name, rank_func(values, window=window))
     out = np.zeros(len(values), dtype=float)
     for contract in dict.fromkeys(contracts.tolist()):
         mask = contracts == contract
-        out[mask] = _rolling_quantile_rank(values[mask], window=window)
+        out[mask] = rank_func(values[mask], window=window)
     return pl.Series(series.name, out)
 
 
@@ -813,6 +826,62 @@ def process_enhanced_state_features(df: pl.DataFrame) -> pl.DataFrame:
         oi_prev10 = pl.col("open_interest").shift(10)
         oi_chg = pl.when(oi_prev10 > 1e-8).then((pl.col("open_interest") - oi_prev10) / oi_prev10).otherwise(0.0)
         exprs.append(oi_chg.fill_null(0.0).fill_nan(0.0).alias("oi_change_rate_norm_10m"))
+
+    # ADR-0025: Continuous Multi-Bar Macro Momentum (Core Macro Trio)
+    has_trade_counts = {"ntrade_up_estimated", "ntrade_down_estimated"}.issubset(frame.columns) or {
+        "ntrade_estimated_up_udnorm", "ntrade_estimated_down_udnorm"
+    }.issubset(frame.columns)
+    if has_trade_counts:
+        up_col_name = "ntrade_up_estimated" if "ntrade_up_estimated" in frame.columns else "ntrade_estimated_up_udnorm"
+        down_col_name = "ntrade_down_estimated" if "ntrade_down_estimated" in frame.columns else "ntrade_estimated_down_udnorm"
+        up = pl.col(up_col_name).cast(pl.Float64)
+        down = pl.col(down_col_name).cast(pl.Float64)
+        for w in (48, 240):
+            up_sum = up.rolling_sum(w, min_samples=1)
+            down_sum = down.rolling_sum(w, min_samples=1)
+            pseudo_count = 10.0 * float(w)
+            imb_cont = (up_sum - down_sum) / (up_sum + down_sum + pseudo_count)
+            exprs.append(
+                imb_cont.clip(-1.0, 1.0)
+                .fill_null(0.0)
+                .fill_nan(0.0)
+                .alias(f"macro_trade_imbalance_continuous_{w}")
+            )
+
+    if "open_interest" in frame.columns:
+        oi = pl.col("open_interest").cast(pl.Float64)
+        for w in (48, 240):
+            oi_prev = oi.shift(w)
+            oi_mean = oi.rolling_mean(w, min_samples=1)
+            oi_shift = (
+                pl.when(oi_mean > 1.0)
+                .then((oi - oi_prev) / (oi_mean + 1.0))
+                .otherwise(0.0)
+            )
+            exprs.append(
+                oi_shift.clip(-0.5, 0.5)
+                .fill_null(0.0)
+                .fill_nan(0.0)
+                .alias(f"macro_oi_change_rate_{w}")
+            )
+
+    if "volume" in frame.columns and "open_interest" in frame.columns:
+        vol = pl.col("volume").cast(pl.Float64)
+        oi = pl.col("open_interest").cast(pl.Float64)
+        for w in (48, 240):
+            vol_sum = vol.rolling_sum(w, min_samples=1)
+            turnover_ratio = (
+                pl.when(oi > 1.0)
+                .then(vol_sum / (oi + 1.0))
+                .otherwise(0.0)
+            )
+            turnover_log = (1.0 + turnover_ratio).log()
+            exprs.append(
+                turnover_log.clip(0.0, 10.0)
+                .fill_null(0.0)
+                .fill_nan(0.0)
+                .alias(f"macro_turnover_rate_log_{w}")
+            )
 
     if "cm_main_sub_log_price_ratio" in frame.columns:
         cm_v = pl.col("cm_main_sub_log_price_ratio").diff(10).fill_null(0.0)

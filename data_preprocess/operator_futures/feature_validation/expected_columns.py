@@ -792,6 +792,12 @@ ENHANCED_FEATURE_COLUMNS = [
     "cm_current_sub_spread_rolling_zscore_192",
     "cm_main_sub_spread_rolling_zscore_48",
     "cm_main_sub_spread_rolling_zscore_192",
+    "macro_trade_imbalance_continuous_48",
+    "macro_trade_imbalance_continuous_240",
+    "macro_oi_change_rate_48",
+    "macro_oi_change_rate_240",
+    "macro_turnover_rate_log_48",
+    "macro_turnover_rate_log_240",
 ]
 
 TIME_FEATURE_COLUMNS = _build_time_feature_columns()

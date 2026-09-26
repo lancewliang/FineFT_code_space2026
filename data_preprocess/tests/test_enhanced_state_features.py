@@ -680,3 +680,55 @@ def test_rolling_quantile_rank_for_multiday_features():
             "prev_2_day_turnover_rate_quantile_rank",
         ],
     )
+
+
+def test_continuous_macro_momentum_features():
+    steps = np.arange(300, dtype=float)
+    df = pl.DataFrame(
+        {
+            "timestamp": steps.astype(int),
+            "ntrade_up_estimated": np.random.uniform(5.0, 20.0, 300),
+            "ntrade_down_estimated": np.random.uniform(5.0, 20.0, 300),
+            "open_interest": 1000.0 + steps * 2.0 + np.random.uniform(-5.0, 5.0, 300),
+            "volume": np.random.uniform(10.0, 50.0, 300),
+        }
+    )
+    res = process_enhanced_state_features(df)
+
+    for w in (48, 240):
+        imb_col = f"macro_trade_imbalance_continuous_{w}"
+        oi_col = f"macro_oi_change_rate_{w}"
+        to_col = f"macro_turnover_rate_log_{w}"
+
+        assert imb_col in res.columns
+        assert oi_col in res.columns
+        assert to_col in res.columns
+
+        imb_arr = res[imb_col].to_numpy()
+        oi_arr = res[oi_col].to_numpy()
+        to_arr = res[to_col].to_numpy()
+
+        assert np.isfinite(imb_arr).all()
+        assert (imb_arr >= -1.0).all() and (imb_arr <= 1.0).all()
+
+        assert np.isfinite(oi_arr).all()
+        assert (oi_arr >= -0.5).all() and (oi_arr <= 0.5).all()
+
+        assert np.isfinite(to_arr).all()
+        assert (to_arr >= 0.0).all() and (to_arr <= 10.0).all()
+
+
+def test_probit_quantile_rank():
+    from operator_futures.time_operator.time_operator_util import compute_rolling_quantile_rank
+
+    series = pl.Series("val", np.arange(100, dtype=float))
+    probit_ranked = compute_rolling_quantile_rank(series, window=20, method="probit")
+    arr = probit_ranked.to_numpy()
+
+    # Warmup period check
+    assert (arr[:19] == 0.0).all()
+    # Mature values are finite
+    assert np.isfinite(arr[19:]).all()
+    # For strictly increasing sequence, latest value is highest (rank = (19 + 0.5)/20 = 0.975)
+    # Probit of 0.975 is approximately 1.96
+    assert arr[19] == pytest.approx(1.95996, rel=1e-2)
