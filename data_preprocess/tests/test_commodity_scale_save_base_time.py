@@ -99,3 +99,43 @@ def test_scale_save_passthrough_base_time_features(tmp_path):
     ]
     assert np.allclose(out_df["contract_life_remaining_ratio"].to_list(), [0.8] * n)
     assert np.allclose(out_df["prev_day_contract_role_tier"].to_list(), [1.0] * n)
+
+
+def test_resolve_feature_clip_bounds_fat_tailed():
+    from operator_futures.scale_describe_save.muti_contract_scale_save import (
+        resolve_feature_clip_bounds,
+    )
+    # General features should retain global clip bounds [-5.0, 5.0]
+    assert resolve_feature_clip_bounds("normal_feature", -5.0, 5.0) == (-5.0, 5.0)
+    assert resolve_feature_clip_bounds("rsi_12", -5.0, 5.0) == (-5.0, 5.0)
+
+    # Fat-tailed features should clamp to [-4.0, 4.0]
+    assert resolve_feature_clip_bounds("vstd_24_origin", -5.0, 5.0) == (-4.0, 4.0)
+    assert resolve_feature_clip_bounds("cm_m1_m2_log_price_spread_velocity_10m", -5.0, 5.0) == (-4.0, 4.0)
+    assert resolve_feature_clip_bounds("cm_open_interest_shift_speed_10m", -5.0, 5.0) == (-4.0, 4.0)
+    assert resolve_feature_clip_bounds("ask_size_topk_size_5_increments", -5.0, 5.0) == (-4.0, 4.0)
+    assert resolve_feature_clip_bounds("bid_size_topk_size_5_increments", -5.0, 5.0) == (-4.0, 4.0)
+    assert resolve_feature_clip_bounds("sell_spread_oe_max_trend_192", -5.0, 5.0) == (-4.0, 4.0)
+
+    # Tighter custom bounds should be preserved
+    assert resolve_feature_clip_bounds("vstd_24_origin", -3.0, 3.0) == (-3.0, 3.0)
+
+
+def test_vstd_operator_bounds():
+    from operator_futures.time_operator.multi_processing_util import _process_ohlcv_single_window_polars
+
+    # Near-zero and zero volume should not cause division explosion in vstd
+    df = pl.DataFrame({
+        "timestamp": list(range(10)),
+        "open": [100.0] * 10,
+        "high": [101.0] * 10,
+        "low": [99.0] * 10,
+        "close": [100.0] * 10,
+        "volume": [0.0, 0.0, 1e-12, 0.5, 100.0, 500.0, 0.0, 0.0, 10.0, 10.0],
+    })
+    result = _process_ohlcv_single_window_polars(df, window=3)
+    assert "vstd_3" in result.columns
+    vstd_vals = result["vstd_3"].to_numpy()
+    assert np.all(np.isfinite(vstd_vals))
+    assert np.all(vstd_vals >= 0.0)
+    assert np.all(vstd_vals <= 10.0)

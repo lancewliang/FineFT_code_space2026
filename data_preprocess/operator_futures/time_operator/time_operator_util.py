@@ -252,9 +252,9 @@ def process_ohlcv(df: pd.DataFrame, window: list):
         df_feature["vma_{}".format(w)] = ori_volume_rolling.mean() / (
             df["volume"] + 1e-12
         )
-        df_feature["vstd_{}".format(w)] = ori_volume_rolling.std() / (
-            df["volume"] + 1e-12
-        )
+        df_feature["vstd_{}".format(w)] = (
+            ori_volume_rolling.std() / np.maximum(df["volume"], 1.0)
+        ).clip(0.0, 10.0)
         shift = np.abs((df["close"] / close_shift_1 - 1)) * df["volume"]
         df1 = shift.rolling(w).std()
         df2 = shift.rolling(w).mean()

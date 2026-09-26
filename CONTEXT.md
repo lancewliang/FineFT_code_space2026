@@ -124,6 +124,14 @@ _Avoid_: 剩余天数、自然日倒计时
 在 RobustScaler 缩放后对微观深度增量（如 `ask_size_topk_size_5_increments`、`bid_size_topk_size_5_increments`）及全部状态特征施加 `[-5.0, 5.0]` 的硬截断，将极端偏态与流动性冲击离群值约束在 5 个尺度内，防止 VAE 产生高斯负对数似然 (NLL) 崩溃。
 _Avoid_: 原始深度差值截断、无界缩放
 
+**算子物理边界约束 (Operator Physical Bounding)**:
+在底层算子计算层（Tier 1）对存在近零除零风险的特征（`vstd_{window}` 分母下限取 1.0 并截断至 `[0.0, 10.0]`）、跨期差分跳变特征（`cm_*_spread_velocity_10m` 截断至 `[-0.05, 0.05]`、`cm_open_interest_shift_speed_10m` 截断至 `[-0.1, 0.1]`）以及微观深度特征施加的物理有效定义域硬边界（ADR-0023），防止极端离群值在算子层发生数值发散。
+_Avoid_: 缩放后截断、全特征无差别限幅
+
+**特征族分级截断 (Feature-Group Clamping)**:
+在 RobustScaler 缩放层（Tier 2）对厚尾特征模式（`vstd_`、`spread_velocity`、`shift_speed`、`_increments`、`spread_oe_max`）应用更严格的 `[-4.0, 4.0]` 尺度截断，其余常规特征维持全局 `[-5.0, 5.0]` 截断的分层策略（ADR-0023）。
+_Avoid_: 全局单一边界截断、运行时未定界
+
 **滚动窗口特征 (Rolling Window Feature)**:
 基于历史窗口滚动计算的衍生特征，如移动平均、波动率等。
 _Avoid_: Base_Time_feature、时序特征

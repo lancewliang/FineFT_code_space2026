@@ -454,10 +454,10 @@ def process_snapshot_features(df: pd.DataFrame, topk=5, depth=25):
     )
     price_related_df["buy_spread_oe_max"] = np.abs(
         df["bid1_price"] - df[f"bid{depth}_price"]
-    )
+    ).clip(0.0, 50.0)
     price_related_df["sell_spread_oe_max"] = np.abs(
         df["ask1_price"] - df[f"ask{depth}_price"]
-    )
+    ).clip(0.0, 50.0)
     topk_related_df = pd.DataFrame(
         columns=["ask_price_topk_size_{}_increments".format(i + 1) for i in range(topk)]
         + ["bid_price_topk_size_{}_increments".format(i + 1) for i in range(topk)]
@@ -471,11 +471,11 @@ def process_snapshot_features(df: pd.DataFrame, topk=5, depth=25):
         topk_related_df["bid_price_topk_size_{}_increments".format(i + 1)] = (
             bid_price_topk_size[:, i] - best_bid_price_array
         )
-        topk_related_df["ask_size_topk_size_{}_increments".format(i + 1)] = (
-            ask_size_topk_size[:, i] - best_ask_size_array
+        topk_related_df["ask_size_topk_size_{}_increments".format(i + 1)] = np.clip(
+            ask_size_topk_size[:, i] - best_ask_size_array, -5000.0, 5000.0
         )
-        topk_related_df["bid_size_topk_size_{}_increments".format(i + 1)] = (
-            bid_size_topk_size[:, i] - best_bid_size_array
+        topk_related_df["bid_size_topk_size_{}_increments".format(i + 1)] = np.clip(
+            bid_size_topk_size[:, i] - best_bid_size_array, -5000.0, 5000.0
         )
     price_related_df = pd.concat([price_related_df, topk_related_df], axis=1)
 
@@ -743,13 +743,13 @@ def process_snapshot_features(df, topk=5, depth=25) -> pl.DataFrame:
     data["sell_wap"] = np.where(ask_side_empty, best_ask_price_array, sell_wap)
     data["buy_wap"] = np.where(bid_side_empty, best_bid_price_array, buy_wap)
     data["buy_sell_wap_spread"] = data["buy_wap"] - data["sell_wap"]
-    data["buy_spread_oe_max"] = np.abs(df["bid1_price"].to_numpy() - df[f"bid{depth}_price"].to_numpy())
-    data["sell_spread_oe_max"] = np.abs(df["ask1_price"].to_numpy() - df[f"ask{depth}_price"].to_numpy())
+    data["buy_spread_oe_max"] = np.clip(np.abs(df["bid1_price"].to_numpy() - df[f"bid{depth}_price"].to_numpy()), 0.0, 50.0)
+    data["sell_spread_oe_max"] = np.clip(np.abs(df["ask1_price"].to_numpy() - df[f"ask{depth}_price"].to_numpy()), 0.0, 50.0)
     for i in range(topk):
         data[f"ask_price_topk_size_{i + 1}_increments"] = ask_price_topk_size[:, i] - best_ask_price_array
         data[f"bid_price_topk_size_{i + 1}_increments"] = bid_price_topk_size[:, i] - best_bid_price_array
-        data[f"ask_size_topk_size_{i + 1}_increments"] = ask_size_topk_size[:, i] - best_ask_size_array
-        data[f"bid_size_topk_size_{i + 1}_increments"] = bid_size_topk_size[:, i] - best_bid_size_array
+        data[f"ask_size_topk_size_{i + 1}_increments"] = np.clip(ask_size_topk_size[:, i] - best_ask_size_array, -5000.0, 5000.0)
+        data[f"bid_size_topk_size_{i + 1}_increments"] = np.clip(bid_size_topk_size[:, i] - best_bid_size_array, -5000.0, 5000.0)
     data["buy_volume_oe"] = bid_total
     data["sell_volume_oe"] = ask_total
     data["imblance_volume_oe"] = (

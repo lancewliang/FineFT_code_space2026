@@ -131,6 +131,21 @@ COMMODITY_FU_FEATURE_BLACKLIST=(
     imin_192
     imax_192_origin
     imax_192
+    # Blacklisted Non-Stationary Microstructure Depth Increments & Trade Counts (ADR-0023)
+    ask_size_topk_size_1_increments
+    ask_size_topk_size_2_increments
+    ask_size_topk_size_3_increments
+    ask_size_topk_size_4_increments
+    ask_size_topk_size_5_increments
+    bid_size_topk_size_1_increments
+    bid_size_topk_size_2_increments
+    bid_size_topk_size_3_increments
+    bid_size_topk_size_4_increments
+    bid_size_topk_size_5_increments
+    ntrade_estimated
+    ntrade_estimated_up_udnorm
+    ntrade_estimated_down_udnorm
+    ntrade_estimated_updown_imbalance_udnorm
 )
 
 run_commodity_logged_step() {
@@ -765,15 +780,15 @@ run_commodity_full_process() {
 
     local log_dir="${LOG_DIR:-${root_path}/log_futures/ticker_result/commodity}"
 
-    # run_commodity_logged_step \
-    #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-    #     "stitch_main_contract" \
-    #     run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$start_date" "$end_date" "$symbol"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "stitch_main_contract" \
+        run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$start_date" "$end_date" "$symbol"
     local summary_path="${root_path}/PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/${symbol}/main_contract_summary.json"
-    # run_commodity_logged_step \
-    #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-    #     "downscale_continuous_by_trading_day" \
-    #     run_commodity_downscale_continuous_by_trading_day "$root_path" "$summary_path" "$target_freq" "$symbol"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "downscale_continuous_by_trading_day" \
+        run_commodity_downscale_continuous_by_trading_day "$root_path" "$summary_path" "$target_freq" "$symbol"
 
     local max_contract_workers=${MAX_CONTRACT_PROCESSES:-${max_processes:-3}}
     local -a contract_pids=()

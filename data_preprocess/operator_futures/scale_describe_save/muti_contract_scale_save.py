@@ -341,6 +341,28 @@ def fit_robust_scaler(
     )
 
 
+FAT_TAILED_FEATURE_PATTERNS: tuple[str, ...] = (
+    "vstd_",
+    "spread_velocity",
+    "shift_speed",
+    "_increments",
+    "spread_oe_max",
+)
+FAT_TAILED_CLIP_MIN: float = -4.0
+FAT_TAILED_CLIP_MAX: float = 4.0
+
+
+def resolve_feature_clip_bounds(
+    feature: str,
+    clip_min: float,
+    clip_max: float,
+) -> tuple[float, float]:
+    for pattern in FAT_TAILED_FEATURE_PATTERNS:
+        if pattern in feature:
+            return max(clip_min, FAT_TAILED_CLIP_MIN), min(clip_max, FAT_TAILED_CLIP_MAX)
+    return clip_min, clip_max
+
+
 def apply_robust_scaler(
     df_state: pl.DataFrame,
     manifest: ScaleManifest,
@@ -353,8 +375,11 @@ def apply_robust_scaler(
         scaled = (values - stats.center) / stats.scale
         clipped_count = 0
         if manifest.clip_enabled:
-            clip_min = float(manifest.clip_min)
-            clip_max = float(manifest.clip_max)
+            clip_min, clip_max = resolve_feature_clip_bounds(
+                stats.feature,
+                float(manifest.clip_min),
+                float(manifest.clip_max),
+            )
             clipped_mask = (scaled < clip_min) | (scaled > clip_max)
             clipped_count = int(np.count_nonzero(clipped_mask))
             scaled = np.clip(scaled, clip_min, clip_max)

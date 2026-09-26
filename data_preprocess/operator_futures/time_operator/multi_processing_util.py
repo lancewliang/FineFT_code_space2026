@@ -478,7 +478,7 @@ def _process_ohlcv_single_window_polars(df: pl.DataFrame, window: int) -> pl.Dat
         (1 - pl.col("__pos_ret1").rolling_sum(window) / (pl.col("__abs_ret1").rolling_sum(window) + min_value)).alias(f"sumn_{window}"),
         (2 * pl.col("__pos_ret1").rolling_sum(window) / (pl.col("__abs_ret1").rolling_sum(window) + min_value) - 1).alias(f"sumd_{window}"),
         (pl.col("__volume_mean") / (volume + min_value)).alias(f"vma_{window}"),
-        ((pl.col("__volume_std") - min_value) / (volume + min_value)).alias(f"vstd_{window}"),
+        (((pl.col("__volume_std") - min_value) / pl.when(volume > 1.0).then(volume).otherwise(1.0)).clip(0.0, 10.0)).alias(f"vstd_{window}"),
         (pl.col("__shift_std") / (pl.col("__shift_mean") + min_value)).alias(f"wvma_{window}"),
         (pl.col("__pos_vchg1").rolling_sum(window) / (pl.col("__abs_vchg1").rolling_sum(window) + min_value)).alias(f"vsump_{window}"),
         (1 - pl.col("__pos_vchg1").rolling_sum(window) / (pl.col("__abs_vchg1").rolling_sum(window) + min_value)).alias(f"vsumn_{window}"),
