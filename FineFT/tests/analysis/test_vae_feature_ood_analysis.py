@@ -63,13 +63,13 @@ def test_analyze_feature_vae_ood_end_to_end(tmp_path: Path):
     num_samples = 100
 
     np.random.seed(42)
-    # Valid distribution: mean 0, std 1
-    valid_df = pd.DataFrame(
+    # Train distribution: baseline mean 0, std 1
+    train_df = pd.DataFrame(
         np.random.normal(0.0, 1.0, size=(num_samples, input_dim)),
         columns=feature_names,
     )
-    # Train distribution: similar to valid
-    train_df = pd.DataFrame(
+    # Valid distribution: similar to train
+    valid_df = pd.DataFrame(
         np.random.normal(0.0, 1.0, size=(num_samples, input_dim)),
         columns=feature_names,
     )
@@ -111,6 +111,7 @@ def test_analyze_feature_vae_ood_end_to_end(tmp_path: Path):
         vae_path=str(tmp_path / "result" / "DiHFT" / "vae_results"),
         output_dir=str(output_dir),
         sample_size=100,
+        top_k=10,
         device="cpu",
         per_contract=False,
         z_dim=z_dim,
@@ -120,16 +121,105 @@ def test_analyze_feature_vae_ood_end_to_end(tmp_path: Path):
     results = analyze_feature_vae_ood(args)
 
     assert "summary_df" in results
+    assert "summary_valid_vs_train" in results
+    assert "summary_test_vs_train" in results
+    assert "summary_test_vs_valid" in results
+
     summary_df = results["summary_df"]
+    summary_v_tr = results["summary_valid_vs_train"]
+    summary_t_tr = results["summary_test_vs_train"]
+    summary_t_v = results["summary_test_vs_valid"]
 
     assert len(summary_df) == input_dim
-    assert (output_dir / "feature_ood_summary.csv").is_file()
+    assert len(summary_v_tr) == input_dim
+    assert len(summary_t_tr) == input_dim
+    assert len(summary_t_v) == input_dim
 
-    # The severely drifted features must rank ahead of stable features
-    top_feature = summary_df.iloc[0]["feature"]
-    second_feature = summary_df.iloc[1]["feature"]
+    # Verify CSV files are persisted
+    assert (output_dir / "feature_ood_summary.csv").is_file()
+    assert (output_dir / "feature_ood_valid_vs_train.csv").is_file()
+    assert (output_dir / "feature_ood_test_vs_train.csv").is_file()
+    assert (output_dir / "feature_ood_test_vs_valid.csv").is_file()
+
+    # The severely drifted features must rank ahead in test_vs_train
+    top_feature = summary_t_tr.iloc[0]["feature"]
+    second_feature = summary_t_tr.iloc[1]["feature"]
     assert {top_feature, second_feature} == {"feat_mean_shift", "feat_var_shift"}
-    assert summary_df.iloc[0]["delta_nll_test_vs_valid"] > 0
+    assert summary_t_tr.iloc[0]["delta_nll_test_vs_train"] > 0
+    assert summary_df.iloc[0]["delta_nll_test_vs_train"] > 0
+
+
+def test_analyze_feature_vae_ood_multi_perspective_directionality(tmp_path: Path):
+    """Test that valid drift against train does not invert diagnostic direction."""
+    feature_names = ["feat_valid_drifted", "feat_stable"]
+    input_dim = len(feature_names)
+    num_samples = 80
+
+    np.random.seed(99)
+    # Train: baseline
+    train_df = pd.DataFrame(np.random.normal(0.0, 1.0, size=(num_samples, input_dim)), columns=feature_names)
+    # Valid: feat_valid_drifted has moderate drift (+3.0)
+    valid_mat = np.random.normal(0.0, 1.0, size=(num_samples, input_dim))
+    valid_mat[:, 0] += 3.0
+    valid_df = pd.DataFrame(valid_mat, columns=feature_names)
+    # Test: feat_valid_drifted has severe drift (+7.0)
+    test_mat = np.random.normal(0.0, 1.0, size=(num_samples, input_dim))
+    test_mat[:, 0] += 7.0
+    test_df = pd.DataFrame(test_mat, columns=feature_names)
+
+    dataset_name = "mock_sym_dir"
+    experiment_name = "mock_exp_dir"
+    data_dir = tmp_path / "dataset" / "10min" / dataset_name
+    for split, df in [("train", train_df), ("valid", valid_df), ("test", test_df)]:
+        split_dir = data_dir / split
+        split_dir.mkdir(parents=True, exist_ok=True)
+        df.to_feather(split_dir / "c1.feather")
+
+    np.save(data_dir / "state_features.npy", np.array(feature_names))
+
+    vae_dir = tmp_path / "result" / "DiHFT" / "vae_results" / dataset_name / experiment_name
+    hidden_dims = [8, 4]
+    z_dim = 2
+
+    for axis in ("slope", "volatility"):
+        for label_idx in range(3):
+            label_dir = vae_dir / axis / f"label_{label_idx}"
+            label_dir.mkdir(parents=True, exist_ok=True)
+            vae_model = MLP_VAE(INPUT_DIM=input_dim, Z_DIM=z_dim, hidden_dims=hidden_dims, loss_func="NLL")
+            torch.save(vae_model.state_dict(), label_dir / "model_latest.pth")
+
+    output_dir = tmp_path / "analysis_result" / "test_ood_dir"
+
+    args = argparse.Namespace(
+        base_path=str(tmp_path / "dataset" / "10min"),
+        dataset_name=dataset_name,
+        experiment_name=experiment_name,
+        vae_path=str(tmp_path / "result" / "DiHFT" / "vae_results"),
+        output_dir=str(output_dir),
+        sample_size=80,
+        top_k=5,
+        device="cpu",
+        per_contract=False,
+        z_dim=z_dim,
+        hidden_dims=hidden_dims,
+    )
+
+    results = analyze_feature_vae_ood(args)
+
+    # 1. Valid vs Train: feat_valid_drifted has positive delta_nll
+    v_tr = results["summary_valid_vs_train"]
+    assert v_tr.iloc[0]["feature"] == "feat_valid_drifted"
+    assert v_tr.iloc[0]["delta_nll_valid_vs_train"] > 0
+
+    # 2. Test vs Train: feat_valid_drifted has higher positive delta_nll
+    t_tr = results["summary_test_vs_train"]
+    assert t_tr.iloc[0]["feature"] == "feat_valid_drifted"
+    assert t_tr.iloc[0]["delta_nll_test_vs_train"] > v_tr.iloc[0]["delta_nll_valid_vs_train"]
+
+    # 3. Test vs Valid: test is still more shifted than valid
+    t_v = results["summary_test_vs_valid"]
+    assert t_v.iloc[0]["feature"] == "feat_valid_drifted"
+    assert t_v.iloc[0]["delta_nll_test_vs_valid"] > 0
 
 
 def test_analyze_feature_vae_ood_per_contract(tmp_path: Path):
@@ -177,6 +267,7 @@ def test_analyze_feature_vae_ood_per_contract(tmp_path: Path):
         vae_path=str(tmp_path / "result" / "DiHFT" / "vae_results"),
         output_dir=str(output_dir),
         sample_size=100,
+        top_k=10,
         device="cpu",
         per_contract=True,
         z_dim=z_dim,
@@ -191,3 +282,5 @@ def test_analyze_feature_vae_ood_per_contract(tmp_path: Path):
     assert "c2" in per_contract
     assert (output_dir / "contracts" / "c1_ood.csv").is_file()
     assert (output_dir / "contracts" / "c2_ood.csv").is_file()
+    assert "delta_nll_vs_train" in per_contract["c1"].columns
+    assert "delta_nll_vs_valid" in per_contract["c1"].columns

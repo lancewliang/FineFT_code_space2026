@@ -150,6 +150,13 @@ COMMODITY_FU_FEATURE_BLACKLIST=(
     # Blacklisted Non-Stationary Long-Period Macro Volatility (ADR-0024)
     parkinson_volatility_96
     parkinson_volatility_192
+    # Blacklisted High-OOD Microstructure Spreads, Lifecycle Shares & Directional Counts (ADR-0027)
+    sell_spread_oe_max_trend_192
+    cm_main_sub_open_interest_share_sub
+    cm_current_sub_open_interest_share_current
+    cm_current_main_open_interest_share_current
+    cntn_192_origin
+    cntp_192_origin
 )
 
 run_commodity_logged_step() {

@@ -37,5 +37,8 @@ python -u FineFT/RL/DiHFT/high_level/vae_routing_optuna.py \
     --transcation_cost 0.0005 \
     --short_estimated_rate 0 \
     --long_estimated_rate 0 \
+    --n_trials 50 \
+    --rule_base_threshold_min 0.2 \
+    --rule_base_threshold_max 0.5 \
     "${DEFENSE_ARGS[@]}" \
     >"log/DiHFT/fu/high_level/optuna/${EXPERIMENT_NAME}/optuna.log" 2>&1

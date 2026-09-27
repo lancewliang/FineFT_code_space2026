@@ -1,3 +1,4 @@
+import numpy as np
 from pathlib import Path
 import os
 import subprocess
@@ -631,3 +632,42 @@ def test_process_enhanced_state_features():
         assert col in res.columns
         assert res[col].null_count() == 0
         assert not res[col].is_nan().any()
+
+
+def test_standardized_price_distance_operators_properties():
+    close_vals = [
+        100.0, 102.0, 101.0, 103.0, 105.0, 104.0, 106.0, 108.0, 107.0, 110.0,
+        109.0, 111.0, 112.0, 110.0, 108.0, 106.0, 105.0, 107.0, 109.0, 111.0,
+        113.0, 115.0, 114.0, 112.0, 110.0, 108.0, 107.0, 109.0, 111.0, 113.0,
+    ]
+    df = pl.DataFrame({
+        "timestamp": list(range(len(close_vals))),
+        "open": close_vals,
+        "high": [c + 1.0 for c in close_vals],
+        "low": [c - 1.0 for c in close_vals],
+        "close": close_vals,
+    })
+    window = 5
+    res = _process_ohlc_single_window_polars(df, window=window)
+    max_norm = res[f"max_{window}_std_norm"].to_numpy()
+    assert (max_norm >= 0.0).all()
+
+    min_norm = res[f"min_{window}_std_norm"].to_numpy()
+    assert (min_norm >= 0.0).all()
+
+    qtlu_norm = res[f"qtlu_{window}_std_norm"].to_numpy()
+    qtld_norm = res[f"qtld_{window}_std_norm"].to_numpy()
+    assert np.isfinite(qtlu_norm).all()
+    assert np.isfinite(qtld_norm).all()
+
+    ma_norm = res[f"ma_{window}_std_norm"].to_numpy()
+    assert np.isfinite(ma_norm).all()
+
+    for row in res.iter_rows(named=True):
+        ts = row["timestamp"]
+        window_slice = close_vals[ts - window + 1 : ts + 1]
+        c = close_vals[ts]
+        if c == max(window_slice):
+            assert row[f"max_{window}_std_norm"] == pytest.approx(0.0, abs=1e-5)
+        if c == min(window_slice):
+            assert row[f"min_{window}_std_norm"] == pytest.approx(0.0, abs=1e-5)

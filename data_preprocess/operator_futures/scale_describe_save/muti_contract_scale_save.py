@@ -34,6 +34,7 @@ class ScalerFeatureStats:
     max: float
     row_count: int
     fallback_reason: str | None = None
+    is_log_transformed: bool = False
 
 
 @dataclass(frozen=True)
@@ -244,6 +245,9 @@ def fit_feature_stats(
 ) -> ScalerFeatureStats:
     if values.size == 0:
         raise ValueError(f"no train values available for feature={feature}")
+    is_log = is_volatility_feature(feature)
+    if is_log:
+        values = transform_volatility_values(values)
     q25 = ensure_finite(np.nanquantile(values, 0.25), feature, "q25")
     q75 = ensure_finite(np.nanquantile(values, 0.75), feature, "q75")
     center = ensure_finite(np.nanmedian(values), feature, "center")
@@ -277,6 +281,7 @@ def fit_feature_stats(
         max=maximum,
         row_count=int(values.size),
         fallback_reason=fallback_reason,
+        is_log_transformed=is_log,
     )
 
 
@@ -341,6 +346,24 @@ def fit_robust_scaler(
     )
 
 
+VOLATILITY_FEATURE_PATTERNS: tuple[str, ...] = (
+    "realized_volatility",
+    "rolling_volatility",
+    "garman_klass_volatility",
+    "parkinson_volatility",
+    "historical_volatility",
+)
+VOLATILITY_LOG_EPSILON: float = 1e-6
+
+
+def is_volatility_feature(feature: str) -> bool:
+    return any(pattern in feature for pattern in VOLATILITY_FEATURE_PATTERNS)
+
+
+def transform_volatility_values(values: np.ndarray) -> np.ndarray:
+    return np.log(np.maximum(values, 0.0) + VOLATILITY_LOG_EPSILON)
+
+
 FAT_TAILED_FEATURE_PATTERNS: tuple[str, ...] = (
     "vstd_",
     "spread_velocity",
@@ -372,6 +395,8 @@ def apply_robust_scaler(
     rows = df_state.height
     for stats in manifest.features:
         values = df_state.get_column(stats.feature).to_numpy().astype(float, copy=False)
+        if stats.is_log_transformed:
+            values = transform_volatility_values(values)
         scaled = (values - stats.center) / stats.scale
         clipped_count = 0
         if manifest.clip_enabled:

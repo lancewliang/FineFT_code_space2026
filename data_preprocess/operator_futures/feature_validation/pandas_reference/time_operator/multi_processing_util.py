@@ -87,7 +87,7 @@ def process_ohlcv_single_window(df: pd.DataFrame, w: int):
     df_feature["roc_{}_std_norm".format(w)] = (df["close"] - close_shift) / close_std
 
     df_feature["ma_{}".format(w)] = close_rolling.mean() / df["close"]
-    df_feature["ma_{}_std_norm".format(w)] = close_rolling.mean() / close_std
+    df_feature["ma_{}_std_norm".format(w)] = (df["close"] - close_rolling.mean()) / close_std
 
     df_feature["std_{}".format(w)] = close_rolling.std() / df["close"]
 
@@ -97,13 +97,13 @@ def process_ohlcv_single_window(df: pd.DataFrame, w: int):
     )
 
     df_feature["max_{}".format(w)] = close_rolling.max() / df["close"]
-    df_feature["max_{}_std_norm".format(w)] = close_rolling.max() / close_std
+    df_feature["max_{}_std_norm".format(w)] = (close_rolling.max() - df["close"]) / close_std
     df_feature["min_{}".format(w)] = close_rolling.min() / df["close"]
-    df_feature["min_{}_std_norm".format(w)] = close_rolling.min() / close_std
+    df_feature["min_{}_std_norm".format(w)] = (df["close"] - close_rolling.min()) / close_std
     df_feature["qtlu_{}".format(w)] = close_rolling.quantile(0.8) / df["close"]
-    df_feature["qtlu_{}_std_norm".format(w)] = close_rolling.quantile(0.8) / close_std
+    df_feature["qtlu_{}_std_norm".format(w)] = (close_rolling.quantile(0.8) - df["close"]) / close_std
     df_feature["qtld_{}".format(w)] = close_rolling.quantile(0.2) / df["close"]
-    df_feature["qtld_{}_std_norm".format(w)] = close_rolling.quantile(0.2) / close_std
+    df_feature["qtld_{}_std_norm".format(w)] = (df["close"] - close_rolling.quantile(0.2)) / close_std
     df_feature["rank_{}".format(w)] = close_rolling.apply(my_rank) / w
     df_feature["imax_{}".format(w)] = df["high"].rolling(w).apply(np.argmax) / w
     df_feature["imin_{}".format(w)] = df["low"].rolling(w).apply(np.argmin) / w
@@ -188,7 +188,7 @@ def process_ohlc_single_window(df: pd.DataFrame, w: int):
     df_feature["roc_{}_std_norm".format(w)] = (df["close"] - close_shift) / close_std
 
     df_feature["ma_{}".format(w)] = close_rolling.mean() / df["close"]
-    df_feature["ma_{}_std_norm".format(w)] = close_rolling.mean() / close_std
+    df_feature["ma_{}_std_norm".format(w)] = (df["close"] - close_rolling.mean()) / close_std
 
     df_feature["std_{}".format(w)] = close_rolling.std() / df["close"]
 
@@ -197,16 +197,16 @@ def process_ohlc_single_window(df: pd.DataFrame, w: int):
         w * close_std
     )
     df_feature["max_{}".format(w)] = close_rolling.max() / df["close"]
-    df_feature["max_{}_std_norm".format(w)] = close_rolling.max() / close_std
+    df_feature["max_{}_std_norm".format(w)] = (close_rolling.max() - df["close"]) / close_std
 
     df_feature["min_{}".format(w)] = close_rolling.min() / df["close"]
-    df_feature["min_{}_std_norm".format(w)] = close_rolling.min() / close_std
+    df_feature["min_{}_std_norm".format(w)] = (df["close"] - close_rolling.min()) / close_std
 
     df_feature["qtlu_{}".format(w)] = close_rolling.quantile(0.8) / df["close"]
-    df_feature["qtlu_{}_std_norm".format(w)] = close_rolling.quantile(0.8) / close_std
+    df_feature["qtlu_{}_std_norm".format(w)] = (close_rolling.quantile(0.8) - df["close"]) / close_std
 
     df_feature["qtld_{}".format(w)] = close_rolling.quantile(0.2) / df["close"]
-    df_feature["qtld_{}_std_norm".format(w)] = close_rolling.quantile(0.2) / close_std
+    df_feature["qtld_{}_std_norm".format(w)] = (df["close"] - close_rolling.quantile(0.2)) / close_std
 
     df_feature["rank_{}".format(w)] = close_rolling.apply(my_rank) / w
     df_feature["imax_{}".format(w)] = df["high"].rolling(w).apply(np.argmax) / w

@@ -68,6 +68,14 @@ _Avoid_: NaN 检查、空值校验
 
 ### Feature Engineering
 
+**标准化价格偏离距离 (Standardized Price Distance)**:
+在 `multi_processing_util.py` 中以当前价格为参考基准，计算极值或均价相对当前价的偏离并除以窗口波动率 $\\sigma_P$ 得到的无量纲波动率倍数，严格保证零均值平稳与跨期尺度不变性。
+_Avoid_: 名义价格标准化、未中心化价格波动比
+
+**对数波动率正态化变换 (Log-Volatility Gaussian Transformation)**:
+在特征缩放阶段对具有右偏厚尾特性的金融波动率类指标预先执行 $\\ln(\\text{vol} + 10^{-6})$ 对数映射，对齐 VAE 连续高斯重构假定，消除高波动体制下的方差爆炸。
+_Avoid_: 线性波动率缩放、原始波动率直通
+
 **环境执行与奖励特征 (Reward & Execution Features)**:
 存在于最终 Feather 数据集中供 RL 环境、回测模拟器及状态转移约束使用的物理变量（如价格上下限、涨跌停挂单比率 `limit_up/down_single_sided_ratio` 等）；即使被特征黑名单排除在 VAE 及 Policy 的观测输入向量之外，也必须由 Scale Save 完整保留。
 _Avoid_: 状态特征、观察特征
@@ -459,6 +467,14 @@ _Avoid_: 路由摘要
 **OOD Detection**:
 通过 VAE 重构损失识别超出训练分布的市场状态，触发保守策略。
 _Avoid_: 异常检测、分布外检测
+
+**多视角特征 OOD 诊断矩阵 (Multi-Perspective Feature OOD Diagnostic Matrix)**:
+在 `FineFT/analysis/feature/vae_feature_ood_analysis.py` 中以 VAE 真实训练集 `train` 为核心原点基准，由 `valid_vs_train`（验证集相对训练集漂移）、`test_vs_train`（测试集真实 OOD 崩溃）、`test_vs_valid`（验证到测试泛化衰减）三大独立视角构成的闭式高斯似然与统计漂移诊断体系。
+_Avoid_: 单基准 OOD 报告、方向倒置诊断
+
+**特征似然恶化量 (Feature Negative Log-Likelihood Delta)**:
+评估目标分布相对参考基准的高斯负对数似然增加量 $\\Delta \\text{NLL} = \\text{NLL}_{\\text{target}} - \\text{NLL}_{\\text{ref}}$；正值严格指示目标相对基准发生似然恶化与分布外偏离。
+_Avoid_: 似然差值（未指定基准与方向时）、双向对称似然损失
 
 **Agent 策略原型档案库 (Agent Archetype Profile)**:
 为每个 VAE Label 维护包含 12 大策略原型（动量、均值回归、盘口失衡、持仓量驱动等）离线择优选出的专属 Agent 智囊团档案。

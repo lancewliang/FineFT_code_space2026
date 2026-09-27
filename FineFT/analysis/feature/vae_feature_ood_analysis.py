@@ -168,7 +168,7 @@ def calculate_distribution_drift(
 
 
 def analyze_feature_vae_ood(args: argparse.Namespace) -> dict[str, Any]:
-    """Execute complete feature-level VAE OOD diagnosis pipeline."""
+    """Execute complete feature-level VAE OOD multi-perspective diagnosis pipeline."""
     base_path = Path(args.base_path)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -181,8 +181,13 @@ def analyze_feature_vae_ood(args: argparse.Namespace) -> dict[str, Any]:
 
     logger.info("Loaded %d features from %s", feature_dim, feature_file)
 
-    # 1. Load data splits
-    logger.info("Loading valid dataset (in-distribution reference baseline)...")
+    # 1. Load data splits (train is true in-distribution baseline per ADR-0021 / ADR-0026)
+    logger.info("Loading train dataset (in-distribution reference baseline)...")
+    train_df, _ = load_data_split(
+        base_path, args.dataset_name, "train", feature_names, args.sample_size
+    )
+
+    logger.info("Loading valid dataset...")
     valid_df, _ = load_data_split(
         base_path, args.dataset_name, "valid", feature_names, args.sample_size
     )
@@ -192,14 +197,9 @@ def analyze_feature_vae_ood(args: argparse.Namespace) -> dict[str, Any]:
         base_path, args.dataset_name, "test", feature_names, args.sample_size
     )
 
-    logger.info("Loading train dataset...")
-    train_df, _ = load_data_split(
-        base_path, args.dataset_name, "train", feature_names, args.sample_size
-    )
-
+    train_tensor = torch.tensor(train_df.values, dtype=torch.float32)
     valid_tensor = torch.tensor(valid_df.values, dtype=torch.float32)
     test_tensor = torch.tensor(test_df.values, dtype=torch.float32)
-    train_tensor = torch.tensor(train_df.values, dtype=torch.float32)
 
     # 2. Load VAE models
     logger.info("Loading VAE checkpoints from %s...", args.vae_path)
@@ -217,109 +217,274 @@ def analyze_feature_vae_ood(args: argparse.Namespace) -> dict[str, Any]:
     # 3. Compute per-model, per-feature NLL across splits
     logger.info("Computing per-feature Gaussian NLL across all VAE regime models...")
     model_keys = []
+    train_nlls = []
     valid_nlls = []
     test_nlls = []
-    train_nlls = []
 
-    axis_delta_test: dict[str, list[np.ndarray]] = {"slope": [], "volatility": []}
-    axis_delta_train: dict[str, list[np.ndarray]] = {"slope": [], "volatility": []}
+    axis_delta_test_vs_train: dict[str, list[np.ndarray]] = {"slope": [], "volatility": []}
+    axis_delta_valid_vs_train: dict[str, list[np.ndarray]] = {"slope": [], "volatility": []}
+    axis_delta_test_vs_valid: dict[str, list[np.ndarray]] = {"slope": [], "volatility": []}
 
     for axis, model_list in models_dict.items():
         for label_idx, model in enumerate(model_list):
             key = f"{axis}_label_{label_idx}"
             model_keys.append(key)
 
+            tr_nll = compute_feature_gaussian_nll(model, train_tensor, args.device)
             v_nll = compute_feature_gaussian_nll(model, valid_tensor, args.device)
             t_nll = compute_feature_gaussian_nll(model, test_tensor, args.device)
-            tr_nll = compute_feature_gaussian_nll(model, train_tensor, args.device)
 
+            tr_mean = tr_nll.mean(axis=0)
             v_mean = v_nll.mean(axis=0)
             t_mean = t_nll.mean(axis=0)
-            tr_mean = tr_nll.mean(axis=0)
 
+            train_nlls.append(tr_mean)
             valid_nlls.append(v_mean)
             test_nlls.append(t_mean)
-            train_nlls.append(tr_mean)
 
-            d_test = t_mean - v_mean
-            d_train = tr_mean - v_mean
-
-            axis_delta_test[axis].append(d_test)
-            axis_delta_train[axis].append(d_train)
+            axis_delta_test_vs_train[axis].append(t_mean - tr_mean)
+            axis_delta_valid_vs_train[axis].append(v_mean - tr_mean)
+            axis_delta_test_vs_valid[axis].append(t_mean - v_mean)
 
     # Global average across all 6 models
+    avg_train_nll = np.mean(train_nlls, axis=0)
     avg_valid_nll = np.mean(valid_nlls, axis=0)
     avg_test_nll = np.mean(test_nlls, axis=0)
-    avg_train_nll = np.mean(train_nlls, axis=0)
 
-    delta_nll_test = avg_test_nll - avg_valid_nll
-    delta_nll_train = avg_train_nll - avg_valid_nll
+    # 1. Perspective: valid_vs_train (Validation drift relative to training baseline)
+    delta_nll_valid_vs_train = avg_valid_nll - avg_train_nll
+    total_delta_valid_vs_train = float(np.sum(delta_nll_valid_vs_train))
+    norm_factor_v_vs_tr = (
+        total_delta_valid_vs_train if total_delta_valid_vs_train > 1e-8 else 1.0
+    )
+    contrib_pct_valid_vs_train = (
+        delta_nll_valid_vs_train / norm_factor_v_vs_tr
+    ) * 100.0
 
-    total_delta_test = float(np.sum(delta_nll_test))
-    norm_factor_test = total_delta_test if total_delta_test > 1e-8 else 1.0
-    contrib_pct_test = (delta_nll_test / norm_factor_test) * 100.0
+    # 2. Perspective: test_vs_train (True VAE OOD breakdown from training dynamics)
+    delta_nll_test_vs_train = avg_test_nll - avg_train_nll
+    total_delta_test_vs_train = float(np.sum(delta_nll_test_vs_train))
+    norm_factor_t_vs_tr = (
+        total_delta_test_vs_train if total_delta_test_vs_train > 1e-8 else 1.0
+    )
+    contrib_pct_test_vs_train = (
+        delta_nll_test_vs_train / norm_factor_t_vs_tr
+    ) * 100.0
 
-    total_delta_train = float(np.sum(delta_nll_train))
-    norm_factor_train = total_delta_train if total_delta_train > 1e-8 else 1.0
-    contrib_pct_train = (delta_nll_train / norm_factor_train) * 100.0
+    # 3. Perspective: test_vs_valid (Generalization degradation from validation set)
+    delta_nll_test_vs_valid = avg_test_nll - avg_valid_nll
+    total_delta_test_vs_valid = float(np.sum(delta_nll_test_vs_valid))
+    norm_factor_t_vs_v = (
+        total_delta_test_vs_valid if total_delta_test_vs_valid > 1e-8 else 1.0
+    )
+    contrib_pct_test_vs_valid = (
+        delta_nll_test_vs_valid / norm_factor_t_vs_v
+    ) * 100.0
 
-    # Axis-level averages
-    slope_delta_test = np.mean(axis_delta_test["slope"], axis=0)
-    volatility_delta_test = np.mean(axis_delta_test["volatility"], axis=0)
+    # Axis-level averages for primary OOD benchmark (test_vs_train)
+    slope_delta_test_vs_train = np.mean(axis_delta_test_vs_train["slope"], axis=0)
+    volatility_delta_test_vs_train = np.mean(
+        axis_delta_test_vs_train["volatility"], axis=0
+    )
 
-    # 4. Statistical distribution drift metrics
-    test_drift = calculate_distribution_drift(valid_df, test_df, feature_names)
-    train_drift = calculate_distribution_drift(valid_df, train_df, feature_names)
+    # 4. Statistical distribution drift metrics (independently calculated per pair)
+    drift_valid_vs_train = calculate_distribution_drift(
+        ref_df=train_df, target_df=valid_df, feature_names=feature_names
+    )
+    drift_test_vs_train = calculate_distribution_drift(
+        ref_df=train_df, target_df=test_df, feature_names=feature_names
+    )
+    drift_test_vs_valid = calculate_distribution_drift(
+        ref_df=valid_df, target_df=test_df, feature_names=feature_names
+    )
 
-    # 5. Build summary table
+    # 5. Build perspective tables
+    # Table 1: valid_vs_train
+    rows_v_tr = []
+    for idx, feat in enumerate(feature_names):
+        st = drift_valid_vs_train[feat]
+        rows_v_tr.append(
+            {
+                "feature": feat,
+                "delta_nll_valid_vs_train": float(delta_nll_valid_vs_train[idx]),
+                "contrib_pct_valid_vs_train": float(contrib_pct_valid_vs_train[idx]),
+                "train_mean": st["ref_mean"],
+                "train_std": st["ref_std"],
+                "valid_mean": st["target_mean"],
+                "valid_std": st["target_std"],
+                "mean_shift": st["mean_shift"],
+                "var_ratio": st["var_ratio"],
+                "valid_min": st["target_min"],
+                "valid_max": st["target_max"],
+            }
+        )
+    df_valid_vs_train = (
+        pd.DataFrame(rows_v_tr)
+        .sort_values(by="delta_nll_valid_vs_train", ascending=False)
+        .reset_index(drop=True)
+    )
+    df_valid_vs_train["rank"] = df_valid_vs_train.index + 1
+    cols_v_tr = [
+        "rank",
+        "feature",
+        "delta_nll_valid_vs_train",
+        "contrib_pct_valid_vs_train",
+    ] + [
+        c
+        for c in df_valid_vs_train.columns
+        if c not in ["rank", "feature", "delta_nll_valid_vs_train", "contrib_pct_valid_vs_train"]
+    ]
+    df_valid_vs_train = df_valid_vs_train[cols_v_tr]
+    csv_valid_vs_train = output_dir / "feature_ood_valid_vs_train.csv"
+    df_valid_vs_train.to_csv(csv_valid_vs_train, index=False)
+    logger.info("Saved valid vs train OOD summary to %s", csv_valid_vs_train)
+
+    # Table 2: test_vs_train (Primary OOD Benchmark)
+    rows_t_tr = []
+    for idx, feat in enumerate(feature_names):
+        st = drift_test_vs_train[feat]
+        rows_t_tr.append(
+            {
+                "feature": feat,
+                "delta_nll_test_vs_train": float(delta_nll_test_vs_train[idx]),
+                "contrib_pct_test_vs_train": float(contrib_pct_test_vs_train[idx]),
+                "train_mean": st["ref_mean"],
+                "train_std": st["ref_std"],
+                "test_mean": st["target_mean"],
+                "test_std": st["target_std"],
+                "mean_shift": st["mean_shift"],
+                "var_ratio": st["var_ratio"],
+                "test_min": st["target_min"],
+                "test_max": st["target_max"],
+            }
+        )
+    df_test_vs_train = (
+        pd.DataFrame(rows_t_tr)
+        .sort_values(by="delta_nll_test_vs_train", ascending=False)
+        .reset_index(drop=True)
+    )
+    df_test_vs_train["rank"] = df_test_vs_train.index + 1
+    cols_t_tr = [
+        "rank",
+        "feature",
+        "delta_nll_test_vs_train",
+        "contrib_pct_test_vs_train",
+    ] + [
+        c
+        for c in df_test_vs_train.columns
+        if c not in ["rank", "feature", "delta_nll_test_vs_train", "contrib_pct_test_vs_train"]
+    ]
+    df_test_vs_train = df_test_vs_train[cols_t_tr]
+    csv_test_vs_train = output_dir / "feature_ood_test_vs_train.csv"
+    df_test_vs_train.to_csv(csv_test_vs_train, index=False)
+    logger.info("Saved test vs train OOD summary to %s", csv_test_vs_train)
+
+    # Table 3: test_vs_valid
+    rows_t_v = []
+    for idx, feat in enumerate(feature_names):
+        st = drift_test_vs_valid[feat]
+        rows_t_v.append(
+            {
+                "feature": feat,
+                "delta_nll_test_vs_valid": float(delta_nll_test_vs_valid[idx]),
+                "contrib_pct_test_vs_valid": float(contrib_pct_test_vs_valid[idx]),
+                "valid_mean": st["ref_mean"],
+                "valid_std": st["ref_std"],
+                "test_mean": st["target_mean"],
+                "test_std": st["target_std"],
+                "mean_shift": st["mean_shift"],
+                "var_ratio": st["var_ratio"],
+                "test_min": st["target_min"],
+                "test_max": st["target_max"],
+            }
+        )
+    df_test_vs_valid = (
+        pd.DataFrame(rows_t_v)
+        .sort_values(by="delta_nll_test_vs_valid", ascending=False)
+        .reset_index(drop=True)
+    )
+    df_test_vs_valid["rank"] = df_test_vs_valid.index + 1
+    cols_t_v = [
+        "rank",
+        "feature",
+        "delta_nll_test_vs_valid",
+        "contrib_pct_test_vs_valid",
+    ] + [
+        c
+        for c in df_test_vs_valid.columns
+        if c not in ["rank", "feature", "delta_nll_test_vs_valid", "contrib_pct_test_vs_valid"]
+    ]
+    df_test_vs_valid = df_test_vs_valid[cols_t_v]
+    csv_test_vs_valid = output_dir / "feature_ood_test_vs_valid.csv"
+    df_test_vs_valid.to_csv(csv_test_vs_valid, index=False)
+    logger.info("Saved test vs valid OOD summary to %s", csv_test_vs_valid)
+
+    # 6. Build and save master consolidated summary table
     summary_rows = []
     for idx, feat in enumerate(feature_names):
-        t_stat = test_drift[feat]
-        tr_stat = train_drift[feat]
+        v_tr = drift_valid_vs_train[feat]
+        t_tr = drift_test_vs_train[feat]
+        t_v = drift_test_vs_valid[feat]
 
         summary_rows.append(
             {
                 "feature": feat,
-                "delta_nll_test_vs_valid": float(delta_nll_test[idx]),
-                "contrib_pct_test": float(contrib_pct_test[idx]),
-                "delta_nll_train_vs_valid": float(delta_nll_train[idx]),
-                "contrib_pct_train": float(contrib_pct_train[idx]),
-                "slope_delta_nll_test": float(slope_delta_test[idx]),
-                "volatility_delta_nll_test": float(volatility_delta_test[idx]),
-                "valid_mean": t_stat["ref_mean"],
-                "valid_std": t_stat["ref_std"],
-                "test_mean": t_stat["target_mean"],
-                "test_std": t_stat["target_std"],
-                "test_mean_shift": t_stat["mean_shift"],
-                "test_var_ratio": t_stat["var_ratio"],
-                "test_min": t_stat["target_min"],
-                "test_max": t_stat["target_max"],
-                "train_mean": tr_stat["target_mean"],
-                "train_std": tr_stat["target_std"],
-                "train_mean_shift": tr_stat["mean_shift"],
+                "delta_nll_test_vs_train": float(delta_nll_test_vs_train[idx]),
+                "contrib_pct_test_vs_train": float(contrib_pct_test_vs_train[idx]),
+                "delta_nll_valid_vs_train": float(delta_nll_valid_vs_train[idx]),
+                "contrib_pct_valid_vs_train": float(contrib_pct_valid_vs_train[idx]),
+                "delta_nll_test_vs_valid": float(delta_nll_test_vs_valid[idx]),
+                "contrib_pct_test_vs_valid": float(contrib_pct_test_vs_valid[idx]),
+                "slope_delta_nll_test_vs_train": float(slope_delta_test_vs_train[idx]),
+                "volatility_delta_nll_test_vs_train": float(
+                    volatility_delta_test_vs_train[idx]
+                ),
+                "train_mean": t_tr["ref_mean"],
+                "train_std": t_tr["ref_std"],
+                "valid_mean": v_tr["target_mean"],
+                "valid_std": v_tr["target_std"],
+                "valid_mean_shift_vs_train": v_tr["mean_shift"],
+                "valid_var_ratio_vs_train": v_tr["var_ratio"],
+                "test_mean": t_tr["target_mean"],
+                "test_std": t_tr["target_std"],
+                "test_mean_shift_vs_train": t_tr["mean_shift"],
+                "test_var_ratio_vs_train": t_tr["var_ratio"],
+                "test_mean_shift_vs_valid": t_v["mean_shift"],
+                "test_var_ratio_vs_valid": t_v["var_ratio"],
+                "test_min": t_tr["target_min"],
+                "test_max": t_tr["target_max"],
             }
         )
 
     summary_df = pd.DataFrame(summary_rows)
     summary_df = summary_df.sort_values(
-        by="delta_nll_test_vs_valid", ascending=False
+        by="delta_nll_test_vs_train", ascending=False
     ).reset_index(drop=True)
     summary_df["rank"] = summary_df.index + 1
 
-    # Reorder columns
-    cols = ["rank", "feature", "delta_nll_test_vs_valid", "contrib_pct_test"] + [
+    cols_master = [
+        "rank",
+        "feature",
+        "delta_nll_test_vs_train",
+        "contrib_pct_test_vs_train",
+    ] + [
         c
         for c in summary_df.columns
-        if c not in ["rank", "feature", "delta_nll_test_vs_valid", "contrib_pct_test"]
+        if c
+        not in [
+            "rank",
+            "feature",
+            "delta_nll_test_vs_train",
+            "contrib_pct_test_vs_train",
+        ]
     ]
-    summary_df = summary_df[cols]
+    summary_df = summary_df[cols_master]
 
-    # Save primary CSV
     summary_csv_path = output_dir / "feature_ood_summary.csv"
     summary_df.to_csv(summary_csv_path, index=False)
-    logger.info("Saved feature OOD summary to %s", summary_csv_path)
+    logger.info("Saved master feature OOD summary to %s", summary_csv_path)
 
-    # 6. Per-contract breakdown if requested
+    # 7. Per-contract breakdown if requested
     per_contract_summaries = {}
     if args.per_contract:
         logger.info("Executing per-contract OOD breakdown for test contracts...")
@@ -335,74 +500,160 @@ def analyze_feature_vae_ood(args: argparse.Namespace) -> dict[str, Any]:
                     c_test_nlls.append(c_nll.mean(axis=0))
 
             avg_c_nll = np.mean(c_test_nlls, axis=0)
-            c_delta = avg_c_nll - avg_valid_nll
-            c_sum_delta = float(np.sum(c_delta))
-            c_norm = c_sum_delta if c_sum_delta > 1e-8 else 1.0
+            c_delta_vs_train = avg_c_nll - avg_train_nll
+            c_delta_vs_valid = avg_c_nll - avg_valid_nll
 
-            c_drift = calculate_distribution_drift(valid_df, c_df, feature_names)
+            c_sum_delta_train = float(np.sum(c_delta_vs_train))
+            c_norm_train = c_sum_delta_train if c_sum_delta_train > 1e-8 else 1.0
+
+            c_drift_train = calculate_distribution_drift(train_df, c_df, feature_names)
+            c_drift_valid = calculate_distribution_drift(valid_df, c_df, feature_names)
 
             c_rows = []
             for idx, feat in enumerate(feature_names):
+                dt_tr = c_drift_train[feat]
+                dt_v = c_drift_valid[feat]
                 c_rows.append(
                     {
                         "feature": feat,
-                        "delta_nll": float(c_delta[idx]),
-                        "contrib_pct": float((c_delta[idx] / c_norm) * 100.0),
-                        "mean_shift": c_drift[feat]["mean_shift"],
-                        "contract_mean": c_drift[feat]["target_mean"],
-                        "contract_std": c_drift[feat]["target_std"],
-                        "valid_mean": c_drift[feat]["ref_mean"],
-                        "valid_std": c_drift[feat]["ref_std"],
+                        "delta_nll_vs_train": float(c_delta_vs_train[idx]),
+                        "contrib_pct_vs_train": float(
+                            (c_delta_vs_train[idx] / c_norm_train) * 100.0
+                        ),
+                        "delta_nll_vs_valid": float(c_delta_vs_valid[idx]),
+                        "contract_mean": dt_tr["target_mean"],
+                        "contract_std": dt_tr["target_std"],
+                        "train_mean": dt_tr["ref_mean"],
+                        "train_std": dt_tr["ref_std"],
+                        "valid_mean": dt_v["ref_mean"],
+                        "valid_std": dt_v["ref_std"],
+                        "mean_shift_vs_train": dt_tr["mean_shift"],
+                        "var_ratio_vs_train": dt_tr["var_ratio"],
+                        "mean_shift_vs_valid": dt_v["mean_shift"],
+                        "var_ratio_vs_valid": dt_v["var_ratio"],
                     }
                 )
 
-            c_summary_df = pd.DataFrame(c_rows).sort_values(
-                by="delta_nll", ascending=False
-            ).reset_index(drop=True)
+            c_summary_df = (
+                pd.DataFrame(c_rows)
+                .sort_values(by="delta_nll_vs_train", ascending=False)
+                .reset_index(drop=True)
+            )
             c_summary_df["rank"] = c_summary_df.index + 1
+            c_cols = [
+                "rank",
+                "feature",
+                "delta_nll_vs_train",
+                "contrib_pct_vs_train",
+            ] + [
+                c
+                for c in c_summary_df.columns
+                if c
+                not in [
+                    "rank",
+                    "feature",
+                    "delta_nll_vs_train",
+                    "contrib_pct_vs_train",
+                ]
+            ]
+            c_summary_df = c_summary_df[c_cols]
             c_csv = contracts_out_dir / f"{c_name}_ood.csv"
             c_summary_df.to_csv(c_csv, index=False)
             per_contract_summaries[c_name] = c_summary_df
 
-    # 7. Print formatted top summary
-    print("\n" + "=" * 96)
-    print(" TOP 15 FEATURES CAUSING VAE OOD COLLAPSE (Test vs Valid Baseline)")
-    print("=" * 96)
-    print_cols = [
+    # 8. Print formatted multi-perspective summaries
+    top_k = args.top_k
+    print("\n" + "=" * 105)
+    print(
+        f" TABLE 1: TOP {top_k} FEATURES WITH DISTRIBUTION SHIFT (Valid vs Train Baseline)"
+    )
+    print("=" * 105)
+    cols_display_t1 = [
+        "rank",
+        "feature",
+        "delta_nll_valid_vs_train",
+        "contrib_pct_valid_vs_train",
+        "train_mean",
+        "valid_mean",
+        "mean_shift",
+        "var_ratio",
+    ]
+    disp_t1 = df_valid_vs_train.head(top_k)[cols_display_t1].copy()
+    disp_t1["delta_nll_valid_vs_train"] = disp_t1["delta_nll_valid_vs_train"].round(2)
+    disp_t1["contrib_pct_valid_vs_train"] = disp_t1[
+        "contrib_pct_valid_vs_train"
+    ].round(2)
+    disp_t1["train_mean"] = disp_t1["train_mean"].round(3)
+    disp_t1["valid_mean"] = disp_t1["valid_mean"].round(3)
+    disp_t1["mean_shift"] = disp_t1["mean_shift"].round(2)
+    disp_t1["var_ratio"] = disp_t1["var_ratio"].round(2)
+    print(disp_t1.to_string(index=False))
+
+    print("\n" + "=" * 105)
+    print(
+        f" TABLE 2: TOP {top_k} FEATURES CAUSING TRUE VAE OOD COLLAPSE (Test vs Train Baseline)"
+    )
+    print("=" * 105)
+    cols_display_t2 = [
+        "rank",
+        "feature",
+        "delta_nll_test_vs_train",
+        "contrib_pct_test_vs_train",
+        "train_mean",
+        "test_mean",
+        "mean_shift",
+        "var_ratio",
+    ]
+    disp_t2 = df_test_vs_train.head(top_k)[cols_display_t2].copy()
+    disp_t2["delta_nll_test_vs_train"] = disp_t2["delta_nll_test_vs_train"].round(2)
+    disp_t2["contrib_pct_test_vs_train"] = disp_t2["contrib_pct_test_vs_train"].round(2)
+    disp_t2["train_mean"] = disp_t2["train_mean"].round(3)
+    disp_t2["test_mean"] = disp_t2["test_mean"].round(3)
+    disp_t2["mean_shift"] = disp_t2["mean_shift"].round(2)
+    disp_t2["var_ratio"] = disp_t2["var_ratio"].round(2)
+    print(disp_t2.to_string(index=False))
+
+    print("\n" + "=" * 105)
+    print(
+        f" TABLE 3: TOP {top_k} FEATURES WITH GENERALIZATION SHIFT (Test vs Valid Baseline)"
+    )
+    print("=" * 105)
+    cols_display_t3 = [
         "rank",
         "feature",
         "delta_nll_test_vs_valid",
-        "contrib_pct_test",
+        "contrib_pct_test_vs_valid",
         "valid_mean",
         "test_mean",
-        "test_mean_shift",
-        "test_var_ratio",
+        "mean_shift",
+        "var_ratio",
     ]
-    display_df = summary_df.head(15)[print_cols].copy()
-    display_df["delta_nll_test_vs_valid"] = display_df[
-        "delta_nll_test_vs_valid"
-    ].round(2)
-    display_df["contrib_pct_test"] = display_df["contrib_pct_test"].round(2)
-    display_df["valid_mean"] = display_df["valid_mean"].round(3)
-    display_df["test_mean"] = display_df["test_mean"].round(3)
-    display_df["test_mean_shift"] = display_df["test_mean_shift"].round(2)
-    display_df["test_var_ratio"] = display_df["test_var_ratio"].round(2)
-
-    print(display_df.to_string(index=False))
-    print("=" * 96 + "\n")
+    disp_t3 = df_test_vs_valid.head(top_k)[cols_display_t3].copy()
+    disp_t3["delta_nll_test_vs_valid"] = disp_t3["delta_nll_test_vs_valid"].round(2)
+    disp_t3["contrib_pct_test_vs_valid"] = disp_t3["contrib_pct_test_vs_valid"].round(2)
+    disp_t3["valid_mean"] = disp_t3["valid_mean"].round(3)
+    disp_t3["test_mean"] = disp_t3["test_mean"].round(3)
+    disp_t3["mean_shift"] = disp_t3["mean_shift"].round(2)
+    disp_t3["var_ratio"] = disp_t3["var_ratio"].round(2)
+    print(disp_t3.to_string(index=False))
+    print("=" * 105 + "\n")
 
     return {
         "summary_df": summary_df,
+        "summary_valid_vs_train": df_valid_vs_train,
+        "summary_test_vs_train": df_test_vs_train,
+        "summary_test_vs_valid": df_test_vs_valid,
         "per_contract_summaries": per_contract_summaries,
-        "total_delta_test": total_delta_test,
-        "total_delta_train": total_delta_train,
+        "total_delta_test_vs_train": total_delta_test_vs_train,
+        "total_delta_valid_vs_train": total_delta_valid_vs_train,
+        "total_delta_test_vs_valid": total_delta_test_vs_valid,
         "output_dir": output_dir,
     }
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Analyze per-feature VAE OOD contributions between valid and test/train splits."
+        description="Analyze per-feature VAE OOD contributions across train, valid, and test splits."
     )
     parser.add_argument(
         "--base_path",
@@ -439,6 +690,12 @@ def main():
         type=int,
         default=5000,
         help="Maximum number of rows to sample per split (None for all)",
+    )
+    parser.add_argument(
+        "--top_k",
+        type=int,
+        default=10,
+        help="Number of top features to display in each terminal table (default: 10)",
     )
     parser.add_argument(
         "--device",

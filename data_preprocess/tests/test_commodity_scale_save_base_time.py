@@ -139,3 +139,89 @@ def test_vstd_operator_bounds():
     assert np.all(np.isfinite(vstd_vals))
     assert np.all(vstd_vals >= 0.0)
     assert np.all(vstd_vals <= 10.0)
+
+
+def test_is_volatility_feature_helper():
+    from operator_futures.scale_describe_save.muti_contract_scale_save import (
+        is_volatility_feature,
+    )
+    assert is_volatility_feature("realized_volatility_192") is True
+    assert is_volatility_feature("garman_klass_volatility_16") is True
+    assert is_volatility_feature("rolling_volatility_48") is True
+    assert is_volatility_feature("parkinson_volatility_96") is True
+    assert is_volatility_feature("historical_volatility_24") is True
+    assert is_volatility_feature("rsi_12") is False
+    assert is_volatility_feature("normal_feature") is False
+    assert is_volatility_feature("log_price_slope_48") is False
+
+
+def test_log_volatility_transformation_in_scale_save(tmp_path):
+    from operator_futures.scale_describe_save.muti_contract_scale_save import (
+        VOLATILITY_LOG_EPSILON,
+    )
+
+    feature_list_file = tmp_path / "state_features.npy"
+    features = ["realized_volatility_192", "normal_feature"]
+    np.save(feature_list_file, np.array(features))
+
+    split_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train"
+    split_dir.mkdir(parents=True, exist_ok=True)
+
+    n = 100
+    np.random.seed(42)
+    raw_vol = np.exp(np.random.normal(-4.0, 0.5, size=n))
+    normal_vals = np.random.normal(50.0, 10.0, size=n)
+
+    df = pl.DataFrame({
+        "timestamp": list(range(1, n + 1)),
+        "contract": ["fu2601"] * n,
+        "symbol": ["fu"] * n,
+        "ask1_price": [100.0] * n,
+        "ask1_size": [1.0] * n,
+        "bid1_price": [99.0] * n,
+        "bid1_size": [1.0] * n,
+        "LowerLimitPrice": [90.0] * n,
+        "UpperLimitPrice": [110.0] * n,
+        "funding_timestamp": list(range(1, n + 1)),
+        "funding_rate": [0.0] * n,
+        "index_price": [100.0] * n,
+        "mark_price": [100.0] * n,
+        "realized_volatility_192": raw_vol,
+        "normal_feature": normal_vals,
+    })
+    df.write_ipc(split_dir / "fu2601.feather")
+
+    save_path = "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE"
+    args = parser.parse_args([
+        "--root_path", str(tmp_path),
+        "--symbols", "fu",
+        "--target_freq", "5min",
+        "--feature_list_path", str(feature_list_file),
+        "--save_path", save_path,
+    ])
+
+    main(args)
+
+    output_root = tmp_path / save_path / "fu" / "5min"
+    manifest_path = output_root / "scaler_manifest.json"
+    assert manifest_path.exists()
+    manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    stats_by_feat = {f["feature"]: f for f in manifest_data["features"]}
+    assert stats_by_feat["realized_volatility_192"]["is_log_transformed"] is True
+    assert stats_by_feat["normal_feature"]["is_log_transformed"] is False
+
+    # Volatility center must be in log space (around -4.0), not raw space (around 0.02)
+    vol_center = stats_by_feat["realized_volatility_192"]["center"]
+    assert -5.0 < vol_center < -3.0
+
+    # Verify scaled dataframe matches exact log-transformation formula
+    out_file = output_root / "train" / "fu2601.feather"
+    out_df = pl.read_ipc(out_file)
+    vol_scale = stats_by_feat["realized_volatility_192"]["scale"]
+    expected_vol_scaled = np.clip(
+        (np.log(np.maximum(raw_vol, 0.0) + VOLATILITY_LOG_EPSILON) - vol_center) / vol_scale,
+        -5.0,
+        5.0,
+    )
+    assert np.allclose(out_df["realized_volatility_192"].to_numpy(), expected_vol_scaled, atol=1e-6)
