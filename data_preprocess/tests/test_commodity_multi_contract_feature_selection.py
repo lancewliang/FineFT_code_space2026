@@ -195,6 +195,7 @@ def test_catboost_importance_matches_original_training_call(fake_catboost):
         "loss_function": "MAE",
         "task_type": "GPU",
         "random_seed": 42,
+        "early_stopping_rounds": 30,
     }
     assert fake_catboost["fit"]["eval_set"] is not None
     assert fake_catboost["fit"]["verbose"] == 100

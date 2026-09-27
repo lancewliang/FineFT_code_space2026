@@ -117,6 +117,7 @@ def _catboost_importance(
             loss_function="MAE",
             task_type="GPU",
             random_seed=42,
+            early_stopping_rounds=30,
         )
         model.fit(train_pool, eval_set=eval_pool, verbose=100)
     except Exception:
@@ -127,6 +128,7 @@ def _catboost_importance(
             loss_function="MAE",
             task_type="CPU",
             random_seed=42,
+            early_stopping_rounds=30,
         )
         model.fit(train_pool, eval_set=eval_pool, verbose=100)
     values = model.get_feature_importance(fit_pool)

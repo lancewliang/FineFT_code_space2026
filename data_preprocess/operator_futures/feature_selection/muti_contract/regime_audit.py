@@ -177,6 +177,11 @@ def audit_regimes(
     # Collect contract-level rank ICs for conditional retention check:
     # key: (feature, window, s_bin, v_bin) -> list of (contract, step_count, rank_ic)
     bin_contract_rank_ics: dict[tuple[str, int, int, int], list[tuple[str, int, float]]] = {}
+    future_returns: dict[tuple[str, int], np.ndarray] = {
+        (contract, window): calculate_future_return(frame, window)
+        for contract, frame in frames.items()
+        for window in windows_list
+    }
 
     for s_bin in range(num_slope_bins):
         for v_bin in range(num_vol_bins):
@@ -215,7 +220,7 @@ def audit_regimes(
                         if mask is None or not mask.any():
                             continue
 
-                        future_ret = calculate_future_return(frame, window)
+                        future_ret = future_returns[(contract, window)]
                         min_len = min(len(future_ret), len(mask))
                         if min_len == 0:
                             continue
