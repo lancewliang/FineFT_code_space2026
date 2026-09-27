@@ -167,6 +167,23 @@ COMMODITY_FU_FEATURE_BLACKLIST=(
     bollinger_lower_192_origin
     min_192_origin
     max_192_origin
+    # Blacklisted Residual Uncentered Price Ratios, Volume Shares & Microstructure Spreads (ADR-0030)
+    min_96_origin
+    max_96_origin
+    pivot_s2_48_origin
+    pivot_s1_24_origin
+    pivot_s1_6_origin
+    bollinger_lower_12_origin
+    max_192_std_norm_origin
+    cm_current_main_spread_rolling_zscore_192
+    cm_main_sub_spread_rolling_zscore_192
+    cm_main_sub_volume_share_sub
+    cm_current_main_volume_share_current
+    cm_current_sub_volume_share_current
+    sell_spread_oe_max_trend_6
+    buy_spread_oe_max_trend_6
+    buy_spread_oe_max
+    sell_spread_oe_max
 )
 
 run_commodity_logged_step() {
@@ -801,15 +818,15 @@ run_commodity_full_process() {
 
     local log_dir="${LOG_DIR:-${root_path}/log_futures/ticker_result/commodity}"
 
-    # run_commodity_logged_step \
-    #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-    #     "stitch_main_contract" \
-    #     run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$start_date" "$end_date" "$symbol"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "stitch_main_contract" \
+        run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$start_date" "$end_date" "$symbol"
     local summary_path="${root_path}/PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/${symbol}/main_contract_summary.json"
-    # run_commodity_logged_step \
-    #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-    #     "downscale_continuous_by_trading_day" \
-    #     run_commodity_downscale_continuous_by_trading_day "$root_path" "$summary_path" "$target_freq" "$symbol"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "downscale_continuous_by_trading_day" \
+        run_commodity_downscale_continuous_by_trading_day "$root_path" "$summary_path" "$target_freq" "$symbol"
 
     local max_contract_workers=${MAX_CONTRACT_PROCESSES:-${max_processes:-3}}
     local -a contract_pids=()
@@ -817,40 +834,40 @@ run_commodity_full_process() {
     local contract_failed=0
 
     local contract
-    # while IFS= read -r contract; do
-    #     [ -n "$contract" ] || continue
-    #     while [ "${#contract_pids[@]}" -ge "$max_contract_workers" ]; do
-    #         local first_pid="${contract_pids[0]}"
-    #         local first_contract="${contract_names[0]}"
-    #         if ! wait "$first_pid"; then
-    #             echo "[commodity][cross_section] failed for contract ${first_contract} (pid ${first_pid})" >&2
-    #             contract_failed=1
-    #         fi
-    #         contract_pids=("${contract_pids[@]:1}")
-    #         contract_names=("${contract_names[@]:1}")
-    #     done
-    #     if [ "$contract_failed" -ne 0 ]; then
-    #         break
-    #     fi
-    #     (
-    #         set -e
-    #         run_commodity_logged_step \
-    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-    #             "cross_section" \
-    #             run_commodity_cross_section_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
-    #     ) &
-    #     contract_pids+=("$!")
-    #     contract_names+=("$contract")
-    # done < <(run_commodity_summary_contracts "$summary_path")
+    while IFS= read -r contract; do
+        [ -n "$contract" ] || continue
+        while [ "${#contract_pids[@]}" -ge "$max_contract_workers" ]; do
+            local first_pid="${contract_pids[0]}"
+            local first_contract="${contract_names[0]}"
+            if ! wait "$first_pid"; then
+                echo "[commodity][cross_section] failed for contract ${first_contract} (pid ${first_pid})" >&2
+                contract_failed=1
+            fi
+            contract_pids=("${contract_pids[@]:1}")
+            contract_names=("${contract_names[@]:1}")
+        done
+        if [ "$contract_failed" -ne 0 ]; then
+            break
+        fi
+        (
+            set -e
+            run_commodity_logged_step \
+                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+                "cross_section" \
+                run_commodity_cross_section_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
+        ) &
+        contract_pids+=("$!")
+        contract_names+=("$contract")
+    done < <(run_commodity_summary_contracts "$summary_path")
 
-    # for idx in "${!contract_pids[@]}"; do
-    #     local pid="${contract_pids[$idx]}"
-    #     local cname="${contract_names[$idx]}"
-    #     if ! wait "$pid"; then
-    #         echo "[commodity][cross_section] failed for contract ${cname} (pid ${pid})" >&2
-    #         contract_failed=1
-    #     fi
-    # done
+    for idx in "${!contract_pids[@]}"; do
+        local pid="${contract_pids[$idx]}"
+        local cname="${contract_names[$idx]}"
+        if ! wait "$pid"; then
+            echo "[commodity][cross_section] failed for contract ${cname} (pid ${pid})" >&2
+            contract_failed=1
+        fi
+    done
 
     if [ "$contract_failed" -ne 0 ]; then
         return 1
@@ -860,85 +877,85 @@ run_commodity_full_process() {
     contract_names=()
     contract_failed=0
 
-    # while IFS= read -r contract; do
-    #     [ -n "$contract" ] || continue
-    #     while [ "${#contract_pids[@]}" -ge "$max_contract_workers" ]; do
-    #         local first_pid="${contract_pids[0]}"
-    #         local first_contract="${contract_names[0]}"
-    #         if ! wait "$first_pid"; then
-    #             echo "[commodity][contract_feature_pipeline] failed for contract ${first_contract} (pid ${first_pid})" >&2
-    #             contract_failed=1
-    #         fi
-    #         contract_pids=("${contract_pids[@]:1}")
-    #         contract_names=("${contract_names[@]:1}")
-    #     done
-    #     if [ "$contract_failed" -ne 0 ]; then
-    #         break
-    #     fi
-    #     (
-    #         set -e
-    #         run_commodity_logged_step \
-    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-    #             "daily_base_feature" \
-    #             run_commodity_daily_base_feature_process "$start_date" "$end_date" "$target_freq" "$symbol" "$root_path" "$contract"
-    #         run_commodity_logged_step \
-    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-    #             "weekly_base_feature" \
-    #             run_commodity_weekly_base_feature_process "$start_date" "$end_date" "$target_freq" "$symbol" "$root_path" "$contract"
-    #         run_commodity_logged_step \
-    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-    #             "cross_month_feature" \
-    #             run_commodity_cross_month_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$summary_path" "$contract"
-    #         run_commodity_logged_step \
-    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-    #             "daily_mixed_frequency_feature" \
-    #             run_commodity_daily_mixed_frequency_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
-    #         run_commodity_logged_step \
-    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-    #             "weekly_mixed_frequency_feature" \
-    #             run_commodity_weekly_mixed_frequency_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
-    #         run_commodity_logged_step \
-    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-    #             "mixed_frequency_feature" \
-    #             run_commodity_mixed_frequency_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
-    #         run_commodity_logged_step \
-    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-    #             "merge" \
-    #             run_commodity_merge_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
-    #         run_commodity_logged_step \
-    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-    #             "concat" \
-    #             run_commodity_concat_process "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
-    #         run_commodity_logged_step \
-    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-    #             "time_feature" \
-    #             run_commodity_time_feature "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
-    #         run_commodity_logged_step \
-    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-    #             "merge_clean" \
-    #             run_commodity_merge_and_clean "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
-    #     ) &
-    #     contract_pids+=("$!")
-    #     contract_names+=("$contract")
-    # done < <(run_commodity_summary_contracts "$summary_path")
+    while IFS= read -r contract; do
+        [ -n "$contract" ] || continue
+        while [ "${#contract_pids[@]}" -ge "$max_contract_workers" ]; do
+            local first_pid="${contract_pids[0]}"
+            local first_contract="${contract_names[0]}"
+            if ! wait "$first_pid"; then
+                echo "[commodity][contract_feature_pipeline] failed for contract ${first_contract} (pid ${first_pid})" >&2
+                contract_failed=1
+            fi
+            contract_pids=("${contract_pids[@]:1}")
+            contract_names=("${contract_names[@]:1}")
+        done
+        if [ "$contract_failed" -ne 0 ]; then
+            break
+        fi
+        (
+            set -e
+            run_commodity_logged_step \
+                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+                "daily_base_feature" \
+                run_commodity_daily_base_feature_process "$start_date" "$end_date" "$target_freq" "$symbol" "$root_path" "$contract"
+            run_commodity_logged_step \
+                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+                "weekly_base_feature" \
+                run_commodity_weekly_base_feature_process "$start_date" "$end_date" "$target_freq" "$symbol" "$root_path" "$contract"
+            run_commodity_logged_step \
+                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+                "cross_month_feature" \
+                run_commodity_cross_month_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$summary_path" "$contract"
+            run_commodity_logged_step \
+                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+                "daily_mixed_frequency_feature" \
+                run_commodity_daily_mixed_frequency_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
+            run_commodity_logged_step \
+                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+                "weekly_mixed_frequency_feature" \
+                run_commodity_weekly_mixed_frequency_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
+            run_commodity_logged_step \
+                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+                "mixed_frequency_feature" \
+                run_commodity_mixed_frequency_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
+            run_commodity_logged_step \
+                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+                "merge" \
+                run_commodity_merge_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
+            run_commodity_logged_step \
+                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+                "concat" \
+                run_commodity_concat_process "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
+            run_commodity_logged_step \
+                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+                "time_feature" \
+                run_commodity_time_feature "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
+            run_commodity_logged_step \
+                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+                "merge_clean" \
+                run_commodity_merge_and_clean "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
+        ) &
+        contract_pids+=("$!")
+        contract_names+=("$contract")
+    done < <(run_commodity_summary_contracts "$summary_path")
 
-    # for idx in "${!contract_pids[@]}"; do
-    #     local pid="${contract_pids[$idx]}"
-    #     local cname="${contract_names[$idx]}"
-    #     if ! wait "$pid"; then
-    #         echo "[commodity][contract_feature_pipeline] failed for contract ${cname} (pid ${pid})" >&2
-    #         contract_failed=1
-    #     fi
-    # done
+    for idx in "${!contract_pids[@]}"; do
+        local pid="${contract_pids[$idx]}"
+        local cname="${contract_names[$idx]}"
+        if ! wait "$pid"; then
+            echo "[commodity][contract_feature_pipeline] failed for contract ${cname} (pid ${pid})" >&2
+            contract_failed=1
+        fi
+    done
 
     if [ "$contract_failed" -ne 0 ]; then
         return 1
     fi
 
-    # run_commodity_logged_step \
-    #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-    #     "dataset_split" \
-    #     run_commodity_dataset_split "$summary_path" "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "dataset_split" \
+        run_commodity_dataset_split "$summary_path" "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
 
     run_commodity_logged_step \
         "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \

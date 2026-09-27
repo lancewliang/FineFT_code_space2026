@@ -84,6 +84,10 @@ _Avoid_: 线性带宽缩放、原始带宽直通
 在 `cross_month_feature.py` 中利用双曲正切函数 $0.05 \cdot \tanh(\Delta / 0.02)$ 对跨期对数价差的差分速度进行平滑软饱和映射，消除硬截断边界处的概率密度尖峰堆叠，保持导数连续。
 _Avoid_: 硬截断价差速度、断点价差差分
 
+**盘口物理深度保底 (Physical Orderbook Depth Bounding)**:
+在 `base_feature_util.py` 中对 5 档盘口价差指标（`buy_spread_oe_max`、`sell_spread_oe_max`）施加不低于 $\text{min\_depth\_spread} = \text{depth} - 1$ 个 Tick 的物理有效距离保底（ADR-0030），防止在开收盘集合竞价、极端涨跌停或空深度时计算出 0.0 异常值导致缩放后严重下溢（$-2.845$）并破坏 VAE 状态重构。
+_Avoid_: 零深度直通、盘口无保底价差
+
 **环境执行与奖励特征 (Reward & Execution Features)**:
 存在于最终 Feather 数据集中供 RL 环境、回测模拟器及状态转移约束使用的物理变量（如价格上下限、涨跌停挂单比率 `limit_up/down_single_sided_ratio` 等）；即使被特征黑名单排除在 VAE 及 Policy 的观测输入向量之外，也必须由 Scale Save 完整保留。
 _Avoid_: 状态特征、观察特征

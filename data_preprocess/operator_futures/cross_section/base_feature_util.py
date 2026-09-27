@@ -452,12 +452,13 @@ def process_snapshot_features(df: pd.DataFrame, topk=5, depth=25):
     price_related_df["buy_sell_wap_spread"] = (
         price_related_df["buy_wap"] - price_related_df["sell_wap"]
     )
-    price_related_df["buy_spread_oe_max"] = np.abs(
-        df["bid1_price"] - df[f"bid{depth}_price"]
-    ).clip(0.0, 50.0)
-    price_related_df["sell_spread_oe_max"] = np.abs(
-        df["ask1_price"] - df[f"ask{depth}_price"]
-    ).clip(0.0, 50.0)
+    min_depth_spread = float(max(1, depth - 1))
+    price_related_df["buy_spread_oe_max"] = np.clip(
+        np.abs(df["bid1_price"] - df[f"bid{depth}_price"]), min_depth_spread, 50.0
+    )
+    price_related_df["sell_spread_oe_max"] = np.clip(
+        np.abs(df["ask1_price"] - df[f"ask{depth}_price"]), min_depth_spread, 50.0
+    )
     topk_ask_sum = np.sum(ask_size_topk_size, axis=1, keepdims=True)
     topk_bid_sum = np.sum(bid_size_topk_size, axis=1, keepdims=True)
     ask_share = np.divide(
@@ -766,8 +767,9 @@ def process_snapshot_features(df, topk=5, depth=25) -> pl.DataFrame:
     data["sell_wap"] = np.where(ask_side_empty, best_ask_price_array, sell_wap)
     data["buy_wap"] = np.where(bid_side_empty, best_bid_price_array, buy_wap)
     data["buy_sell_wap_spread"] = data["buy_wap"] - data["sell_wap"]
-    data["buy_spread_oe_max"] = np.clip(np.abs(df["bid1_price"].to_numpy() - df[f"bid{depth}_price"].to_numpy()), 0.0, 50.0)
-    data["sell_spread_oe_max"] = np.clip(np.abs(df["ask1_price"].to_numpy() - df[f"ask{depth}_price"].to_numpy()), 0.0, 50.0)
+    min_depth_spread = float(max(1, depth - 1))
+    data["buy_spread_oe_max"] = np.clip(np.abs(df["bid1_price"].to_numpy() - df[f"bid{depth}_price"].to_numpy()), min_depth_spread, 50.0)
+    data["sell_spread_oe_max"] = np.clip(np.abs(df["ask1_price"].to_numpy() - df[f"ask{depth}_price"].to_numpy()), min_depth_spread, 50.0)
     topk_ask_sum = np.sum(ask_size_topk_size, axis=1, keepdims=True)
     topk_bid_sum = np.sum(bid_size_topk_size, axis=1, keepdims=True)
     ask_share = np.divide(

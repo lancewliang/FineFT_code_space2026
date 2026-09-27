@@ -227,3 +227,74 @@ def test_log_volatility_transformation_in_scale_save(tmp_path):
         5.0,
     )
     assert np.allclose(out_df["realized_volatility_192"].to_numpy(), expected_vol_scaled, atol=1e-6)
+
+
+def test_orderbook_spread_physical_depth_bounding():
+    import pandas as pd
+    from operator_futures.cross_section.base_feature_util import process_snapshot_features
+
+    # Create dummy 5-depth orderbook dataframe with flat/identical prices (simulating auction or zero depth)
+    df = pd.DataFrame({
+        "bid1_price": [100.0, 100.0],
+        "bid2_price": [100.0, 99.0],
+        "bid3_price": [100.0, 98.0],
+        "bid4_price": [100.0, 97.0],
+        "bid5_price": [100.0, 96.0],
+        "ask1_price": [101.0, 101.0],
+        "ask2_price": [101.0, 102.0],
+        "ask3_price": [101.0, 103.0],
+        "ask4_price": [101.0, 104.0],
+        "ask5_price": [101.0, 105.0],
+        "bid1_size": [10.0, 10.0],
+        "bid2_size": [10.0, 10.0],
+        "bid3_size": [10.0, 10.0],
+        "bid4_size": [10.0, 10.0],
+        "bid5_size": [10.0, 10.0],
+        "ask1_size": [10.0, 10.0],
+        "ask2_size": [10.0, 10.0],
+        "ask3_size": [10.0, 10.0],
+        "ask4_size": [10.0, 10.0],
+        "ask5_size": [10.0, 10.0],
+    })
+
+    # Pandas version
+    price_df = process_snapshot_features(df, topk=5, depth=5)
+    # Row 0 has bid1 == bid5 == 100.0 (diff 0.0). With ADR-0030 bounding, minimum is 4.0
+    assert price_df["buy_spread_oe_max"].iloc[0] == 4.0
+    assert price_df["sell_spread_oe_max"].iloc[0] == 4.0
+    assert price_df["buy_spread_oe_max"].iloc[1] == 4.0
+    assert price_df["sell_spread_oe_max"].iloc[1] == 4.0
+
+    # Polars version
+    pl_df = pl.from_pandas(df)
+    pl_res = process_snapshot_features(pl_df, topk=5, depth=5)
+    assert pl_res["buy_spread_oe_max"][0] == 4.0
+    assert pl_res["sell_spread_oe_max"][0] == 4.0
+    assert pl_res["buy_spread_oe_max"][1] == 4.0
+    assert pl_res["sell_spread_oe_max"][1] == 4.0
+
+
+def test_adr0030_blacklist_coverage():
+    script_path = REPO_ROOT / "data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
+    text = script_path.read_text(encoding="utf-8")
+
+    expected_features = [
+        "min_96_origin",
+        "max_96_origin",
+        "pivot_s2_48_origin",
+        "pivot_s1_24_origin",
+        "pivot_s1_6_origin",
+        "bollinger_lower_12_origin",
+        "max_192_std_norm_origin",
+        "cm_current_main_spread_rolling_zscore_192",
+        "cm_main_sub_spread_rolling_zscore_192",
+        "cm_main_sub_volume_share_sub",
+        "cm_current_main_volume_share_current",
+        "cm_current_sub_volume_share_current",
+        "sell_spread_oe_max_trend_6",
+        "buy_spread_oe_max_trend_6",
+        "buy_spread_oe_max",
+        "sell_spread_oe_max",
+    ]
+    for feat in expected_features:
+        assert feat in text, f"Feature {feat} missing from fu_full_process.sh blacklist"
