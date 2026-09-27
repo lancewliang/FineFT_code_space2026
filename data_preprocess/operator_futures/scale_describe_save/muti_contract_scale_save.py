@@ -352,6 +352,7 @@ VOLATILITY_FEATURE_PATTERNS: tuple[str, ...] = (
     "garman_klass_volatility",
     "parkinson_volatility",
     "historical_volatility",
+    "bollinger_bandwidth",
 )
 VOLATILITY_LOG_EPSILON: float = 1e-6
 

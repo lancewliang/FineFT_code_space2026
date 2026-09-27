@@ -493,3 +493,30 @@ def test_cross_month_feature_rolling_zscore_finite_and_bounded():
     assert zscore[0] == 0.0
     # Over 48 samples, Z-score should be bounded and mean near 0
     assert np.all(np.abs(zscore) < 5.0)
+
+
+def test_cross_month_spread_velocity_soft_saturation():
+    from operator_futures.commodity.cross_month_feature import generate_delivery_month_sequence_features
+    n = 20
+    # Create extreme jump in m1 vs m2 at step 15
+    m1_closes = [100.0] * 10 + [200.0] * 10
+    m2_closes = [100.0] * 20
+    m3_closes = [100.0] * 20
+
+    contract_bars = {
+        "fu2601": pl.DataFrame({"timestamp": list(range(n)), "close": m1_closes, "volume": [10.0]*n, "open_interest": [100.0]*n}),
+        "fu2602": pl.DataFrame({"timestamp": list(range(n)), "close": m2_closes, "volume": [10.0]*n, "open_interest": [100.0]*n}),
+        "fu2603": pl.DataFrame({"timestamp": list(range(n)), "close": m3_closes, "volume": [10.0]*n, "open_interest": [100.0]*n}),
+    }
+    current_bars = contract_bars["fu2601"]
+
+    res = generate_delivery_month_sequence_features(current_bars=current_bars, contract_bars=contract_bars)
+    v = res["cm_m1_m2_log_price_spread_velocity_10m"].to_numpy()
+
+    # Must be finite and strictly bounded within (-0.05, 0.05)
+    assert np.all(np.isfinite(v))
+    assert np.all(v <= 0.05)
+    assert np.all(v >= -0.05)
+    # At step 10, jump occurred: tanh soft-saturation smoothly dampens it
+    assert v[10] > 0.04
+    assert v[10] <= 0.05

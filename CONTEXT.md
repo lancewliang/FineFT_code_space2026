@@ -76,6 +76,14 @@ _Avoid_: 名义价格标准化、未中心化价格波动比
 在特征缩放阶段对具有右偏厚尾特性的金融波动率类指标预先执行 $\\ln(\\text{vol} + 10^{-6})$ 对数映射，对齐 VAE 连续高斯重构假定，消除高波动体制下的方差爆炸。
 _Avoid_: 线性波动率缩放、原始波动率直通
 
+**布林带宽对数正态化 (Log-Bandwidth Transformation)**:
+在 `muti_contract_scale_save.py` 中对布林带宽指标（$4\sigma/\mu$）预先执行 $\ln(\text{bandwidth} + 10^{-6})$ 对数映射，将右偏厚尾的相对波动率转化为对称高斯分布，消除高波动验证集的方差膨胀。
+_Avoid_: 线性带宽缩放、原始带宽直通
+
+**软饱和跨期价差速度 (Soft-Saturated Spread Velocity)**:
+在 `cross_month_feature.py` 中利用双曲正切函数 $0.05 \cdot \tanh(\Delta / 0.02)$ 对跨期对数价差的差分速度进行平滑软饱和映射，消除硬截断边界处的概率密度尖峰堆叠，保持导数连续。
+_Avoid_: 硬截断价差速度、断点价差差分
+
 **环境执行与奖励特征 (Reward & Execution Features)**:
 存在于最终 Feather 数据集中供 RL 环境、回测模拟器及状态转移约束使用的物理变量（如价格上下限、涨跌停挂单比率 `limit_up/down_single_sided_ratio` 等）；即使被特征黑名单排除在 VAE 及 Policy 的观测输入向量之外，也必须由 Scale Save 完整保留。
 _Avoid_: 状态特征、观察特征

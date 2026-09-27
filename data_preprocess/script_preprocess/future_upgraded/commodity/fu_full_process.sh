@@ -157,6 +157,16 @@ COMMODITY_FU_FEATURE_BLACKLIST=(
     cm_current_main_open_interest_share_current
     cntn_192_origin
     cntp_192_origin
+    # Blacklisted Long-Window Uncentered Nominal Price Ratios (ADR-0028)
+    pivot_s1_192_origin
+    pivot_r1_192_origin
+    pivot_pp_192_origin
+    pivot_s2_192_origin
+    pivot_r2_192_origin
+    bollinger_upper_192_origin
+    bollinger_lower_192_origin
+    min_192_origin
+    max_192_origin
 )
 
 run_commodity_logged_step() {
@@ -807,40 +817,40 @@ run_commodity_full_process() {
     local contract_failed=0
 
     local contract
-    while IFS= read -r contract; do
-        [ -n "$contract" ] || continue
-        while [ "${#contract_pids[@]}" -ge "$max_contract_workers" ]; do
-            local first_pid="${contract_pids[0]}"
-            local first_contract="${contract_names[0]}"
-            if ! wait "$first_pid"; then
-                echo "[commodity][cross_section] failed for contract ${first_contract} (pid ${first_pid})" >&2
-                contract_failed=1
-            fi
-            contract_pids=("${contract_pids[@]:1}")
-            contract_names=("${contract_names[@]:1}")
-        done
-        if [ "$contract_failed" -ne 0 ]; then
-            break
-        fi
-        (
-            set -e
-            run_commodity_logged_step \
-                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-                "cross_section" \
-                run_commodity_cross_section_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
-        ) &
-        contract_pids+=("$!")
-        contract_names+=("$contract")
-    done < <(run_commodity_summary_contracts "$summary_path")
+    # while IFS= read -r contract; do
+    #     [ -n "$contract" ] || continue
+    #     while [ "${#contract_pids[@]}" -ge "$max_contract_workers" ]; do
+    #         local first_pid="${contract_pids[0]}"
+    #         local first_contract="${contract_names[0]}"
+    #         if ! wait "$first_pid"; then
+    #             echo "[commodity][cross_section] failed for contract ${first_contract} (pid ${first_pid})" >&2
+    #             contract_failed=1
+    #         fi
+    #         contract_pids=("${contract_pids[@]:1}")
+    #         contract_names=("${contract_names[@]:1}")
+    #     done
+    #     if [ "$contract_failed" -ne 0 ]; then
+    #         break
+    #     fi
+    #     (
+    #         set -e
+    #         run_commodity_logged_step \
+    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #             "cross_section" \
+    #             run_commodity_cross_section_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
+    #     ) &
+    #     contract_pids+=("$!")
+    #     contract_names+=("$contract")
+    # done < <(run_commodity_summary_contracts "$summary_path")
 
-    for idx in "${!contract_pids[@]}"; do
-        local pid="${contract_pids[$idx]}"
-        local cname="${contract_names[$idx]}"
-        if ! wait "$pid"; then
-            echo "[commodity][cross_section] failed for contract ${cname} (pid ${pid})" >&2
-            contract_failed=1
-        fi
-    done
+    # for idx in "${!contract_pids[@]}"; do
+    #     local pid="${contract_pids[$idx]}"
+    #     local cname="${contract_names[$idx]}"
+    #     if ! wait "$pid"; then
+    #         echo "[commodity][cross_section] failed for contract ${cname} (pid ${pid})" >&2
+    #         contract_failed=1
+    #     fi
+    # done
 
     if [ "$contract_failed" -ne 0 ]; then
         return 1
@@ -850,85 +860,85 @@ run_commodity_full_process() {
     contract_names=()
     contract_failed=0
 
-    while IFS= read -r contract; do
-        [ -n "$contract" ] || continue
-        while [ "${#contract_pids[@]}" -ge "$max_contract_workers" ]; do
-            local first_pid="${contract_pids[0]}"
-            local first_contract="${contract_names[0]}"
-            if ! wait "$first_pid"; then
-                echo "[commodity][contract_feature_pipeline] failed for contract ${first_contract} (pid ${first_pid})" >&2
-                contract_failed=1
-            fi
-            contract_pids=("${contract_pids[@]:1}")
-            contract_names=("${contract_names[@]:1}")
-        done
-        if [ "$contract_failed" -ne 0 ]; then
-            break
-        fi
-        (
-            set -e
-            run_commodity_logged_step \
-                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-                "daily_base_feature" \
-                run_commodity_daily_base_feature_process "$start_date" "$end_date" "$target_freq" "$symbol" "$root_path" "$contract"
-            run_commodity_logged_step \
-                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-                "weekly_base_feature" \
-                run_commodity_weekly_base_feature_process "$start_date" "$end_date" "$target_freq" "$symbol" "$root_path" "$contract"
-            run_commodity_logged_step \
-                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-                "cross_month_feature" \
-                run_commodity_cross_month_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$summary_path" "$contract"
-            run_commodity_logged_step \
-                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-                "daily_mixed_frequency_feature" \
-                run_commodity_daily_mixed_frequency_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
-            run_commodity_logged_step \
-                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-                "weekly_mixed_frequency_feature" \
-                run_commodity_weekly_mixed_frequency_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
-            run_commodity_logged_step \
-                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-                "mixed_frequency_feature" \
-                run_commodity_mixed_frequency_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
-            run_commodity_logged_step \
-                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-                "merge" \
-                run_commodity_merge_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
-            run_commodity_logged_step \
-                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-                "concat" \
-                run_commodity_concat_process "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
-            run_commodity_logged_step \
-                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-                "time_feature" \
-                run_commodity_time_feature "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
-            run_commodity_logged_step \
-                "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
-                "merge_clean" \
-                run_commodity_merge_and_clean "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
-        ) &
-        contract_pids+=("$!")
-        contract_names+=("$contract")
-    done < <(run_commodity_summary_contracts "$summary_path")
+    # while IFS= read -r contract; do
+    #     [ -n "$contract" ] || continue
+    #     while [ "${#contract_pids[@]}" -ge "$max_contract_workers" ]; do
+    #         local first_pid="${contract_pids[0]}"
+    #         local first_contract="${contract_names[0]}"
+    #         if ! wait "$first_pid"; then
+    #             echo "[commodity][contract_feature_pipeline] failed for contract ${first_contract} (pid ${first_pid})" >&2
+    #             contract_failed=1
+    #         fi
+    #         contract_pids=("${contract_pids[@]:1}")
+    #         contract_names=("${contract_names[@]:1}")
+    #     done
+    #     if [ "$contract_failed" -ne 0 ]; then
+    #         break
+    #     fi
+    #     (
+    #         set -e
+    #         run_commodity_logged_step \
+    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #             "daily_base_feature" \
+    #             run_commodity_daily_base_feature_process "$start_date" "$end_date" "$target_freq" "$symbol" "$root_path" "$contract"
+    #         run_commodity_logged_step \
+    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #             "weekly_base_feature" \
+    #             run_commodity_weekly_base_feature_process "$start_date" "$end_date" "$target_freq" "$symbol" "$root_path" "$contract"
+    #         run_commodity_logged_step \
+    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #             "cross_month_feature" \
+    #             run_commodity_cross_month_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$summary_path" "$contract"
+    #         run_commodity_logged_step \
+    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #             "daily_mixed_frequency_feature" \
+    #             run_commodity_daily_mixed_frequency_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
+    #         run_commodity_logged_step \
+    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #             "weekly_mixed_frequency_feature" \
+    #             run_commodity_weekly_mixed_frequency_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
+    #         run_commodity_logged_step \
+    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #             "mixed_frequency_feature" \
+    #             run_commodity_mixed_frequency_feature_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
+    #         run_commodity_logged_step \
+    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #             "merge" \
+    #             run_commodity_merge_process "$start_date" "$end_date" "$max_processes" "$target_freq" "$symbol" "$root_path" "$contract"
+    #         run_commodity_logged_step \
+    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #             "concat" \
+    #             run_commodity_concat_process "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
+    #         run_commodity_logged_step \
+    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #             "time_feature" \
+    #             run_commodity_time_feature "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
+    #         run_commodity_logged_step \
+    #             "$log_dir" "${symbol}_${contract}" "$target_freq" "$start_date" "$end_date" \
+    #             "merge_clean" \
+    #             run_commodity_merge_and_clean "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path" "$contract"
+    #     ) &
+    #     contract_pids+=("$!")
+    #     contract_names+=("$contract")
+    # done < <(run_commodity_summary_contracts "$summary_path")
 
-    for idx in "${!contract_pids[@]}"; do
-        local pid="${contract_pids[$idx]}"
-        local cname="${contract_names[$idx]}"
-        if ! wait "$pid"; then
-            echo "[commodity][contract_feature_pipeline] failed for contract ${cname} (pid ${pid})" >&2
-            contract_failed=1
-        fi
-    done
+    # for idx in "${!contract_pids[@]}"; do
+    #     local pid="${contract_pids[$idx]}"
+    #     local cname="${contract_names[$idx]}"
+    #     if ! wait "$pid"; then
+    #         echo "[commodity][contract_feature_pipeline] failed for contract ${cname} (pid ${pid})" >&2
+    #         contract_failed=1
+    #     fi
+    # done
 
     if [ "$contract_failed" -ne 0 ]; then
         return 1
     fi
 
-    run_commodity_logged_step \
-        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-        "dataset_split" \
-        run_commodity_dataset_split "$summary_path" "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
+    # run_commodity_logged_step \
+    #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+    #     "dataset_split" \
+    #     run_commodity_dataset_split "$summary_path" "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
 
     run_commodity_logged_step \
         "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \

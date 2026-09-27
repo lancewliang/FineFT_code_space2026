@@ -150,6 +150,8 @@ def test_is_volatility_feature_helper():
     assert is_volatility_feature("rolling_volatility_48") is True
     assert is_volatility_feature("parkinson_volatility_96") is True
     assert is_volatility_feature("historical_volatility_24") is True
+    assert is_volatility_feature("bollinger_bandwidth_96_origin") is True
+    assert is_volatility_feature("bollinger_bandwidth_48") is True
     assert is_volatility_feature("rsi_12") is False
     assert is_volatility_feature("normal_feature") is False
     assert is_volatility_feature("log_price_slope_48") is False
