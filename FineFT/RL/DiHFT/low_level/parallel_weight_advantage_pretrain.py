@@ -403,7 +403,7 @@ parser.add_argument(
 parser.add_argument(
     "--result_path",
     type=str,
-    default="result/DiHFT/low_level/parallel",
+    default="result/DiHFT/low_level",
     help="the path for storing the test result",
 )
 # loss setting

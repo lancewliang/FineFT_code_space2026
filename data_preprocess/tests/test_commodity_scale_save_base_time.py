@@ -257,13 +257,13 @@ def test_orderbook_spread_physical_depth_bounding():
         "ask5_size": [10.0, 10.0],
     })
 
-    # Pandas version
+    # Orderbook depth features are returned as Polars DataFrame
     price_df = process_snapshot_features(df, topk=5, depth=5)
     # Row 0 has bid1 == bid5 == 100.0 (diff 0.0). With ADR-0030 bounding, minimum is 4.0
-    assert price_df["buy_spread_oe_max"].iloc[0] == 4.0
-    assert price_df["sell_spread_oe_max"].iloc[0] == 4.0
-    assert price_df["buy_spread_oe_max"].iloc[1] == 4.0
-    assert price_df["sell_spread_oe_max"].iloc[1] == 4.0
+    assert price_df["buy_spread_oe_max"][0] == 4.0
+    assert price_df["sell_spread_oe_max"][0] == 4.0
+    assert price_df["buy_spread_oe_max"][1] == 4.0
+    assert price_df["sell_spread_oe_max"][1] == 4.0
 
     # Polars version
     pl_df = pl.from_pandas(df)

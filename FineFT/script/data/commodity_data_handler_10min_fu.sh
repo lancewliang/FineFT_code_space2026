@@ -4,8 +4,8 @@ set -euo pipefail
 ROOTPATH=${ROOTPATH:-$(pwd)}
 SYMBOL=${SYMBOL:-fu}
 TARGET_FREQ=${TARGET_FREQ:-10min}
-CHUNK_LENGTH=${CHUNK_LENGTH:-1500}
-EARLY_STOP=${EARLY_STOP:-2}
+CHUNK_LENGTH=${CHUNK_LENGTH:-4000}
+EARLY_STOP=${EARLY_STOP:-200}
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate finetf
