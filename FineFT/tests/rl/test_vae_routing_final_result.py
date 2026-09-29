@@ -41,6 +41,10 @@ def test_resolve_parameters_from_optuna_csv_via_trial_id(tmp_path):
         window_length=64,
         gamma=0.9,
         rule_base_threshold=0.2,
+        gating_strategy="absolute",
+        ood_threshold=0.005,
+        slope_margin_threshold=0.12,
+        volatility_margin_threshold=0.12,
     )
 
     resolved = vru.resolve_routing_parameters(args)
@@ -74,6 +78,10 @@ def test_resolve_parameters_from_formatted_string_without_csv(tmp_path):
         window_length=64,
         gamma=0.9,
         rule_base_threshold=0.2,
+        gating_strategy="absolute",
+        ood_threshold=0.005,
+        slope_margin_threshold=0.12,
+        volatility_margin_threshold=0.12,
     )
 
     resolved = vru.resolve_routing_parameters(args)

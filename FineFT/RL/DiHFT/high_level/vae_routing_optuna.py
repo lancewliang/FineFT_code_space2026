@@ -115,6 +115,37 @@ parser_all.add_argument(
     help="number of parallel worker processes; each runs trials independently "
     "on CPU with a single thread and shares the study via sqlite storage",
 )
+parser_all.add_argument(
+    "--gating_strategy",
+    type=str,
+    default="absolute",
+    choices=["absolute", "hierarchical"],
+    help="gating strategy type (absolute or hierarchical)",
+)
+parser_all.add_argument(
+    "--ood_threshold_min",
+    type=float,
+    default=0.001,
+    help="minimum OOD threshold for hierarchical gating",
+)
+parser_all.add_argument(
+    "--ood_threshold_max",
+    type=float,
+    default=0.02,
+    help="maximum OOD threshold for hierarchical gating",
+)
+parser_all.add_argument(
+    "--margin_threshold_min",
+    type=float,
+    default=0.05,
+    help="minimum margin threshold for hierarchical gating",
+)
+parser_all.add_argument(
+    "--margin_threshold_max",
+    type=float,
+    default=0.30,
+    help="maximum margin threshold for hierarchical gating",
+)
 
 
 def default_selection_manifest_path(args):
@@ -146,6 +177,10 @@ def prepare_base_args(args_1, args_2):
         args_2.enable_non_main_contract_defense
         or base_args.enable_non_main_contract_defense
     )
+    base_args.gating_strategy = args_2.gating_strategy
+    base_args.ood_threshold = 0.005
+    base_args.slope_margin_threshold = 0.12
+    base_args.volatility_margin_threshold = 0.12
     manifest_path = args_2.selection_manifest or default_selection_manifest_path(base_args)
     manifest = load_two_dimensional_selection_manifest(manifest_path)
     if not manifest.artifacts.model_assembly:
@@ -179,25 +214,55 @@ def suggest_trial_parameters(trial, trial_args, search_args):
         search_args.gamma_max,
         log=True,
     )
-    trial_args.slope_rule_base_threshold = trial.suggest_float(
-        RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD,
-        search_args.rule_base_threshold_min,
-        search_args.rule_base_threshold_max,
-    )
-    trial_args.volatility_rule_base_threshold = trial.suggest_float(
-        RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD,
-        search_args.rule_base_threshold_min,
-        search_args.rule_base_threshold_max,
-    )
     trial_args.window_length = max(
         trial_args.slope_window_length,
         trial_args.volatility_window_length,
     )
     trial_args.gamma = trial_args.slope_gamma
-    trial_args.rule_base_threshold = min(
-        trial_args.slope_rule_base_threshold,
-        trial_args.volatility_rule_base_threshold,
+    trial_args.gating_strategy = search_args.gating_strategy
+    trial.suggest_categorical(
+        RoutingParamColumns.GATING_STRATEGY,
+        [search_args.gating_strategy],
     )
+
+    if search_args.gating_strategy == "hierarchical":
+        trial_args.ood_threshold = trial.suggest_float(
+            RoutingParamColumns.OOD_THRESHOLD,
+            search_args.ood_threshold_min,
+            search_args.ood_threshold_max,
+            log=True,
+        )
+        trial_args.slope_margin_threshold = trial.suggest_float(
+            RoutingParamColumns.SLOPE_MARGIN_THRESHOLD,
+            search_args.margin_threshold_min,
+            search_args.margin_threshold_max,
+        )
+        trial_args.volatility_margin_threshold = trial.suggest_float(
+            RoutingParamColumns.VOLATILITY_MARGIN_THRESHOLD,
+            search_args.margin_threshold_min,
+            search_args.margin_threshold_max,
+        )
+        trial_args.slope_rule_base_threshold = 0.0
+        trial_args.volatility_rule_base_threshold = 0.0
+        trial_args.rule_base_threshold = 0.0
+    else:
+        trial_args.slope_rule_base_threshold = trial.suggest_float(
+            RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD,
+            search_args.rule_base_threshold_min,
+            search_args.rule_base_threshold_max,
+        )
+        trial_args.volatility_rule_base_threshold = trial.suggest_float(
+            RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD,
+            search_args.rule_base_threshold_min,
+            search_args.rule_base_threshold_max,
+        )
+        trial_args.ood_threshold = 0.005
+        trial_args.slope_margin_threshold = 0.12
+        trial_args.volatility_margin_threshold = 0.12
+        trial_args.rule_base_threshold = min(
+            trial_args.slope_rule_base_threshold,
+            trial_args.volatility_rule_base_threshold,
+        )
     return trial_args
 
 

@@ -126,39 +126,55 @@ class Picker:
         lookup = {}
         for _, row in df.iterrows():
             trial_id = int(row[RoutingParamColumns.NUMBER])
+            entry = {}
             if RoutingParamColumns.PARAMS_SLOPE_WINDOW_LENGTH in df.columns:
-                lookup[trial_id] = {
-                    RoutingParamColumns.SLOPE_WINDOW_LENGTH: int(
-                        row[RoutingParamColumns.PARAMS_SLOPE_WINDOW_LENGTH]
-                    ),
-                    RoutingParamColumns.VOLATILITY_WINDOW_LENGTH: int(
-                        row[RoutingParamColumns.PARAMS_VOLATILITY_WINDOW_LENGTH]
-                    ),
-                    RoutingParamColumns.SLOPE_GAMMA: float(
-                        row[RoutingParamColumns.PARAMS_SLOPE_GAMMA]
-                    ),
-                    RoutingParamColumns.VOLATILITY_GAMMA: float(
-                        row[RoutingParamColumns.PARAMS_VOLATILITY_GAMMA]
-                    ),
-                    RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD: float(
+                entry[RoutingParamColumns.SLOPE_WINDOW_LENGTH] = int(
+                    row[RoutingParamColumns.PARAMS_SLOPE_WINDOW_LENGTH]
+                )
+                entry[RoutingParamColumns.VOLATILITY_WINDOW_LENGTH] = int(
+                    row[RoutingParamColumns.PARAMS_VOLATILITY_WINDOW_LENGTH]
+                )
+                entry[RoutingParamColumns.SLOPE_GAMMA] = float(
+                    row[RoutingParamColumns.PARAMS_SLOPE_GAMMA]
+                )
+                entry[RoutingParamColumns.VOLATILITY_GAMMA] = float(
+                    row[RoutingParamColumns.PARAMS_VOLATILITY_GAMMA]
+                )
+                if RoutingParamColumns.PARAMS_SLOPE_RULE_BASE_THRESHOLD in df.columns:
+                    entry[RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD] = float(
                         row[RoutingParamColumns.PARAMS_SLOPE_RULE_BASE_THRESHOLD]
-                    ),
-                    RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD: float(
+                    )
+                if RoutingParamColumns.PARAMS_VOLATILITY_RULE_BASE_THRESHOLD in df.columns:
+                    entry[RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD] = float(
                         row[RoutingParamColumns.PARAMS_VOLATILITY_RULE_BASE_THRESHOLD]
-                    ),
-                }
+                    )
             elif RoutingParamColumns.PARAMS_WINDOW_LENGTH in df.columns:
                 w = int(row[RoutingParamColumns.PARAMS_WINDOW_LENGTH])
                 g = float(row[RoutingParamColumns.PARAMS_GAMMA])
                 t = float(row[RoutingParamColumns.PARAMS_RULE_BASE_THRESHOLD])
-                lookup[trial_id] = {
-                    RoutingParamColumns.SLOPE_WINDOW_LENGTH: w,
-                    RoutingParamColumns.VOLATILITY_WINDOW_LENGTH: w,
-                    RoutingParamColumns.SLOPE_GAMMA: g,
-                    RoutingParamColumns.VOLATILITY_GAMMA: g,
-                    RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD: t,
-                    RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD: t,
-                }
+                entry[RoutingParamColumns.SLOPE_WINDOW_LENGTH] = w
+                entry[RoutingParamColumns.VOLATILITY_WINDOW_LENGTH] = w
+                entry[RoutingParamColumns.SLOPE_GAMMA] = g
+                entry[RoutingParamColumns.VOLATILITY_GAMMA] = g
+                entry[RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD] = t
+                entry[RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD] = t
+
+            if RoutingParamColumns.PARAMS_GATING_STRATEGY in df.columns:
+                entry[RoutingParamColumns.GATING_STRATEGY] = str(
+                    row[RoutingParamColumns.PARAMS_GATING_STRATEGY]
+                )
+            if RoutingParamColumns.PARAMS_OOD_THRESHOLD in df.columns:
+                entry[RoutingParamColumns.GATING_STRATEGY] = "hierarchical"
+                entry[RoutingParamColumns.OOD_THRESHOLD] = float(
+                    row[RoutingParamColumns.PARAMS_OOD_THRESHOLD]
+                )
+                entry[RoutingParamColumns.SLOPE_MARGIN_THRESHOLD] = float(
+                    row[RoutingParamColumns.PARAMS_SLOPE_MARGIN_THRESHOLD]
+                )
+                entry[RoutingParamColumns.VOLATILITY_MARGIN_THRESHOLD] = float(
+                    row[RoutingParamColumns.PARAMS_VOLATILITY_MARGIN_THRESHOLD]
+                )
+            lookup[trial_id] = entry
         return lookup
 
     def _get_contract_dirs(self, epoch_path):
@@ -323,6 +339,16 @@ class Picker:
                 result[RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD] = (
                     float(tv_m.group(1)) if tv_m else (float(thresh_m.group(1)) if thresh_m else None)
                 )
+                ood_m = re.search(r"ood_([0-9.]+)", parameter)
+                ms_m = re.search(r"ms_([0-9.]+)", parameter)
+                mv_m = re.search(r"mv_([0-9.]+)", parameter)
+                if "strat_hierarchical" in parameter or ood_m:
+                    result[RoutingParamColumns.GATING_STRATEGY] = "hierarchical"
+                    result[RoutingParamColumns.OOD_THRESHOLD] = float(ood_m.group(1)) if ood_m else 0.005
+                    result[RoutingParamColumns.SLOPE_MARGIN_THRESHOLD] = float(ms_m.group(1)) if ms_m else 0.12
+                    result[RoutingParamColumns.VOLATILITY_MARGIN_THRESHOLD] = float(mv_m.group(1)) if mv_m else 0.12
+                else:
+                    result[RoutingParamColumns.GATING_STRATEGY] = "absolute"
 
             result_list.append(result)
         result_df = pd.DataFrame(result_list)
@@ -390,6 +416,29 @@ class Picker:
         return self.best_result_df.iloc[0]
 
     def _format_best_para_str(self, best_row: pd.Series) -> str:
+        gating_strategy = (
+            str(best_row[RoutingParamColumns.GATING_STRATEGY])
+            if (RoutingParamColumns.GATING_STRATEGY in best_row and pd.notna(best_row[RoutingParamColumns.GATING_STRATEGY]))
+            else ("hierarchical" if (RoutingParamColumns.OOD_THRESHOLD in best_row and pd.notna(best_row[RoutingParamColumns.OOD_THRESHOLD])) else "absolute")
+        )
+        trial_id = (
+            best_row[MetricColumns.TRIAL_ID]
+            if (MetricColumns.TRIAL_ID in best_row and pd.notna(best_row[MetricColumns.TRIAL_ID]))
+            else None
+        )
+        ws = int(best_row[RoutingParamColumns.SLOPE_WINDOW_LENGTH]) if (RoutingParamColumns.SLOPE_WINDOW_LENGTH in best_row and pd.notna(best_row[RoutingParamColumns.SLOPE_WINDOW_LENGTH])) else None
+        wv = int(best_row[RoutingParamColumns.VOLATILITY_WINDOW_LENGTH]) if (RoutingParamColumns.VOLATILITY_WINDOW_LENGTH in best_row and pd.notna(best_row[RoutingParamColumns.VOLATILITY_WINDOW_LENGTH])) else None
+        gs = best_row[RoutingParamColumns.SLOPE_GAMMA] if (RoutingParamColumns.SLOPE_GAMMA in best_row and pd.notna(best_row[RoutingParamColumns.SLOPE_GAMMA])) else None
+        gv = best_row[RoutingParamColumns.VOLATILITY_GAMMA] if (RoutingParamColumns.VOLATILITY_GAMMA in best_row and pd.notna(best_row[RoutingParamColumns.VOLATILITY_GAMMA])) else None
+
+        if gating_strategy == "hierarchical":
+            ood = best_row[RoutingParamColumns.OOD_THRESHOLD]
+            ms = best_row[RoutingParamColumns.SLOPE_MARGIN_THRESHOLD]
+            mv = best_row[RoutingParamColumns.VOLATILITY_MARGIN_THRESHOLD]
+            if trial_id is not None:
+                return f"strat_hierarchical_trial_{int(trial_id)}_ws_{ws}_wv_{wv}_gs_{gs}_gv_{gv}_ood_{ood}_ms_{ms}_mv_{mv}"
+            return f"strat_hierarchical_ws_{ws}_wv_{wv}_gs_{gs}_gv_{gv}_ood_{ood}_ms_{ms}_mv_{mv}"
+
         keys = [
             RoutingParamColumns.SLOPE_WINDOW_LENGTH,
             RoutingParamColumns.VOLATILITY_WINDOW_LENGTH,
@@ -399,17 +448,8 @@ class Picker:
             RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD,
         ]
         if all(k in best_row and pd.notna(best_row[k]) for k in keys):
-            ws = int(best_row[RoutingParamColumns.SLOPE_WINDOW_LENGTH])
-            wv = int(best_row[RoutingParamColumns.VOLATILITY_WINDOW_LENGTH])
-            gs = best_row[RoutingParamColumns.SLOPE_GAMMA]
-            gv = best_row[RoutingParamColumns.VOLATILITY_GAMMA]
             ts = best_row[RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD]
             tv = best_row[RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD]
-            trial_id = (
-                best_row[MetricColumns.TRIAL_ID]
-                if (MetricColumns.TRIAL_ID in best_row and pd.notna(best_row[MetricColumns.TRIAL_ID]))
-                else None
-            )
             if trial_id is not None:
                 return f"trial_{int(trial_id)}_ws_{ws}_wv_{wv}_gs_{gs}_gv_{gv}_ts_{ts}_tv_{tv}"
             return f"ws_{ws}_wv_{wv}_gs_{gs}_gv_{gv}_ts_{ts}_tv_{tv}"
@@ -437,6 +477,8 @@ class Picker:
 
         if has_multi_contracts:
             target_contracts_dir = os.path.join(high_level_path, "contracts")
+            if os.path.exists(target_contracts_dir):
+                shutil.rmtree(target_contracts_dir)
             os.makedirs(target_contracts_dir, exist_ok=True)
             for c_dir in contract_dirs:
                 c_name = os.path.basename(c_dir)
@@ -482,9 +524,13 @@ class Picker:
         color_list = ["#8ECFC9", "#FFBE7A", "#FA7F6F"]
         all_contract_data = []
 
+        has_contracts = os.path.exists(os.path.join(high_level_path, "contracts"))
         for c_name, feather_path in contract_files:
-            c_result_dir = os.path.join(high_level_path, "contracts", c_name)
-            if not os.path.exists(c_result_dir):
+            if has_contracts:
+                c_result_dir = os.path.join(high_level_path, "contracts", c_name)
+                if not os.path.exists(c_result_dir):
+                    continue
+            else:
                 c_result_dir = high_level_path
 
             if not os.path.exists(os.path.join(c_result_dir, HistoryArtifactNames.REWARD_HISTORY_NPY)):
@@ -539,22 +585,14 @@ class Picker:
             # Individual plot for each contract
             fig, ax = plt.subplots(figsize=(14, 5))
             for i, key in enumerate(result_dict.keys()):
-                if i in (0, 1):
-                    plt.plot(
-                        df.timestamp[:],
-                        result_dict[key] * 100,
-                        color=color_list[i],
-                        label=key,
-                        linewidth=2,
-                    )
-                else:
-                    plt.plot(
-                        df.timestamp[:len(result_dict[key])],
-                        result_dict[key] * 100,
-                        color=color_list[i],
-                        label=key,
-                        linewidth=2,
-                    )
+                plot_len = min(len(df.timestamp), len(result_dict[key]))
+                plt.plot(
+                    df.timestamp.iloc[:plot_len],
+                    result_dict[key][:plot_len] * 100,
+                    color=color_list[i],
+                    label=key,
+                    linewidth=2,
+                )
             plt.title(f"Contract: {c_name} (Valid Dataset)", size=16)
             plt.xlabel("Trading Timestamp(s)", size=14)
             plt.ylabel("Total Return(%)", size=14)
@@ -581,22 +619,14 @@ class Picker:
                 r_idx, c_idx = divmod(idx, cols)
                 ax = axes[r_idx, c_idx]
                 for i, key in enumerate(result_dict.keys()):
-                    if i in (0, 1):
-                        ax.plot(
-                            df.timestamp[:],
-                            result_dict[key] * 100,
-                            color=color_list[i],
-                            label=key,
-                            linewidth=1.5,
-                        )
-                    else:
-                        ax.plot(
-                            df.timestamp[:len(result_dict[key])],
-                            result_dict[key] * 100,
-                            color=color_list[i],
-                            label=key,
-                            linewidth=1.5,
-                        )
+                    plot_len = min(len(df.timestamp), len(result_dict[key]))
+                    ax.plot(
+                        df.timestamp.iloc[:plot_len],
+                        result_dict[key][:plot_len] * 100,
+                        color=color_list[i],
+                        label=key,
+                        linewidth=1.5,
+                    )
                 ax.set_title(f"Contract: {c_name}", fontsize=12)
                 ax.set_xlabel("Timestamp", fontsize=10)
                 ax.set_ylabel("Return (%)", fontsize=10)

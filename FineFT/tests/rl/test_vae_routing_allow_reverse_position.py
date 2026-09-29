@@ -159,6 +159,7 @@ def test_two_dimensional_routing_maps_axis_labels_to_slot():
         "volatility": [0.1, 0.8, 0.2],
         "slope": [0.1, 0.2, 0.9],
     }[axis]
+    routing.gating_strategy = vru.create_gating_strategy("absolute", slope_threshold=0.2, volatility_threshold=0.2)
     routing.agent_act = lambda state, info: 7
 
     action = routing.get_action({}, np.array([0.0]), 0.0, 5)
@@ -194,6 +195,7 @@ def test_two_dimensional_empty_slot_uses_defensive_action(monkeypatch):
     routing.action = 6
     routing.macro_action_history = []
     routing.calculate_axis_window_result = lambda axis: [0.9, 0.1, 0.1]
+    routing.gating_strategy = vru.create_gating_strategy("absolute", slope_threshold=0.2, volatility_threshold=0.2)
     monkeypatch.setattr(vru, "rule_based_close", lambda *args: 4)
 
     def fail_if_model_is_called(state, info):
@@ -232,6 +234,7 @@ def test_two_dimensional_routing_applies_axis_specific_thresholds(monkeypatch):
         "volatility": [0.7, 0.1, 0.1],
         "slope": [0.1, 0.9, 0.1],
     }[axis]
+    routing.gating_strategy = vru.create_gating_strategy("absolute", slope_threshold=0.2, volatility_threshold=0.8)
     monkeypatch.setattr(vru, "rule_based_close", lambda *args: 4)
     routing.agent_act = lambda state, info: 7
 
@@ -335,6 +338,7 @@ def test_prepare_base_args_loads_two_dimensional_model_from_manifest(tmp_path):
         allow_reverse_position=True,
         enable_non_main_contract_defense=False,
         selection_manifest=str(manifest_path),
+        gating_strategy="absolute",
     )
 
     prepared = vro.prepare_base_args(args_1, args_2)
@@ -372,6 +376,7 @@ def test_prepare_base_args_does_not_mutate_original_args(tmp_path):
         allow_reverse_position=False,
         enable_non_main_contract_defense=False,
         selection_manifest=str(manifest_path),
+        gating_strategy="absolute",
     )
 
     prepared = vro.prepare_base_args(args_1, args_2)
@@ -411,6 +416,7 @@ def test_prepare_base_args_rejects_missing_model_assembly(tmp_path):
         allow_reverse_position=True,
         enable_non_main_contract_defense=False,
         selection_manifest=str(manifest_path),
+        gating_strategy="absolute",
     )
     with pytest.raises(
         ValueError, match="two-dimensional manifest has no model_assembly artifact"
@@ -438,6 +444,7 @@ def test_prepare_base_args_validates_manifest_contract(tmp_path):
         allow_reverse_position=True,
         enable_non_main_contract_defense=False,
         selection_manifest=str(manifest_path),
+        gating_strategy="absolute",
     )
     with pytest.raises(
         ValueError, match="manifest slot_count does not match the two-dimensional axes"
@@ -463,6 +470,10 @@ def test_suggest_trial_parameters_uses_independent_axis_parameters():
                 "volatility_rule_base_threshold": 0.45,
             }[name]
 
+        def suggest_categorical(self, name, choices):
+            self.names.append(name)
+            return choices[0]
+
     trial = FakeTrial()
     trial_args = types.SimpleNamespace()
     search_args = types.SimpleNamespace(
@@ -472,6 +483,7 @@ def test_suggest_trial_parameters_uses_independent_axis_parameters():
         gamma_max=0.98,
         rule_base_threshold_min=0.2,
         rule_base_threshold_max=0.5,
+        gating_strategy="absolute",
     )
 
     vro.suggest_trial_parameters(trial, trial_args, search_args)
@@ -481,6 +493,7 @@ def test_suggest_trial_parameters_uses_independent_axis_parameters():
         "volatility_window_length",
         "slope_gamma",
         "volatility_gamma",
+        "gating_strategy",
         "slope_rule_base_threshold",
         "volatility_rule_base_threshold",
     ]

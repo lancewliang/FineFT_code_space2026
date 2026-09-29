@@ -73,6 +73,7 @@ def _create_mock_router(
     routing.slot_count = 9
     routing.rule_base_threshold = 0.2
     routing.axis_thresholds = {"volatility": 0.2, "slope": 0.2}
+    routing.gating_strategy = vru.create_gating_strategy("absolute", slope_threshold=0.2, volatility_threshold=0.2)
     routing.selection_manifest = TwoDimensionalSelectionManifest.from_dict(
         _sample_manifest_payload(num_labels=3)
     )
@@ -105,6 +106,7 @@ def test_prepare_base_args_forwards_enable_non_main_contract_defense(tmp_path):
         allow_reverse_position=False,
         selection_manifest=str(manifest_path),
         enable_non_main_contract_defense=False,
+        gating_strategy="absolute",
     )
     args_2 = types.SimpleNamespace(
         dataset_name="fu",
@@ -114,6 +116,7 @@ def test_prepare_base_args_forwards_enable_non_main_contract_defense(tmp_path):
         allow_reverse_position=True,
         selection_manifest=str(manifest_path),
         enable_non_main_contract_defense=True,
+        gating_strategy="absolute",
     )
 
     base_args = vro.prepare_base_args(args_1, args_2)
@@ -190,6 +193,10 @@ def test_reconfigure_routing_preserves_defense_flag(monkeypatch):
         volatility_rule_base_threshold=0.25,
         trial_number=1,
         enable_non_main_contract_defense=True,
+        gating_strategy="absolute",
+        ood_threshold=0.005,
+        slope_margin_threshold=0.12,
+        volatility_margin_threshold=0.12,
     )
     monkeypatch.setattr(routing, "_resolve_test_path", lambda a: "/tmp/test_trial_1")
     monkeypatch.setattr(routing, "reset_routing_state", lambda: None)

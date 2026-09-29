@@ -29,6 +29,7 @@ from env.env_class.futures_util import (
     rule_based_close,
 )
 from RL.DiHFT.VAE.vae import MLP_VAE, analyze_single_sample
+from RL.DiHFT.high_level.gating import create_gating_strategy
 
 from analysis.pick_agent.FineFT_two_dimensional_agent_selector import (
     TwoDimensionalSelectionManifest,
@@ -297,6 +298,31 @@ parser.add_argument(
     help="volatility rule base threshold",
 )
 parser.add_argument(
+    "--gating_strategy",
+    type=str,
+    default="absolute",
+    choices=["absolute", "hierarchical"],
+    help="gating strategy type (absolute or hierarchical)",
+)
+parser.add_argument(
+    "--ood_threshold",
+    type=float,
+    default=0.005,
+    help="OOD circuit breaker threshold for hierarchical gating",
+)
+parser.add_argument(
+    "--slope_margin_threshold",
+    type=float,
+    default=0.12,
+    help="slope top-1 vs top-2 probability margin threshold for hierarchical gating",
+)
+parser.add_argument(
+    "--volatility_margin_threshold",
+    type=float,
+    default=0.12,
+    help="volatility top-1 vs top-2 probability margin threshold for hierarchical gating",
+)
+parser.add_argument(
     "--trial_number",
     type=int,
     default=None,
@@ -329,13 +355,18 @@ import re
 
 
 def resolve_routing_parameters(args):
-    """Resolve 6 dual-axis routing parameters from CLI arguments, para_file, or optuna_csv."""
+    """Resolve dual-axis routing parameters and gating strategy from CLI arguments, para_file, or optuna_csv."""
     slope_window_length = args.slope_window_length
     volatility_window_length = args.volatility_window_length
     slope_gamma = args.slope_gamma
     volatility_gamma = args.volatility_gamma
     slope_rule_base_threshold = args.slope_rule_base_threshold
     volatility_rule_base_threshold = args.volatility_rule_base_threshold
+
+    gating_strategy = args.gating_strategy
+    ood_threshold = args.ood_threshold
+    slope_margin_threshold = args.slope_margin_threshold
+    volatility_margin_threshold = args.volatility_margin_threshold
 
     para_file = args.para_file
     optuna_csv = args.optuna_csv
@@ -363,8 +394,17 @@ def resolve_routing_parameters(args):
                 volatility_gamma = float(r[RoutingParamColumns.PARAMS_VOLATILITY_GAMMA])
             if slope_rule_base_threshold is None:
                 slope_rule_base_threshold = float(r[RoutingParamColumns.PARAMS_SLOPE_RULE_BASE_THRESHOLD])
-            if volatility_rule_base_threshold is None:
+            if volatility_rule_base_threshold is None and RoutingParamColumns.PARAMS_VOLATILITY_RULE_BASE_THRESHOLD in df.columns:
                 volatility_rule_base_threshold = float(r[RoutingParamColumns.PARAMS_VOLATILITY_RULE_BASE_THRESHOLD])
+            if RoutingParamColumns.PARAMS_GATING_STRATEGY in df.columns:
+                gating_strategy = str(r[RoutingParamColumns.PARAMS_GATING_STRATEGY])
+            if RoutingParamColumns.PARAMS_OOD_THRESHOLD in df.columns:
+                ood_threshold = float(r[RoutingParamColumns.PARAMS_OOD_THRESHOLD])
+                gating_strategy = "hierarchical"
+            if RoutingParamColumns.PARAMS_SLOPE_MARGIN_THRESHOLD in df.columns:
+                slope_margin_threshold = float(r[RoutingParamColumns.PARAMS_SLOPE_MARGIN_THRESHOLD])
+            if RoutingParamColumns.PARAMS_VOLATILITY_MARGIN_THRESHOLD in df.columns:
+                volatility_margin_threshold = float(r[RoutingParamColumns.PARAMS_VOLATILITY_MARGIN_THRESHOLD])
 
     # 2. Try resolving via explicit ws_ / wv_ format in para_str
     if para_str:
@@ -387,6 +427,21 @@ def resolve_routing_parameters(args):
             slope_rule_base_threshold = float(ts_match.group(1))
         if tv_match and volatility_rule_base_threshold is None:
             volatility_rule_base_threshold = float(tv_match.group(1))
+
+        if "strat_hierarchical" in para_str or "ood_" in para_str:
+            gating_strategy = "hierarchical"
+        elif "strat_absolute" in para_str:
+            gating_strategy = "absolute"
+
+        ood_match = re.search(r"ood_([0-9.]+)", para_str)
+        ms_match = re.search(r"ms_([0-9.]+)", para_str)
+        mv_match = re.search(r"mv_([0-9.]+)", para_str)
+        if ood_match:
+            ood_threshold = float(ood_match.group(1))
+        if ms_match:
+            slope_margin_threshold = float(ms_match.group(1))
+        if mv_match:
+            volatility_margin_threshold = float(mv_match.group(1))
 
     # 3. Fallback to single gamma_ / window_ / threshold_ format if present in para_str
     if para_str:
@@ -415,6 +470,11 @@ def resolve_routing_parameters(args):
     args.volatility_window_length = volatility_window_length if volatility_window_length is not None else base_window
     args.slope_gamma = slope_gamma if slope_gamma is not None else base_gamma
     args.volatility_gamma = volatility_gamma if volatility_gamma is not None else base_gamma
+    args.gating_strategy = gating_strategy
+    args.ood_threshold = ood_threshold
+    args.slope_margin_threshold = slope_margin_threshold
+    args.volatility_margin_threshold = volatility_margin_threshold
+
     args.slope_rule_base_threshold = slope_rule_base_threshold if slope_rule_base_threshold is not None else base_threshold
     args.volatility_rule_base_threshold = volatility_rule_base_threshold if volatility_rule_base_threshold is not None else base_threshold
 
@@ -499,6 +559,14 @@ class vae_risk_aware_routing:
             "slope": args.slope_rule_base_threshold,
             "volatility": args.volatility_rule_base_threshold,
         }
+        self.gating_strategy = create_gating_strategy(
+            args.gating_strategy,
+            slope_threshold=self.axis_thresholds["slope"],
+            volatility_threshold=self.axis_thresholds["volatility"],
+            ood_threshold=args.ood_threshold,
+            slope_margin_threshold=args.slope_margin_threshold,
+            volatility_margin_threshold=args.volatility_margin_threshold,
+        )
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
         self.experiment_name = args.experiment_name
         self.eval_stage = args.eval_stage
@@ -668,6 +736,12 @@ class vae_risk_aware_routing:
             "vae_risk_aware_routing",
         )
         trial_suffix = "" if args.trial_number is None else f"_trial_{args.trial_number}"
+        if args.gating_strategy == "hierarchical":
+            return os.path.join(
+                self.model_path,
+                f"strat_hierarchical_gamma_{self.gamma}_window_{self.window_length}_ood_{args.ood_threshold}_ms_{args.slope_margin_threshold}_mv_{args.volatility_margin_threshold}"
+                + trial_suffix,
+            )
         return os.path.join(
             self.model_path,
             "gamma_{}_window_{}_threshold_{}".format(
@@ -697,6 +771,14 @@ class vae_risk_aware_routing:
             "slope": args.slope_rule_base_threshold,
             "volatility": args.volatility_rule_base_threshold,
         }
+        self.gating_strategy = create_gating_strategy(
+            args.gating_strategy,
+            slope_threshold=self.axis_thresholds["slope"],
+            volatility_threshold=self.axis_thresholds["volatility"],
+            ood_threshold=args.ood_threshold,
+            slope_margin_threshold=args.slope_margin_threshold,
+            volatility_margin_threshold=args.volatility_margin_threshold,
+        )
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
         self.enable_non_main_contract_defense = args.enable_non_main_contract_defense
         self.test_path = self._resolve_test_path(args)
@@ -793,15 +875,13 @@ class vae_risk_aware_routing:
 
         volatility_weights = self.calculate_axis_window_result("volatility")
         slope_weights = self.calculate_axis_window_result("slope")
-        if (
-            max(volatility_weights) < self.axis_thresholds["volatility"]
-            or max(slope_weights) < self.axis_thresholds["slope"]
-        ):
+        decision = self.gating_strategy.decide(volatility_weights, slope_weights)
+        if decision.is_defensive:
             action = self._defensive_action(info, current_position, current_leverage)
             self.macro_action_history.append(self.slot_count)
         else:
-            volatility_index = int(np.argmax(volatility_weights))
-            slope_index = int(np.argmax(slope_weights))
+            volatility_index = decision.volatility_index
+            slope_index = decision.slope_index
             slot_id = volatility_index * self.num_labels + slope_index
             slot = self.selection_manifest.slots[slot_id]
             if slot["kind"] == "empty_model":

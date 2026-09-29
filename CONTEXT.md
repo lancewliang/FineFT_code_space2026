@@ -508,6 +508,30 @@ _Avoid_: 元路由器、路由选择器
 当单合约累计最大回撤率超过 15% 时强行切断 Agent 路由，全量降级为规则平仓 (`macro_action = 5`)。
 _Avoid_: 熔断器、强平保护
 
+**门控策略 (Gating Strategy)**:
+高层 Meta Router 中根据双轴 VAE 状态似然分位数权重决定是否执行防御性空仓或调度底层子 Agent 的算法模块。
+_Avoid_: 路由策略、过滤规则
+
+**绝对阈值门控 (Absolute Threshold Gating)**:
+直接使用双轴 VAE 似然分位数绝对阈值与平滑权重比较的传统门控策略 (`AbsoluteThresholdGating`，CLI 标识为 `absolute`)。低于阈值即触发拒识空仓。
+_Avoid_: 单阈值门控、传统门控、旧门控
+
+**双层分级门控 (Hierarchical Dual Gating)**:
+解耦黑天鹅绝对底线熔断与相对模式清晰度降噪的新一代风控门控策略 (`HierarchicalDualGating`，CLI 标识为 `hierarchical`)。
+_Avoid_: 相对概率门控、混合门控
+
+**黑天鹅绝对熔断 (Tail-Risk Circuit Breaker)**:
+双层分级门控中的第一道防线（Gate 1）。当双轴最大平滑似然分位数跌破极低绝对阈值（如 0.005）时触发，防止模型在完全未见过的极端黑天鹅行情中盲目交易。
+_Avoid_: 绝对过滤、底线拒识
+
+**相对清晰度门控 (Relative Margin Gating)**:
+双层分级门控中的第二道防线（Gate 2）。在线性归一化概率分布上计算首名模式与次名模式的置信度差值 $\Delta p = p_{(1)} - p_{(2)}$；若差值低于设定间距阈值，判定市场处于无序震荡并触发空仓观望。
+_Avoid_: 相对阈值、间距门控、Softmax 门控
+
+**门控决策契约 (Gating Decision Contract)**:
+门控策略返回的标准化数据契约 `GatingDecision`，显式包含 `is_defensive`、双轴子 Agent 索引以及结构化拒识归因标签（如 `none`、`absolute_threshold`、`ood_circuit_breaker`、`margin_ambiguity`）。
+_Avoid_: 门控结果、路由决策字典
+
 **非主力合约门控防御 (Non-Main Contract Defensive Gating)**:
 在高层路由中基于前一交易日合约角色档位（`prev_day_contract_role_tier < 0.5`）对非主力及非次主力合约实施规则平仓并保持空仓的保护策略，避免浅盘口低流动性合约扭曲多合约验证集评估与 Optuna 门控超参遴选；支持通过参数进行退化消融测试。
 _Avoid_: 非主力过滤、角色熔断、合约降级
