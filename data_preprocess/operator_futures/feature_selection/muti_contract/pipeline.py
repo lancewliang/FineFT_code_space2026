@@ -311,7 +311,7 @@ def _ordered_filter_features(
                     zip(sc_df["feature"].to_list(), sc_df["SignConsistency"].to_list())
                 )
                 sign_consistent = [
-                    f for f in hard if sc_map.get(f, 0.0) >= min_sign_consistency
+                    f for f in hard if sc_map[f] >= min_sign_consistency
                 ]
                 sign_consistency_dropped = [
                     f for f in hard if f not in set(sign_consistent)
@@ -325,7 +325,7 @@ def _ordered_filter_features(
             zip(selected["feature"].to_list(), selected["SignConsistency"].to_list())
         )
         sign_consistent = [
-            f for f in hard if sc_map.get(f, 0.0) >= min_sign_consistency
+            f for f in hard if sc_map[f] >= min_sign_consistency
         ]
         sign_consistency_dropped = [
             f for f in hard if f not in set(sign_consistent)
@@ -384,7 +384,7 @@ def _ordered_filter_features(
 
     if mean_psi_by_feature is not None:
         mean_psi_values = [
-            float(mean_psi_by_feature[f]) if f in mean_psi_by_feature else 0.0
+            float(mean_psi_by_feature[f])
             for f in scored_input["feature"].to_list()
         ]
     elif "mean_psi" in scored_input.columns:
@@ -636,6 +636,21 @@ def run_feature_selection(
     if not candidate_universe and not mandatory_features:
         raise ValueError(f"{stage} feature universe is empty after feature ablation")
 
+    distribution_audit = audit_distribution_drift(
+        frames=frames,
+        feature_universe=candidate_universe,
+        num_bins=distribution_num_bins,
+        max_mean_psi=max_mean_psi,
+        max_pair_psi=max_pair_psi,
+        min_drift_survivors=min_drift_survivors,
+    )
+    distribution_audit_path = output_dir / "distribution_audit_metrics.csv"
+    distribution_audit.metrics_df.write_csv(distribution_audit_path)
+
+    if distribution_audit.dropped_features:
+        surviving_set = set(distribution_audit.surviving_features)
+        candidate_universe = [f for f in candidate_universe if f in surviving_set]
+
     feature_universe = candidate_universe + mandatory_features
 
     per_contract_dir = output_dir / "per_contract"
@@ -718,17 +733,6 @@ def run_feature_selection(
     regime_audit_path = output_dir / "regime_audit_metrics.csv"
     regime_audit_df.write_csv(regime_audit_path)
 
-    distribution_audit = audit_distribution_drift(
-        frames=frames,
-        feature_universe=candidate_universe,
-        num_bins=distribution_num_bins,
-        max_mean_psi=max_mean_psi,
-        max_pair_psi=max_pair_psi,
-        min_drift_survivors=min_drift_survivors,
-    )
-    distribution_audit_path = output_dir / "distribution_audit_metrics.csv"
-    distribution_audit.metrics_df.write_csv(distribution_audit_path)
-
     if stage == "valid":
         manifest = FeatureSelectionManifest(
             symbol=symbol,
@@ -749,16 +753,15 @@ def run_feature_selection(
             regime_quantiles=regime_quantiles,
             regime_audit_path=str(regime_audit_path),
             distribution_audit_path=str(distribution_audit_path),
+            max_mean_psi=max_mean_psi,
+            max_pair_psi=max_pair_psi,
+            min_drift_survivors=min_drift_survivors,
+            min_sign_consistency=min_sign_consistency,
             conditional_anchors_retained=retention_details if retention_details else None,
         )
         manifest_path = output_dir / "feature_selection_manifest.json"
         manifest.write_json(manifest_path)
         return FeatureSelectionResult(output_dir=output_dir, manifest=manifest)
-
-    if distribution_audit.dropped_features:
-        candidate_universe = [
-            f for f in candidate_universe if f in set(distribution_audit.surviving_features)
-        ]
     persistence_diagnostics = None
     if min_half_life_bars > 0.0:
         persistence_diagnostics = _calculate_persistence_diagnostics(
@@ -851,6 +854,10 @@ def run_feature_selection(
         regime_quantiles=regime_quantiles,
         regime_audit_path=str(regime_audit_path),
         distribution_audit_path=str(distribution_audit_path),
+        max_mean_psi=max_mean_psi,
+        max_pair_psi=max_pair_psi,
+        min_drift_survivors=min_drift_survivors,
+        min_sign_consistency=min_sign_consistency,
         conditional_anchors_retained=retention_details if retention_details else None,
     )
     manifest_path = output_dir / "feature_selection_manifest.json"

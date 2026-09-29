@@ -99,6 +99,10 @@ class FeatureSelectionManifest:
     regime_quantiles: dict[str, list[float]] | None = None
     regime_audit_path: str | None = None
     distribution_audit_path: str | None = None
+    max_mean_psi: float | None = None
+    max_pair_psi: float | None = None
+    min_drift_survivors: int | None = None
+    min_sign_consistency: float | None = None
     conditional_anchors_retained: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -155,6 +159,14 @@ class FeatureSelectionManifest:
             payload["regime_audit_path"] = self.regime_audit_path
         if self.distribution_audit_path is not None:
             payload["distribution_audit_path"] = self.distribution_audit_path
+        if self.max_mean_psi is not None:
+            payload["max_mean_psi"] = self.max_mean_psi
+        if self.max_pair_psi is not None:
+            payload["max_pair_psi"] = self.max_pair_psi
+        if self.min_drift_survivors is not None:
+            payload["min_drift_survivors"] = self.min_drift_survivors
+        if self.min_sign_consistency is not None:
+            payload["min_sign_consistency"] = self.min_sign_consistency
         if self.conditional_anchors_retained is not None:
             payload["conditional_anchors_retained"] = self.conditional_anchors_retained
         return payload
