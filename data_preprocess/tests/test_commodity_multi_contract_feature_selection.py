@@ -942,3 +942,47 @@ def test_catboost_importance_uses_temporal_split_when_sample_size_large(fake_cat
     result = calculate_metric_frame(frame, ["alpha", "beta"], windows_list=[1])
     assert fake_catboost["fit"]["eval_set"] is not None
     assert fake_catboost["fit"]["eval_set"].x.shape[0] < fake_catboost["fit"]["train_pool"].x.shape[0] + fake_catboost["fit"]["eval_set"].x.shape[0]
+
+
+def test_conditional_anchors_cannot_override_feature_blacklist(tmp_path, fake_catboost):
+    _write_long_split_contract(
+        tmp_path,
+        "train",
+        "fu2601",
+        [float(index) for index in range(15)],
+        [float(14 - index) for index in range(15)],
+        extra_features={
+            "log_price_slope_96": [float(i) for i in range(15)],
+        },
+    )
+    _write_long_split_contract(
+        tmp_path,
+        "train",
+        "fu2605",
+        [float(index + 1) for index in range(15)],
+        [float(15 - index) for index in range(15)],
+        extra_features={
+            "log_price_slope_96": [float(i + 1) for i in range(15)],
+        },
+    )
+
+    manifest = run_feature_selection(
+        root_path=tmp_path,
+        split_path="PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST",
+        save_path="PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION",
+        symbol="fu",
+        target_freq="5min",
+        stage="train",
+        orderbook_depth=5,
+        min_abs_ic=0.001,
+        max_correlation=1.0,
+        composite_drop_ratio=0.0,
+        feature_blacklist=["log_price_slope_96"],
+        feature_ablation_patterns=[],
+        rank_ic_mode="absolute",
+        enable_conditional_anchors=True,
+    )
+
+    stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
+    selected_features = np.load(stage_dir / "state_features.npy", allow_pickle=True).tolist()
+    assert "log_price_slope_96" not in selected_features

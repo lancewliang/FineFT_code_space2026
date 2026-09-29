@@ -1,6 +1,6 @@
 source data_preprocess/script_preprocess/future_upgraded/commodity/commodity_process.sh
 
-COMMODITY_FU_FEATURE_BLACKLIST=(
+COMMODITY_COMMON_FEATURE_BLACKLIST=(
     open
     high
     low
@@ -185,6 +185,78 @@ COMMODITY_FU_FEATURE_BLACKLIST=(
     buy_spread_oe_max
     sell_spread_oe_max
 )
+
+# Frequency-specific feature blacklists (ADR-0032: Physical Window Truncation)
+COMMODITY_10MIN_FEATURE_BLACKLIST=(
+    realized_volatility_192
+    ema_slope_192
+    log_price_slope_96
+    bollinger_bandwidth_96_origin
+    vma_192_std_norm_origin
+    cntd_96_origin
+    macro_trade_imbalance_continuous_240
+    cvd_slope_192
+    cvd_slope_96
+    sell_volume_oe_trend_192
+    wvma_192_origin
+    wvma_96_origin
+    imax_96_origin
+    imin_96_origin
+    rsv_96_std_norm_origin
+    corr_192_origin
+    relative_amount_192
+    trend_to_noise_96
+    log_return_vol_quantile_192
+)
+
+# 5min frequency retains w=96 (1 trading day cycle), blacklists w>=192 multi-day macro
+COMMODITY_5MIN_FEATURE_BLACKLIST=(
+    realized_volatility_192
+    ema_slope_192
+    vma_192_std_norm_origin
+    macro_trade_imbalance_continuous_240
+    cvd_slope_192
+    sell_volume_oe_trend_192
+    wvma_192_origin
+    corr_192_origin
+    relative_amount_192
+    log_return_vol_quantile_192
+)
+
+# 1min frequency retains w=96 (1.6h) and w=192 (3.2h) as purely intraday signals
+COMMODITY_1MIN_FEATURE_BLACKLIST=()
+
+# 30min frequency: w>=48 spans multiple trading days
+COMMODITY_30MIN_FEATURE_BLACKLIST=(
+    "${COMMODITY_10MIN_FEATURE_BLACKLIST[@]}"
+)
+
+# Backward-compatibility alias
+COMMODITY_FU_FEATURE_BLACKLIST=("${COMMODITY_COMMON_FEATURE_BLACKLIST[@]}")
+
+get_commodity_feature_blacklist() {
+    local target_freq=${1:-10min}
+    local freq_blacklist=()
+    case "${target_freq}" in
+        10min)
+            freq_blacklist=("${COMMODITY_10MIN_FEATURE_BLACKLIST[@]}")
+            ;;
+        5min)
+            freq_blacklist=("${COMMODITY_5MIN_FEATURE_BLACKLIST[@]}")
+            ;;
+        1min)
+            freq_blacklist=("${COMMODITY_1MIN_FEATURE_BLACKLIST[@]}")
+            ;;
+        30min)
+            freq_blacklist=("${COMMODITY_30MIN_FEATURE_BLACKLIST[@]}")
+            ;;
+        *)
+            freq_blacklist=()
+            ;;
+    esac
+    printf "%s\n" "${COMMODITY_COMMON_FEATURE_BLACKLIST[@]}" "${freq_blacklist[@]}"
+}
+
 
 run_commodity_logged_step() {
     local log_dir=$1
@@ -772,9 +844,14 @@ run_commodity_feature_selection() {
     local symbol=$4
     local root_path=$5
     local regime_bins=${6:-${REGIME_BINS:-3}}
+    local effective_blacklist=()
+    while IFS= read -r item; do
+        [ -n "$item" ] && effective_blacklist+=("$item")
+    done < <(get_commodity_feature_blacklist "${target_freq}")
+
     local feature_blacklist_args=()
-    if [ "${#COMMODITY_FU_FEATURE_BLACKLIST[@]}" -gt 0 ]; then
-        feature_blacklist_args=(--feature_blacklist "${COMMODITY_FU_FEATURE_BLACKLIST[@]}")
+    if [ "${#effective_blacklist[@]}" -gt 0 ]; then
+        feature_blacklist_args=(--feature_blacklist "${effective_blacklist[@]}")
     fi
 
     local target_regime_bins_args=()

@@ -469,8 +469,15 @@ def _process_ohlcv_single_window_polars(df: pl.DataFrame, window: int) -> pl.Dat
         (pl.col("__ret1").gt(0).cast(pl.Float64).rolling_sum(window) / window).alias(f"cntp_{window}"),
         (pl.col("__ret1").lt(0).cast(pl.Float64).rolling_sum(window) / window).alias(f"cntn_{window}"),
         (
-            pl.col("__ret1").gt(0).cast(pl.Float64).rolling_sum(window) / window
-            - pl.col("__ret1").lt(0).cast(pl.Float64).rolling_sum(window) / window
+            (
+                pl.col("__ret1").gt(0).cast(pl.Float64).rolling_sum(window) / window
+                - pl.col("__ret1").lt(0).cast(pl.Float64).rolling_sum(window) / window
+            )
+            / (
+                pl.col("__ret1").gt(0).cast(pl.Float64).rolling_sum(window) / window
+                + pl.col("__ret1").lt(0).cast(pl.Float64).rolling_sum(window) / window
+                + 1e-6
+            )
         ).alias(f"cntd_{window}"),
         pl.col("__corr").alias(f"corr_{window}"),
         pl.col("__cord").alias(f"cord_{window}"),
@@ -486,8 +493,8 @@ def _process_ohlcv_single_window_polars(df: pl.DataFrame, window: int) -> pl.Dat
         ((close - close_shift) / close_std).alias(f"roc_{window}_std_norm"),
         ((close - pl.col("__close_mean")) / close_std).alias(f"ma_{window}_std_norm"),
         ((close - close_shift) / (window * close_std)).alias(f"beta_{window}_std_norm"),
-        ((close.rolling_max(window) - close) / close_std).alias(f"max_{window}_std_norm"),
-        ((close - close.rolling_min(window)) / close_std).alias(f"min_{window}_std_norm"),
+        ((close.rolling_max(window) - close) / (close + min_value)).alias(f"max_{window}_std_norm"),
+        ((close - close.rolling_min(window)) / (close + min_value)).alias(f"min_{window}_std_norm"),
         ((close.rolling_quantile(0.8, interpolation="linear", window_size=window) - close) / close_std).alias(f"qtlu_{window}_std_norm"),
         ((close - close.rolling_quantile(0.2, interpolation="linear", window_size=window)) / close_std).alias(f"qtld_{window}_std_norm"),
         ((close - min_price) / (close_std + min_value)).alias(f"rsv_{window}_std_norm"),
@@ -554,9 +561,9 @@ def _process_ohlc_single_window_polars(df: pl.DataFrame, window: int) -> pl.Data
         ((close - close_shift) / (window * close)).alias(f"beta_{window}"),
         ((close - close_shift) / (window * close_std)).alias(f"beta_{window}_std_norm"),
         (close_max / close).alias(f"max_{window}"),
-        ((close_max - close) / close_std).alias(f"max_{window}_std_norm"),
+        ((close_max - close) / (close + min_value)).alias(f"max_{window}_std_norm"),
         (close_min / close).alias(f"min_{window}"),
-        ((close - close_min) / close_std).alias(f"min_{window}_std_norm"),
+        ((close - close_min) / (close + min_value)).alias(f"min_{window}_std_norm"),
         (close_q80 / close).alias(f"qtlu_{window}"),
         ((close_q80 - close) / close_std).alias(f"qtlu_{window}_std_norm"),
         (close_q20 / close).alias(f"qtld_{window}"),
@@ -569,8 +576,15 @@ def _process_ohlc_single_window_polars(df: pl.DataFrame, window: int) -> pl.Data
         ((pl.col("__ret1") > 0).rolling_sum(window) / window).alias(f"cntp_{window}"),
         ((pl.col("__ret1") < 0).rolling_sum(window) / window).alias(f"cntn_{window}"),
         (
-            ((pl.col("__ret1") > 0).rolling_sum(window) / window)
-            - ((pl.col("__ret1") < 0).rolling_sum(window) / window)
+            (
+                (pl.col("__ret1") > 0).rolling_sum(window) / window
+                - (pl.col("__ret1") < 0).rolling_sum(window) / window
+            )
+            / (
+                (pl.col("__ret1") > 0).rolling_sum(window) / window
+                + (pl.col("__ret1") < 0).rolling_sum(window) / window
+                + 1e-6
+            )
         ).alias(f"cntd_{window}"),
         (
             pl.col("__pos_ret1").rolling_sum(window) / (pl.col("__abs_ret1").rolling_sum(window) + min_value)

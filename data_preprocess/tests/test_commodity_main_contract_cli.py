@@ -1677,6 +1677,84 @@ def test_commodity_full_process_shell_passes_feature_blacklist():
     assert '"bid${level}_size"' not in text
 
 
+def test_commodity_full_process_shell_frequency_aware_feature_blacklist():
+    script = (
+        REPO_ROOT
+        / "data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
+    )
+    text = script.read_text(encoding="utf-8")
+
+    assert "COMMODITY_COMMON_FEATURE_BLACKLIST=(" in text
+    assert "COMMODITY_10MIN_FEATURE_BLACKLIST=(" in text
+    assert "COMMODITY_5MIN_FEATURE_BLACKLIST=(" in text
+    assert "COMMODITY_1MIN_FEATURE_BLACKLIST=(" in text
+    assert "get_commodity_feature_blacklist" in text
+
+    # Verify 10min blacklist includes all 19 macro features
+    expected_10min_macro_features = [
+        "realized_volatility_192",
+        "ema_slope_192",
+        "log_price_slope_96",
+        "bollinger_bandwidth_96_origin",
+        "vma_192_std_norm_origin",
+        "cntd_96_origin",
+        "macro_trade_imbalance_continuous_240",
+        "cvd_slope_192",
+        "cvd_slope_96",
+        "sell_volume_oe_trend_192",
+        "wvma_192_origin",
+        "wvma_96_origin",
+        "imax_96_origin",
+        "imin_96_origin",
+        "rsv_96_std_norm_origin",
+        "corr_192_origin",
+        "relative_amount_192",
+        "trend_to_noise_96",
+        "log_return_vol_quantile_192",
+    ]
+    for feat in expected_10min_macro_features:
+        assert feat in text
+
+    # Execute bash snippet to test dynamic dispatch
+    import subprocess
+    cmd = f"""bash -c '
+    source "{script}"
+    echo "===10MIN==="
+    get_commodity_feature_blacklist "10min"
+    echo "===5MIN==="
+    get_commodity_feature_blacklist "5min"
+    echo "===1MIN==="
+    get_commodity_feature_blacklist "1min"
+    '"""
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
+    out = result.stdout
+
+    sections = {}
+    current_key = None
+    for line in out.strip().splitlines():
+        line = line.strip()
+        if line.startswith("===") and line.endswith("==="):
+            current_key = line.strip("=")
+            sections[current_key] = set()
+        elif current_key and line:
+            sections[current_key].add(line)
+
+    # 10min must include both 96 and 192 features
+    assert "realized_volatility_192" in sections["10MIN"]
+    assert "log_price_slope_96" in sections["10MIN"]
+    assert "open" in sections["10MIN"]
+
+    # 5min must include 192 but NOT 96 features (preserving 1-day signals)
+    assert "realized_volatility_192" in sections["5MIN"]
+    assert "log_price_slope_96" not in sections["5MIN"]
+    assert "open" in sections["5MIN"]
+
+    # 1min must NOT include 192 or 96 (preserving intraday signals)
+    assert "realized_volatility_192" not in sections["1MIN"]
+    assert "log_price_slope_96" not in sections["1MIN"]
+    assert "open" in sections["1MIN"]
+
+
 def test_commodity_full_process_shell_preserves_cross_month_features():
     script = (
         REPO_ROOT

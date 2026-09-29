@@ -671,3 +671,56 @@ def test_standardized_price_distance_operators_properties():
             assert row[f"max_{window}_std_norm"] == pytest.approx(0.0, abs=1e-5)
         if c == min(window_slice):
             assert row[f"min_{window}_std_norm"] == pytest.approx(0.0, abs=1e-5)
+
+
+def test_extreme_normalization_zero_volatility_safety_and_cntd_boundedness():
+    # 1. Constant price test (zero volatility)
+    constant_close = [100.0] * 20
+    df_const = pl.DataFrame({
+        "timestamp": list(range(20)),
+        "open": constant_close,
+        "high": constant_close,
+        "low": constant_close,
+        "close": constant_close,
+        "volume": [1000.0] * 20,
+    })
+    res_const = _process_ohlcv_single_window_polars(df_const, window=5)
+    max_norm_const = res_const["max_5_std_norm"].to_numpy()
+    min_norm_const = res_const["min_5_std_norm"].to_numpy()
+    cntd_const = res_const["cntd_5"].to_numpy()
+
+    assert np.isfinite(max_norm_const).all()
+    assert np.isfinite(min_norm_const).all()
+    assert np.allclose(max_norm_const, 0.0)
+    assert np.allclose(min_norm_const, 0.0)
+    assert np.allclose(cntd_const, 0.0)
+
+    # 2. Pure monotonic upward trend
+    up_close = [100.0 + idx * 2.0 for idx in range(30)]
+    df_up = pl.DataFrame({
+        "timestamp": list(range(30)),
+        "open": up_close,
+        "high": [c + 1.0 for c in up_close],
+        "low": [c - 1.0 for c in up_close],
+        "close": up_close,
+        "volume": [1000.0] * 30,
+    })
+    res_up = _process_ohlcv_single_window_polars(df_up, window=5)
+    cntd_up = res_up["cntd_5"].to_numpy()
+    assert (cntd_up > 0.99).all()
+    assert (cntd_up <= 1.0).all()
+
+    # 3. Pure monotonic downward trend
+    down_close = [200.0 - idx * 2.0 for idx in range(30)]
+    df_down = pl.DataFrame({
+        "timestamp": list(range(30)),
+        "open": down_close,
+        "high": [c + 1.0 for c in down_close],
+        "low": [c - 1.0 for c in down_close],
+        "close": down_close,
+        "volume": [1000.0] * 30,
+    })
+    res_down = _process_ohlcv_single_window_polars(df_down, window=5)
+    cntd_down = res_down["cntd_5"].to_numpy()
+    assert (cntd_down < -0.99).all()
+    assert (cntd_down >= -1.0).all()

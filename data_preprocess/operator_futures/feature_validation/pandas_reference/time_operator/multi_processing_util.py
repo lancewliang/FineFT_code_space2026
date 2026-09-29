@@ -97,9 +97,9 @@ def process_ohlcv_single_window(df: pd.DataFrame, w: int):
     )
 
     df_feature["max_{}".format(w)] = close_rolling.max() / df["close"]
-    df_feature["max_{}_std_norm".format(w)] = (close_rolling.max() - df["close"]) / close_std
+    df_feature["max_{}_std_norm".format(w)] = (close_rolling.max() - df["close"]) / (df["close"] + min_value)
     df_feature["min_{}".format(w)] = close_rolling.min() / df["close"]
-    df_feature["min_{}_std_norm".format(w)] = (df["close"] - close_rolling.min()) / close_std
+    df_feature["min_{}_std_norm".format(w)] = (df["close"] - close_rolling.min()) / (df["close"] + min_value)
     df_feature["qtlu_{}".format(w)] = close_rolling.quantile(0.8) / df["close"]
     df_feature["qtlu_{}_std_norm".format(w)] = (close_rolling.quantile(0.8) - df["close"]) / close_std
     df_feature["qtld_{}".format(w)] = close_rolling.quantile(0.2) / df["close"]
@@ -123,6 +123,8 @@ def process_ohlcv_single_window(df: pd.DataFrame, w: int):
     df_feature["cntn_{}".format(w)] = (df_feature["ret1"].lt(0)).rolling(w).sum() / w
     df_feature["cntd_{}".format(w)] = (
         df_feature["cntp_{}".format(w)] - df_feature["cntn_{}".format(w)]
+    ) / (
+        df_feature["cntp_{}".format(w)] + df_feature["cntn_{}".format(w)] + 1e-6
     )
     df_feature["corr_{}".format(w)] = close_rolling.corr(pairwise=volume_rolling)
     previous_returns = df["close"] / close_shift_1
@@ -197,10 +199,10 @@ def process_ohlc_single_window(df: pd.DataFrame, w: int):
         w * close_std
     )
     df_feature["max_{}".format(w)] = close_rolling.max() / df["close"]
-    df_feature["max_{}_std_norm".format(w)] = (close_rolling.max() - df["close"]) / close_std
+    df_feature["max_{}_std_norm".format(w)] = (close_rolling.max() - df["close"]) / (df["close"] + min_value)
 
     df_feature["min_{}".format(w)] = close_rolling.min() / df["close"]
-    df_feature["min_{}_std_norm".format(w)] = (df["close"] - close_rolling.min()) / close_std
+    df_feature["min_{}_std_norm".format(w)] = (df["close"] - close_rolling.min()) / (df["close"] + min_value)
 
     df_feature["qtlu_{}".format(w)] = close_rolling.quantile(0.8) / df["close"]
     df_feature["qtlu_{}_std_norm".format(w)] = (close_rolling.quantile(0.8) - df["close"]) / close_std
@@ -224,6 +226,8 @@ def process_ohlc_single_window(df: pd.DataFrame, w: int):
     df_feature["cntn_{}".format(w)] = (df_feature["ret1"].lt(0)).rolling(w).sum() / w
     df_feature["cntd_{}".format(w)] = (
         df_feature["cntp_{}".format(w)] - df_feature["cntn_{}".format(w)]
+    ) / (
+        df_feature["cntp_{}".format(w)] + df_feature["cntn_{}".format(w)] + 1e-6
     )
 
     df_feature["sump_{}".format(w)] = df_feature["pos_ret1"].rolling(w).sum() / (

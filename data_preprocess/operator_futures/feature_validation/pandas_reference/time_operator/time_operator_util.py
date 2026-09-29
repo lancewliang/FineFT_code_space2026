@@ -101,6 +101,8 @@ def process_ohlcv(df: pd.DataFrame, window: list):
         ).sum() / w
         df_feature["cntd_{}".format(w)] = (
             df_feature["cntp_{}".format(w)] - df_feature["cntn_{}".format(w)]
+        ) / (
+            df_feature["cntp_{}".format(w)] + df_feature["cntn_{}".format(w)] + 1e-6
         )
         df_feature["corr_{}".format(w)] = close_rolling.corr(pairwise=volume_rolling)
         previous_returns = df["close"] / close_shift_1
@@ -195,6 +197,8 @@ def process_ohlc(df: pd.DataFrame, window: list):
         ).sum() / w
         df_feature["cntd_{}".format(w)] = (
             df_feature["cntp_{}".format(w)] - df_feature["cntn_{}".format(w)]
+        ) / (
+            df_feature["cntp_{}".format(w)] + df_feature["cntn_{}".format(w)] + 1e-6
         )
 
         df_feature["sump_{}".format(w)] = df_feature["pos_ret1"].rolling(w).sum() / (

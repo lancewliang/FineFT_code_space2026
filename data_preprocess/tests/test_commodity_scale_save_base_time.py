@@ -144,7 +144,9 @@ def test_vstd_operator_bounds():
 def test_is_volatility_feature_helper():
     from operator_futures.scale_describe_save.muti_contract_scale_save import (
         is_volatility_feature,
+        is_log_transformed_feature,
     )
+    # Volatility patterns
     assert is_volatility_feature("realized_volatility_192") is True
     assert is_volatility_feature("garman_klass_volatility_16") is True
     assert is_volatility_feature("rolling_volatility_48") is True
@@ -155,6 +157,18 @@ def test_is_volatility_feature_helper():
     assert is_volatility_feature("rsi_12") is False
     assert is_volatility_feature("normal_feature") is False
     assert is_volatility_feature("log_price_slope_48") is False
+
+    # Volume activity patterns (ADR-0033)
+    assert is_log_transformed_feature("vma_24_std_norm_origin") is True
+    assert is_log_transformed_feature("relative_volume_10") is True
+    assert is_log_transformed_feature("relative_amount_48") is True
+    assert is_log_transformed_feature("wvma_48_origin") is True
+
+    # Signed volume/trend features must NOT be log-transformed
+    assert is_log_transformed_feature("buy_volume_oe_trend_6") is False
+    assert is_log_transformed_feature("imblance_volume_oe_trend_16") is False
+    assert is_log_transformed_feature("sell_volume_oe_log_return_2") is False
+    assert is_log_transformed_feature("price_oi_vol_interaction_10m") is False
 
 
 def test_log_volatility_transformation_in_scale_save(tmp_path):
@@ -298,3 +312,56 @@ def test_adr0030_blacklist_coverage():
     ]
     for feat in expected_features:
         assert feat in text, f"Feature {feat} missing from fu_full_process.sh blacklist"
+
+
+def test_volume_activity_log_transformation_in_scale_save(tmp_path):
+    feature_list_file = tmp_path / "state_features.npy"
+    features = ["vma_24_std_norm_origin", "buy_volume_oe_trend_6"]
+    np.save(feature_list_file, np.array(features))
+
+    split_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train"
+    split_dir.mkdir(parents=True, exist_ok=True)
+
+    n = 50
+    np.random.seed(42)
+    raw_vma = np.exp(np.random.normal(1.0, 0.3, size=n))
+    raw_trend = np.random.normal(0.0, 2.0, size=n)
+
+    df = pl.DataFrame({
+        "timestamp": list(range(1, n + 1)),
+        "contract": ["fu2601"] * n,
+        "symbol": ["fu"] * n,
+        "ask1_price": [100.0] * n,
+        "ask1_size": [1.0] * n,
+        "bid1_price": [99.0] * n,
+        "bid1_size": [1.0] * n,
+        "LowerLimitPrice": [90.0] * n,
+        "UpperLimitPrice": [110.0] * n,
+        "funding_timestamp": list(range(1, n + 1)),
+        "funding_rate": [0.0] * n,
+        "index_price": [100.0] * n,
+        "mark_price": [100.0] * n,
+        "vma_24_std_norm_origin": raw_vma,
+        "buy_volume_oe_trend_6": raw_trend,
+    })
+    df.write_ipc(split_dir / "fu2601.feather")
+
+    save_path = "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE"
+    args = parser.parse_args([
+        "--root_path", str(tmp_path),
+        "--symbols", "fu",
+        "--target_freq", "5min",
+        "--feature_list_path", str(feature_list_file),
+        "--save_path", save_path,
+    ])
+
+    main(args)
+
+    output_root = tmp_path / save_path / "fu" / "5min"
+    manifest_path = output_root / "scaler_manifest.json"
+    assert manifest_path.exists()
+    manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    stats_by_feat = {f["feature"]: f for f in manifest_data["features"]}
+    assert stats_by_feat["vma_24_std_norm_origin"]["is_log_transformed"] is True
+    assert stats_by_feat["buy_volume_oe_trend_6"]["is_log_transformed"] is False

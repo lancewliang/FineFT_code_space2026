@@ -692,12 +692,22 @@ def run_feature_selection(
             "Feature Blacklist Dropped": all_blacklisted_dropped,
         }
     normal_selected = [f for f in selected_features if f not in mandatory_features]
+    blacklist_set = set(feature_blacklist or [])
     if enable_conditional_anchors and retained_anchors:
-        newly_retained = [a for a in retained_anchors if a in candidate_universe and a not in normal_selected]
+        newly_retained = [
+            a
+            for a in retained_anchors
+            if a in candidate_universe
+            and a not in normal_selected
+            and a not in blacklist_set
+        ]
         if newly_retained:
             normal_selected.extend(newly_retained)
             filter_results["Conditional Anchor Retention"] = newly_retained
     selected_features = normal_selected + mandatory_features
+    selected_features, _ = _apply_feature_blacklist(
+        selected_features, feature_blacklist
+    )
 
     selected_file = output_dir / "state_features.npy"
     np.save(selected_file, np.array(selected_features))

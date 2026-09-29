@@ -245,7 +245,7 @@ def fit_feature_stats(
 ) -> ScalerFeatureStats:
     if values.size == 0:
         raise ValueError(f"no train values available for feature={feature}")
-    is_log = is_volatility_feature(feature)
+    is_log = is_log_transformed_feature(feature)
     if is_log:
         values = transform_volatility_values(values)
     q25 = ensure_finite(np.nanquantile(values, 0.25), feature, "q25")
@@ -354,11 +354,38 @@ VOLATILITY_FEATURE_PATTERNS: tuple[str, ...] = (
     "historical_volatility",
     "bollinger_bandwidth",
 )
+NON_NEGATIVE_ACTIVITY_PATTERNS: tuple[str, ...] = (
+    "relative_volume",
+    "relative_amount",
+    "vma_",
+    "wvma_",
+)
+SIGNED_FEATURE_EXCLUSIONS: tuple[str, ...] = (
+    "trend",
+    "slope",
+    "imblance",
+    "log_return",
+    "diff",
+    "persistence",
+    "interaction",
+)
+LOG_FEATURE_PATTERNS: tuple[str, ...] = (
+    *VOLATILITY_FEATURE_PATTERNS,
+    *NON_NEGATIVE_ACTIVITY_PATTERNS,
+)
 VOLATILITY_LOG_EPSILON: float = 1e-6
 
 
+def is_log_transformed_feature(feature: str) -> bool:
+    if any(pattern in feature for pattern in VOLATILITY_FEATURE_PATTERNS):
+        return True
+    if any(pattern in feature for pattern in NON_NEGATIVE_ACTIVITY_PATTERNS):
+        return not any(excl in feature for excl in SIGNED_FEATURE_EXCLUSIONS)
+    return False
+
+
 def is_volatility_feature(feature: str) -> bool:
-    return any(pattern in feature for pattern in VOLATILITY_FEATURE_PATTERNS)
+    return is_log_transformed_feature(feature)
 
 
 def transform_volatility_values(values: np.ndarray) -> np.ndarray:
