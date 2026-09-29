@@ -105,7 +105,7 @@ def test_snapshot_features_reject_both_sides_empty():
 def test_manifest_replaces_first_106_reward_columns():
     reward_columns = get_reward_execution_columns(depth=5)
 
-    assert len(reward_columns) == 49
+    assert len(reward_columns) == 55
     assert "contract" in reward_columns
     assert "close" in reward_columns
     assert "volume" in reward_columns
@@ -114,6 +114,15 @@ def test_manifest_replaces_first_106_reward_columns():
     assert "LowerLimitPrice" in reward_columns
     assert "UpperLimitPrice" in reward_columns
     assert "ask25_price" not in reward_columns
+    assert "contract_life_remaining_ratio" in reward_columns
+    assert "cm_main_sub_open_interest_share_sub" in reward_columns
+
+
+def test_lifecycle_and_expiration_indicators_segregated_to_execution_columns():
+    from operator_futures.commodity.schema import LIFECYCLE_EXECUTION_COLUMNS
+    reward_columns = get_reward_execution_columns(depth=5)
+    for col in LIFECYCLE_EXECUTION_COLUMNS:
+        assert col in reward_columns
 
 
 def test_ic_correlation_uses_commodity_manifest_for_reward_columns():

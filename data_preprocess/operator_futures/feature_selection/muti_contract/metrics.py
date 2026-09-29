@@ -11,7 +11,7 @@ METRIC_COLUMNS = [
     "RankIC",
     "Sharpe",
 ]
-DEFAULT_WINDOWS_LIST = [1, 6, 12]
+DEFAULT_WINDOWS_LIST = [1, 2, 6, 12, 24, 48]
 
 
 def calculate_ic(column, target) -> float:
@@ -185,4 +185,27 @@ def aggregate_metric_frames(frames: list[pl.DataFrame]) -> pl.DataFrame:
                 pl.col(metric).median().alias(f"{metric}_Median"),
             ]
         )
-    return combined.group_by("feature", maintain_order=True).agg(expressions)
+    agg = combined.group_by("feature", maintain_order=True).agg(expressions)
+    if "RankIC" in combined.columns and "window" in combined.columns:
+        num_contracts = float(len(frames))
+        window_sign_df = (
+            combined.group_by(["feature", "window"])
+            .agg(
+                [
+                    (pl.col("RankIC") > 0.0).sum().alias("pos_cnt"),
+                    (pl.col("RankIC") < 0.0).sum().alias("neg_cnt"),
+                ]
+            )
+            .with_columns(
+                (pl.max_horizontal("pos_cnt", "neg_cnt") / num_contracts).alias("SignConsistency")
+            )
+            .group_by("feature")
+            .agg(
+                [
+                    pl.col("SignConsistency").mean().alias("SignConsistency_Mean"),
+                    pl.col("SignConsistency").min().alias("SignConsistency_Min"),
+                ]
+            )
+        )
+        agg = agg.join(window_sign_df, on="feature", how="left")
+    return agg

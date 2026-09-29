@@ -203,7 +203,7 @@ def test_catboost_importance_matches_original_training_call(fake_catboost):
     assert result["CatBoost Importance"].to_list() == [0.25, 0.75]
 
 
-def test_metric_frame_uses_original_default_windows(fake_catboost):
+def test_metric_frame_uses_intraday_default_windows(fake_catboost):
     frame = pl.DataFrame(
         {
             "mark_price": [float(index) for index in range(15)],
@@ -214,7 +214,7 @@ def test_metric_frame_uses_original_default_windows(fake_catboost):
 
     result = calculate_metric_frame(frame, ["alpha", "beta"])
 
-    assert result["window"].to_list() == [1, 1, 6, 6, 12, 12]
+    assert result["window"].to_list() == [1, 1, 2, 2, 6, 6, 12, 12]
 
 
 def test_aggregate_metric_frames_writes_mean_std_median_columns():
@@ -240,9 +240,9 @@ def test_composite_score_drops_bottom_ten_percent_with_rankic_priority():
             "IC_Mean": [0.1] * 10,
             "IC_Std": [0.1] * 10,
             "RankIC_Mean": [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.01],
-            "Sharpe_Mean": [0.0] * 9 + [100.0],
-            "Permutation Importance_Mean": [0.0] * 9 + [100.0],
-            "CatBoost Importance_Mean": [0.0] * 9 + [100.0],
+            "Sharpe_Mean": [0.0] * 10,
+            "Permutation Importance_Mean": [0.0] * 10,
+            "CatBoost Importance_Mean": [0.0] * 10,
         }
     )
     frames = {
@@ -524,11 +524,11 @@ def test_train_stage_writes_final_features_metrics_filtered_outputs_and_manifest
     metrics = pl.read_csv(stage_dir / "aggregate_metrics.csv")
     assert {"IC_Mean", "IC_Std", "IC_Median", "Sharpe_Mean", "Sharpe_Std", "Sharpe_Median"}.issubset(metrics.columns)
     per_contract_metrics = pl.read_csv(stage_dir / "per_contract" / "fu2601_metrics.csv")
-    assert per_contract_metrics["window"].unique().sort().to_list() == [1, 6, 12]
-    assert manifest.manifest.windows_list == [1, 6, 12]
+    assert per_contract_metrics["window"].unique().sort().to_list() == [1, 2, 6, 12]
+    assert manifest.manifest.windows_list == [1, 2, 6, 12, 24, 48]
 
 
-def test_train_stage_applies_feature_blacklist_only_to_final_outputs(tmp_path, fake_catboost):
+def test_train_stage_front_loads_feature_blacklist_preventing_metric_evaluation(tmp_path, fake_catboost):
     _write_long_split_contract(
         tmp_path,
         "train",
@@ -608,7 +608,8 @@ def test_train_stage_applies_feature_blacklist_only_to_final_outputs(tmp_path, f
         (stage_dir / "feature_selection_manifest.json").read_text(encoding="utf-8")
     )
 
-    assert "custom_signal" in aggregate["feature"].to_list()
+    # Front-loaded blacklist purges before metric calculation
+    assert "custom_signal" not in aggregate["feature"].to_list()
     assert "custom_signal" not in selected_features
     assert "custom_signal" not in filtered.columns
     assert "mark_price" in filtered.columns
@@ -622,6 +623,63 @@ def test_train_stage_applies_feature_blacklist_only_to_final_outputs(tmp_path, f
     assert manifest.manifest.filter_results["Feature Blacklist Dropped"] == ["custom_signal"]
     assert persisted_manifest["filter_results"]["Feature Blacklist Dropped"] == ["custom_signal"]
     assert manifest.manifest.selected_feature_count == len(selected_features)
+
+
+def test_front_loaded_blacklist_eliminates_borrowed_knife_correlation_dropping(tmp_path, fake_catboost):
+    # toxic_feature is correlated with valid_stationary_feature
+    # toxic_feature is blacklisted.
+    # Front-loaded blacklist must drop toxic_feature upfront, so valid_stationary_feature survives correlation filter.
+    toxic = [float(i) for i in range(15)]
+    valid = [float(i) for i in range(15)]
+    # Use uncorrelated alpha/beta so only toxic and valid correlate
+    independent_beta = [1.0, 0.0, -1.0, 0.5, -0.5, 0.8, -0.8, 0.2, -0.2, 0.1, -0.1, 0.3, -0.3, 0.4, -0.4]
+    _write_long_split_contract(
+        tmp_path,
+        "train",
+        "fu2601",
+        independent_beta,
+        independent_beta,
+        extra_features={
+            "toxic_feature": toxic,
+            "valid_stationary_feature": valid,
+        },
+    )
+    _write_long_split_contract(
+        tmp_path,
+        "train",
+        "fu2605",
+        independent_beta,
+        independent_beta,
+        extra_features={
+            "toxic_feature": toxic,
+            "valid_stationary_feature": valid,
+        },
+    )
+
+    manifest = run_feature_selection(
+        root_path=tmp_path,
+        split_path="PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST",
+        save_path="PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION",
+        symbol="fu",
+        target_freq="5min",
+        stage="train",
+        orderbook_depth=5,
+        min_abs_ic=0.01,
+        max_correlation=0.70,
+        composite_drop_ratio=0.0,
+        feature_blacklist=["toxic_feature"],
+        feature_ablation_patterns=[],
+        rank_ic_mode="absolute",
+    )
+
+    stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
+    selected_features = np.load(
+        stage_dir / "state_features.npy", allow_pickle=True
+    ).tolist()
+
+    assert "toxic_feature" not in selected_features
+    assert "valid_stationary_feature" in selected_features
+    assert "toxic_feature" in manifest.manifest.filter_results["Feature Blacklist Dropped"]
 
 
 def test_train_stage_filters_fast_decay_micro_returns_by_persistence(
@@ -986,3 +1044,199 @@ def test_conditional_anchors_cannot_override_feature_blacklist(tmp_path, fake_ca
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     selected_features = np.load(stage_dir / "state_features.npy", allow_pickle=True).tolist()
     assert "log_price_slope_96" not in selected_features
+
+
+def test_cross_contract_sign_consistency_gate_rejects_flipping_features():
+    # 4 contracts: consistent_feat has positive RankIC in all 4 (sc=1.0)
+    # flipping_feat has positive RankIC in 2 and negative in 2 (sc=0.50 < 0.75)
+    metric_frames = [
+        pl.DataFrame({"feature": ["consistent_feat", "flipping_feat"], "window": [6, 6], "RankIC": [0.15, 0.12]}),
+        pl.DataFrame({"feature": ["consistent_feat", "flipping_feat"], "window": [6, 6], "RankIC": [0.18, -0.10]}),
+        pl.DataFrame({"feature": ["consistent_feat", "flipping_feat"], "window": [6, 6], "RankIC": [0.20, 0.15]}),
+        pl.DataFrame({"feature": ["consistent_feat", "flipping_feat"], "window": [6, 6], "RankIC": [0.14, -0.11]}),
+    ]
+    aggregate = pl.DataFrame({
+        "feature": ["consistent_feat", "flipping_feat"],
+        "RankIC_Mean": [0.1675, 0.015],
+        "RankIC_Std": [0.02, 0.13],
+        "IC_Std": [0.05, 0.05],
+        "Sharpe_Mean": [1.0, 0.2],
+        "Permutation Importance_Mean": [0.5, 0.1],
+        "CatBoost Importance_Mean": [0.5, 0.1],
+    })
+    frames = {
+        "c1": pl.DataFrame({
+            "consistent_feat": [1.0, 2.0, 3.0],
+            "flipping_feat": [1.0, 2.0, 3.0],
+        })
+    }
+
+    selected, filter_results = _ordered_filter_features(
+        frames=frames,
+        aggregate=aggregate,
+        feature_universe=["consistent_feat", "flipping_feat"],
+        min_abs_ic=0.01,
+        max_metric_std=1.0,
+        max_correlation=1.0,
+        min_rank_ic_ir=0.0,
+        min_sign_consistency=0.75,
+        target_decision_window=6,
+        metric_frames=metric_frames,
+    )
+
+    assert "consistent_feat" in selected
+    assert "flipping_feat" not in selected
+    assert "flipping_feat" in filter_results["Sign Consistency Filter Dropped"]
+
+
+def test_rank_ic_ir_gate_rejects_noisy_low_ir_features():
+    # stable_feat has RankIC_Mean=0.05, RankIC_Std=0.05 -> IR = 0.05 / 0.050001 ~ 1.0 >= 0.40
+    # noisy_feat has RankIC_Mean=0.03, RankIC_Std=0.15 -> IR = 0.03 / 0.150001 = 0.20 < 0.40
+    features = ["stable_feat", "noisy_feat"]
+    aggregate = pl.DataFrame({
+        "feature": features,
+        "RankIC_Mean": [0.05, 0.03],
+        "RankIC_Std": [0.05, 0.15],
+        "IC_Std": [0.05, 0.05],
+        "Sharpe_Mean": [1.0, 0.2],
+        "Permutation Importance_Mean": [0.5, 0.1],
+        "CatBoost Importance_Mean": [0.5, 0.1],
+    })
+    frames = {
+        "c1": pl.DataFrame({
+            "stable_feat": [1.0, 2.0, 3.0],
+            "noisy_feat": [1.0, 2.0, 3.0],
+        })
+    }
+
+    selected, filter_results = _ordered_filter_features(
+        frames=frames,
+        aggregate=aggregate,
+        feature_universe=features,
+        min_abs_ic=0.01,
+        max_metric_std=1.0,
+        max_correlation=1.0,
+        min_rank_ic_ir=0.40,
+    )
+
+    assert "stable_feat" in selected
+    assert "noisy_feat" not in selected
+    assert "noisy_feat" in filter_results["Hard Filter"] or "noisy_feat" not in filter_results["Stability Filter"]
+
+
+def test_default_min_abs_ic_elevated_to_0_02():
+    features = ["low_ic_feat", "good_ic_feat"]
+    aggregate = pl.DataFrame({
+        "feature": features,
+        "RankIC_Mean": [0.015, 0.035],
+        "RankIC_Std": [0.01, 0.01],
+        "IC_Std": [0.05, 0.05],
+        "Sharpe_Mean": [0.5, 1.0],
+        "Permutation Importance_Mean": [0.2, 0.5],
+        "CatBoost Importance_Mean": [0.2, 0.5],
+    })
+    frames = {
+        "c1": pl.DataFrame({
+            "low_ic_feat": [1.0, 2.0, 3.0],
+            "good_ic_feat": [1.0, 2.0, 3.0],
+        })
+    }
+
+    # default min_abs_ic is 0.02
+    selected, filter_results = _ordered_filter_features(
+        frames=frames,
+        aggregate=aggregate,
+        feature_universe=features,
+        max_metric_std=1.0,
+        max_correlation=1.0,
+        min_rank_ic_ir=0.40,
+    )
+
+    assert "low_ic_feat" not in selected
+    assert "good_ic_feat" in selected
+
+
+def test_contract_normalized_correlation_avoids_simpsons_paradox():
+    from operator_futures.feature_selection.cor_util import compute_contract_normalized_correlation_matrix
+
+    # Two contracts with vastly different baseline price levels (2,000 vs 4,000)
+    # Inside each contract, feat_x and feat_y are orthogonal / uncorrelated (r = 0.0)
+    # Naive vertical concatenation creates spurious correlation r > 0.999
+    c1 = pl.DataFrame({
+        "feat_x": [1999.0, 2001.0, 1999.0, 2001.0],
+        "feat_y": [1999.0, 1999.0, 2001.0, 2001.0],
+    })
+    c2 = pl.DataFrame({
+        "feat_x": [3999.0, 4001.0, 3999.0, 4001.0],
+        "feat_y": [3999.0, 3999.0, 4001.0, 4001.0],
+    })
+    frames = {"fu2601": c1, "fu2605": c2}
+
+    # Naive concatenation correlation
+    naive_concat = pl.concat([c1, c2], how="vertical")
+    naive_corr = naive_concat.select(pl.corr("feat_x", "feat_y")).item()
+    assert naive_corr > 0.99  # Spurious Simpson's paradox correlation
+
+    # Decentralized contract-normalized correlation matrix
+    decentralized_df = compute_contract_normalized_correlation_matrix(frames, ["feat_x", "feat_y"])
+    feat_y_corr = decentralized_df.filter(pl.col("feature") == "feat_x")["feat_y"].item()
+    assert abs(feat_y_corr) < 0.01  # Truly uncorrelated
+
+    # Under pipeline filtering at max_correlation=0.70, both features survive
+    aggregate = pl.DataFrame({
+        "feature": ["feat_x", "feat_y"],
+        "RankIC_Mean": [0.05, 0.05],
+        "RankIC_Std": [0.01, 0.01],
+        "IC_Std": [0.05, 0.05],
+        "Sharpe_Mean": [1.0, 1.0],
+        "Permutation Importance_Mean": [0.5, 0.5],
+        "CatBoost Importance_Mean": [0.5, 0.5],
+    })
+    selected, filter_results = _ordered_filter_features(
+        frames=frames,
+        aggregate=aggregate,
+        feature_universe=["feat_x", "feat_y"],
+        max_correlation=0.70,
+        composite_drop_ratio=0.0,
+    )
+    assert set(selected) == {"feat_x", "feat_y"}
+
+
+def test_ood_aware_priority_scoring_retains_low_psi_feature():
+    # Two features with identical RankIC (0.05) and CatBoost importance (0.5)
+    # feat_low_drift has mean_psi = 0.01, feat_high_drift has mean_psi = 0.20
+    # Because they are correlated (r = 0.90), greedy deduplication should keep feat_low_drift
+    features = ["feat_low_drift", "feat_high_drift"]
+    aggregate = pl.DataFrame({
+        "feature": features,
+        "RankIC_Mean": [0.05, 0.05],
+        "RankIC_Std": [0.01, 0.01],
+        "IC_Std": [0.05, 0.05],
+        "Sharpe_Mean": [1.0, 1.0],
+        "Permutation Importance_Mean": [0.5, 0.5],
+        "CatBoost Importance_Mean": [0.5, 0.5],
+    })
+    # Both features are highly correlated inside contract
+    frames = {
+        "c1": pl.DataFrame({
+            "feat_low_drift": [1.0, 2.0, 3.0, 4.0],
+            "feat_high_drift": [1.1, 2.1, 3.1, 4.1],
+        })
+    }
+    mean_psi_by_feature = {
+        "feat_low_drift": 0.01,
+        "feat_high_drift": 0.20,
+    }
+
+    selected, filter_results = _ordered_filter_features(
+        frames=frames,
+        aggregate=aggregate,
+        feature_universe=features,
+        max_correlation=0.70,
+        composite_drop_ratio=0.0,
+        mean_psi_by_feature=mean_psi_by_feature,
+    )
+
+    assert selected == ["feat_low_drift"]
+    assert "feat_high_drift" not in selected
+    assert filter_results["Composite Score"][0] == "feat_low_drift"

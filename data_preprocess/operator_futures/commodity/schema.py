@@ -30,6 +30,15 @@ PRICE_LIMIT_RATIO_FEATURE_COLUMNS = [
     *DAILY_LIMIT_RATIO_FEATURE_COLUMNS,
 ]
 
+LIFECYCLE_EXECUTION_COLUMNS = [
+    "contract_life_remaining_ratio",
+    "cm_current_main_open_interest_share_current",
+    "cm_current_sub_open_interest_share_current",
+    "cm_main_sub_open_interest_share_sub",
+    "cm_m1_m2_open_interest_share_m2",
+    "cm_m2_m3_open_interest_share_m3",
+]
+
 
 def resample_kwargs() -> Dict[str, str]:
     return {"closed": "right", "label": "right"}
@@ -57,5 +66,6 @@ def get_reward_execution_columns(depth: int) -> List[str]:
         *build_orderbook_columns(depth),
         *PRICE_LIMIT_COLUMNS,
         *PRICE_LIMIT_RATIO_FEATURE_COLUMNS,
+        *LIFECYCLE_EXECUTION_COLUMNS,
         *DERIVATIVE_REFERENCE_COLUMNS,
     ]

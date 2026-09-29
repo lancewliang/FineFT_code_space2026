@@ -19,7 +19,14 @@ import polars as pl
 
 from operator_futures.commodity.schema import get_reward_execution_columns
 from operator_futures.data_quality import DataQualityValidator
-from operator_futures.feature_selection.cor_util import select_feature
+from operator_futures.feature_selection.cor_util import compute_contract_normalized_correlation_matrix, select_feature
+from .distribution_audit import (
+    DEFAULT_DISTRIBUTION_NUM_BINS,
+    DEFAULT_MAX_MEAN_PSI,
+    DEFAULT_MAX_PAIR_PSI,
+    DEFAULT_MIN_DRIFT_SURVIVORS,
+    audit_distribution_drift,
+)
 from operator_futures.feature_selection.muti_contract.metrics import (
     DEFAULT_WINDOWS_LIST,
     aggregate_metric_frames,
@@ -241,14 +248,19 @@ def _ordered_filter_features(
     aggregate: pl.DataFrame,
     feature_universe: list[str],
     *,
-    min_abs_ic: float,
-    max_metric_std: float,
-    max_correlation: float,
-    min_rank_ic_ir: float = 0.0,
+    min_abs_ic: float = 0.02,
+    max_metric_std: float = 1.0,
+    max_correlation: float = 0.7,
+    min_rank_ic_ir: float = 0.40,
+    min_sign_consistency: float = 0.75,
+    target_decision_window: int | None = None,
+    windows_list: list[int] | None = None,
+    metric_frames: list[pl.DataFrame] | None = None,
     composite_drop_ratio: float = 0.1,
     min_half_life_bars: float = 0.0,
     persistence_diagnostics: list[PersistenceDiagnostic] | None = None,
     rank_ic_mode: str = "absolute",
+    mean_psi_by_feature: dict[str, float] | None = None,
 ) -> tuple[list[str], dict[str, list[str]]]:
     if composite_drop_ratio < 0 or composite_drop_ratio >= 1:
         raise ValueError("composite_drop_ratio must be in [0, 1)")
@@ -267,14 +279,70 @@ def _ordered_filter_features(
     if not hard:
         raise ValueError("feature selection produced an empty list after Hard Filter")
 
-    persistence = hard
+    sign_consistent = hard
+    sign_consistency_dropped: list[str] = []
+    if metric_frames is not None and len(metric_frames) > 0:
+        eff_windows = list(windows_list or [6, 12, 24, 48])
+        dec_window = (
+            target_decision_window
+            if target_decision_window is not None
+            else (6 if 6 in eff_windows else eff_windows[0])
+        )
+        combined_mf = pl.concat(metric_frames, how="vertical")
+        if "RankIC" in combined_mf.columns and "window" in combined_mf.columns:
+            w_frames = combined_mf.filter(pl.col("window") == dec_window)
+            if w_frames.height > 0:
+                n_contracts = float(len(metric_frames))
+                sc_df = (
+                    w_frames.group_by("feature")
+                    .agg(
+                        [
+                            (pl.col("RankIC") > 0.0).sum().alias("pos_cnt"),
+                            (pl.col("RankIC") < 0.0).sum().alias("neg_cnt"),
+                        ]
+                    )
+                    .with_columns(
+                        (pl.max_horizontal("pos_cnt", "neg_cnt") / n_contracts).alias(
+                            "SignConsistency"
+                        )
+                    )
+                )
+                sc_map = dict(
+                    zip(sc_df["feature"].to_list(), sc_df["SignConsistency"].to_list())
+                )
+                sign_consistent = [
+                    f for f in hard if sc_map.get(f, 0.0) >= min_sign_consistency
+                ]
+                sign_consistency_dropped = [
+                    f for f in hard if f not in set(sign_consistent)
+                ]
+                if not sign_consistent:
+                    raise ValueError(
+                        "feature selection produced an empty list after Sign Consistency Filter"
+                    )
+    elif "SignConsistency" in selected.columns:
+        sc_map = dict(
+            zip(selected["feature"].to_list(), selected["SignConsistency"].to_list())
+        )
+        sign_consistent = [
+            f for f in hard if sc_map.get(f, 0.0) >= min_sign_consistency
+        ]
+        sign_consistency_dropped = [
+            f for f in hard if f not in set(sign_consistent)
+        ]
+        if not sign_consistent:
+            raise ValueError(
+                "feature selection produced an empty list after Sign Consistency Filter"
+            )
+
+    persistence = sign_consistent
     persistence_dropped: list[str] = []
     if min_half_life_bars > 0.0:
         diagnostics_by_feature = {
             str(row["feature"]): row for row in (persistence_diagnostics or [])
         }
         persistence, persistence_dropped = _filter_by_persistence(
-            hard,
+            sign_consistent,
             diagnostics_by_feature,
             min_half_life_bars=min_half_life_bars,
         )
@@ -285,8 +353,6 @@ def _ordered_filter_features(
 
     stability_cond = pl.col("IC_Std") <= max_metric_std
     if "RankIC_Std" in selected.columns:
-        stability_cond = stability_cond & (pl.col("RankIC_Std") <= max_metric_std)
-    if min_rank_ic_ir > 0.0 and "RankIC_Std" in selected.columns:
         rank_ic_ir = pl.col("RankIC_Mean").abs() / (pl.col("RankIC_Std") + 1e-6)
         stability_cond = stability_cond & (rank_ic_ir >= min_rank_ic_ir)
 
@@ -303,43 +369,49 @@ def _ordered_filter_features(
 
     scored_input = selected.filter(pl.col("feature").is_in(stability))
     height = float(max(scored_input.height, 1))
-    secondary_raw = (
-        pl.col("Permutation Importance_Mean").fill_null(0.0)
-        + pl.col("Sharpe_Mean").abs().fill_null(0.0)
-    )
-    if "SHAP Importance_Mean" in scored_input.columns:
-        secondary_raw = secondary_raw + pl.col("SHAP Importance_Mean").fill_null(0.0)
 
-    # Normalize secondary components to percentile rank [0, 1] to prevent magnitude distortion
-    secondary_score = (secondary_raw.rank() / height) + (pl.col("CatBoost Importance_Mean").fill_null(0.0).rank() / height)
     rank_ic_score = (
         pl.col("RankIC_Mean").abs()
         if rank_ic_mode == "absolute"
         else pl.col("RankIC_Mean")
     ).fill_null(0.0)
 
+    catboost_score = (
+        pl.col("CatBoost Importance_Mean").fill_null(0.0)
+        if "CatBoost Importance_Mean" in scored_input.columns
+        else pl.lit(0.0)
+    )
+
+    if mean_psi_by_feature is not None:
+        mean_psi_values = [
+            float(mean_psi_by_feature[f]) if f in mean_psi_by_feature else 0.0
+            for f in scored_input["feature"].to_list()
+        ]
+    elif "mean_psi" in scored_input.columns:
+        mean_psi_values = scored_input["mean_psi"].fill_null(0.0).to_list()
+    else:
+        mean_psi_values = [0.0] * scored_input.height
+
+    inv_psi_values = [1.0 / (psi + 1e-4) for psi in mean_psi_values]
+
     scored = (
         scored_input.with_columns(
             [
                 rank_ic_score.alias("Composite RankIC Score"),
-                secondary_score.alias("Composite Secondary Score"),
-                pl.col("CatBoost Importance_Mean")
-                .fill_null(0.0)
-                .alias("Composite Importance Score"),
+                catboost_score.alias("Composite Importance Score"),
+                pl.Series("inv_mean_psi", inv_psi_values),
             ]
         )
         .with_columns(
             (
-                pl.col("Composite RankIC Score")
-                + pl.col("Composite Secondary Score")
-            ).alias("Composite Score")
+                0.40 * (pl.col("inv_mean_psi").rank() / height)
+                + 0.35 * (pl.col("Composite RankIC Score").rank() / height)
+                + 0.25 * (pl.col("Composite Importance Score").rank() / height)
+            ).alias("Priority")
         )
+        .with_columns(pl.col("Priority").alias("Composite Score"))
         .sort(
-            [
-                "Composite RankIC Score",
-                "Composite Secondary Score",
-                "Composite Importance Score",
-            ],
+            ["Priority", "Composite RankIC Score", "Composite Importance Score"],
             descending=[True, True, True],
         )
     )
@@ -355,17 +427,19 @@ def _ordered_filter_features(
             "feature selection produced an empty list after Composite Score"
         )
 
-    combined = pl.concat(
-        [frame.select(composite) for frame in frames.values()], how="vertical"
+    corre_df = compute_contract_normalized_correlation_matrix(
+        frames=frames, features=composite
     )
     correlation = select_feature(
-        features=composite, df=combined, theshold=max_correlation
+        features=composite, corre_df=corre_df, theshold=max_correlation
     )
     if not correlation:
         raise ValueError(
             "feature selection produced an empty list after Correlation Filter"
         )
     filter_results = {"Hard Filter": hard}
+    if sign_consistency_dropped:
+        filter_results["Sign Consistency Filter Dropped"] = sign_consistency_dropped
     if min_half_life_bars > 0.0:
         filter_results.update(
             {
@@ -471,10 +545,12 @@ def run_feature_selection(
     target_freq: str,
     stage: str,
     orderbook_depth: int = 5,
-    min_abs_ic: float = 0.01,
+    min_abs_ic: float = 0.02,
     max_metric_std: float = 1.0,
     max_correlation: float = 0.7,
-    min_rank_ic_ir: float = 0.0,
+    min_rank_ic_ir: float = 0.40,
+    min_sign_consistency: float = 0.75,
+    target_decision_window: int | None = None,
     windows_list: list[int] | None = None,
     composite_drop_ratio: float = 0.1,
     feature_blacklist: list[str] | None = None,
@@ -486,6 +562,10 @@ def run_feature_selection(
     enable_conditional_anchors: bool = True,
     regime_bins: int = 4,
     target_regime_bins: Sequence[tuple[int, int]] | None = None,
+    max_mean_psi: float = DEFAULT_MAX_MEAN_PSI,
+    max_pair_psi: float = DEFAULT_MAX_PAIR_PSI,
+    min_drift_survivors: int = DEFAULT_MIN_DRIFT_SURVIVORS,
+    distribution_num_bins: int = DEFAULT_DISTRIBUTION_NUM_BINS,
 ) -> FeatureSelectionResult:
     if stage not in {"train", "valid"}:
         raise ValueError("stage must be 'train' or 'valid'")
@@ -530,21 +610,33 @@ def run_feature_selection(
 
     if stage == "train":
         first_frame = next(iter(frames.values()))
-        feature_universe = _state_features(first_frame, orderbook_depth=orderbook_depth)
+        raw_universe = _state_features(first_frame, orderbook_depth=orderbook_depth)
         train_feature_file = None
     else:
         train_feature_file = (
             _stage_output_dir(root_path, save_path, target_freq, symbol, "train")
             / "state_features.npy"
         )
-        feature_universe = _load_feature_list(train_feature_file)
-    if not feature_universe:
+        raw_universe = _load_feature_list(train_feature_file)
+    if not raw_universe:
         raise ValueError(f"{stage} feature universe is empty")
-    feature_universe, ablation_dropped = _apply_feature_ablation_patterns(
-        feature_universe, feature_ablation_patterns
+
+    candidate_universe = [f for f in raw_universe if f not in mandatory_features]
+    candidate_universe, blacklisted_features = _apply_feature_blacklist(
+        candidate_universe, feature_blacklist
     )
-    if not feature_universe:
+    all_blacklisted_dropped = sorted(set(blacklisted_features).union(blacklisted_mandatory))
+    if feature_blacklist and not candidate_universe and not mandatory_features:
+        raise ValueError(
+            "feature selection produced an empty list after Feature Blacklist"
+        )
+    candidate_universe, ablation_dropped = _apply_feature_ablation_patterns(
+        candidate_universe, feature_ablation_patterns
+    )
+    if not candidate_universe and not mandatory_features:
         raise ValueError(f"{stage} feature universe is empty after feature ablation")
+
+    feature_universe = candidate_universe + mandatory_features
 
     per_contract_dir = output_dir / "per_contract"
     per_contract_dir.mkdir(parents=True, exist_ok=True)
@@ -562,7 +654,6 @@ def run_feature_selection(
             contract=contract,
             feature_universe=feature_universe,
         )
-        candidate_universe = [f for f in feature_universe if f not in mandatory_features]
         metrics = calculate_metric_frame(frame, candidate_universe, windows_list=windows_list)
         metric_path = per_contract_dir / f"{contract}_metrics.csv"
         metrics.write_csv(metric_path)
@@ -627,6 +718,17 @@ def run_feature_selection(
     regime_audit_path = output_dir / "regime_audit_metrics.csv"
     regime_audit_df.write_csv(regime_audit_path)
 
+    distribution_audit = audit_distribution_drift(
+        frames=frames,
+        feature_universe=candidate_universe,
+        num_bins=distribution_num_bins,
+        max_mean_psi=max_mean_psi,
+        max_pair_psi=max_pair_psi,
+        min_drift_survivors=min_drift_survivors,
+    )
+    distribution_audit_path = output_dir / "distribution_audit_metrics.csv"
+    distribution_audit.metrics_df.write_csv(distribution_audit_path)
+
     if stage == "valid":
         manifest = FeatureSelectionManifest(
             symbol=symbol,
@@ -646,13 +748,17 @@ def run_feature_selection(
             target_regime_bins=effective_target_bins,
             regime_quantiles=regime_quantiles,
             regime_audit_path=str(regime_audit_path),
+            distribution_audit_path=str(distribution_audit_path),
             conditional_anchors_retained=retention_details if retention_details else None,
         )
         manifest_path = output_dir / "feature_selection_manifest.json"
         manifest.write_json(manifest_path)
         return FeatureSelectionResult(output_dir=output_dir, manifest=manifest)
 
-    candidate_universe = [f for f in feature_universe if f not in mandatory_features]
+    if distribution_audit.dropped_features:
+        candidate_universe = [
+            f for f in candidate_universe if f in set(distribution_audit.surviving_features)
+        ]
     persistence_diagnostics = None
     if min_half_life_bars > 0.0:
         persistence_diagnostics = _calculate_persistence_diagnostics(
@@ -660,7 +766,7 @@ def run_feature_selection(
             candidate_universe,
             active_feature_pattern=persistence_filter_pattern,
         )
-    selected_features, filter_results = _ordered_filter_features(
+    selected_features, ordered_filter_results = _ordered_filter_features(
         frames,
         aggregate,
         candidate_universe,
@@ -668,29 +774,25 @@ def run_feature_selection(
         max_metric_std=max_metric_std,
         max_correlation=max_correlation,
         min_rank_ic_ir=min_rank_ic_ir,
+        min_sign_consistency=min_sign_consistency,
+        target_decision_window=target_decision_window,
+        windows_list=windows_list,
+        metric_frames=metric_frames,
         composite_drop_ratio=composite_drop_ratio,
         min_half_life_bars=min_half_life_bars,
         persistence_diagnostics=persistence_diagnostics,
         rank_ic_mode=rank_ic_mode,
+        mean_psi_by_feature=distribution_audit.mean_psi_by_feature,
     )
+    filter_results: dict[str, Any] = {}
     if ablation_dropped:
-        filter_results = {
-            "Feature Ablation Dropped": ablation_dropped,
-            **filter_results,
-        }
-    selected_features, blacklisted_features = _apply_feature_blacklist(
-        selected_features, feature_blacklist
-    )
-    all_blacklisted_dropped = sorted(set(blacklisted_features).union(blacklisted_mandatory))
-    if feature_blacklist and not selected_features and not mandatory_features:
-        raise ValueError(
-            "feature selection produced an empty list after Feature Blacklist"
-        )
+        filter_results["Feature Ablation Dropped"] = ablation_dropped
     if all_blacklisted_dropped:
-        filter_results = {
-            **filter_results,
-            "Feature Blacklist Dropped": all_blacklisted_dropped,
-        }
+        filter_results["Feature Blacklist Dropped"] = all_blacklisted_dropped
+    if distribution_audit.dropped_features:
+        filter_results["Distribution Drift Dropped"] = distribution_audit.dropped_features
+    filter_results.update(ordered_filter_results)
+
     normal_selected = [f for f in selected_features if f not in mandatory_features]
     blacklist_set = set(feature_blacklist or [])
     if enable_conditional_anchors and retained_anchors:
@@ -705,9 +807,6 @@ def run_feature_selection(
             normal_selected.extend(newly_retained)
             filter_results["Conditional Anchor Retention"] = newly_retained
     selected_features = normal_selected + mandatory_features
-    selected_features, _ = _apply_feature_blacklist(
-        selected_features, feature_blacklist
-    )
 
     selected_file = output_dir / "state_features.npy"
     np.save(selected_file, np.array(selected_features))
@@ -751,6 +850,7 @@ def run_feature_selection(
         target_regime_bins=effective_target_bins,
         regime_quantiles=regime_quantiles,
         regime_audit_path=str(regime_audit_path),
+        distribution_audit_path=str(distribution_audit_path),
         conditional_anchors_retained=retention_details if retention_details else None,
     )
     manifest_path = output_dir / "feature_selection_manifest.json"
@@ -775,10 +875,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target_freq", type=str, required=True)
     parser.add_argument("--stage", choices=["train", "valid"], required=True)
     parser.add_argument("--orderbook_depth", type=int, default=5)
-    parser.add_argument("--min_abs_ic", type=float, default=0.01)
+    parser.add_argument("--min_abs_ic", type=float, default=0.02)
     parser.add_argument("--max_metric_std", type=float, default=1.0)
     parser.add_argument("--max_correlation", type=float, default=0.7)
-    parser.add_argument("--min_rank_ic_ir", type=float, default=0.0)
+    parser.add_argument("--min_rank_ic_ir", type=float, default=0.40)
+    parser.add_argument("--min_sign_consistency", type=float, default=0.75)
+    parser.add_argument("--target_decision_window", type=int, default=None)
     parser.add_argument("--composite_drop_ratio", type=float, default=0.1)
     parser.add_argument("--feature_blacklist", nargs="*", default=None)
     parser.add_argument(
@@ -825,6 +927,30 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Target regime bins for conditional anchor retention (e.g. '0,0' '2,0' or '0,0 3,0 0,1 3,1')",
     )
+    parser.add_argument(
+        "--max_mean_psi",
+        type=float,
+        default=DEFAULT_MAX_MEAN_PSI,
+        help="Maximum contract-averaged Population Stability Index (default: 0.10)",
+    )
+    parser.add_argument(
+        "--max_pair_psi",
+        type=float,
+        default=DEFAULT_MAX_PAIR_PSI,
+        help="Maximum pairwise Population Stability Index (default: 0.25)",
+    )
+    parser.add_argument(
+        "--min_drift_survivors",
+        type=int,
+        default=DEFAULT_MIN_DRIFT_SURVIVORS,
+        help="Minimum survivors safety guard for distribution drift gate (default: 20)",
+    )
+    parser.add_argument(
+        "--distribution_num_bins",
+        type=int,
+        default=DEFAULT_DISTRIBUTION_NUM_BINS,
+        help="Number of quantile bins for distribution drift audit (default: 10)",
+    )
     return parser
 
 
@@ -842,6 +968,8 @@ def main(argv=None):
         max_metric_std=args.max_metric_std,
         max_correlation=args.max_correlation,
         min_rank_ic_ir=args.min_rank_ic_ir,
+        min_sign_consistency=args.min_sign_consistency,
+        target_decision_window=args.target_decision_window,
         windows_list=_parse_windows_list(args.windows_list),
         composite_drop_ratio=args.composite_drop_ratio,
         feature_blacklist=args.feature_blacklist,
@@ -852,4 +980,8 @@ def main(argv=None):
         rank_ic_mode=args.rank_ic_mode,
         regime_bins=args.regime_bins,
         target_regime_bins=_parse_target_regime_bins(args.target_regime_bins),
+        max_mean_psi=args.max_mean_psi,
+        max_pair_psi=args.max_pair_psi,
+        min_drift_survivors=args.min_drift_survivors,
+        distribution_num_bins=args.distribution_num_bins,
     )

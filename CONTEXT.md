@@ -118,6 +118,22 @@ _Avoid_: 步长硬截断、无量纲窗口截断、纯步长指标剔除
 
 **跨期稳态基差 (Cross-Month Rolling Stationary Basis)**:
 基于局部滚动时间窗口对跨期绝对价差进行去中心化与局部波动归一化（如滚动 Z-Score）得到的无量纲平稳化特征。
+
+**前置特征黑名单 (Front-Loaded Feature Blacklist)**:
+在特征初筛、指标评估与相关性去重前立即执行的特征黑名单过滤机制；直接从初始候选特征集中剔除拉黑特征，彻底防止高分黑名单特征占用综合打分优先级并在贪心相关性筛选中淘汰合法平稳特征（杜绝“借刀杀人”），同时节省无效模型训练开销。
+_Avoid_: 事后黑名单、后置拉黑、去重后剔除
+
+**跨合约群体稳定性指标 (Multi-Contract Population Stability Index, PSI)**:
+在多合约特征选择流水线中度量候选特征在训练集不同参与合约之间经验概率分布距离的统计量，公式为 $\text{PSI}(C_i, C_j) = \sum_{k=1}^K (P_{i,k} - Q_{j,k}) \ln(P_{i,k} / Q_{j,k})$；作为特征准入的刚性同质性门禁（$\overline{\text{PSI}} \le 0.10$），超标特征一票否决淘汰出局。
+_Avoid_: 跨合约分布检验、单合约 PSI、测试集 PSI
+
+**跨合约符号一致性 (Cross-Contract Sign Consistency)**:
+在多合约特征选择中度量特征与未来收益率秩相关系数（RankIC）在不同训练合约间同向比例的统计量，即 $\max(\sum \mathbb{I}(r_c > 0), \sum \mathbb{I}(r_c < 0)) / N_{\text{contracts}}$；要求达到指定门槛（如 $\ge 75\%$），用于排除因个别极端合约虚高均值但方向随机翻转的假信号。
+_Avoid_: 跨期符号一致性、符号相关性、方向一致率
+
+**合约感知去中心化相关矩阵 (Contract-Normalized Correlation Matrix)**:
+在各合约截面内部独立计算去中心化经验相关矩阵 $R_c = \text{Corr}(X_c)$ 后按样本量加权平均得到的全局相关矩阵 $\bar{R} = \sum w_c R_c$；彻底阻断未缩放多合约直接垂直拼接因价格与流动性基准台阶引发的辛普森伪相关。
+_Avoid_: 竖向拼接相关矩阵、跨合约池化相关性、全局相关矩阵
 _Avoid_: 跨期绝对价差、跨期价差比率
 
 **盘口深度相对份额 (Orderbook Depth Share)**:

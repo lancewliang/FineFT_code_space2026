@@ -306,10 +306,65 @@ def audit_regimes(
     retained_anchors: list[str] = []
     retention_details: list[dict[str, Any]] = []
 
+    extreme_bins = set(target_bins)
+    if num_slope_bins > 2:
+        neutral_bins = {
+            (s, v) for s in range(1, num_slope_bins - 1) for v in range(num_vol_bins)
+        }
+    else:
+        neutral_bins = {
+            (s, v)
+            for s in range(num_slope_bins)
+            for v in range(num_vol_bins)
+            if (s, v) not in extreme_bins
+        }
+
     if enable_conditional_anchors:
         for anchor in MARKET_STATE_ANCHOR_COLUMNS:
             if anchor not in feature_universe:
                 continue
+
+            # Compute cross-regime variance ratio for this anchor (extreme bins vs neutral bins)
+            extreme_vals: list[np.ndarray] = []
+            neutral_vals: list[np.ndarray] = []
+
+            for contract, frame in frames.items():
+                if frame.height < 48 or anchor not in frame.columns:
+                    continue
+                masks = contract_bin_masks[contract]
+                if not masks:
+                    continue
+
+                arr = frame[anchor].to_numpy()
+                e_mask = np.zeros(frame.height, dtype=bool)
+                for eb in extreme_bins:
+                    if eb in masks:
+                        e_mask |= masks[eb]
+
+                n_mask = np.zeros(frame.height, dtype=bool)
+                for nb in neutral_bins:
+                    if nb in masks:
+                        n_mask |= masks[nb]
+
+                e_sub = arr[e_mask]
+                n_sub = arr[n_mask]
+                if len(e_sub) > 0:
+                    extreme_vals.append(e_sub)
+                if len(n_sub) > 0:
+                    neutral_vals.append(n_sub)
+
+            cat_extreme = np.concatenate(extreme_vals) if extreme_vals else np.array([])
+            cat_neutral = np.concatenate(neutral_vals) if neutral_vals else np.array([])
+
+            var_extreme = float(np.var(cat_extreme, ddof=1)) if len(cat_extreme) > 1 else 0.0
+            var_neutral = float(np.var(cat_neutral, ddof=1)) if len(cat_neutral) > 1 else 0.0
+
+            if var_neutral > 0.0:
+                variance_ratio = float(var_extreme / var_neutral)
+            elif var_extreme == 0.0:
+                variance_ratio = 1.0
+            else:
+                variance_ratio = float("inf")
 
             passed = False
             passing_bins: list[str] = []
@@ -348,15 +403,20 @@ def audit_regimes(
                     lcb = float(a_mean - t_crit * se)
 
                     if lcb >= min_abs_ic:
-                        passed = True
                         bin_str = f"slope{s_bin}_vol{v_bin}_w{window}"
-                        passing_bins.append(bin_str)
+                        is_variance_stable = variance_ratio <= 3.0
+                        if is_variance_stable:
+                            passed = True
+                            passing_bins.append(bin_str)
+
                         retention_details.append({
                             "feature": anchor,
                             "target_bin": bin_str,
                             "rank_ic_90_lcb": lcb,
                             "sign_consistency": sign_consistency,
                             "participating_contracts": len(valid_contracts),
+                            "variance_ratio": round(variance_ratio, 4),
+                            "retained": is_variance_stable,
                         })
 
             if passed and anchor not in retained_anchors:

@@ -31,10 +31,11 @@ def _write_concat_feature_fixture(
     depth: int = 5,
     mark_price_nan_index: int | None = None,
     single_sided_ask_index: int | None = None,
+    row_count: int = 20,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = []
-    for idx in range(20):
+    for idx in range(row_count):
         row = {
             "timestamp": idx,
             "open": 2600.0 + idx,
@@ -724,3 +725,59 @@ def test_extreme_normalization_zero_volatility_safety_and_cntd_boundedness():
     cntd_down = res_down["cntd_5"].to_numpy()
     assert (cntd_down < -0.99).all()
     assert (cntd_down >= -1.0).all()
+
+
+def test_time_feature_10min_window_truncation_eliminates_macro_windows(tmp_path):
+    input_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/MERGE_CONCAT/CONCAT_FEATURE/fu/10min"
+        / "2026-01-05-2026-01-06.feather"
+    )
+    _write_concat_feature_fixture(input_file, depth=5, row_count=60)
+
+    subprocess.run(
+        [
+            sys.executable,
+            "data_preprocess/operator_futures/time_operator/create_feature_multi_processing.py",
+            "--root_path",
+            str(tmp_path),
+            "--data_path",
+            "PREPROCESS_DATASET/commodity-futures/MERGE_CONCAT/CONCAT_FEATURE/",
+            "--save_path",
+            "PREPROCESS_DATASET/commodity-futures/TIME_FEATURE/",
+            "--symbols",
+            "fu",
+            "--target_freq",
+            "10min",
+            "--start_date",
+            "2026-01-05",
+            "--end_date",
+            "2026-01-06",
+            "--windows",
+            "2,6,12,16,24,48",
+            "--orderbook_depth",
+            "5",
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "data_preprocess")},
+        check=True,
+    )
+
+    output_file = (
+        tmp_path
+        / "PREPROCESS_DATASET/commodity-futures/TIME_FEATURE/fu/10min"
+        / "2026-01-05-2026-01-06.feather"
+    )
+    out = pl.read_ipc(output_file)
+    assert out.height > 0
+    # Window-derived features for intraday windows present
+    assert "roc_48_origin" in out.columns
+    assert "roc_2_origin" in out.columns
+    assert "bid1_price_trend_48" in out.columns
+    # Multi-day macro window-derived features eliminated
+    assert "roc_96_origin" not in out.columns
+    assert "roc_192_origin" not in out.columns
+    assert "bid1_price_trend_96" not in out.columns
+    assert "bid1_price_trend_192" not in out.columns
+    assert "min_96_origin" not in out.columns
+    assert "max_192_origin" not in out.columns

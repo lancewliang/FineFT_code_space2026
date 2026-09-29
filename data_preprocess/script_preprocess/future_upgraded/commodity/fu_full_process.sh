@@ -445,13 +445,8 @@ CROSS_MONTH_FEATURE_COLUMNS=(
     cm_contract_role_sub
     cm_contract_role_other
     cm_current_main_volume_share_current
-    cm_current_main_open_interest_share_current
     cm_current_sub_volume_share_current
-    cm_current_sub_open_interest_share_current
     cm_main_sub_volume_share_sub
-    cm_main_sub_open_interest_share_sub
-    cm_m1_m2_open_interest_share_m2
-    cm_m2_m3_open_interest_share_m3
     cm_main_sub_log_price_spread_velocity_10m
     cm_open_interest_shift_speed_10m
     cm_m1_m2_log_price_spread_velocity_10m
@@ -778,6 +773,10 @@ run_commodity_time_feature() {
     if [ -n "${contract}" ]; then
         contract_args=(--contract "${contract}")
     fi
+    local windows="2,6,12,16,24,48,96,192"
+    if [ "${target_freq}" = "10min" ]; then
+        windows="2,6,12,16,24,48"
+    fi
 
     PYTHONPATH="${root_path}/data_preprocess" python -u data_preprocess/operator_futures/time_operator/create_feature_multi_processing.py \
         --symbols "$symbol" \
@@ -789,7 +788,7 @@ run_commodity_time_feature() {
         --data_path "PREPROCESS_DATASET/commodity-futures/MERGE_CONCAT/CONCAT_FEATURE/" \
         --save_path "PREPROCESS_DATASET/commodity-futures/TIME_FEATURE/" \
         --orderbook_depth 5 \
-        --windows "2,6,12,16,24,48,96,192"
+        --windows "${windows}"
 }
 
 run_commodity_merge_and_clean() {
@@ -859,11 +858,16 @@ run_commodity_feature_selection() {
         target_regime_bins_args=(--target_regime_bins ${TARGET_REGIME_BINS})
     fi
 
+    local windows_list=(1 2 6 12 24 48 96)
+    if [ "${target_freq}" = "10min" ]; then
+        windows_list=(1 2 6 12 24 48)
+    fi
+
     PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" python -u -m operator_futures.feature_selection.muti_contract \
         --root_path "${root_path}" \
         --split_path "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST" \
         --save_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION" \
-        --symbol "${symbol}" --windows_list 1 2 6 12 24 48 96 \
+        --symbol "${symbol}" --windows_list "${windows_list[@]}" \
         --target_freq "${target_freq}" \
         --stage "${stage}" \
         --orderbook_depth 5 \

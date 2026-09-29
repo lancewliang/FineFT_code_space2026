@@ -98,6 +98,7 @@ class FeatureSelectionManifest:
     target_regime_bins: list[list[int]] | list[tuple[int, int]] | None = None
     regime_quantiles: dict[str, list[float]] | None = None
     regime_audit_path: str | None = None
+    distribution_audit_path: str | None = None
     conditional_anchors_retained: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -152,6 +153,8 @@ class FeatureSelectionManifest:
             payload["regime_quantiles"] = self.regime_quantiles
         if self.regime_audit_path is not None:
             payload["regime_audit_path"] = self.regime_audit_path
+        if self.distribution_audit_path is not None:
+            payload["distribution_audit_path"] = self.distribution_audit_path
         if self.conditional_anchors_retained is not None:
             payload["conditional_anchors_retained"] = self.conditional_anchors_retained
         return payload

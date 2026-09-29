@@ -37,8 +37,10 @@ def _create_mock_split_dataset(tmp_path: Path, num_contracts: int = 4, num_rows:
         contract_name = f"fu260{i+1}"
         slope_val = 0.001 * (i + 1)
         rng = np.random.default_rng(42 + i)
-        noise = rng.normal(0.0, 0.002, num_rows)
-        close = 100.0 * np.exp(slope_val * steps + noise)
+        noise = rng.normal(0.0, 0.001, num_rows)
+        feat_a = np.sin(steps / 5.0)
+        ret = 0.003 * feat_a + slope_val + noise
+        close = 100.0 * np.exp(np.cumsum(ret))
         df = pl.DataFrame(
             {
                 "timestamp": steps.astype(int),
@@ -54,10 +56,10 @@ def _create_mock_split_dataset(tmp_path: Path, num_contracts: int = 4, num_rows:
                 "trend_r2_48": np.full(num_rows, 0.95),
                 "log_return_vol_quantile_192": np.full(num_rows, 0.5),
                 # Add ordinary candidate features
-                "feature_a": np.sin(steps / 5.0) + noise,
+                "feature_a": feat_a + noise,
                 "feature_b": np.cos(steps / 5.0) - noise,
                 # Add reward execution column
-                "future_return_30m": rng.normal(0.0001 * (i + 1), 0.001, num_rows),
+                "future_return_30m": 0.01 * (feat_a + noise) + rng.normal(0.0, 0.0005, num_rows),
             }
         )
         df.write_ipc(split_dir / "train" / f"{contract_name}.feather")
@@ -231,3 +233,68 @@ def test_regime_audit_3x3_bins_configurable(tmp_path: Path):
     valid_audit_df = pl.read_csv(valid_manifest.regime_audit_path)
     valid_bins_present = set(zip(valid_audit_df["slope_bin"].to_list(), valid_audit_df["vol_bin"].to_list()))
     assert valid_bins_present == expected_9_bins
+
+
+def test_regime_audit_anchor_retention_cross_regime_variance_bounding():
+    # Ticket 06: Verify that market state anchors with exploding variance in extreme regimes
+    # (variance_ratio > 3.0) are rejected from conditional retention, while stable anchors
+    # (variance_ratio <= 3.0) are retained and variance_ratio is recorded in retention_details.
+    num_rows = 150
+    frames = {}
+    quantiles = {"slope": [-0.01, 0.0, 0.01], "volatility": [0.001, 0.002, 0.003]}
+
+    for i in range(4):
+        rng = np.random.default_rng(100 + i)
+        close = np.linspace(100.0, 110.0, num_rows)
+        slope = np.zeros(num_rows)
+        # 47:95 (48 steps) in target bin (0, 0): slope < -0.01
+        slope[47:95] = -0.05
+        # 95:150 (55 steps) in neutral bin (1, 1): -0.01 <= slope < 0.0
+        slope[95:] = -0.005
+
+        sig = np.linspace(0.1, 1.0, 48)
+        # stable_anchor (trend_r2_48): variance across regimes is comparable (ratio <= 3.0)
+        stable = np.ones(num_rows)
+        stable[47:95] = sig + rng.normal(0, 0.01, 48)
+        stable[95:] = rng.normal(0.5, 1.0, 55)
+
+        # exploding_anchor (signed_efficiency_48): variance in extreme regimes explodes (std 8 vs 0.5)
+        exploding = np.ones(num_rows)
+        exploding[47:95] = sig * 10.0 + rng.normal(0, 8.0, 48)
+        exploding[95:] = rng.normal(0.5, 0.5, 55)
+
+        for idx, t in enumerate(range(47, 94)):
+            close[t + 1] = close[t] * (1.0 + 0.001 * sig[idx])
+
+        df = pl.DataFrame({
+            "timestamp": np.arange(num_rows),
+            "close": close,
+            "mark_price": close,
+            "log_price_slope_48": slope,
+            "trend_r2_48": stable,
+            "signed_efficiency_48": exploding,
+        })
+        frames[f"fu260{i+1}"] = df
+
+    feature_universe = ["trend_r2_48", "signed_efficiency_48"]
+    audit_df, retained_anchors, retention_details = audit_regimes(
+        frames=frames,
+        feature_universe=feature_universe,
+        quantiles=quantiles,
+        windows_list=[1],
+        min_abs_ic=0.001,
+        enable_conditional_anchors=True,
+    )
+
+    # Stable anchor must be retained; exploding anchor must be rejected
+    assert "trend_r2_48" in retained_anchors
+    assert "signed_efficiency_48" not in retained_anchors
+
+    # retention_details must record variance_ratio for all evaluated anchors
+    stable_detail = next(d for d in retention_details if d["feature"] == "trend_r2_48")
+    assert stable_detail["variance_ratio"] <= 3.0
+    assert stable_detail["retained"] is True
+
+    exploding_detail = next(d for d in retention_details if d["feature"] == "signed_efficiency_48")
+    assert exploding_detail["variance_ratio"] > 3.0
+    assert exploding_detail["retained"] is False

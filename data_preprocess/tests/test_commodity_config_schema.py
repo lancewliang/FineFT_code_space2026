@@ -9,6 +9,7 @@ from operator_futures.commodity.config import (
     get_commodity_config,
 )
 from operator_futures.commodity.schema import (
+    LIFECYCLE_EXECUTION_COLUMNS,
     PRICE_LIMIT_RATIO_FEATURE_COLUMNS,
     build_orderbook_columns,
     get_reward_execution_columns,
@@ -128,13 +129,14 @@ def test_reward_execution_manifest_for_depth_five():
         "LowerLimitPrice",
         "UpperLimitPrice",
         *PRICE_LIMIT_RATIO_FEATURE_COLUMNS,
+        *LIFECYCLE_EXECUTION_COLUMNS,
         "symbol",
         "funding_timestamp",
         "funding_rate",
         "index_price",
         "mark_price",
     ]
-    assert len(columns) == 1 + 1 + 1 + 2 + 20 + 2 + len(PRICE_LIMIT_RATIO_FEATURE_COLUMNS) + 5
+    assert len(columns) == 1 + 1 + 1 + 2 + 20 + 2 + len(PRICE_LIMIT_RATIO_FEATURE_COLUMNS) + len(LIFECYCLE_EXECUTION_COLUMNS) + 5
 
 
 def test_resample_kwargs_are_right_closed_and_right_labeled():
