@@ -558,6 +558,18 @@ _Avoid_: 非主力过滤、角色熔断、合约降级
 
 ### Evaluation And Diagnostics
 
+**策略认知不确定性 (Policy Epistemic Uncertainty)**:
+由强化学习集成 Q 网络（`ensemble_Qnet`）各子模型对当前状态动作价值预测的方差 $\text{Var}_{\text{ensemble}}(Q(s, a^*))$；用于衡量强化学习策略在遇到未充分训练的新样本时的外推不确定性爆炸，不同于无监督生成模型的特征密度估计。
+_Avoid_: 状态方差、特征不确定性、随机不确定性
+
+**最优动作决策分歧率 (Action Disagreement Rate)**:
+集成 Q 网络中各子网络在单步推荐的最优贪心动作的不一致程度 $1 - \frac{\max_a \sum \mathbb{I}(a_m^*(s) == a)}{M}$，取值范围在 $[0, 1 - 1/M]$；直接反映多智能体在离散交易执行层面的决策冲突。
+_Avoid_: 动作方差、投票误差、动作离散度
+
+**策略隐空间马氏距离 (Policy Latent Mahalanobis Distance)**:
+状态与环境上下文在 `ensemble_Qnet` 倒数第二层特征隐藏层（`fc2` 激活后均值表征）相对于训练经验回放池基准分布的协方差加权距离 $D_M(s) = \sqrt{(\bar{h}(s) - \mu_h)^T \Sigma_h^{-1} (\bar{h}(s) - \mu_h)}$；通过 Ledoit-Wolf 高斯收缩估计消除矩阵求逆奇异性，衡量策略表征流形上的离群度。
+_Avoid_: 欧氏隐距离、特征马氏距离、原始状态距离
+
 **Pipeline Artifact (管道产出物)**:
 跨训练、测试、筛选与分析环节在磁盘上生成的标准化契约文件，包括模型权重、数据清单、指标汇总与超参配置。
 _Avoid_: 中间文件、临时产出、结果文件
