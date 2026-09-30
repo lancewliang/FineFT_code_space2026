@@ -130,7 +130,7 @@ def test_validate_scale_save_reports_missing_dependency_artifacts(tmp_path):
     result = validate_scale_save(config)
 
     assert result.status == "error"
-    assert "state_features.npy" in result.message
+    assert "rl_state_features.npy" in result.message
 
 
 def test_compare_stage_uses_real_comparator():
@@ -325,7 +325,7 @@ def test_ic_and_scale_reference_use_commodity_reward_schema(tmp_path):
     _write_feather(ic_dir / "df.feather", rows)
     import numpy as np
 
-    np.save(ic_dir / "state_features.npy", np.array(["state_a", "state_b"]))
+    np.save(ic_dir / "rl_state_features.npy", np.array(["state_a", "state_b"]))
     config = ValidationConfig(
         root_path=tmp_path,
         symbol="fu",

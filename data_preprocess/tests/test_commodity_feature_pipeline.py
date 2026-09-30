@@ -295,8 +295,8 @@ def test_write_contract_feature_union_writes_symbol_level_manifest(tmp_path):
     second = base / "SCALE_SAVE" / "fu" / "fu2605" / "5min" / "2026-01-01-2026-04-01"
     first.mkdir(parents=True)
     second.mkdir(parents=True)
-    np.save(first / "state_features.npy", np.array(["alpha", "beta"]))
-    np.save(second / "state_features.npy", np.array(["beta", "gamma"]))
+    np.save(first / "rl_state_features.npy", np.array(["alpha", "beta"]))
+    np.save(second / "rl_state_features.npy", np.array(["beta", "gamma"]))
 
     result = write_contract_feature_union(
         root_path=tmp_path,
@@ -312,7 +312,7 @@ def test_write_contract_feature_union_writes_symbol_level_manifest(tmp_path):
     assert output_dir == (
         base / "FEATURE_UNION" / "fu" / "5min" / "2026-01-01-2026-04-01"
     )
-    assert np.load(output_dir / "state_features.npy", allow_pickle=True).tolist() == [
+    assert np.load(output_dir / "rl_state_features.npy", allow_pickle=True).tolist() == [
         "alpha",
         "beta",
         "gamma",
@@ -379,14 +379,14 @@ def test_write_contract_feature_union_finalizes_ic_result_from_candidates(tmp_pa
     assert isinstance(result, FeatureUnionResult)
     output_dir = result.output_dir
 
-    assert np.load(output_dir / "state_features.npy", allow_pickle=True).tolist() == [
+    assert np.load(output_dir / "rl_state_features.npy", allow_pickle=True).tolist() == [
         "alpha",
         "beta",
         "gamma",
     ]
     for contract in ["fu2601", "fu2605"]:
         contract_dir = base / "IC_RESULT" / "fu" / contract / "5min" / date_range
-        assert np.load(contract_dir / "state_features.npy", allow_pickle=True).tolist() == [
+        assert np.load(contract_dir / "rl_state_features.npy", allow_pickle=True).tolist() == [
             "alpha",
             "beta",
             "gamma",
@@ -557,6 +557,6 @@ def test_write_contract_feature_union_fails_when_union_feature_missing_from_cont
     first_output_dir = base / "IC_RESULT" / "fu" / "fu2601" / "5min" / date_range
     union_output_dir = base / "FEATURE_UNION" / "fu" / "5min" / date_range
     assert not (first_output_dir / "df.feather").exists()
-    assert not (first_output_dir / "state_features.npy").exists()
-    assert not (union_output_dir / "state_features.npy").exists()
+    assert not (first_output_dir / "rl_state_features.npy").exists()
+    assert not (union_output_dir / "rl_state_features.npy").exists()
     assert not (union_output_dir / "feature_union_manifest.json").exists()

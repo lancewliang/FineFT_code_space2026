@@ -17,6 +17,7 @@ from common.artifacts import ArtifactNames
 TARGET_DIRS = [
     FINEFT_ROOT / "RL" / "DiHFT",
     FINEFT_ROOT / "RL" / "EarnHFT",
+    FINEFT_ROOT / "RL" / "SL",
 ]
 
 MIGRATED_RL_FILES = [
@@ -43,6 +44,8 @@ MIGRATED_RL_FILES = [
     FINEFT_ROOT / "RL" / "DiHFT" / "ablation" / "converge_steps_sun" / "FineFT_test.py",
     FINEFT_ROOT / "RL" / "DiHFT" / "ablation" / "converge_steps_sun" / "FineFT_without_pretrain.py",
     FINEFT_ROOT / "RL" / "DiHFT" / "ablation" / "converge_steps_sun" / "FineFT_wo_pretrain_test.py",
+    # SL
+    FINEFT_ROOT / "RL" / "SL" / "test_adaboost.py",
 ]
 
 

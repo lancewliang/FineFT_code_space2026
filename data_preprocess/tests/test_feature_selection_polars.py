@@ -219,9 +219,9 @@ def test_ic_correlation_cli_writes_expected_files(tmp_path):
     assert (output_dir / "df.feather").exists()
     assert (output_dir / "df.csv").exists()
     assert pl.read_csv(output_dir / "df.csv").shape == pl.read_ipc(output_dir / "df.feather").shape
-    assert (output_dir / "state_features.npy").exists()
+    assert (output_dir / "rl_state_features.npy").exists()
     assert (output_dir / "correlation.csv").exists()
-    assert np.load(output_dir / "state_features.npy", allow_pickle=True).size >= 0
+    assert np.load(output_dir / "rl_state_features.npy", allow_pickle=True).size >= 0
 
 
 def test_ic_correlation_returns_result_object_and_score_window_json(tmp_path):
@@ -247,7 +247,7 @@ def test_ic_correlation_returns_result_object_and_score_window_json(tmp_path):
     assert result.output_dir == output_dir
     assert result.frame.shape == pl.read_ipc(output_dir / "df.feather").shape
     assert result.selected_features == np.load(
-        output_dir / "state_features.npy", allow_pickle=True
+        output_dir / "rl_state_features.npy", allow_pickle=True
     ).tolist()
     assert len(result.score_windows) == 1
     assert isinstance(result.score_windows[0], FeatureScoreWindow)
@@ -427,7 +427,7 @@ def _scale_output_dir(tmp_path: Path) -> Path:
 
 def _write_scale_state_features(input_file: Path) -> None:
     np.save(
-        input_file.parent / "state_features.npy",
+        input_file.parent / "rl_state_features.npy",
         np.array(["feature_a"]),
     )
 
@@ -477,7 +477,7 @@ def test_scale_save_cli_writes_expected_files(tmp_path):
     assert (output_dir / "df.feather").exists()
     assert (output_dir / "df.csv").exists()
     assert pl.read_csv(output_dir / "df.csv").shape == pl.read_ipc(output_dir / "df.feather").shape
-    assert (output_dir / "state_features.npy").exists()
+    assert (output_dir / "rl_state_features.npy").exists()
     assert (output_dir / "df_describe.csv").exists()
     df = pl.read_ipc(output_dir / "df.feather")
     assert "symbol" in df.columns
@@ -491,7 +491,7 @@ def test_scale_save_cli_reads_feature_selection_filtered_input(tmp_path):
     )
     input_file = input_dir / "df.feather"
     _write_scale_fixture(input_file)
-    np.save(input_dir.parent / "state_features.npy", np.array(["feature_a"]))
+    np.save(input_dir.parent / "rl_state_features.npy", np.array(["feature_a"]))
 
     result = subprocess.run(
         [
@@ -535,7 +535,7 @@ def test_scale_save_cli_reads_feature_selection_filtered_input(tmp_path):
         / "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/fu2601/5min/2026-01-05-2026-01-06"
     )
     assert (output_dir / "df.feather").exists()
-    assert np.load(output_dir / "state_features.npy", allow_pickle=True).tolist() == [
+    assert np.load(output_dir / "rl_state_features.npy", allow_pickle=True).tolist() == [
         "feature_a"
     ]
 
@@ -768,7 +768,7 @@ def test_multi_contract_scale_save_cli_does_not_leave_partial_outputs_on_later_s
 ):
     feature_file = (
         tmp_path
-        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy"
+        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/rl_state_features.npy"
     )
     feature_file.parent.mkdir(parents=True)
     np.save(feature_file, np.array(["feature_a"]))
@@ -838,7 +838,7 @@ def test_scale_save_cli_rejects_input_nan_before_writing_outputs(tmp_path):
     assert "feature_a(count=1, rows=[2])" in combined_output
     assert not (output_dir / "df.feather").exists()
     assert not (output_dir / "df.csv").exists()
-    assert not (output_dir / "state_features.npy").exists()
+    assert not (output_dir / "rl_state_features.npy").exists()
     assert not (output_dir / "df_describe.csv").exists()
 
 
@@ -857,7 +857,7 @@ def test_scale_save_cli_rejects_output_nan_before_writing_outputs(tmp_path):
     assert "feature_a(count=12, rows=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])" in combined_output
     assert not (output_dir / "df.feather").exists()
     assert not (output_dir / "df.csv").exists()
-    assert not (output_dir / "state_features.npy").exists()
+    assert not (output_dir / "rl_state_features.npy").exists()
     assert not (output_dir / "df_describe.csv").exists()
 
 

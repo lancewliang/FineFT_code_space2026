@@ -1861,7 +1861,7 @@ def test_validate_features_checks_feature_union_outputs():
 
     assert "FEATURE_UNION" in text
     assert "feature_union_manifest.json" in text
-    assert "state_features.npy" in text
+    assert "rl_state_features.npy" in text
 
 
 def test_commodity_full_process_shell_excludes_ood_features_and_enforces_clipping():
