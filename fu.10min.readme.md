@@ -1,16 +1,16 @@
-# fu 脚本主流程
+# fu 10min 脚本主流程
 
 下面整理仓库里以 `10min` 并行版本为例的 `fu` (燃料油) 主流程 shell 脚本及其完整执行顺序、**各个步骤的前置依赖输入物**、关键产出物目录与文件（包含 Feather/NPY 数据集、`result/` 模型权重与回测诊断数据、`log/` 日志以及**用于分析与评估的 JSON 与 CSV 文件**）。
 
 推荐串联运行顺序：
 
-`main_10min_fu.sh` -> `commodity_data_handler_10min_fu.sh` -> `train_commodity_fu_10_parallel.sh` -> `test_util_fu_10.sh` -> `low_level_fu_10.sh` -> `VAE_util_fu_10.sh` -> `vae_optuna_fu_10.sh` -> `high_level_heurstic_fu_10.sh` -> `final_result_fu_10_p.sh`
+`main_fu_10.sh` -> `commodity_data_handler_fu_10.sh` -> `train_commodity_fu_10.sh` -> `test_util_fu_10.sh` -> `low_level_fu_10.sh` -> `VAE_util_fu_10.sh` -> `vae_optuna_fu_10.sh` -> `high_level_heurstic_fu_10.sh` -> `final_result_fu_10.sh`
 
-> **提示**：10min 并行专属脚本（`train_commodity_fu_10_parallel.sh`、`test_util_fu_10.sh`、`low_level_fu_10.sh`、`VAE_util_fu_10.sh`、`vae_optuna_fu_10.sh`、`high_level_heurstic_fu_10.sh`、`final_result_fu_10_p.sh`）内部默认的 `EXPERIMENT_NAME` 均为 `10min_parallel`，保证了实验路径的一致性。
+> **提示**：10min 并行专属脚本（`train_commodity_fu_10.sh`、`test_util_fu_10.sh`、`low_level_fu_10.sh`、`VAE_util_fu_10.sh`、`vae_optuna_fu_10.sh`、`high_level_heurstic_fu_10.sh`、`final_result_fu_10.sh`）内部默认的 `EXPERIMENT_NAME` 均为 `10min_parallel`，保证了实验路径的一致性。
 
 ## 1. 数据预处理入口
 
-### `data_preprocess/script_preprocess/future_upgraded/commodity/main_10min_fu.sh`
+### `data_preprocess/script_preprocess/future_upgraded/commodity/main_fu_10.sh`
 
 - **作用**：燃料油 `fu` 10min 频率下的商品期货预处理总入口。
 - **依赖输入物**：
@@ -60,7 +60,7 @@
 
 ## 2. FineFT 数据准备
 
-### `FineFT/script/data/commodity_data_handler_10min_fu.sh`
+### `FineFT/script/data/commodity_data_handler_fu_10.sh`
 
 - **作用**：把 10min 商品期货预处理结果整理成 FineFT 训练所需的数据集结构，校准验证集和训练集的动态标签切片，并生成 VAE 数据。
 - **依赖输入物**（由步骤 1 预处理产出）：
@@ -93,7 +93,7 @@
 
 ## 3. 低层 Agent 并行训练
 
-### `FineFT/script/train/train_commodity_fu_10_parallel.sh`
+### `FineFT/script/train/train_commodity_fu_10.sh`
 
 - **作用**：训练 `fu` 的 10min 低层 agent，采用多 Worker 探索与权重优势预训练的并行训练机制。
 - **依赖输入物**（由步骤 2 数据准备产出）：
@@ -141,7 +141,7 @@
     - **评估日志**：`result/DiHFT/low_level/fu/10min_parallel/weights_advantage_pretrain/pretrain_evaluation.log`
   - **`log/` 运行文本日志**：
     - 控制台文本日志：`log/DiHFT/fu/low_level/train/10min/10min_parallel/advantage-10min-parallel.log`
-- **位置**：承接 `commodity_data_handler_10min_fu.sh` 生成的 `dataset/10min/fu` 数据，是低层回测和 agent 筛选的前置训练步骤。
+- **位置**：承接 `commodity_data_handler_fu_10.sh` 生成的 `dataset/10min/fu` 数据，是低层回测和 agent 筛选的前置训练步骤。
 
 ## 4. 低层回测/测试 (并行测试)
 
@@ -315,7 +315,7 @@
 
 ## 9. 高层路由测试集最终回测与评估 (Final Result)
 
-### `FineFT/script/test/DiHFT/high_level/final_result_fu_10_p.sh`
+### `FineFT/script/test/DiHFT/high_level/final_result_fu_10.sh`
 
 - **作用**：加载步骤 8 筛选出的高层最优路由超参数与步骤 5 筛选出的低层 Agent 组合，在测试集（test stage）全量合约上运行最终的风险感知 VAE 宏观路由与微观交易回测评估，记录逐合约与整体投资组合的最终收益表现与动作历史，并开启非主力合约防御机制。
 - **依赖输入物**（前置各步骤联合依赖）：
@@ -358,12 +358,12 @@
 
 | 阶段 / 步骤 | 核心执行脚本 | 核心依赖输入物 | 关键产出物目录与核心文件 |
 | :--- | :--- | :--- | :--- |
-| **1. 数据预处理** | `main_10min_fu.sh` | `data/原始下载/` (Tick/KLine CSV)<br>`config.py` (合约规则) | `PREPROCESS_DATASET/commodity-futures/`<br>(`SPLIT-TRAIN-VALID-TEST`, `FEATURE_SELECTION`, `SCALE_SAVE`) |
-| **2. FineFT 数据准备** | `commodity_data_handler_10min_fu.sh` | 步骤 1 产出的 `SCALE_SAVE`, `dataset_split_manifest.json`, `state_features.npy` | `dataset/10min/fu/`<br>(`train/`, `valid/`, `test/`, `VAE_data/`, `dataset_manifest.json`) |
-| **3. 低层 Agent 并行训练** | `train_commodity_fu_10_parallel.sh` | 步骤 2 产出的 `dataset/10min/fu/train/`, `state_features.npy`, `margin_dict.npy` | `result/DiHFT/low_level/fu/10min_parallel/weights_advantage_pretrain/`<br>(`epoch_1/`~`epoch_75/trained_model.pkl`, `log/`, `pretrain_evaluation.log`) |
+| **1. 数据预处理** | `main_fu_10.sh` | `data/原始下载/` (Tick/KLine CSV)<br>`config.py` (合约规则) | `PREPROCESS_DATASET/commodity-futures/`<br>(`SPLIT-TRAIN-VALID-TEST`, `FEATURE_SELECTION`, `SCALE_SAVE`) |
+| **2. FineFT 数据准备** | `commodity_data_handler_fu_10.sh` | 步骤 1 产出的 `SCALE_SAVE`, `dataset_split_manifest.json`, `state_features.npy` | `dataset/10min/fu/`<br>(`train/`, `valid/`, `test/`, `VAE_data/`, `dataset_manifest.json`) |
+| **3. 低层 Agent 并行训练** | `train_commodity_fu_10.sh` | 步骤 2 产出的 `dataset/10min/fu/train/`, `state_features.npy`, `margin_dict.npy` | `result/DiHFT/low_level/fu/10min_parallel/weights_advantage_pretrain/`<br>(`epoch_1/`~`epoch_75/trained_model.pkl`, `log/`, `pretrain_evaluation.log`) |
 | **4. 低层 Agent 并行测试** | `test_util_fu_10.sh` | 步骤 3 产出的 `trained_model.pkl` + 步骤 2 产出的 `valid/` 数据 | `result/DiHFT/low_level/fu/10min_parallel/weights_advantage_pretrain/epoch_{epoch}/{slope,volatility}/`<br>(`analysis_result.csv`, `trading_action_detail_*.csv`, `analysis_result.npy`) |
 | **5. 低层 Agent 二维筛选** | `low_level_fu_10.sh` | 步骤 4 产出的 `analysis_result.csv` + 步骤 2 产出的 `valid/` 数据 | `analysis_result/DiHFT/low_level/fu/10min_parallel/two_dimensional_selection/`<br>(`two_dimensional_selection_manifest.json`, `marginal_metrics.csv`, `joint_metrics.csv`, `candidate_rankings.csv`, `selected_slots.csv`) |
 | **6. VAE 并行训练与评估** | `VAE_util_fu_10.sh` | 步骤 2 产出的 `VAE_data/{slope,volatility}/<contract>/label_*.npy` + 步骤 5 的 Label 划分 | `result/DiHFT/vae_results/fu/10min_parallel/{slope,volatility}/`<br>(`label_*/model_latest.pth`, `summary.json`, `ood_logpx_*.csv`, `routing_summary.json`) |
 | **7. 高层 Optuna 并行寻优** | `vae_optuna_fu_10.sh` | 步骤 3/5 筛选的 Agent 模型 + 步骤 6 的 VAE 模型 + 步骤 2 的 `valid/` 数据 | `result/DiHFT/high_level/fu/10min_parallel/`<br>(`vae_risk_aware_routing_optuna/optuna_results.csv`, `vae_risk_aware_routing/.../contract_results.csv`, `trading_info.npy`, `macro_action.npy`) |
 | **8. 高层路由筛选与可视化** | `high_level_heurstic_fu_10.sh` | 步骤 7 产出的 `vae_risk_aware_routing/` 诊断数据 + 步骤 2 的 `valid/*.feather` | `analysis_result/DiHFT/high_level_heurstic/fu/10min_parallel/`<br>(`result.csv`, `best_result.csv`, `best_result_*.png/pdf`)<br>`result/DiHFT/final_result/fu/10min_parallel/`<br>(`high_level_agent_para.txt`, 最终路由诊断向量 `.npy`/`.csv`) |
-| **9. 最终测试与评估** | `final_result_fu_10_p.sh` | 步骤 8 产出的 `high_level_agent_para.txt` + 步骤 7 产出的 `optuna_results.csv` + 步骤 5 的 `two_dimensional_selection_manifest.json` + 步骤 2 的 `test/*.feather` | `result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/`<br>(`contract_results.csv`, `trading_info.npy`, `contracts/<contract>/` 轨迹向量)<br>`log/DiHFT/${DATASET_NAME}/high_level/final_result/${EXPERIMENT_NAME}/final_result.log` |
+| **9. 最终测试与评估** | `final_result_fu_10.sh` | 步骤 8 产出的 `high_level_agent_para.txt` + 步骤 7 产出的 `optuna_results.csv` + 步骤 5 的 `two_dimensional_selection_manifest.json` + 步骤 2 的 `test/*.feather` | `result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/`<br>(`contract_results.csv`, `trading_info.npy`, `contracts/<contract>/` 轨迹向量)<br>`log/DiHFT/${DATASET_NAME}/high_level/final_result/${EXPERIMENT_NAME}/final_result.log` |

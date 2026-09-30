@@ -2,18 +2,18 @@
 set -euo pipefail
 
 # ==============================================================================
-# fu (燃料油) 10min 强化学习全流程流水线执行脚本
+# fu (燃料油) 5min 强化学习全流程流水线执行脚本
 #
-# 对应 fu.10min.readme.md 中的推荐串联运行顺序：
-#   1. main_fu_10.sh
-#   2. commodity_data_handler_fu_10.sh
-#   3. train_commodity_fu_10.sh
-#   4. test_util_fu_10.sh
-#   5. low_level_fu_10.sh
-#   6. VAE_util_fu_10.sh
-#   7. vae_optuna_fu_10.sh
-#   8. high_level_heurstic_fu_10.sh
-#   9. final_result_fu_10.sh
+# 对应 fu.5min.readme.md 中的推荐串联运行顺序：
+#   1. main_fu_5.sh
+#   2. commodity_data_handler_fu_5.sh
+#   3. train_commodity_fu_5.sh
+#   4. test_util_fu_5.sh
+#   5. low_level_fu_5.sh
+#   6. VAE_util_fu_5.sh
+#   7. vae_optuna_fu_5.sh
+#   8. high_level_heurstic_fu_5.sh
+#   9. final_result_fu_5.sh
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,15 +33,15 @@ export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT:${ROOTPATH}/data_preprocess${P
 
 # 9 个核心脚本定义 (格式: 步骤名称|脚本相对路径|主要日志路径)
 declare -a PIPELINE_STEPS=(
-    "数据预处理|data_preprocess/script_preprocess/future_upgraded/commodity/main_fu_10.sh|log_futures/ticker_result/commodity/fu_10min_2023-01-01_2026-03-01.log"
-    "FineFT 数据准备|FineFT/script/data/commodity_data_handler_fu_10.sh|终端标准输出"
-    "低层 Agent 并行训练|FineFT/script/train/train_commodity_fu_10.sh|log/DiHFT/fu/low_level/train/10min/10min_parallel/advantage-10min-parallel.log"
-    "低层 Agent 并行测试|FineFT/script/test/DiHFT/low_level/test_util_fu_10.sh|log/DiHFT/fu/low_level/test/10min_parallel/{slope,volatility}/epoch_*.log"
-    "低层 Agent 二维联合筛选与分析|FineFT/script/analysis/pick_agent/low_level_fu_10.sh|log/analysis/pick_agent/DiHFT/fu/10min_parallel.log"
-    "VAE 并行训练与评估 (多进程并行)|FineFT/script/train/DiHFT/low_level/VAE_util_fu_10.sh|log/DiHFT/fu/VAE/10min_parallel/{slope,volatility}/train_label_*.log"
-    "高层 VAE 路由 Optuna 优化与分析|FineFT/script/test/DiHFT/high_level/vae_optuna_fu_10.sh|log/DiHFT/fu/high_level/optuna/10min_parallel/optuna.log"
-    "高层启发式路由策略筛选与分析|FineFT/script/analysis/pick_agent/high_level_heurstic_fu_10.sh|log/analysis/pick_agent/DiHFT/fu/high_level_heurstic/10min_parallel.log"
-    "高层路由测试集最终回测与评估|FineFT/script/test/DiHFT/high_level/final_result_fu_10.sh|log/DiHFT/fu/high_level/final_result/10min_parallel/final_result.log"
+    "数据预处理|data_preprocess/script_preprocess/future_upgraded/commodity/main_fu_5.sh|log_futures/ticker_result/commodity/fu_5min_2023-01-01_2026-03-01.log"
+    "FineFT 数据准备|FineFT/script/data/commodity_data_handler_fu_5.sh|终端标准输出"
+    "低层 Agent 并行训练|FineFT/script/train/train_commodity_fu_5.sh|log/DiHFT/fu/low_level/train/5min/5min_parallel/advantage-5min-parallel.log"
+    "低层 Agent 并行测试|FineFT/script/test/DiHFT/low_level/test_util_fu_5.sh|log/DiHFT/fu/low_level/test/5min_parallel/{slope,volatility}/epoch_*.log"
+    "低层 Agent 二维联合筛选与分析|FineFT/script/analysis/pick_agent/low_level_fu_5.sh|log/analysis/pick_agent/DiHFT/fu/5min_parallel.log"
+    "VAE 并行训练与评估 (多进程并行)|FineFT/script/train/DiHFT/low_level/VAE_util_fu_5.sh|log/DiHFT/fu/VAE/5min_parallel/{slope,volatility}/train_label_*.log"
+    "高层 VAE 路由 Optuna 优化与分析|FineFT/script/test/DiHFT/high_level/vae_optuna_fu_5.sh|log/DiHFT/fu/high_level/optuna/5min_parallel/optuna.log"
+    "高层启发式路由策略筛选与分析|FineFT/script/analysis/pick_agent/high_level_heurstic_fu_5.sh|log/analysis/pick_agent/DiHFT/fu/high_level_heurstic/5min_parallel.log"
+    "高层路由测试集最终回测与评估|FineFT/script/test/DiHFT/high_level/final_result_fu_5.sh|log/DiHFT/fu/high_level/final_result/5min_parallel/final_result.log"
 )
 
 TOTAL_STEPS="${#PIPELINE_STEPS[@]}"
@@ -62,10 +62,10 @@ format_duration() {
 
 show_help() {
     cat <<EOF
-fu (燃料油) 10min 全流程流水线执行脚本
+fu (燃料油) 5min 全流程流水线执行脚本
 
 用法:
-  ./run_fu_10min_pipeline.sh [选项] [步骤编号/列表/区间]
+  ./run_fu_5min_pipeline.sh [选项] [步骤编号/列表/区间]
 
 参数支持以下格式:
   (无参数)                     顺序执行全部 1 至 ${TOTAL_STEPS} 步
@@ -82,17 +82,17 @@ fu (燃料油) 10min 全流程流水线执行脚本
   -h, --help           显示此帮助信息
 
 示例:
-  ./run_fu_10min_pipeline.sh 1,2,6            # 仅依次运行步骤 1, 2, 6
-  ./run_fu_10min_pipeline.sh 1 2 6            # 仅依次运行步骤 1, 2, 6
-  ./run_fu_10min_pipeline.sh 3                # 从第 3 步开始运行至最后
-  ./run_fu_10min_pipeline.sh 3 5              # 仅运行第 3 步至第 5 步
-  ./run_fu_10min_pipeline.sh -n 1,2,6         # 预检预览步骤 1, 2, 6
+  ./run_fu_5min_pipeline.sh 1,2,6            # 仅依次运行步骤 1, 2, 6
+  ./run_fu_5min_pipeline.sh 1 2 6            # 仅依次运行步骤 1, 2, 6
+  ./run_fu_5min_pipeline.sh 3                # 从第 3 步开始运行至最后
+  ./run_fu_5min_pipeline.sh 3 5              # 仅运行第 3 步至第 5 步
+  ./run_fu_5min_pipeline.sh -n 1,2,6         # 预检预览步骤 1, 2, 6
 EOF
 }
 
 list_steps() {
     echo "================================================================================"
-    echo "fu 10min 全流程流水线步骤清单 (共 ${TOTAL_STEPS} 步):"
+    echo "fu 5min 全流程流水线步骤清单 (共 ${TOTAL_STEPS} 步):"
     echo "================================================================================"
     for ((i = 1; i <= TOTAL_STEPS; i++)); do
         local idx=$((i - 1))
@@ -256,9 +256,9 @@ done
 overall_start_time=$(date +%s)
 echo "================================================================================"
 if [ "${DRY_RUN}" -eq 1 ]; then
-    echo "🔍 [预检模式] fu 10min 全流程流水线"
+    echo "🔍 [预检模式] fu 5min 全流程流水线"
 else
-    echo "🚀 开始执行 fu 10min 全流程流水线"
+    echo "🚀 开始执行 fu 5min 全流程流水线"
 fi
 echo "工作根目录: ${ROOTPATH}"
 echo "当前环境: $(which python 2>/dev/null || echo '未检测到 python')"
@@ -311,7 +311,7 @@ echo "==========================================================================
 if [ "${DRY_RUN}" -eq 1 ]; then
     echo "🔍 [预检模式完成] 所有计划步骤检查通过！"
 else
-    echo "🎉 fu 10min 所选步骤已全部执行完成！"
+    echo "🎉 fu 5min 所选步骤已全部执行完成！"
 fi
 echo "已完成步骤: [ ${SELECTED_STEPS[*]} ]"
 echo "总耗时: ${total_duration}"

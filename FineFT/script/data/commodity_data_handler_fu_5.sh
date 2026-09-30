@@ -5,7 +5,7 @@ ROOTPATH=${ROOTPATH:-$(pwd)}
 SYMBOL=${SYMBOL:-fu}
 TARGET_FREQ=${TARGET_FREQ:-5min}
 CHUNK_LENGTH=${CHUNK_LENGTH:-8000}
-EARLY_STOP=${EARLY_STOP:-2}
+EARLY_STOP=${EARLY_STOP:-200}
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate finetf
@@ -35,14 +35,30 @@ python FineFT/datahandler/valid_cross_contract_label_calibration.py \
   --threshold_method global_segment_quantile \
   --timestamp timestamp
 
+python FineFT/datahandler/valid_cross_contract_label_calibration.py \
+  --data_dir "dataset/${TARGET_FREQ}/${SYMBOL}/train" \
+  --dynamic_number 3 \
+  --labeling_method "slope" \
+  --threshold_method global_segment_quantile \
+  --timestamp timestamp
+
+python FineFT/datahandler/valid_cross_contract_label_calibration.py \
+  --data_dir "dataset/${TARGET_FREQ}/${SYMBOL}/train" \
+  --dynamic_number 3 \
+  --labeling_method "volatility" \
+  --threshold_method global_segment_quantile \
+  --timestamp timestamp
+
 python FineFT/datahandler/vae_data_creation.py \
   --base_path "dataset/${TARGET_FREQ}" \
   --dataset_name "${SYMBOL}" \
   --save_path "dataset/${TARGET_FREQ}" \
+  --source_split "train" \
   --labeling_method "slope"
 
 python FineFT/datahandler/vae_data_creation.py \
   --base_path "dataset/${TARGET_FREQ}" \
   --dataset_name "${SYMBOL}" \
   --save_path "dataset/${TARGET_FREQ}" \
+  --source_split "train" \
   --labeling_method "volatility"
