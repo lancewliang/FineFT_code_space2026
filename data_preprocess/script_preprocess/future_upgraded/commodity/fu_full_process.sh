@@ -444,9 +444,6 @@ CROSS_MONTH_FEATURE_COLUMNS=(
     cm_contract_role_main
     cm_contract_role_sub
     cm_contract_role_other
-    cm_current_main_volume_share_current
-    cm_current_sub_volume_share_current
-    cm_main_sub_volume_share_sub
     cm_main_sub_log_price_spread_velocity_10m
     cm_open_interest_shift_speed_10m
     cm_m1_m2_log_price_spread_velocity_10m
@@ -518,6 +515,10 @@ run_commodity_scale_save() {
         --orderbook_depth 5 \
         --clip_min -5.0 \
         --clip_max 5.0 \
+        --scale_method "rolling_zscore" \
+        --rolling_window 48 \
+        --clip_mode "tanh" \
+        --soft_clip_m 4.0 \
         --feature_list_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/${target_freq}/${symbol}/train/state_features.npy" \
         --passthrough_features "${BASE_TIME_FEATURE_COLUMNS[@]}"
 }
@@ -873,7 +874,7 @@ run_commodity_feature_selection() {
         --orderbook_depth 5 \
         --regime_bins "${regime_bins}" \
         "${target_regime_bins_args[@]}" \
-        --mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" "${CROSS_MONTH_FEATURE_COLUMNS[@]}" "${PRICE_LIMIT_RATIO_FEATURE_COLUMNS[@]}" \
+        --mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" "${CROSS_MONTH_FEATURE_COLUMNS[@]}" \
         "${feature_blacklist_args[@]}"
 }
 

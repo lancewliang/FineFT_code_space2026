@@ -51,6 +51,11 @@ class ScaleManifest:
     clip_max: float | None
     features: list[ScalerFeatureStats]
     passthrough_state_features: list[str] = field(default_factory=list)
+    scale_method: str = "rolling_zscore"
+    rolling_window: int = 48
+    rolling_min_periods: int = 1
+    clip_mode: str = "tanh"
+    soft_clip_m: float = 4.0
 
     def to_dict(self) -> dict:
         payload = asdict(self)
@@ -58,7 +63,11 @@ class ScaleManifest:
             "enabled": self.clip_enabled,
             "min": self.clip_min,
             "max": self.clip_max,
+            "mode": self.clip_mode,
+            "soft_clip_m": self.soft_clip_m,
         }
+        payload["scale_method"] = self.scale_method
+        payload["rolling_window"] = self.rolling_window
         return payload
 
 
@@ -103,6 +112,38 @@ parser.add_argument(
     "--disable_clip",
     action="store_true",
     help="disable robust scaler clipping",
+)
+parser.add_argument(
+    "--scale_method",
+    type=str,
+    default="rolling_zscore",
+    choices=["rolling_zscore", "robust"],
+    help="feature scaling method: rolling_zscore (adaptive) or robust (static train-wide)",
+)
+parser.add_argument(
+    "--rolling_window",
+    type=int,
+    default=48,
+    help="rolling window size for rolling_zscore",
+)
+parser.add_argument(
+    "--rolling_min_periods",
+    type=int,
+    default=1,
+    help="minimum observations for rolling window",
+)
+parser.add_argument(
+    "--clip_mode",
+    type=str,
+    default="tanh",
+    choices=["tanh", "hard"],
+    help="clipping mode: tanh (continuous soft saturation) or hard (np.clip)",
+)
+parser.add_argument(
+    "--soft_clip_m",
+    type=float,
+    default=4.0,
+    help="saturation bound scale for tanh soft clipping: m * tanh(z / m)",
 )
 parser.add_argument(
     "--iqr_epsilon",
@@ -194,6 +235,12 @@ def validate_clip_args(args) -> None:
         raise ValueError("iqr_epsilon must be a finite positive value")
     if args.std_epsilon <= 0 or not math.isfinite(args.std_epsilon):
         raise ValueError("std_epsilon must be a finite positive value")
+    if args.rolling_window <= 0:
+        raise ValueError("rolling_window must be a positive integer")
+    if args.rolling_min_periods <= 0:
+        raise ValueError("rolling_min_periods must be a positive integer")
+    if args.soft_clip_m <= 0 or not math.isfinite(args.soft_clip_m):
+        raise ValueError("soft_clip_m must be a finite positive value")
     if args.disable_clip:
         return
     if not math.isfinite(args.clip_min) or not math.isfinite(args.clip_max):
@@ -333,7 +380,11 @@ def fit_robust_scaler(
     return ScaleManifest(
         symbol=args.symbols,
         target_freq=args.target_freq,
-        scaler_version="robust_v1",
+        scaler_version=(
+            "rolling_zscore_v1"
+            if args.scale_method == "rolling_zscore"
+            else "robust_v1"
+        ),
         fit_scope="train_all_contracts",
         feature_list_path=str(feature_list_path),
         train_input_files=train_input_files,
@@ -343,6 +394,11 @@ def fit_robust_scaler(
         clip_max=None if args.disable_clip else float(args.clip_max),
         features=feature_stats,
         passthrough_state_features=passthrough_features,
+        scale_method=args.scale_method,
+        rolling_window=args.rolling_window,
+        rolling_min_periods=args.rolling_min_periods,
+        clip_mode=args.clip_mode,
+        soft_clip_m=float(args.soft_clip_m),
     )
 
 
@@ -389,6 +445,8 @@ def is_volatility_feature(feature: str) -> bool:
 
 
 def transform_volatility_values(values: np.ndarray) -> np.ndarray:
+    if values.size > 0 and np.nanmin(values) < 0.0:
+        return values
     return np.log(np.maximum(values, 0.0) + VOLATILITY_LOG_EPSILON)
 
 
@@ -425,7 +483,34 @@ def apply_robust_scaler(
         values = df_state.get_column(stats.feature).to_numpy().astype(float, copy=False)
         if stats.is_log_transformed:
             values = transform_volatility_values(values)
-        scaled = (values - stats.center) / stats.scale
+
+        if manifest.scale_method == "rolling_zscore":
+            r_mean = (
+                pl.Series(values)
+                .rolling_mean(
+                    window_size=manifest.rolling_window,
+                    min_samples=manifest.rolling_min_periods,
+                )
+                .to_numpy()
+            )
+            r_std = (
+                pl.Series(values)
+                .rolling_std(
+                    window_size=manifest.rolling_window,
+                    min_samples=2,
+                )
+                .to_numpy()
+            )
+            fallback_scale = (
+                stats.scale
+                if stats.scale > 1e-8
+                else (stats.std if stats.std > 1e-8 else 1.0)
+            )
+            denom = np.where(np.isnan(r_std) | (r_std <= 1e-8), fallback_scale, r_std)
+            scaled = (values - r_mean) / denom
+        else:
+            scaled = (values - stats.center) / stats.scale
+
         clipped_count = 0
         if manifest.clip_enabled:
             clip_min, clip_max = resolve_feature_clip_bounds(
@@ -433,9 +518,16 @@ def apply_robust_scaler(
                 float(manifest.clip_min),
                 float(manifest.clip_max),
             )
-            clipped_mask = (scaled < clip_min) | (scaled > clip_max)
-            clipped_count = int(np.count_nonzero(clipped_mask))
-            scaled = np.clip(scaled, clip_min, clip_max)
+            if manifest.clip_mode == "tanh":
+                m = min(abs(clip_min), abs(clip_max), float(manifest.soft_clip_m))
+                clipped_mask = (scaled < -m) | (scaled > m)
+                clipped_count = int(np.count_nonzero(clipped_mask))
+                scaled = m * np.tanh(scaled / m)
+            else:
+                clipped_mask = (scaled < clip_min) | (scaled > clip_max)
+                clipped_count = int(np.count_nonzero(clipped_mask))
+                scaled = np.clip(scaled, clip_min, clip_max)
+
         columns[stats.feature] = scaled
         clipped_by_feature[stats.feature] = clipped_count
 

@@ -214,6 +214,8 @@ def test_log_volatility_transformation_in_scale_save(tmp_path):
         "--target_freq", "5min",
         "--feature_list_path", str(feature_list_file),
         "--save_path", save_path,
+        "--scale_method", "robust",
+        "--clip_mode", "hard",
     ])
 
     main(args)
@@ -365,3 +367,92 @@ def test_volume_activity_log_transformation_in_scale_save(tmp_path):
     stats_by_feat = {f["feature"]: f for f in manifest_data["features"]}
     assert stats_by_feat["vma_24_std_norm_origin"]["is_log_transformed"] is True
     assert stats_by_feat["buy_volume_oe_trend_6"]["is_log_transformed"] is False
+
+
+def test_rolling_zscore_and_tanh_soft_saturation_in_scale_save(tmp_path):
+    feature_list_file = tmp_path / "state_features.npy"
+    features = ["normal_feature", "outlier_feature"]
+    np.save(feature_list_file, np.array(features))
+
+    split_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train"
+    split_dir.mkdir(parents=True, exist_ok=True)
+
+    n = 60
+    normal_vals = [float(i) for i in range(n)]
+    # Feature with massive outlier at index 50
+    outlier_vals = [1.0] * n
+    outlier_vals[50] = 1000.0
+
+    df = pl.DataFrame({
+        "timestamp": list(range(1, n + 1)),
+        "contract": ["fu2601"] * n,
+        "symbol": ["fu"] * n,
+        "ask1_price": [100.0] * n,
+        "ask1_size": [1.0] * n,
+        "bid1_price": [99.0] * n,
+        "bid1_size": [1.0] * n,
+        "LowerLimitPrice": [90.0] * n,
+        "UpperLimitPrice": [110.0] * n,
+        "funding_timestamp": list(range(1, n + 1)),
+        "funding_rate": [0.0] * n,
+        "index_price": [100.0] * n,
+        "mark_price": [100.0] * n,
+        "normal_feature": normal_vals,
+        "outlier_feature": outlier_vals,
+    })
+    df.write_ipc(split_dir / "fu2601.feather")
+
+    save_path = "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE"
+    args = parser.parse_args([
+        "--root_path", str(tmp_path),
+        "--symbols", "fu",
+        "--target_freq", "5min",
+        "--feature_list_path", str(feature_list_file),
+        "--save_path", save_path,
+        "--scale_method", "rolling_zscore",
+        "--rolling_window", "48",
+        "--clip_mode", "tanh",
+        "--soft_clip_m", "4.0",
+    ])
+
+    main(args)
+
+    output_root = tmp_path / save_path / "fu" / "5min"
+    manifest_path = output_root / "scaler_manifest.json"
+    assert manifest_path.exists()
+    manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert manifest_data["scale_method"] == "rolling_zscore"
+    assert manifest_data["rolling_window"] == 48
+    assert manifest_data["clip"]["mode"] == "tanh"
+    assert manifest_data["clip"]["soft_clip_m"] == 4.0
+    assert manifest_data["scaler_version"] == "rolling_zscore_v1"
+
+    out_file = output_root / "train" / "fu2601.feather"
+    out_df = pl.read_ipc(out_file)
+
+    # First row in rolling z-score: mean equals values[0], so (x - mean) == 0.0
+    assert out_df["normal_feature"][0] == 0.0
+
+    # Tanh soft saturation ensures values are strictly bounded by (-4.0, 4.0)
+    outlier_scaled = out_df["outlier_feature"].to_numpy()
+    assert np.all(outlier_scaled >= -4.0)
+    assert np.all(outlier_scaled <= 4.0)
+    # The extreme outlier at index 50 should saturate smoothly close to 4.0 but not exceed 4.0
+    assert 3.7 <= outlier_scaled[50] <= 4.0
+
+
+def test_volatility_no_double_log_transformation():
+    from operator_futures.scale_describe_save.muti_contract_scale_save import (
+        transform_volatility_values,
+    )
+    # If values are already in log space (containing negative numbers like log(0.01) = -4.6)
+    log_vals = np.array([-4.6, -3.2, -5.0, 0.5])
+    transformed = transform_volatility_values(log_vals)
+    # Must NOT apply log a second time
+    assert np.array_equal(transformed, log_vals)
+
+    # Raw non-negative values should still be log transformed
+    raw_vals = np.array([0.01, 0.05, 0.1])
+    transformed_raw = transform_volatility_values(raw_vals)
+    assert np.allclose(transformed_raw, np.log(raw_vals + 1e-6))

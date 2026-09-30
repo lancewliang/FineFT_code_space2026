@@ -1773,7 +1773,7 @@ def test_commodity_full_process_shell_preserves_cross_month_features():
     assert "limit_up_single_sided_ratio" in text
     assert "limit_down_single_sided_ratio" in text
     assert (
-        '--mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" "${CROSS_MONTH_FEATURE_COLUMNS[@]}" "${PRICE_LIMIT_RATIO_FEATURE_COLUMNS[@]}"'
+        '--mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" "${CROSS_MONTH_FEATURE_COLUMNS[@]}"'
         in text
     )
 

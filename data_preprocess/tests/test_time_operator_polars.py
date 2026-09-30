@@ -781,3 +781,29 @@ def test_time_feature_10min_window_truncation_eliminates_macro_windows(tmp_path)
     assert "bid1_price_trend_192" not in out.columns
     assert "min_96_origin" not in out.columns
     assert "max_192_origin" not in out.columns
+
+
+def test_bollinger_bandwidth_log_transformation_polars():
+    timestamps = [1_700_000_000 + idx * 60 for idx in range(25)]
+    pandas_frame = pd.DataFrame(
+        {
+            "open": [100.0 + idx for idx in range(25)],
+            "high": [102.0 + idx for idx in range(25)],
+            "low": [98.0 + idx for idx in range(25)],
+            "close": [100.5 + idx for idx in range(25)],
+            "volume": [1000.0 + idx * 10 for idx in range(25)],
+        },
+        index=timestamps,
+    )
+    polars_frame = pl.from_pandas(pandas_frame.reset_index(names="timestamp"))
+    res_ohlcv = _process_ohlcv_single_window_polars(polars_frame, 3)
+    assert "bollinger_bandwidth_3" in res_ohlcv.columns
+    bw_vals = res_ohlcv.get_column("bollinger_bandwidth_3").to_numpy()
+    assert np.all(np.isfinite(bw_vals))
+    assert np.all(bw_vals < 0.0)
+
+    res_ohlc = _process_ohlc_single_window_polars(polars_frame, 3)
+    assert "bollinger_bandwidth_3" in res_ohlc.columns
+    bw_vals_ohlc = res_ohlc.get_column("bollinger_bandwidth_3").to_numpy()
+    assert np.all(np.isfinite(bw_vals_ohlc))
+    assert np.all(bw_vals_ohlc < 0.0)
