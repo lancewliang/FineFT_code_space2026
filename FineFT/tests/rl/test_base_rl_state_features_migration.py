@@ -141,3 +141,13 @@ def test_dqn_trainer_loads_rl_features_and_fails_fast_on_legacy_only(tmp_path):
     trainer = DQN(args)
 
     assert list(trainer.tech_indicator_list) == ["rl_f1", "rl_f2", "rl_f3"]
+
+@pytest.fixture(autouse=True)
+def restore_pythonhashseed():
+    import os
+    orig = os.environ.get("PYTHONHASHSEED")
+    yield
+    if orig is not None:
+        os.environ["PYTHONHASHSEED"] = orig
+    else:
+        os.environ.pop("PYTHONHASHSEED", None)

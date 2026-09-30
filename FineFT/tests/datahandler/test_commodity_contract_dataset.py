@@ -101,7 +101,7 @@ def _dataset_manifest_from_dict(manifest):
     rl_src = manifest.get("rl_state_features_source_path", manifest.get("state_features_source_path", ""))
     rl_dest = manifest.get("rl_state_features_path", "")
     if not rl_dest:
-        dest_p = Path(manifest.get("state_features_path", "dataset/fu/state_features.npy")).parent
+        dest_p = Path(manifest.get("state_features_path", "dataset/fu/rl_state_features.npy")).parent
         rl_dest = str(dest_p / ArtifactNames.RL_STATE_FEATURES_NPY)
     vae_src = manifest.get("vae_state_features_source_path", "")
     vae_dest = manifest.get("vae_state_features_path", "")
@@ -311,8 +311,8 @@ def test_write_stage_datasets_fails_when_state_features_missing(tmp_path):
     train_file = _write_scale_save_file(tmp_path, "train", "fu2508", rows=2)
     dataset_root = tmp_path / "dataset" / "10min" / "fu"
     manifest = _dataset_manifest_from_dict({
-        "state_features_source_path": str(tmp_path / "missing" / ArtifactNames.RL_STATE_FEATURES_NPY),
-        "state_features_path": str(dataset_root / "state_features.npy"),
+        "rl_state_features_source_path": str(tmp_path / "missing" / ArtifactNames.RL_STATE_FEATURES_NPY),
+        "rl_state_features_path": str(dataset_root / ArtifactNames.RL_STATE_FEATURES_NPY),
         "sets": {
             "train": {
                 "contracts": [
@@ -337,8 +337,8 @@ def test_write_stage_datasets_fails_when_scale_save_file_missing(tmp_path):
     np.save(state_features, np.array(["feature_a"]))
     dataset_root = tmp_path / "dataset" / "10min" / "fu"
     manifest = _dataset_manifest_from_dict({
-        "state_features_source_path": str(state_features),
-        "state_features_path": str(dataset_root / "state_features.npy"),
+        "rl_state_features_source_path": str(state_features),
+        "rl_state_features_path": str(dataset_root / ArtifactNames.RL_STATE_FEATURES_NPY),
         "sets": {
             "train": {
                 "contracts": [
@@ -364,8 +364,8 @@ def test_write_stage_datasets_fails_when_state_features_empty(tmp_path):
     np.save(state_features, np.array([]))
     dataset_root = tmp_path / "dataset" / "10min" / "fu"
     manifest = _dataset_manifest_from_dict({
-        "state_features_source_path": str(state_features),
-        "state_features_path": str(dataset_root / "state_features.npy"),
+        "rl_state_features_source_path": str(state_features),
+        "rl_state_features_path": str(dataset_root / ArtifactNames.RL_STATE_FEATURES_NPY),
         "sets": {
             "train": {
                 "contracts": [
@@ -391,8 +391,8 @@ def test_write_stage_datasets_fails_when_copied_stage_data_empty(tmp_path):
     np.save(state_features, np.array(["feature_a"]))
     dataset_root = tmp_path / "dataset" / "10min" / "fu"
     manifest = _dataset_manifest_from_dict({
-        "state_features_source_path": str(state_features),
-        "state_features_path": str(dataset_root / "state_features.npy"),
+        "rl_state_features_source_path": str(state_features),
+        "rl_state_features_path": str(dataset_root / ArtifactNames.RL_STATE_FEATURES_NPY),
         "sets": {
             "train": {
                 "contracts": [

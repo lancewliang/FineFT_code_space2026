@@ -221,3 +221,13 @@ def test_safe_routing_fails_fast_on_missing_rl_or_vae_features(tmp_path):
                 agent = vae_risk_aware_routing(args)
                 assert list(agent.tech_indicator_list) == ["rl_f1", "rl_f2"]
                 assert list(agent.vae_indicator_list) == ["vae_f1"]
+
+@pytest.fixture(autouse=True)
+def restore_pythonhashseed():
+    import os
+    orig = os.environ.get("PYTHONHASHSEED")
+    yield
+    if orig is not None:
+        os.environ["PYTHONHASHSEED"] = orig
+    else:
+        os.environ.pop("PYTHONHASHSEED", None)
