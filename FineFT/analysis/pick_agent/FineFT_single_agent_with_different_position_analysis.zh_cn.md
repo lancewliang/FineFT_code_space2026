@@ -21,7 +21,7 @@
 ```text
 result/DiHFT/low_level/<dataset_name>/<parameter>/epoch_<k>/analysis_result.npy
 result/DiHFT/low_level/<dataset_name>/<parameter>/epoch_<k>/trained_model.pkl
-dataset/<dataset_name>/state_features.npy
+dataset/<dataset_name>/rl_state_features.npy
 ```
 
 其中 `analysis_result.npy` 不是这个脚本生成的，而是由低层回测脚本生成：
@@ -367,7 +367,7 @@ create_potential_result(best_agent_df)
 固定网络参数：
 
 ```python
-n_state = len(dataset/<dataset_name>/state_features.npy)
+n_state = len(dataset/<dataset_name>/rl_state_features.npy)
 n_action = 9
 n_hidden = 128
 time_info_dim = 2

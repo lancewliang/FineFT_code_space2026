@@ -31,7 +31,7 @@ parser.add_argument(
 parser.add_argument(
     "--state_feature_path",
     type=str,
-    default="dataset/motivation/state_features.npy",
+    default="dataset/motivation/rl_state_features.npy",
     help="state_feature path",
 )
 

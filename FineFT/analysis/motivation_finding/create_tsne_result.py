@@ -27,7 +27,7 @@ parser.add_argument(
 parser.add_argument(
     "--state_feature_path",
     type=str,
-    default="dataset/BTCUSDT/state_features.npy",
+    default="dataset/BTCUSDT/rl_state_features.npy",
     help="state_feature path",
 )
 parser.add_argument(

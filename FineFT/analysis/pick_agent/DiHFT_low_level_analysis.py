@@ -11,6 +11,7 @@ os.environ["F_ENABLE_ONEDNN_OPTS"] = "0"
 import sys
 
 sys.path.append(".")
+from common import ArtifactNames
 from model.low_level import create_new_ensemble_qnet
 
 #! abandon this file, use FineFT_single_agent_with_different_position
@@ -375,7 +376,7 @@ class picker:
             bin_index = bin_index_list[0]
             index_list.append(bin_index)
         n_state = len(
-            np.load(os.path.join("dataset", self.dataset_name, "state_features.npy"))
+            np.load(os.path.join("dataset", self.dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY))
         )
         n_action = 9
         n_hidden = 128

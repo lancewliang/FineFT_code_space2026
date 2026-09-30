@@ -323,24 +323,25 @@ def test_low_level_agent_ood_analysis_default_feature_path(tmp_path: Path, monke
 
     split_dir = data_dir / "test"
     split_dir.mkdir(parents=True, exist_ok=True)
+    n_rows = 20
+    t_range = pd.date_range("2026-01-01", periods=n_rows, freq="10min")
+    f_range = pd.date_range("2026-01-01 08:00:00", periods=n_rows, freq="10min")
     df_data = {
-        "timestamp": pd.date_range("2026-01-01", periods=10, freq="10min"),
-        "open": np.linspace(100, 110, 10),
-        "high": np.linspace(101, 111, 10),
-        "low": np.linspace(99, 109, 10),
-        "close": np.linspace(100.5, 110.5, 10),
-        "volume": np.ones(10) * 100,
-        "holding": np.zeros(10),
-        "initial_margin": np.zeros(10),
-        "maintain_margin": np.zeros(10),
-        "margin_rate": np.ones(10) * 0.1,
-        "commission_rate": np.ones(10) * 0.0001,
-        "commission": np.zeros(10),
-        "minute": np.arange(10),
-        "hour": np.zeros(10),
+        "timestamp": t_range,
+        "mark_price": [100.0 + i * 0.1 for i in range(n_rows)],
+        "funding_rate": [0.0] * n_rows,
+        "funding_timestamp": f_range,
+        "funding_count_down_hour": [8.0] * n_rows,
+        "funding_count_down_minute": [0.0] * n_rows,
     }
+    for level in range(1, 26):
+        df_data[f"bid{level}_price"] = [99.0] * n_rows
+        df_data[f"ask{level}_price"] = [101.0] * n_rows
+        df_data[f"bid{level}_size"] = [10.0] * n_rows
+        df_data[f"ask{level}_size"] = [10.0] * n_rows
+
     for i in range(n_states):
-        df_data[f"feat_{i}"] = np.random.randn(10)
+        df_data[f"feat_{i}"] = np.random.randn(n_rows).tolist()
 
     df_test = pd.DataFrame(df_data)
     df_test.to_feather(split_dir / "fu2601.feather")
