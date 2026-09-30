@@ -11,6 +11,7 @@ import sys
 from torch import nn
 
 sys.path.append(".")
+from common import ArtifactNames
 import copy
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
@@ -327,7 +328,7 @@ class high_level_agent:
             self.base_path, self.dataset_name, "train.feather"
         )
         self.tech_indicator_list = np.load(
-            os.path.join(self.base_path, self.dataset_name, "state_features.npy")
+            os.path.join(self.base_path, self.dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY)
         )
         self.maintenance_margin_ratio_dict = np.load(
             os.path.join(

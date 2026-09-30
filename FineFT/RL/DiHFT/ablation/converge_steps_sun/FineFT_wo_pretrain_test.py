@@ -3,6 +3,7 @@
 import sys
 
 sys.path.append(".")
+from common import ArtifactNames
 import os
 import random
 import argparse
@@ -196,7 +197,7 @@ class weighted_trader:
         self.dataset_name = args.dataset_name
         self.valid_data_path = os.path.join(self.base_path, self.dataset_name, "valid")
         self.tech_indicator_list = np.load(
-            os.path.join(self.base_path, self.dataset_name, "state_features.npy")
+            os.path.join(self.base_path, self.dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY)
         )
         self.maintenance_margin_ratio_dict = np.load(
             os.path.join(

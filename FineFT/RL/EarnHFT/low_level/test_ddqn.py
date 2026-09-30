@@ -17,6 +17,7 @@ import yaml
 import pandas as pd
 from env.env_initiate.base_initiate import initiate_base_env
 import re
+from common import ArtifactNames
 
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
@@ -170,7 +171,7 @@ class trader(object):
         self.dataset_name = args.dataset_name
         self.valid_data_path = os.path.join(self.base_path, self.dataset_name, "valid")
         self.tech_indicator_list = np.load(
-            os.path.join(self.base_path, self.dataset_name, "state_features.npy")
+            os.path.join(self.base_path, self.dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY)
         )
         self.maintenance_margin_ratio_dict = np.load(
             os.path.join(

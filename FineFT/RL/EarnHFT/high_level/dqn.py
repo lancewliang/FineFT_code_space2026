@@ -3,6 +3,7 @@
 import sys
 
 sys.path.append(".")
+from common import ArtifactNames
 import os
 from torch.utils.tensorboard import SummaryWriter
 from RL.util.replay_buffer_DQN import Multi_step_ReplayBuffer_multi_info
@@ -259,11 +260,11 @@ class DQN(object):
             self.base_path, self.dataset_name, "train.feather"
         )
         self.tech_indicator_list = np.load(
-            os.path.join(self.base_path, self.dataset_name, "state_features.npy")
+            os.path.join(self.base_path, self.dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY)
         )
         self.high_level_feature_list = np.load(
             os.path.join(
-                self.base_path, self.dataset_name, "high_level_state_features.npy"
+                self.base_path, self.dataset_name, ArtifactNames.HIGH_LEVEL_STATE_FEATURES_NPY
             )
         )
         self.maintenance_margin_ratio_dict = np.load(

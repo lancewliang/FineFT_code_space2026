@@ -15,6 +15,7 @@ import pandas as pd
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
+from common import ArtifactNames
 
 sys.path.append(".")
 
@@ -366,7 +367,7 @@ class Weighted_Contexts_DQN:
         self.train_df = pd.read_feather(self.train_df)
         self.df_index = args.df_index
         self.tech_indicator_list = np.load(
-            os.path.join(self.base_path, self.dataset_name, "state_features.npy")
+            os.path.join(self.base_path, self.dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY)
         )
         self.maintenance_margin_ratio_dict = np.load(
             os.path.join(

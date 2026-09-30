@@ -30,6 +30,7 @@ from RL.util.episode_selector import (
     get_transformation_even_based_sigmoid_risk,
 )
 import re
+from common import ArtifactNames
 
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
@@ -314,7 +315,7 @@ class DQN(object):
         self.train_data_path = os.path.join(self.base_path, self.dataset_name, "train")
         self.total_df_index_length = len(os.listdir(self.train_data_path))
         self.tech_indicator_list = np.load(
-            os.path.join(self.base_path, self.dataset_name, "state_features.npy")
+            os.path.join(self.base_path, self.dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY)
         )
         self.maintenance_margin_ratio_dict = np.load(
             os.path.join(
