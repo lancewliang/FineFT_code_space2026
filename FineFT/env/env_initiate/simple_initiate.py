@@ -4,6 +4,7 @@ import numpy as np
 import sys
 
 sys.path.append(".")
+from common import ArtifactNames
 from env.env_class.simple_env import Simple_Env
 import random
 from numpy.lib.stride_tricks import sliding_window_view
@@ -156,7 +157,7 @@ if __name__ == "__main__":
     df = pd.read_feather(
         os.path.join("/data2/mlqin/FT_0618/dataset", dataset_name, "train.feather")
     )
-    feature_list = np.load(os.path.join("dataset", dataset_name, "state_features.npy"))
+    feature_list = np.load(os.path.join("dataset", dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY))
     env = initiate_rolling_env(df, feature_list)
     s, info = env.reset()
     for i in range(100):

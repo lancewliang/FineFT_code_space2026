@@ -19,6 +19,10 @@ def test_artifact_names_literals() -> None:
     assert ArtifactNames.VAE_STATE_FEATURES_NPY == "vae_state_features.npy"
     assert ArtifactNames.RL_STATE_FEATURES_NPY == "rl_state_features.npy"
     assert (
+        ArtifactNames.HIGH_LEVEL_STATE_FEATURES_NPY
+        == "high_level_state_features.npy"
+    )
+    assert (
         ArtifactNames.MAINTENANCE_MARGIN_RATIO_DICT_NPY
         == "maintenance_margin_ratio_dict.npy"
     )

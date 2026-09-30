@@ -15,6 +15,7 @@ FINEFT_ROOT = REPO_ROOT / "FineFT"
 if str(FINEFT_ROOT) not in sys.path:
     sys.path.insert(0, str(FINEFT_ROOT))
 
+from common import ArtifactNames
 from model.low_level import ensemble_Qnet
 from analysis.feature.low_level_agent_ood_analysis import (
     BaselineStats,
@@ -151,7 +152,7 @@ def test_low_level_agent_ood_analysis_end_to_end(tmp_path: Path, monkeypatch):
     feature_names = [f"feat_{i}" for i in range(n_states)]
 
     # 1. Save dummy feature list
-    feature_file = tmp_path / "state_features.npy"
+    feature_file = tmp_path / ArtifactNames.RL_STATE_FEATURES_NPY
     np.save(feature_file, np.array(feature_names))
 
     # 2. Save dummy model checkpoint
@@ -273,3 +274,112 @@ def test_low_level_agent_ood_analysis_end_to_end(tmp_path: Path, monkeypatch):
     main()
 
     assert (output_static / "agent_ood_summary.csv").is_file()
+
+
+def test_low_level_agent_ood_analysis_default_feature_path(tmp_path: Path, monkeypatch):
+    n_states = 4
+    n_actions = 3
+    hidden_nodes = 16
+    ensemble_size = 2
+    feature_names = [f"feat_{i}" for i in range(n_states)]
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    np.save(data_dir / ArtifactNames.RL_STATE_FEATURES_NPY, np.array(feature_names))
+
+    model = ensemble_Qnet(
+        N_STATES=n_states,
+        N_ACTIONS=n_actions,
+        hidden_nodes=hidden_nodes,
+        TIME_INFO_DIM=2,
+        ensemble_number=ensemble_size,
+        TRADING_INFO_DIM=4,
+    )
+    model_dir = tmp_path / "model_epoch"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    model_path = model_dir / "trained_model.pkl"
+    torch.save(model.state_dict(), model_path)
+
+    buffer_payload = {}
+    for g in range(9):
+        n_samples = 30
+        buffer_payload[g] = {
+            "states": torch.randn(n_samples, n_states),
+            "actions": torch.zeros(n_samples, 1, dtype=torch.int64),
+            "rewards": torch.zeros(n_samples, 1),
+            "next_states": torch.randn(n_samples, n_states),
+            "dones": torch.zeros(n_samples, 1),
+            "infos": {
+                "avaliable_action": torch.ones(n_samples, n_actions),
+                "previous_action": torch.zeros(n_samples),
+                "funding_count_down_hour": torch.zeros(n_samples),
+                "funding_count_down_minute": torch.zeros(n_samples),
+                "trading_info": torch.zeros(n_samples, 4),
+                "q_value": torch.zeros(n_samples, n_actions),
+            },
+        }
+    buffer_path = model_dir / "buffer_diverse.pkl"
+    torch.save(buffer_payload, buffer_path)
+
+    split_dir = data_dir / "test"
+    split_dir.mkdir(parents=True, exist_ok=True)
+    df_data = {
+        "timestamp": pd.date_range("2026-01-01", periods=10, freq="10min"),
+        "open": np.linspace(100, 110, 10),
+        "high": np.linspace(101, 111, 10),
+        "low": np.linspace(99, 109, 10),
+        "close": np.linspace(100.5, 110.5, 10),
+        "volume": np.ones(10) * 100,
+        "holding": np.zeros(10),
+        "initial_margin": np.zeros(10),
+        "maintain_margin": np.zeros(10),
+        "margin_rate": np.ones(10) * 0.1,
+        "commission_rate": np.ones(10) * 0.0001,
+        "commission": np.zeros(10),
+        "minute": np.arange(10),
+        "hour": np.zeros(10),
+    }
+    for i in range(n_states):
+        df_data[f"feat_{i}"] = np.random.randn(10)
+
+    df_test = pd.DataFrame(df_data)
+    df_test.to_feather(split_dir / "fu2601.feather")
+
+    output_dir = tmp_path / "output_default_path"
+    test_args = [
+        "low_level_agent_ood_analysis.py",
+        "--model_path", str(model_path),
+        "--buffer_path", str(buffer_path),
+        "--data_dir", str(data_dir),
+        "--split", "test",
+        "--symbol", "fu",
+        "--target_freq", "10min",
+        "--eval_mode", "env_rollout",
+        "--output_dir", str(output_dir),
+        "--device", "cpu",
+        "--max_samples_per_grid", "20",
+    ]
+    monkeypatch.setattr(sys, "argv", test_args)
+    main()
+
+    assert (output_dir / "agent_ood_summary.csv").is_file()
+
+
+def test_low_level_agent_ood_analysis_missing_feature_fails_fast(tmp_path: Path, monkeypatch):
+    data_dir = tmp_path / "empty_data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    model_dir = tmp_path / "model_epoch"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    model_path = model_dir / "trained_model.pkl"
+    torch.save({}, model_path)
+
+    test_args = [
+        "low_level_agent_ood_analysis.py",
+        "--model_path", str(model_path),
+        "--buffer_path", str(tmp_path / "buffer.pkl"),
+        "--data_dir", str(data_dir),
+    ]
+    monkeypatch.setattr(sys, "argv", test_args)
+    with pytest.raises(FileNotFoundError, match="Feature file not found"):
+        main()

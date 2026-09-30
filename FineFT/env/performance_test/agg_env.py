@@ -3,6 +3,7 @@ import pstats
 import sys
 
 sys.path.append(".")
+from common import ArtifactNames
 from env.env_initiate.agg_initiate import initiate_high_level_earnhft_env
 import pandas as pd
 import numpy as np
@@ -19,9 +20,9 @@ def main():
     potential_model_path = os.path.join("result/EarnHFT/potential_model", dataset_name)
     dynamics_num = 5
     high_level_feature_list = np.load(
-        os.path.join("dataset", dataset_name, "high_level_state_features.npy")
+        os.path.join("dataset", dataset_name, ArtifactNames.HIGH_LEVEL_STATE_FEATURES_NPY)
     )
-    feature_list = np.load(os.path.join("dataset", dataset_name, "state_features.npy"))
+    feature_list = np.load(os.path.join("dataset", dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY))
     env = initiate_high_level_earnhft_env(
         df=df,
         adjust_len=adjust_len,

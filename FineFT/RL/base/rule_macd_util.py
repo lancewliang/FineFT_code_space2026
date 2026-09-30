@@ -4,6 +4,7 @@ import random
 import os
 
 sys.path.append(".")
+from common import ArtifactNames
 import re
 from model.low_level import Actor
 from torch.utils.tensorboard import SummaryWriter
@@ -199,7 +200,7 @@ class macd_trader:
         self.train_data_path = os.path.join(self.base_path, self.dataset_name, "train")
         self.total_df_index_length = len(os.listdir(self.train_data_path)) - 1
         self.tech_indicator_list = np.load(
-            os.path.join(self.base_path, self.dataset_name, "state_features.npy")
+            os.path.join(self.base_path, self.dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY)
         )
         self.maintenance_margin_ratio_dict = np.load(
             os.path.join(

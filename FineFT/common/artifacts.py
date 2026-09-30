@@ -8,6 +8,7 @@ class ArtifactNames:
     REGIME_THRESHOLDS_JSON: str = "regime_thresholds.json"
     VAE_STATE_FEATURES_NPY: str = "vae_state_features.npy"
     RL_STATE_FEATURES_NPY: str = "rl_state_features.npy"
+    HIGH_LEVEL_STATE_FEATURES_NPY: str = "high_level_state_features.npy"
     MAINTENANCE_MARGIN_RATIO_DICT_NPY: str = "maintenance_margin_ratio_dict.npy"
     TRAINED_MODEL_PKL: str = "trained_model.pkl"
     MODEL_LATEST_PTH: str = "model_latest.pth"

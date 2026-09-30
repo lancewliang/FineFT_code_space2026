@@ -28,6 +28,7 @@ if str(FINEFT_ROOT) not in sys.path:
 
 from env.env_initiate.base_initiate import initiate_base_env
 from model.low_level import Qnet, ensemble_Qnet
+from common import ArtifactNames
 
 logging.basicConfig(
     level=logging.INFO,
@@ -548,7 +549,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model_path", type=str, required=True, help="Path to trained_model.pkl")
     parser.add_argument("--buffer_path", type=str, default=None, help="Path to buffer_diverse.pkl snapshot")
     parser.add_argument("--data_dir", type=str, required=True, help="Path to scaled feather data root")
-    parser.add_argument("--feature_path", type=str, required=True, help="Path to state_features.npy")
+    parser.add_argument(
+        "--feature_path",
+        type=str,
+        default=None,
+        help=f"Path to rl_state_features.npy (defaults to <data_dir>/{ArtifactNames.RL_STATE_FEATURES_NPY})",
+    )
     parser.add_argument("--split", type=str, default="test", choices=["test", "valid", "train"], help="Split to evaluate")
     parser.add_argument("--symbol", type=str, default="fu", help="Commodity symbol")
     parser.add_argument("--target_freq", type=str, default="10min", help="Target bar frequency")
@@ -592,7 +598,10 @@ def main():
                 raise FileNotFoundError("buffer_diverse.pkl not specified and not found near model_path")
 
     # Load feature names
-    feature_path = Path(args.feature_path)
+    if args.feature_path:
+        feature_path = Path(args.feature_path)
+    else:
+        feature_path = Path(args.data_dir) / ArtifactNames.RL_STATE_FEATURES_NPY
     if not feature_path.is_file():
         raise FileNotFoundError(f"Feature file not found: {feature_path}")
     feature_names = list(np.load(feature_path, allow_pickle=True))

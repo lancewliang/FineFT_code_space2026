@@ -237,8 +237,10 @@ def test_market_state_anchors_pass_nan_validation_and_scale_save(tmp_path):
         columns=MARKET_STATE_ANCHOR_COLUMNS,
     )
 
-    feature_list_path = tmp_path / "state_features.npy"
-    np.save(feature_list_path, np.array(MARKET_STATE_ANCHOR_COLUMNS))
+    fs_dir = tmp_path / "fs"
+    fs_dir.mkdir(parents=True, exist_ok=True)
+    np.save(fs_dir / "rl_state_features.npy", np.array(MARKET_STATE_ANCHOR_COLUMNS))
+    np.save(fs_dir / "vae_state_features.npy", np.array(MARKET_STATE_ANCHOR_COLUMNS))
     input_dir = (
         tmp_path
         / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST"
@@ -259,8 +261,8 @@ def test_market_state_anchors_pass_nan_validation_and_scale_save(tmp_path):
             "fu",
             "--target_freq",
             "30min",
-            "--feature_list_path",
-            str(feature_list_path),
+            "--feature_selection_dir",
+            str(fs_dir),
         ]
     )
     scale_save_main(args)

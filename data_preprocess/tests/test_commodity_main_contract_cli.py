@@ -1641,8 +1641,8 @@ def test_commodity_full_process_shell_runs_scale_after_feature_selection_valid()
     assert '"feature_selection_train"' in text
     assert '"feature_selection_valid"' in text
     assert "SPLIT-TRAIN-VALID-TEST" in text
-    assert "FEATURE_SELECTION/${target_freq}/${symbol}/train/state_features.npy" in text
-    assert "--feature_list_path" in text
+    assert "FEATURE_SELECTION/${target_freq}/${symbol}/train" in text
+    assert "--feature_selection_dir" in text
     assert "--contract" not in text[text.index("run_commodity_scale_save()") : text.index("run_commodity_merge_process()")]
     assert "--split_stage_scale_save" not in text
     assert "--feature_selection_stage valid" not in text
