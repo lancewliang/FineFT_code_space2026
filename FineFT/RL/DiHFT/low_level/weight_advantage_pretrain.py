@@ -53,9 +53,10 @@ def build_training_data_paths(base_path: str, dataset_name: str) -> dict[str, st
     train_root = os.path.join(dataset_root, "train")
     train_slice_root = os.path.join(train_root, "slice")
     train_data_path = train_slice_root if os.path.isdir(train_slice_root) else train_root
+    state_features_path = os.path.join(dataset_root, ArtifactNames.RL_STATE_FEATURES_NPY)
     return {
         "train_data_path": train_data_path,
-        "state_features_path": os.path.join(dataset_root, ArtifactNames.STATE_FEATURES_NPY),
+        "state_features_path": state_features_path,
         "maintenance_margin_ratio_path": os.path.join(
             dataset_root,
             ArtifactNames.MAINTENANCE_MARGIN_RATIO_DICT_NPY,

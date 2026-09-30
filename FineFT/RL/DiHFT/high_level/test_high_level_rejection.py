@@ -1,3 +1,4 @@
+from common import ArtifactNames
 # the frequency of the high level agent is the same as the low level agent
 # based on a sequency of high levelimport pandas as pd
 import numpy as np
@@ -264,7 +265,7 @@ class high_level_trader:
             self.base_path, self.dataset_name, "test.feather"
         )
         self.tech_indicator_list = np.load(
-            os.path.join(self.base_path, self.dataset_name, "state_features.npy")
+            os.path.join(self.base_path, self.dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY)
         )
         self.maintenance_margin_ratio_dict = np.load(
             os.path.join(

@@ -590,6 +590,7 @@ def test_vae_routing_test_uses_contract_level_valid_features(tmp_path, monkeypat
     routing.single_data_path = str(dataset_root / "valid.feather")
     routing.test_path = str(tmp_path / "result")
     routing.tech_indicator_list = []
+    routing.vae_indicator_list = []
     routing.max_holding_number = 8
     routing.position_choices = 9
     routing.leverage_choices = [5]
@@ -690,6 +691,7 @@ def test_vae_routing_test_passes_order_book_depth_to_base_env(tmp_path, monkeypa
     routing.single_data_path = str(valid_path)
     routing.test_path = str(tmp_path / "result")
     routing.tech_indicator_list = []
+    routing.vae_indicator_list = []
     routing.max_holding_number = 8
     routing.position_choices = 9
     routing.leverage_choices = [5]

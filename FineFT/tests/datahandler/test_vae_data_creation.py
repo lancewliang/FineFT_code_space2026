@@ -16,7 +16,7 @@ def test_make_data_skips_empty_label_directory(tmp_path, capsys):
     (valid_path / "label_empty").mkdir(parents=True)
     (valid_path / "label_full").mkdir()
 
-    np.save(dataset_path / "state_features.npy", np.array(["feature_a", "feature_b"]))
+    np.save(dataset_path / "vae_state_features.npy", np.array(["feature_a", "feature_b"]))
     pd.DataFrame({"feature_a": [1.0], "feature_b": [2.0]}).to_feather(
         valid_path / "label_full" / "df_0.feather"
     )
@@ -46,7 +46,7 @@ def test_make_data_writes_contract_scoped_test_arrays(tmp_path):
     dataset_path = tmp_path / "dataset" / "fu"
     (dataset_path / "valid" / "label_0").mkdir(parents=True)
     (dataset_path / "test").mkdir()
-    np.save(dataset_path / "state_features.npy", np.array(["feature_a", "feature_b"]))
+    np.save(dataset_path / "vae_state_features.npy", np.array(["feature_a", "feature_b"]))
     pd.DataFrame({"feature_a": [1.0], "feature_b": [2.0]}).to_feather(
         dataset_path / "valid" / "label_0" / "df_0.feather"
     )
@@ -85,7 +85,7 @@ def test_make_data_writes_contract_scoped_valid_label_arrays(tmp_path):
     (dataset_path / "valid" / "fu2505" / "label_1").mkdir(parents=True)
     (dataset_path / "valid" / "processed").mkdir()
     (dataset_path / "test").mkdir()
-    np.save(dataset_path / "state_features.npy", np.array(["feature_a", "feature_b"]))
+    np.save(dataset_path / "vae_state_features.npy", np.array(["feature_a", "feature_b"]))
     pd.DataFrame({"feature_a": [1.0], "feature_b": [2.0]}).to_feather(
         dataset_path / "valid" / "fu2505" / "label_0" / "df_0.feather"
     )
@@ -130,7 +130,7 @@ def test_make_data_reads_selected_labeling_method_directory(tmp_path):
     volatility_path = dataset_path / "valid" / "volatility"
     (volatility_path / "fu2505" / "label_0").mkdir(parents=True)
     (dataset_path / "test").mkdir()
-    np.save(dataset_path / "state_features.npy", np.array(["feature_a", "feature_b"]))
+    np.save(dataset_path / "vae_state_features.npy", np.array(["feature_a", "feature_b"]))
     pd.DataFrame({"feature_a": [1.0], "feature_b": [2.0]}).to_feather(
         volatility_path / "fu2505" / "label_0" / "df_0.feather"
     )
@@ -165,7 +165,7 @@ def test_make_data_reads_train_split_and_prunes_stale_contract_directories(tmp_p
     stale_contract_dir.mkdir(parents=True)
     np.save(stale_contract_dir / "label_0.npy", np.array([[99.0, 99.0]]))
 
-    np.save(dataset_path / "state_features.npy", np.array(["feature_a", "feature_b"]))
+    np.save(dataset_path / "vae_state_features.npy", np.array(["feature_a", "feature_b"]))
     pd.DataFrame({"feature_a": [11.0], "feature_b": [12.0]}).to_feather(
         train_path / "fu2305" / "label_0" / "df_0.feather"
     )
@@ -191,3 +191,70 @@ def test_make_data_reads_train_split_and_prunes_stale_contract_directories(tmp_p
         np.load(dataset_path / "VAE_data" / "slope" / "fu2305" / "label_0.npy"),
         np.array([[11.0, 12.0]]),
     )
+
+
+def test_make_data_prioritizes_vae_state_features_over_state_features(tmp_path):
+    dataset_path = tmp_path / "dataset" / "fu"
+    train_path = dataset_path / "train" / "slope"
+    (train_path / "fu2601" / "label_0").mkdir(parents=True)
+    (dataset_path / "test").mkdir()
+
+    # Union has 4 features, VAE has 2 features
+    union_features = np.array(["feat_1", "feat_2", "feat_3", "feat_4"])
+    vae_features = np.array(["feat_1", "feat_3"])
+    np.save(dataset_path / "vae_state_features.npy", union_features)
+    np.save(dataset_path / "vae_state_features.npy", vae_features)
+
+    df_train = pd.DataFrame({
+        "feat_1": [1.0, 2.0],
+        "feat_2": [10.0, 20.0],
+        "feat_3": [100.0, 200.0],
+        "feat_4": [1000.0, 2000.0],
+    })
+    df_train.to_feather(train_path / "fu2601" / "label_0" / "df_0.feather")
+
+    df_test = pd.DataFrame({
+        "feat_1": [3.0],
+        "feat_2": [30.0],
+        "feat_3": [300.0],
+        "feat_4": [3000.0],
+    })
+    df_test.to_feather(dataset_path / "test" / "df_fu2601.feather")
+
+    make_data(
+        SimpleNamespace(
+            base_path=str(tmp_path / "dataset"),
+            dataset_name="fu",
+            save_path=str(tmp_path / "dataset"),
+            source_split="train",
+            labeling_method="slope",
+        )
+    )
+
+    label_arr = np.load(dataset_path / "VAE_data" / "slope" / "fu2601" / "label_0.npy")
+    test_arr = np.load(dataset_path / "VAE_data" / "test" / "test_fu2601.npy")
+
+    # Dimensions must match len(vae_features) == 2, NOT len(union_features) == 4
+    assert label_arr.shape == (2, 2)
+    assert test_arr.shape == (1, 2)
+    np.testing.assert_array_equal(label_arr, np.array([[1.0, 100.0], [2.0, 200.0]]))
+    np.testing.assert_array_equal(test_arr, np.array([[3.0, 300.0]]))
+
+
+def test_make_data_fails_when_vae_state_features_absent(tmp_path):
+    import pytest
+    dataset_path = tmp_path / "dataset" / "legacy"
+    train_path = dataset_path / "train" / "slope"
+    (train_path / "fu2601" / "label_0").mkdir(parents=True)
+    (dataset_path / "test").mkdir()
+
+    with pytest.raises(FileNotFoundError, match="Missing required VAE state features"):
+        make_data(
+            SimpleNamespace(
+                base_path=str(tmp_path / "dataset"),
+                dataset_name="legacy",
+                save_path=str(tmp_path / "dataset"),
+                source_split="train",
+                labeling_method="slope",
+            )
+        )

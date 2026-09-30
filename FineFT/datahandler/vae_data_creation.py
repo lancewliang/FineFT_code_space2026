@@ -114,8 +114,12 @@ def make_data(args):
     else:
         source_path = method_path
     state_name_path = os.path.join(
-        args.base_path, args.dataset_name, ArtifactNames.STATE_FEATURES_NPY
+        args.base_path, args.dataset_name, ArtifactNames.VAE_STATE_FEATURES_NPY
     )
+    if not os.path.exists(state_name_path):
+        raise FileNotFoundError(
+            f"Missing required VAE state features: {state_name_path}"
+        )
     state_features = np.load(state_name_path)
     vae_data_root = os.path.join(args.save_path, args.dataset_name, "VAE_data")
     method_save_path = os.path.join(vae_data_root, labeling_method)

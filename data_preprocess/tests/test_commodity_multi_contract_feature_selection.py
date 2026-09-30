@@ -14,7 +14,6 @@ from operator_futures.feature_selection.muti_contract.metrics import (
 )
 from operator_futures.feature_selection.muti_contract import metrics
 from operator_futures.feature_selection.muti_contract.pipeline import (
-    _ordered_filter_features,
     _state_features,
     build_parser,
     run_feature_selection,
@@ -230,157 +229,6 @@ def test_aggregate_metric_frames_writes_mean_std_median_columns():
     assert "Sharpe_Mean" in result.columns
     assert "Sharpe_Std" in result.columns
     assert "Sharpe_Median" in result.columns
-
-
-def test_composite_score_drops_bottom_ten_percent_with_rankic_priority():
-    features = [f"feature_{index}" for index in range(10)]
-    aggregate = pl.DataFrame(
-        {
-            "feature": features,
-            "IC_Mean": [0.1] * 10,
-            "IC_Std": [0.1] * 10,
-            "RankIC_Mean": [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.01],
-            "Sharpe_Mean": [0.0] * 10,
-            "Permutation Importance_Mean": [0.0] * 10,
-            "CatBoost Importance_Mean": [0.0] * 10,
-        }
-    )
-    frames = {
-        "fu2601": pl.DataFrame(
-            {
-                feature: [float(index), float(index + 1), float(index + 3)]
-                for index, feature in enumerate(features)
-            }
-        )
-    }
-
-    selected, filter_results = _ordered_filter_features(
-        frames,
-        aggregate,
-        features,
-        min_abs_ic=0.01,
-        max_metric_std=1.0,
-        max_correlation=1.0,
-    )
-
-    assert "feature_9" not in selected
-    assert filter_results["Composite Score"][:3] == [
-        "feature_0",
-        "feature_1",
-        "feature_2",
-    ]
-    assert filter_results["Composite Score"] == features[:-1]
-    assert filter_results["Composite Score Dropped"] == ["feature_9"]
-
-
-def test_hard_filter_rejects_high_ic_feature_when_rankic_is_too_low():
-    features = ["high_ic_low_rankic", "sufficient_rankic"]
-    aggregate = pl.DataFrame(
-        {
-            "feature": features,
-            "IC_Mean": [0.95, 0.02],
-            "IC_Std": [0.1, 0.1],
-            "RankIC_Mean": [0.0, 0.2],
-            "Sharpe_Mean": [10.0, 0.0],
-            "Permutation Importance_Mean": [10.0, 0.0],
-            "CatBoost Importance_Mean": [10.0, 0.0],
-        }
-    )
-    frames = {
-        "fu2601": pl.DataFrame(
-            {
-                "high_ic_low_rankic": [1.0, 3.0, 2.0, 4.0],
-                "sufficient_rankic": [1.0, 2.0, 3.0, 4.0],
-            }
-        )
-    }
-
-    selected, filter_results = _ordered_filter_features(
-        frames,
-        aggregate,
-        features,
-        min_abs_ic=0.1,
-        max_metric_std=1.0,
-        max_correlation=1.0,
-    )
-
-    assert "high_ic_low_rankic" not in filter_results["Hard Filter"]
-    assert "sufficient_rankic" in filter_results["Hard Filter"]
-
-
-def test_signed_rank_ic_excludes_negative_direction_features():
-    features = ["trend_following", "trend_reversion"]
-    aggregate = pl.DataFrame(
-        {
-            "feature": features,
-            "IC_Mean": [0.2, -0.2],
-            "IC_Std": [0.1, 0.1],
-            "RankIC_Mean": [0.2, -0.8],
-            "RankIC_Std": [0.1, 0.1],
-            "Sharpe_Mean": [0.0, 0.0],
-            "Permutation Importance_Mean": [0.0, 0.0],
-            "CatBoost Importance_Mean": [0.0, 0.0],
-        }
-    )
-    frames = {
-        "fu2601": pl.DataFrame(
-            {
-                "trend_following": [0.0, 1.0, 2.0, 3.0],
-                "trend_reversion": [0.0, 2.0, 1.0, 3.0],
-            }
-        )
-    }
-
-    selected, filter_results = _ordered_filter_features(
-        frames,
-        aggregate,
-        features,
-        min_abs_ic=0.1,
-        max_metric_std=1.0,
-        max_correlation=1.0,
-        composite_drop_ratio=0.0,
-        rank_ic_mode="signed",
-    )
-
-    assert selected == ["trend_following"]
-    assert filter_results["Hard Filter"] == ["trend_following"]
-
-
-def test_absolute_rank_ic_keeps_negative_direction_features_by_default():
-    features = ["trend_following", "trend_reversion"]
-    aggregate = pl.DataFrame(
-        {
-            "feature": features,
-            "IC_Mean": [0.2, -0.2],
-            "IC_Std": [0.1, 0.1],
-            "RankIC_Mean": [0.2, -0.8],
-            "RankIC_Std": [0.1, 0.1],
-            "Sharpe_Mean": [0.0, 0.0],
-            "Permutation Importance_Mean": [0.0, 0.0],
-            "CatBoost Importance_Mean": [0.0, 0.0],
-        }
-    )
-    frames = {
-        "fu2601": pl.DataFrame(
-            {
-                "trend_following": [0.0, 1.0, 2.0, 3.0],
-                "trend_reversion": [0.0, 2.0, 1.0, 3.0],
-            }
-        )
-    }
-
-    selected, filter_results = _ordered_filter_features(
-        frames,
-        aggregate,
-        features,
-        min_abs_ic=0.1,
-        max_metric_std=1.0,
-        max_correlation=1.0,
-        composite_drop_ratio=0.0,
-    )
-
-    assert set(selected) == set(features)
-    assert set(filter_results["Hard Filter"]) == set(features)
 
 
 def test_state_features_exclude_raw_price_and_oi_levels_and_keep_derived_features():
@@ -934,43 +782,6 @@ def test_valid_stage_fails_when_train_feature_column_is_missing(tmp_path):
         )
 
 
-def test_stability_filter_rejects_unstable_feature_with_low_rank_ic_ir():
-    features = ["stable_feature", "unstable_feature"]
-    aggregate = pl.DataFrame(
-        {
-            "feature": features,
-            "IC_Mean": [0.05, 0.05],
-            "IC_Std": [0.01, 0.20],
-            "RankIC_Mean": [0.05, 0.05],
-            "RankIC_Std": [0.02, 0.20],  # IR for stable = 2.5, for unstable = 0.25
-            "Sharpe_Mean": [1.0, 1.0],
-            "Permutation Importance_Mean": [0.1, 0.1],
-            "CatBoost Importance_Mean": [0.1, 0.1],
-        }
-    )
-    frames = {
-        "fu2601": pl.DataFrame(
-            {
-                "stable_feature": [1.0, 2.0, 3.0],
-                "unstable_feature": [1.0, 3.0, 2.0],
-            }
-        )
-    }
-
-    selected, filter_results = _ordered_filter_features(
-        frames,
-        aggregate,
-        features,
-        min_abs_ic=0.01,
-        max_metric_std=1.0,
-        max_correlation=1.0,
-        min_rank_ic_ir=1.0,
-    )
-
-    assert "unstable_feature" not in filter_results["Stability Filter"]
-    assert "stable_feature" in filter_results["Stability Filter"]
-
-
 def test_calculate_future_return_sorts_unsorted_timestamps():
     from operator_futures.feature_selection.muti_contract.metrics import calculate_future_return
     frame = pl.DataFrame(
@@ -1046,116 +857,6 @@ def test_conditional_anchors_cannot_override_feature_blacklist(tmp_path, fake_ca
     assert "log_price_slope_96" not in selected_features
 
 
-def test_cross_contract_sign_consistency_gate_rejects_flipping_features():
-    # 4 contracts: consistent_feat has positive RankIC in all 4 (sc=1.0)
-    # flipping_feat has positive RankIC in 2 and negative in 2 (sc=0.50 < 0.75)
-    metric_frames = [
-        pl.DataFrame({"feature": ["consistent_feat", "flipping_feat"], "window": [6, 6], "RankIC": [0.15, 0.12]}),
-        pl.DataFrame({"feature": ["consistent_feat", "flipping_feat"], "window": [6, 6], "RankIC": [0.18, -0.10]}),
-        pl.DataFrame({"feature": ["consistent_feat", "flipping_feat"], "window": [6, 6], "RankIC": [0.20, 0.15]}),
-        pl.DataFrame({"feature": ["consistent_feat", "flipping_feat"], "window": [6, 6], "RankIC": [0.14, -0.11]}),
-    ]
-    aggregate = pl.DataFrame({
-        "feature": ["consistent_feat", "flipping_feat"],
-        "RankIC_Mean": [0.1675, 0.015],
-        "RankIC_Std": [0.02, 0.13],
-        "IC_Std": [0.05, 0.05],
-        "Sharpe_Mean": [1.0, 0.2],
-        "Permutation Importance_Mean": [0.5, 0.1],
-        "CatBoost Importance_Mean": [0.5, 0.1],
-    })
-    frames = {
-        "c1": pl.DataFrame({
-            "consistent_feat": [1.0, 2.0, 3.0],
-            "flipping_feat": [1.0, 2.0, 3.0],
-        })
-    }
-
-    selected, filter_results = _ordered_filter_features(
-        frames=frames,
-        aggregate=aggregate,
-        feature_universe=["consistent_feat", "flipping_feat"],
-        min_abs_ic=0.01,
-        max_metric_std=1.0,
-        max_correlation=1.0,
-        min_rank_ic_ir=0.0,
-        min_sign_consistency=0.75,
-        target_decision_window=6,
-        metric_frames=metric_frames,
-    )
-
-    assert "consistent_feat" in selected
-    assert "flipping_feat" not in selected
-    assert "flipping_feat" in filter_results["Sign Consistency Filter Dropped"]
-
-
-def test_rank_ic_ir_gate_rejects_noisy_low_ir_features():
-    # stable_feat has RankIC_Mean=0.05, RankIC_Std=0.05 -> IR = 0.05 / 0.050001 ~ 1.0 >= 0.40
-    # noisy_feat has RankIC_Mean=0.03, RankIC_Std=0.15 -> IR = 0.03 / 0.150001 = 0.20 < 0.40
-    features = ["stable_feat", "noisy_feat"]
-    aggregate = pl.DataFrame({
-        "feature": features,
-        "RankIC_Mean": [0.05, 0.03],
-        "RankIC_Std": [0.05, 0.15],
-        "IC_Std": [0.05, 0.05],
-        "Sharpe_Mean": [1.0, 0.2],
-        "Permutation Importance_Mean": [0.5, 0.1],
-        "CatBoost Importance_Mean": [0.5, 0.1],
-    })
-    frames = {
-        "c1": pl.DataFrame({
-            "stable_feat": [1.0, 2.0, 3.0],
-            "noisy_feat": [1.0, 2.0, 3.0],
-        })
-    }
-
-    selected, filter_results = _ordered_filter_features(
-        frames=frames,
-        aggregate=aggregate,
-        feature_universe=features,
-        min_abs_ic=0.01,
-        max_metric_std=1.0,
-        max_correlation=1.0,
-        min_rank_ic_ir=0.40,
-    )
-
-    assert "stable_feat" in selected
-    assert "noisy_feat" not in selected
-    assert "noisy_feat" in filter_results["Hard Filter"] or "noisy_feat" not in filter_results["Stability Filter"]
-
-
-def test_default_min_abs_ic_elevated_to_0_02():
-    features = ["low_ic_feat", "good_ic_feat"]
-    aggregate = pl.DataFrame({
-        "feature": features,
-        "RankIC_Mean": [0.015, 0.035],
-        "RankIC_Std": [0.01, 0.01],
-        "IC_Std": [0.05, 0.05],
-        "Sharpe_Mean": [0.5, 1.0],
-        "Permutation Importance_Mean": [0.2, 0.5],
-        "CatBoost Importance_Mean": [0.2, 0.5],
-    })
-    frames = {
-        "c1": pl.DataFrame({
-            "low_ic_feat": [1.0, 2.0, 3.0],
-            "good_ic_feat": [1.0, 2.0, 3.0],
-        })
-    }
-
-    # default min_abs_ic is 0.02
-    selected, filter_results = _ordered_filter_features(
-        frames=frames,
-        aggregate=aggregate,
-        feature_universe=features,
-        max_metric_std=1.0,
-        max_correlation=1.0,
-        min_rank_ic_ir=0.40,
-    )
-
-    assert "low_ic_feat" not in selected
-    assert "good_ic_feat" in selected
-
-
 def test_contract_normalized_correlation_avoids_simpsons_paradox():
     from operator_futures.feature_selection.cor_util import compute_contract_normalized_correlation_matrix
 
@@ -1182,61 +883,677 @@ def test_contract_normalized_correlation_avoids_simpsons_paradox():
     feat_y_corr = decentralized_df.filter(pl.col("feature") == "feat_x")["feat_y"].item()
     assert abs(feat_y_corr) < 0.01  # Truly uncorrelated
 
-    # Under pipeline filtering at max_correlation=0.70, both features survive
-    aggregate = pl.DataFrame({
-        "feature": ["feat_x", "feat_y"],
-        "RankIC_Mean": [0.05, 0.05],
-        "RankIC_Std": [0.01, 0.01],
-        "IC_Std": [0.05, 0.05],
-        "Sharpe_Mean": [1.0, 1.0],
-        "Permutation Importance_Mean": [0.5, 0.5],
-        "CatBoost Importance_Mean": [0.5, 0.5],
-    })
-    selected, filter_results = _ordered_filter_features(
-        frames=frames,
-        aggregate=aggregate,
-        feature_universe=["feat_x", "feat_y"],
-        max_correlation=0.70,
-        composite_drop_ratio=0.0,
+    # Under correlation filtering at max_correlation=0.70, both features survive
+    from operator_futures.feature_selection.cor_util import select_feature
+    surviving = select_feature(
+        features=["feat_x", "feat_y"],
+        corre_df=decentralized_df,
+        theshold=0.70,
     )
-    assert set(selected) == {"feat_x", "feat_y"}
+    assert set(surviving) == {"feat_x", "feat_y"}
 
 
-def test_ood_aware_priority_scoring_retains_low_psi_feature():
-    # Two features with identical RankIC (0.05) and CatBoost importance (0.5)
-    # feat_low_drift has mean_psi = 0.01, feat_high_drift has mean_psi = 0.20
-    # Because they are correlated (r = 0.90), greedy deduplication should keep feat_low_drift
-    features = ["feat_low_drift", "feat_high_drift"]
-    aggregate = pl.DataFrame({
-        "feature": features,
-        "RankIC_Mean": [0.05, 0.05],
-        "RankIC_Std": [0.01, 0.01],
-        "IC_Std": [0.05, 0.05],
-        "Sharpe_Mean": [1.0, 1.0],
-        "Permutation Importance_Mean": [0.5, 0.5],
-        "CatBoost Importance_Mean": [0.5, 0.5],
-    })
-    # Both features are highly correlated inside contract
-    frames = {
-        "c1": pl.DataFrame({
-            "feat_low_drift": [1.0, 2.0, 3.0, 4.0],
-            "feat_high_drift": [1.1, 2.1, 3.1, 4.1],
-        })
-    }
-    mean_psi_by_feature = {
-        "feat_low_drift": 0.01,
-        "feat_high_drift": 0.20,
-    }
+def test_stream_filter_profile_immutability_and_defaults():
+    from operator_futures.feature_selection.muti_contract.types import (
+        StreamFilterProfile,
+        DEFAULT_VAE_PROFILE,
+        DEFAULT_RL_PROFILE,
+        FeatureSelectionPipelineConfig,
+    )
+    from pathlib import Path
+    import pytest
 
-    selected, filter_results = _ordered_filter_features(
-        frames=frames,
-        aggregate=aggregate,
-        feature_universe=features,
-        max_correlation=0.70,
-        composite_drop_ratio=0.0,
-        mean_psi_by_feature=mean_psi_by_feature,
+    # Verify VAE Profile canonical values
+    assert DEFAULT_VAE_PROFILE.name == "vae_regime"
+    assert DEFAULT_VAE_PROFILE.max_mean_psi == 0.10
+    assert DEFAULT_VAE_PROFILE.max_pair_psi == 0.20
+    assert DEFAULT_VAE_PROFILE.min_abs_ic == 0.015
+    assert DEFAULT_VAE_PROFILE.min_sign_consistency == 0.70
+    assert DEFAULT_VAE_PROFILE.min_rank_ic_ir == 0.35
+    assert DEFAULT_VAE_PROFILE.max_correlation == 0.65
+    assert DEFAULT_VAE_PROFILE.min_clusters == 12
+    assert DEFAULT_VAE_PROFILE.max_clusters == 18
+    assert DEFAULT_VAE_PROFILE.psi_weight == 0.50
+    assert DEFAULT_VAE_PROFILE.rank_ic_weight == 0.30
+    assert DEFAULT_VAE_PROFILE.catboost_weight == 0.20
+    assert DEFAULT_VAE_PROFILE.filter_micro_persistence is True
+    assert DEFAULT_VAE_PROFILE.mandatory_feature_pattern == r"^(base_time_|time_|trading_minute_)"
+
+    # Verify RL Profile canonical values
+    assert DEFAULT_RL_PROFILE.name == "rl_decision"
+    assert DEFAULT_RL_PROFILE.max_mean_psi == 0.25
+    assert DEFAULT_RL_PROFILE.max_pair_psi == 0.35
+    assert DEFAULT_RL_PROFILE.min_abs_ic == 0.020
+    assert DEFAULT_RL_PROFILE.min_sign_consistency == 0.65
+    assert DEFAULT_RL_PROFILE.min_rank_ic_ir == 0.30
+    assert DEFAULT_RL_PROFILE.max_correlation == 0.80
+    assert DEFAULT_RL_PROFILE.min_clusters == 50
+    assert DEFAULT_RL_PROFILE.max_clusters == 65
+    assert DEFAULT_RL_PROFILE.psi_weight == 0.15
+    assert DEFAULT_RL_PROFILE.rank_ic_weight == 0.50
+    assert DEFAULT_RL_PROFILE.catboost_weight == 0.35
+    assert DEFAULT_RL_PROFILE.filter_micro_persistence is False
+    assert DEFAULT_RL_PROFILE.mandatory_feature_pattern is None
+
+    # Verify frozen immutability
+    with pytest.raises(Exception):
+        DEFAULT_VAE_PROFILE.min_clusters = 5  # type: ignore
+
+    # Verify pipeline config defaults
+    config = FeatureSelectionPipelineConfig(
+        root_path=Path("/tmp"),
+        symbol="fu",
+        target_freq="5min",
+        stage="train",
+    )
+    assert config.dual_stream is True
+    assert config.vae_profile == DEFAULT_VAE_PROFILE
+    assert config.rl_profile == DEFAULT_RL_PROFILE
+
+
+def test_feature_selection_manifest_dual_stream_serialization(tmp_path: Path):
+    from operator_futures.feature_selection.manifests import (
+        FeatureSelectionManifest,
+        StreamAuditRecord,
     )
 
-    assert selected == ["feat_low_drift"]
-    assert "feat_high_drift" not in selected
-    assert filter_results["Composite Score"][0] == "feat_low_drift"
+    vae_record = StreamAuditRecord(
+        profile_name="vae_regime",
+        selected_features=["base_time_day_progress", "time_hour_sin"],
+        selected_feature_count=2,
+        filter_results={"psi_drop": ["feat_unstable"]},
+        candidate_count=10,
+        dropped_counts={"psi_drop": 1},
+    )
+    rl_record = StreamAuditRecord(
+        profile_name="rl_decision",
+        selected_features=["base_time_day_progress", "level5_ofi_weighted_norm"],
+        selected_feature_count=2,
+        filter_results={},
+        candidate_count=10,
+        dropped_counts={},
+    )
+    manifest = FeatureSelectionManifest(
+        symbol="fu",
+        target_freq="5min",
+        stage="train",
+        split_input_dir=str(tmp_path),
+        windows_list=[6],
+        aggregate_metrics_path=str(tmp_path / "metrics.csv"),
+        stream_mode="dual",
+        selected_features=["base_time_day_progress", "time_hour_sin", "level5_ofi_weighted_norm"],
+        selected_feature_count=3,
+        vae_stream=vae_record,
+        rl_stream=rl_record,
+    )
+
+    manifest_path = tmp_path / "feature_selection_manifest.json"
+    manifest.write_json(manifest_path)
+
+    # Read back and verify deserialization roundtrip
+    loaded = FeatureSelectionManifest.read_json(manifest_path)
+    assert loaded.stream_mode == "dual"
+    assert loaded.selected_feature_count == 3
+    assert set(loaded.selected_features or []) == {"base_time_day_progress", "time_hour_sin", "level5_ofi_weighted_norm"}
+    assert loaded.vae_stream is not None
+    assert loaded.vae_stream.profile_name == "vae_regime"
+    assert loaded.vae_stream.selected_feature_count == 2
+    assert loaded.vae_stream.filter_results == {"psi_drop": ["feat_unstable"]}
+    assert loaded.vae_stream.candidate_count == 10
+    assert loaded.vae_stream.dropped_counts == {"psi_drop": 1}
+    assert loaded.rl_stream is not None
+    assert loaded.rl_stream.profile_name == "rl_decision"
+    assert loaded.rl_stream.selected_feature_count == 2
+
+
+def test_dual_stream_train_stage_writes_dual_artifacts_and_union(tmp_path, fake_catboost):
+    from operator_futures.feature_selection.muti_contract.types import (
+        StreamFilterProfile,
+        DEFAULT_VAE_PROFILE,
+        DEFAULT_RL_PROFILE,
+    )
+
+    row_count = 30
+    rng = np.random.RandomState(42)
+
+    # 15 time topology features + 5 mandatory contract features
+    # 55 candidate features = 70 candidate features total
+    time_features = {
+        f"base_time_{i}": rng.normal(0, 1, row_count).tolist() for i in range(8)
+    }
+    time_features.update({
+        f"time_{i}": rng.normal(0, 1, row_count).tolist() for i in range(4)
+    })
+    time_features.update({
+        f"trading_minute_{i}": rng.normal(0, 1, row_count).tolist() for i in range(3)
+    })
+
+    mandatory_contract_features = {
+        "cm_main_sub_spread": rng.normal(0, 1, row_count).tolist(),
+        "cm_volume_ratio": rng.normal(0, 1, row_count).tolist(),
+        "contract_month_sin": [0.5] * row_count,
+        "contract_month_cos": [0.5] * row_count,
+        "contract_life_remaining_ratio": [0.8] * row_count,
+    }
+    all_mandatory = list(time_features.keys()) + list(mandatory_contract_features.keys())
+
+    # Candidate alpha features
+    alpha_features = {}
+    for i in range(50):
+        # Independent features so they don't collapse during correlation clustering
+        alpha_features[f"alpha_feat_{i}"] = (rng.normal(0, 1, row_count) + float(i)*0.01).tolist()
+    alpha_features["level5_ofi_weighted_norm"] = rng.normal(0, 1, row_count).tolist()
+    alpha_features["log_return_1"] = rng.normal(0, 1, row_count).tolist()
+    alpha_features["log_return_2"] = rng.normal(0, 1, row_count).tolist()
+    alpha_features["log_return_6"] = rng.normal(0, 1, row_count).tolist()
+
+    all_extra = {}
+    all_extra.update(time_features)
+    all_extra.update(mandatory_contract_features)
+    all_extra.update(alpha_features)
+
+    _write_long_split_contract(
+        tmp_path,
+        "train",
+        "fu2601",
+        [float(i) for i in range(row_count)],
+        [float(row_count - i) for i in range(row_count)],
+        extra_features=all_extra,
+    )
+    _write_long_split_contract(
+        tmp_path,
+        "train",
+        "fu2605",
+        [float(i + 1) for i in range(row_count)],
+        [float(row_count - i + 1) for i in range(row_count)],
+        extra_features=all_extra,
+    )
+
+    test_vae_profile = StreamFilterProfile(
+        name="vae_regime",
+        max_mean_psi=0.10,
+        max_pair_psi=0.20,
+        min_abs_ic=0.0,
+        min_sign_consistency=0.0,
+        min_rank_ic_ir=0.0,
+        max_correlation=0.65,
+        min_clusters=5,
+        max_clusters=18,
+        psi_weight=0.50,
+        rank_ic_weight=0.30,
+        catboost_weight=0.20,
+        filter_micro_persistence=True,
+        mandatory_feature_pattern=r"^(base_time_|time_|trading_minute_)",
+    )
+    test_rl_profile = StreamFilterProfile(
+        name="rl_decision",
+        max_mean_psi=0.25,
+        max_pair_psi=0.35,
+        min_abs_ic=0.0,
+        min_sign_consistency=0.0,
+        min_rank_ic_ir=0.0,
+        max_correlation=0.80,
+        min_clusters=15,
+        max_clusters=65,
+        psi_weight=0.15,
+        rank_ic_weight=0.50,
+        catboost_weight=0.35,
+        filter_micro_persistence=False,
+        mandatory_feature_pattern=None,
+    )
+
+    res = run_feature_selection(
+        root_path=tmp_path,
+        split_path="PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST",
+        save_path="PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION",
+        symbol="fu",
+        target_freq="5min",
+        stage="train",
+        orderbook_depth=5,
+        min_abs_ic=0.0,
+        max_correlation=0.99,
+        composite_drop_ratio=0.0,
+        mandatory_state_features=all_mandatory,
+        dual_stream=True,
+        vae_profile=test_vae_profile,
+        rl_profile=test_rl_profile,
+    )
+
+    stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
+    vae_file = stage_dir / "vae_state_features.npy"
+    rl_file = stage_dir / "rl_state_features.npy"
+    union_file = stage_dir / "state_features.npy"
+    manifest_file = stage_dir / "feature_selection_manifest.json"
+
+    assert vae_file.exists()
+    assert rl_file.exists()
+    assert union_file.exists()
+    assert manifest_file.exists()
+
+    vae_feats = np.load(vae_file, allow_pickle=True).tolist()
+    rl_feats = np.load(rl_file, allow_pickle=True).tolist()
+    union_feats = np.load(union_file, allow_pickle=True).tolist()
+
+    # Verify set union property
+    assert set(union_feats) == set(vae_feats).union(set(rl_feats))
+
+    # Verify manifest audit payload
+    manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+    assert manifest_data["stream_mode"] == "dual"
+    assert manifest_data["selected_feature_count"] == len(union_feats)
+    assert manifest_data["selected_features"] == union_feats
+    assert "vae_stream" in manifest_data
+    assert "rl_stream" in manifest_data
+    assert manifest_data["vae_stream"]["profile_name"] == "vae_regime"
+    assert manifest_data["rl_stream"]["profile_name"] == "rl_decision"
+    assert manifest_data["vae_stream"]["selected_feature_count"] == len(vae_feats)
+    assert manifest_data["rl_stream"]["selected_feature_count"] == len(rl_feats)
+
+    # Verify filtered contract feather outputs contain reward and union features
+    df_fu2601 = pl.read_ipc(stage_dir / "fu2601" / "df.feather")
+    for uf in union_feats:
+        assert uf in df_fu2601.columns
+    assert "symbol" in df_fu2601.columns
+
+
+def test_dual_stream_micro_persistence_and_mandatory_isolation(tmp_path, fake_catboost):
+    from operator_futures.feature_selection.muti_contract.types import (
+        StreamFilterProfile,
+        DEFAULT_VAE_PROFILE,
+        DEFAULT_RL_PROFILE,
+    )
+
+    row_count = 24
+    fast_decay = [1.0 if index % 2 == 0 else -1.0 for index in range(row_count)]
+    slow_signal = [float(index) for index in range(row_count)]
+
+    # Time topology mandatory vs contract-role mandatory
+    mandatory_features = [
+        "base_time_day_progress",
+        "time_hour_sin",
+        "contract_month_sin",
+        "cm_volume_ratio",
+    ]
+
+    rng = np.random.RandomState(123)
+    extra_features = {
+        "base_time_day_progress": slow_signal,
+        "time_hour_sin": slow_signal,
+        "contract_month_sin": [0.5] * row_count,
+        "cm_volume_ratio": slow_signal,
+        "wap_1_log_return_2": fast_decay,
+        "level5_ofi_weighted_norm": (rng.normal(0, 1, row_count)).tolist(),
+        "stationary_alpha": (rng.normal(0, 1, row_count)).tolist(),
+    }
+
+    _write_long_split_contract(
+        tmp_path, "train", "fu2601", slow_signal, slow_signal, extra_features=extra_features
+    )
+    _write_long_split_contract(
+        tmp_path, "train", "fu2605", [v + 1 for v in slow_signal], slow_signal, extra_features=extra_features
+    )
+
+    # Use smaller min_clusters for this unit test
+    custom_vae_profile = StreamFilterProfile(
+        name="vae_regime",
+        max_mean_psi=0.10,
+        max_pair_psi=0.20,
+        min_abs_ic=0.0,
+        min_sign_consistency=0.0,
+        min_rank_ic_ir=0.0,
+        max_correlation=0.65,
+        min_clusters=1,
+        max_clusters=10,
+        psi_weight=0.50,
+        rank_ic_weight=0.30,
+        catboost_weight=0.20,
+        filter_micro_persistence=True,
+        mandatory_feature_pattern=r"^(base_time_|time_|trading_minute_)",
+    )
+    custom_rl_profile = StreamFilterProfile(
+        name="rl_decision",
+        max_mean_psi=0.25,
+        max_pair_psi=0.35,
+        min_abs_ic=0.0,
+        min_sign_consistency=0.0,
+        min_rank_ic_ir=0.0,
+        max_correlation=0.80,
+        min_clusters=1,
+        max_clusters=20,
+        psi_weight=0.15,
+        rank_ic_weight=0.50,
+        catboost_weight=0.35,
+        filter_micro_persistence=False,
+        mandatory_feature_pattern=None,
+    )
+
+    res = run_feature_selection(
+        root_path=tmp_path,
+        split_path="PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST",
+        save_path="PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION",
+        symbol="fu",
+        target_freq="5min",
+        stage="train",
+        orderbook_depth=5,
+        min_abs_ic=0.0,
+        max_correlation=1.0,
+        composite_drop_ratio=0.0,
+        min_half_life_bars=1.0,
+        mandatory_state_features=mandatory_features,
+        dual_stream=True,
+        vae_profile=custom_vae_profile,
+        rl_profile=custom_rl_profile,
+    )
+
+    stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
+    vae_feats = np.load(stage_dir / "vae_state_features.npy", allow_pickle=True).tolist()
+    rl_feats = np.load(stage_dir / "rl_state_features.npy", allow_pickle=True).tolist()
+    union_feats = np.load(stage_dir / "state_features.npy", allow_pickle=True).tolist()
+
+    # VAE stream isolation:
+    # 1. wap_1_log_return_2 is dropped by persistence filter
+    assert "wap_1_log_return_2" not in vae_feats
+    # 2. contract_month_sin, cm_volume_ratio are stripped (only time topology retained)
+    assert "contract_month_sin" not in vae_feats
+    assert "cm_volume_ratio" not in vae_feats
+    assert "base_time_day_progress" in vae_feats
+    assert "time_hour_sin" in vae_feats
+
+    # RL stream preservation:
+    # 1. wap_1_log_return_2 and level5_ofi_weighted_norm are unblocked and retained
+    assert "wap_1_log_return_2" in rl_feats
+    assert "level5_ofi_weighted_norm" in rl_feats
+    # 2. All mandatory features preserved
+    for mf in mandatory_features:
+        assert mf in rl_feats
+
+    # Union features contains everything from both streams
+    assert "wap_1_log_return_2" in union_feats
+    assert "level5_ofi_weighted_norm" in union_feats
+    assert "contract_month_sin" in union_feats
+    assert set(union_feats) == set(vae_feats).union(set(rl_feats))
+
+
+def test_dual_stream_fail_fast_on_insufficient_clusters(tmp_path, fake_catboost):
+    from operator_futures.feature_selection.muti_contract.types import StreamFilterProfile
+
+    slow_signal = [float(i) for i in range(15)]
+    _write_long_split_contract(
+        tmp_path, "train", "fu2601", slow_signal, slow_signal,
+        extra_features={"feat_1": slow_signal, "feat_2": slow_signal}
+    )
+    _write_long_split_contract(
+        tmp_path, "train", "fu2605", [v + 1 for v in slow_signal], slow_signal,
+        extra_features={"feat_1": slow_signal, "feat_2": slow_signal}
+    )
+
+    # Require min_clusters=10 when only 2 features are provided
+    strict_profile = StreamFilterProfile(
+        name="strict_test",
+        max_mean_psi=0.10,
+        max_pair_psi=0.20,
+        min_abs_ic=0.0,
+        min_sign_consistency=0.0,
+        min_rank_ic_ir=0.0,
+        max_correlation=0.65,
+        min_clusters=10,
+        max_clusters=20,
+        psi_weight=0.50,
+        rank_ic_weight=0.30,
+        catboost_weight=0.20,
+        filter_micro_persistence=False,
+    )
+
+    with pytest.raises(ValueError, match="configured minimum cluster count"):
+        run_feature_selection(
+            root_path=tmp_path,
+            split_path="PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST",
+            save_path="PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION",
+            symbol="fu",
+            target_freq="5min",
+            stage="train",
+            orderbook_depth=5,
+            dual_stream=True,
+            vae_profile=strict_profile,
+            rl_profile=strict_profile,
+        )
+
+
+def test_end_to_end_pipeline_dual_stream_selection_scale_and_vae_data_creation(tmp_path, fake_catboost):
+    from operator_futures.feature_selection.muti_contract.types import (
+        StreamFilterProfile,
+        DEFAULT_VAE_PROFILE,
+        DEFAULT_RL_PROFILE,
+    )
+    from operator_futures.scale_describe_save.muti_contract_scale_save import (
+        main as scale_save_main,
+        parser as scale_save_parser,
+    )
+    import sys
+    fineft_root = Path(__file__).resolve().parents[2] / "FineFT"
+    if str(fineft_root) not in sys.path:
+        sys.path.insert(0, str(fineft_root))
+    from datahandler.commodity_contract_dataset import write_stage_datasets
+    from datahandler.manifests import DatasetManifest, DatasetSetManifest, DatasetContractManifest
+    from datahandler.vae_data_creation import make_data as vae_make_data
+    from types import SimpleNamespace
+    import pandas as pd
+
+    row_count = 35
+    rng = np.random.RandomState(42)
+
+    # 15 time features + 5 mandatory contract features
+    time_features = {
+        f"base_time_{i}": rng.normal(0, 1, row_count).tolist() for i in range(8)
+    }
+    time_features.update({
+        f"time_{i}": rng.normal(0, 1, row_count).tolist() for i in range(4)
+    })
+    time_features.update({
+        f"trading_minute_{i}": rng.normal(0, 1, row_count).tolist() for i in range(3)
+    })
+    mandatory_contract_features = {
+        "cm_main_sub_spread": rng.normal(0, 1, row_count).tolist(),
+        "cm_volume_ratio": rng.normal(0, 1, row_count).tolist(),
+        "contract_month_sin": [0.5] * row_count,
+        "contract_month_cos": [0.5] * row_count,
+        "contract_life_remaining_ratio": [0.8] * row_count,
+    }
+    all_mandatory = list(time_features.keys()) + list(mandatory_contract_features.keys())
+
+    alpha_features = {}
+    for i in range(50):
+        alpha_features[f"alpha_feat_{i}"] = (rng.normal(0, 1, row_count) + float(i) * 0.01).tolist()
+    alpha_features["level5_ofi_weighted_norm"] = rng.normal(0, 1, row_count).tolist()
+    alpha_features["log_return_1"] = rng.normal(0, 1, row_count).tolist()
+    alpha_features["log_return_2"] = rng.normal(0, 1, row_count).tolist()
+    alpha_features["log_return_6"] = rng.normal(0, 1, row_count).tolist()
+
+    all_extra = {}
+    all_extra.update(time_features)
+    all_extra.update(mandatory_contract_features)
+    all_extra.update(alpha_features)
+
+    # 1. Populate train, valid, test contracts
+    _write_long_split_contract(
+        tmp_path, "train", "fu2601",
+        [float(i) for i in range(row_count)], [float(row_count - i) for i in range(row_count)],
+        extra_features=all_extra,
+    )
+    _write_long_split_contract(
+        tmp_path, "train", "fu2605",
+        [float(i + 1) for i in range(row_count)], [float(row_count - i + 1) for i in range(row_count)],
+        extra_features=all_extra,
+    )
+    _write_long_split_contract(
+        tmp_path, "valid", "fu2609",
+        [float(i + 2) for i in range(row_count)], [float(row_count - i + 2) for i in range(row_count)],
+        extra_features=all_extra,
+    )
+    _write_long_split_contract(
+        tmp_path, "test", "fu2611",
+        [float(i + 3) for i in range(row_count)], [float(row_count - i + 3) for i in range(row_count)],
+        extra_features=all_extra,
+    )
+
+    test_vae_profile = StreamFilterProfile(
+        name="vae_regime",
+        max_mean_psi=0.10,
+        max_pair_psi=0.20,
+        min_abs_ic=0.0,
+        min_sign_consistency=0.0,
+        min_rank_ic_ir=0.0,
+        max_correlation=0.65,
+        min_clusters=12,
+        max_clusters=18,
+        psi_weight=0.50,
+        rank_ic_weight=0.30,
+        catboost_weight=0.20,
+        filter_micro_persistence=True,
+        mandatory_feature_pattern=r"^(base_time_|time_|trading_minute_)",
+    )
+    test_rl_profile = StreamFilterProfile(
+        name="rl_decision",
+        max_mean_psi=0.25,
+        max_pair_psi=0.35,
+        min_abs_ic=0.0,
+        min_sign_consistency=0.0,
+        min_rank_ic_ir=0.0,
+        max_correlation=0.80,
+        min_clusters=50,
+        max_clusters=65,
+        psi_weight=0.15,
+        rank_ic_weight=0.50,
+        catboost_weight=0.35,
+        filter_micro_persistence=False,
+        mandatory_feature_pattern=None,
+    )
+
+    # 2. Stage 1 & 2: Run Dual-Stream Feature Selection
+    res = run_feature_selection(
+        root_path=tmp_path,
+        split_path="PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST",
+        save_path="PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION",
+        symbol="fu",
+        target_freq="5min",
+        stage="train",
+        orderbook_depth=5,
+        min_abs_ic=0.0,
+        max_correlation=0.99,
+        composite_drop_ratio=0.0,
+        mandatory_state_features=all_mandatory,
+        dual_stream=True,
+        vae_profile=test_vae_profile,
+        rl_profile=test_rl_profile,
+    )
+
+    stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
+    vae_file = stage_dir / "vae_state_features.npy"
+    rl_file = stage_dir / "rl_state_features.npy"
+    union_file = stage_dir / "state_features.npy"
+    manifest_file = stage_dir / "feature_selection_manifest.json"
+
+    assert vae_file.exists()
+    assert rl_file.exists()
+    assert union_file.exists()
+
+    vae_feats = np.load(vae_file, allow_pickle=True).tolist()
+    rl_feats = np.load(rl_file, allow_pickle=True).tolist()
+    union_feats = np.load(union_file, allow_pickle=True).tolist()
+
+    # Manifest audit: VAE has 12-18 features, RL has 50-65 features
+    assert 12 <= len(vae_feats) <= 18
+    assert 50 <= len(rl_feats) <= 65
+    assert set(union_feats) == set(vae_feats).union(set(rl_feats))
+
+    # 3. Stage 3: Unified Scale-Save on Union State Features
+    scale_save_args = scale_save_parser.parse_args([
+        "--root_path", str(tmp_path),
+        "--symbols", "fu",
+        "--target_freq", "5min",
+        "--feature_list_path", str(union_file),
+        "--save_path", "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE",
+        "--scale_method", "rolling_zscore",
+        "--rolling_window", "24",
+        "--clip_mode", "tanh",
+        "--soft_clip_m", "4.0",
+        "--clip_min", "-5.0",
+        "--clip_max", "5.0",
+        "--passthrough_features", "base_time_0",
+    ])
+    scale_save_main(scale_save_args)
+
+    scale_root = tmp_path / "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/5min"
+    assert (scale_root / "state_features.npy").exists()
+    assert (scale_root / "rl_state_features.npy").exists()
+    assert (scale_root / "vae_state_features.npy").exists()
+
+    # 4. Step 2 Dataset Packaging: write_stage_datasets
+    dataset_dest = tmp_path / "dataset" / "5min" / "fu"
+    dataset_manifest = DatasetManifest(
+        symbol="fu",
+        target_freq="5min",
+        dataset_split_manifest_path=str(tmp_path / "dataset_split_manifest.json"),
+        state_features_source_path=str(union_file),
+        state_features_path=str(dataset_dest / "state_features.npy"),
+        sets={
+            "train": DatasetSetManifest(
+                range=None,
+                contracts=[
+                    DatasetContractManifest(
+                        contract="fu2601",
+                        input_path=str(scale_root / "train/fu2601.feather"),
+                        output_path=str(dataset_dest / "train/fu2601.feather"),
+                    )
+                ],
+                skipped_contracts=[],
+            ),
+            "test": DatasetSetManifest(
+                range=None,
+                contracts=[
+                    DatasetContractManifest(
+                        contract="fu2611",
+                        input_path=str(scale_root / "test/fu2611.feather"),
+                        output_path=str(dataset_dest / "test/df_fu2611.feather"),
+                    )
+                ],
+                skipped_contracts=[],
+            ),
+        },
+    )
+    write_stage_datasets(dataset_manifest)
+
+    assert (dataset_dest / "state_features.npy").exists()
+    assert (dataset_dest / "vae_state_features.npy").exists()
+    assert (dataset_dest / "rl_state_features.npy").exists()
+
+    # Create dummy dynamic slice feather under train/slope/fu2601/label_0/df_0.feather
+    train_contract_df = pd.read_feather(dataset_dest / "train/fu2601.feather")
+    slice_dir = dataset_dest / "train" / "slope" / "fu2601" / "label_0"
+    slice_dir.mkdir(parents=True, exist_ok=True)
+    train_contract_df.to_feather(slice_dir / "df_0.feather")
+
+    # 5. Downstream VAE Ingestion: make_data
+    vae_args = SimpleNamespace(
+        base_path=str(tmp_path / "dataset" / "5min"),
+        dataset_name="fu",
+        save_path=str(tmp_path / "dataset" / "5min"),
+        source_split="train",
+        labeling_method="slope",
+    )
+    vae_make_data(vae_args)
+
+    vae_data_dir = dataset_dest / "VAE_data"
+    label_arr = np.load(vae_data_dir / "slope" / "fu2601" / "label_0.npy")
+    test_arr = np.load(vae_data_dir / "test" / "test_fu2611.npy")
+
+    # Both VAE arrays must match exact len(vae_feats) (12~18)
+    assert label_arr.shape == (row_count, len(vae_feats))
+    assert test_arr.shape == (row_count, len(vae_feats))
+    assert not np.isnan(label_arr).any()
+    assert not np.isnan(test_arr).any()
+
+    # 6. Downstream Low-Level RL State Slicing
+    rl_state_obs = train_contract_df[rl_feats].values
+    assert rl_state_obs.shape == (row_count, len(rl_feats))
+    assert not np.isnan(rl_state_obs).any()

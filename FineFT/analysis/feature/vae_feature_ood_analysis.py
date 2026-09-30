@@ -1,4 +1,5 @@
 from __future__ import annotations
+from common import ArtifactNames
 
 import argparse
 import logging
@@ -173,7 +174,7 @@ def analyze_feature_vae_ood(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    feature_file = base_path / args.dataset_name / "state_features.npy"
+    feature_file = base_path / args.dataset_name / ArtifactNames.VAE_STATE_FEATURES_NPY
     if not feature_file.is_file():
         raise FileNotFoundError(f"Missing state features file: {feature_file}")
     feature_names: list[str] = list(np.load(feature_file))

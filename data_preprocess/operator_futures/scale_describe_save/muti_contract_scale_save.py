@@ -5,6 +5,7 @@ import logging
 import math
 import os
 from pathlib import Path
+import shutil
 import time
 
 import numpy as np
@@ -686,6 +687,11 @@ def main(args) -> None:
             args=args,
         ))
     diagnostics_path = write_diagnostics(diagnostics_rows, output_root)
+    for feat_name in ("state_features.npy", "rl_state_features.npy", "vae_state_features.npy"):
+        src_path = feature_list_path.parent / feat_name
+        dest_path = output_root / feat_name
+        if src_path.exists() and src_path.resolve() != dest_path.resolve():
+            shutil.copyfile(src_path, dest_path)
     logger.info(
         "Finished multi-contract scale-save: inputs=%d diagnostics_path=%s elapsed_seconds=%.2f",
         len(inputs),

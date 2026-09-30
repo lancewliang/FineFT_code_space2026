@@ -57,6 +57,49 @@ class FilteredOutputRecord:
         }
 
 
+
+@dataclass
+class StreamAuditRecord:
+    profile_name: str
+    selected_features: list[str]
+    selected_feature_count: int
+    filter_results: dict[str, list[str]] = field(default_factory=dict)
+    candidate_count: int | None = None
+    dropped_counts: dict[str, int] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "profile_name": self.profile_name,
+            "selected_features": list(self.selected_features),
+            "selected_feature_count": self.selected_feature_count,
+            "filter_results": {
+                key: list(values) for key, values in self.filter_results.items()
+            },
+        }
+        if self.candidate_count is not None:
+            payload["candidate_count"] = self.candidate_count
+        if self.dropped_counts is not None:
+            payload["dropped_counts"] = {
+                key: int(val) for key, val in self.dropped_counts.items()
+            }
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> StreamAuditRecord:
+        filter_results = {}
+        if "filter_results" in data and data["filter_results"] is not None:
+            filter_results = {
+                key: list(values) for key, values in data["filter_results"].items()
+            }
+        return cls(
+            profile_name=data["profile_name"],
+            selected_features=list(data["selected_features"]),
+            selected_feature_count=int(data["selected_feature_count"]),
+            filter_results=filter_results,
+            candidate_count=data.get("candidate_count"),
+            dropped_counts=data.get("dropped_counts"),
+        )
+
 @dataclass
 class ContractOutputShape:
     rows: int
@@ -104,6 +147,9 @@ class FeatureSelectionManifest:
     min_drift_survivors: int | None = None
     min_sign_consistency: float | None = None
     conditional_anchors_retained: list[dict[str, Any]] | None = None
+    stream_mode: str | None = None
+    vae_stream: StreamAuditRecord | None = None
+    rl_stream: StreamAuditRecord | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -114,12 +160,16 @@ class FeatureSelectionManifest:
         }
         if self.selected_feature_file is not None:
             payload["selected_feature_file"] = self.selected_feature_file
+        if self.selected_feature_count is not None:
             payload["selected_feature_count"] = self.selected_feature_count
-            payload["selected_features"] = list(self.selected_features or [])
+        if self.selected_features is not None:
+            payload["selected_features"] = list(self.selected_features)
         if self.evaluated_feature_file is not None:
             payload["evaluated_feature_file"] = self.evaluated_feature_file
+        if self.evaluated_feature_count is not None:
             payload["evaluated_feature_count"] = self.evaluated_feature_count
-            payload["evaluated_features"] = list(self.evaluated_features or [])
+        if self.evaluated_features is not None:
+            payload["evaluated_features"] = list(self.evaluated_features)
         payload["windows_list"] = list(self.windows_list)
         if self.composite_drop_ratio is not None:
             payload["composite_drop_ratio"] = self.composite_drop_ratio
@@ -169,10 +219,91 @@ class FeatureSelectionManifest:
             payload["min_sign_consistency"] = self.min_sign_consistency
         if self.conditional_anchors_retained is not None:
             payload["conditional_anchors_retained"] = self.conditional_anchors_retained
+        if self.stream_mode is not None:
+            payload["stream_mode"] = self.stream_mode
+        if self.vae_stream is not None:
+            payload["vae_stream"] = self.vae_stream.to_dict()
+        if self.rl_stream is not None:
+            payload["rl_stream"] = self.rl_stream.to_dict()
         return payload
 
     def write_json(self, path: Path) -> None:
         _write_json(path, self.to_dict())
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> FeatureSelectionManifest:
+        contracts = [
+            FeatureSelectionContractRecord(
+                contract=c["contract"],
+                input_path=c["input_path"],
+                metric_path=c["metric_path"],
+            )
+            for c in data.get("contracts", [])
+        ]
+        filtered_outputs = None
+        if "filtered_outputs" in data and data["filtered_outputs"] is not None:
+            filtered_outputs = [
+                FilteredOutputRecord(
+                    contract=f["contract"],
+                    output_path=f["output_path"],
+                    output_row_count=f["output_row_count"],
+                    output_column_count=f["output_column_count"],
+                )
+                for f in data["filtered_outputs"]
+            ]
+        vae_stream = (
+            StreamAuditRecord.from_dict(data["vae_stream"])
+            if "vae_stream" in data and data["vae_stream"] is not None
+            else None
+        )
+        rl_stream = (
+            StreamAuditRecord.from_dict(data["rl_stream"])
+            if "rl_stream" in data and data["rl_stream"] is not None
+            else None
+        )
+        return cls(
+            symbol=data["symbol"],
+            target_freq=data["target_freq"],
+            stage=data["stage"],
+            split_input_dir=data["split_input_dir"],
+            windows_list=list(data["windows_list"]),
+            aggregate_metrics_path=data["aggregate_metrics_path"],
+            contracts=contracts,
+            selected_feature_file=data.get("selected_feature_file"),
+            selected_feature_count=data.get("selected_feature_count"),
+            selected_features=data.get("selected_features"),
+            composite_drop_ratio=data.get("composite_drop_ratio"),
+            feature_blacklist=data.get("feature_blacklist"),
+            feature_ablation_patterns=data.get("feature_ablation_patterns"),
+            rank_ic_mode=data.get("rank_ic_mode"),
+            mandatory_state_features=data.get("mandatory_state_features"),
+            filter_results=data.get("filter_results"),
+            persistence_filter=data.get("persistence_filter"),
+            persistence_diagnostics=data.get("persistence_diagnostics"),
+            filtered_outputs=filtered_outputs,
+            evaluated_feature_file=data.get("evaluated_feature_file"),
+            evaluated_feature_count=data.get("evaluated_feature_count"),
+            evaluated_features=data.get("evaluated_features"),
+            report_only=data.get("report_only"),
+            regime_bins=data.get("regime_bins"),
+            target_regime_bins=data.get("target_regime_bins"),
+            regime_quantiles=data.get("regime_quantiles"),
+            regime_audit_path=data.get("regime_audit_path"),
+            distribution_audit_path=data.get("distribution_audit_path"),
+            max_mean_psi=data.get("max_mean_psi"),
+            max_pair_psi=data.get("max_pair_psi"),
+            min_drift_survivors=data.get("min_drift_survivors"),
+            min_sign_consistency=data.get("min_sign_consistency"),
+            conditional_anchors_retained=data.get("conditional_anchors_retained"),
+            stream_mode=data.get("stream_mode"),
+            vae_stream=vae_stream,
+            rl_stream=rl_stream,
+        )
+
+    @classmethod
+    def read_json(cls, path: Path) -> FeatureSelectionManifest:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return cls.from_dict(payload)
 
 
 @dataclass

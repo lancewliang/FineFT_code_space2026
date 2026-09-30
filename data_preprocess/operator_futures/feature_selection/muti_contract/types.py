@@ -90,6 +90,59 @@ class RegimeAuditConfig:
 
 
 @dataclass(frozen=True)
+class StreamFilterProfile:
+    name: str
+    max_mean_psi: float
+    max_pair_psi: float
+    min_abs_ic: float
+    min_sign_consistency: float
+    min_rank_ic_ir: float
+    max_correlation: float
+    min_clusters: int
+    max_clusters: int
+    psi_weight: float
+    rank_ic_weight: float
+    catboost_weight: float
+    filter_micro_persistence: bool
+    mandatory_feature_pattern: str | None = None
+
+
+DEFAULT_VAE_PROFILE = StreamFilterProfile(
+    name="vae_regime",
+    max_mean_psi=0.10,
+    max_pair_psi=0.20,
+    min_abs_ic=0.015,
+    min_sign_consistency=0.70,
+    min_rank_ic_ir=0.35,
+    max_correlation=0.65,
+    min_clusters=12,
+    max_clusters=18,
+    psi_weight=0.50,
+    rank_ic_weight=0.30,
+    catboost_weight=0.20,
+    filter_micro_persistence=True,
+    mandatory_feature_pattern=r"^(base_time_|time_|trading_minute_)",
+)
+
+DEFAULT_RL_PROFILE = StreamFilterProfile(
+    name="rl_decision",
+    max_mean_psi=0.25,
+    max_pair_psi=0.35,
+    min_abs_ic=0.020,
+    min_sign_consistency=0.65,
+    min_rank_ic_ir=0.30,
+    max_correlation=0.80,
+    min_clusters=50,
+    max_clusters=65,
+    psi_weight=0.15,
+    rank_ic_weight=0.50,
+    catboost_weight=0.35,
+    filter_micro_persistence=False,
+    mandatory_feature_pattern=None,
+)
+
+
+@dataclass(frozen=True)
 class FeatureSelectionPipelineConfig:
     root_path: Path
     symbol: str
@@ -100,6 +153,9 @@ class FeatureSelectionPipelineConfig:
     orderbook_depth: int = 5
     mandatory_state_features: tuple[str, ...] = field(default_factory=tuple)
     persistence_filter_pattern: str = r"_log_return_(1|2)$"
+    dual_stream: bool = True
+    vae_profile: StreamFilterProfile = DEFAULT_VAE_PROFILE
+    rl_profile: StreamFilterProfile = DEFAULT_RL_PROFILE
     hygiene: DataHygieneConfig = field(default_factory=DataHygieneConfig)
     drift: DistributionAuditConfig = field(default_factory=DistributionAuditConfig)
     stationarity: StationarityAuditConfig = field(default_factory=StationarityAuditConfig)

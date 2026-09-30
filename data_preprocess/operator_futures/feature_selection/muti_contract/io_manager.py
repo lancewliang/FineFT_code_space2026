@@ -197,6 +197,20 @@ class PipelineIOManager:
         np.save(selected_file, np.array(selected_features))
         return selected_file
 
+    def save_dual_stream_features(
+        self,
+        vae_features: list[str],
+        rl_features: list[str],
+        union_features: list[str],
+    ) -> tuple[Path, Path, Path]:
+        vae_file = self.output_dir / "vae_state_features.npy"
+        rl_file = self.output_dir / "rl_state_features.npy"
+        union_file = self.output_dir / "state_features.npy"
+        np.save(vae_file, np.array(vae_features))
+        np.save(rl_file, np.array(rl_features))
+        np.save(union_file, np.array(union_features))
+        return vae_file, rl_file, union_file
+
     def save_manifest(self, manifest: FeatureSelectionManifest) -> Path:
         manifest_path = self.output_dir / "feature_selection_manifest.json"
         manifest.write_json(manifest_path)

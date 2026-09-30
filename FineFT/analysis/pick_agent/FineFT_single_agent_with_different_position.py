@@ -386,7 +386,7 @@ class picker:
     def create_potential_result(self, best_agent_df):
         best_agent_df = self._ordered_best_agent_df(best_agent_df)
         n_state = len(
-            np.load(os.path.join(self.base_path, self.dataset_name, ArtifactNames.STATE_FEATURES_NPY))
+            np.load(os.path.join(self.base_path, self.dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY))
         )
         n_action = self.position_choices
         n_hidden = self.hidden_nodes

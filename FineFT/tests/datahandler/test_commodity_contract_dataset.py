@@ -471,12 +471,17 @@ def test_write_train_slices_uses_contiguous_indices_and_single_contract_files(tm
 
 def test_commodity_data_handler_scripts_use_contract_dataset_tool():
     root = Path(__file__).resolve().parents[3]
-    for script_name, symbol in [
-        (f"commodity_data_handler_{frequency}_{symbol}.sh", symbol)
+    for frequency, symbol in [
+        (frequency, symbol)
         for frequency in ("1min", "5min", "10min", "30min")
         for symbol in ("fu", "al")
     ]:
-        text = (root / "FineFT" / "script" / "data" / script_name).read_text()
+        script_file = root / "FineFT" / "script" / "data" / f"commodity_data_handler_{frequency}_{symbol}.sh"
+        if not script_file.exists():
+            freq_num = frequency.rstrip("min")
+            alt_name = f"commodity_data_handler_{symbol}_{freq_num}.sh"
+            script_file = root / "FineFT" / "script" / "data" / alt_name
+        text = script_file.read_text()
         assert "commodity_contract_dataset.py" in text
         assert f"--symbol {symbol}" in text or '--symbol "${SYMBOL}"' in text
         assert "--dataset_split_manifest_path" in text
@@ -484,9 +489,9 @@ def test_commodity_data_handler_scripts_use_contract_dataset_tool():
         assert "dataset_split_manifest.json" in text
         assert "--input_root" in text
         assert "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE" in text
-        assert "--state_features_path" in text
+        assert ("--state_features_path" in text or "--rl_state_features_path" in text)
         assert "FEATURE_SELECTION" in text
-        assert "train/state_features.npy" in text
+        assert ("train/state_features.npy" in text or "train/rl_state_features.npy" in text)
         assert "valid_cross_contract_label_calibration.py" in text
         assert '--valid_dir "dataset/${TARGET_FREQ}/${SYMBOL}/valid"' in text
         assert "--data_path" not in text
@@ -736,3 +741,44 @@ def test_commodity_contract_dataset_cli_help():
         check=True,
     )
     assert "--dataset_split_manifest_path" in result.stdout
+
+
+def test_write_stage_datasets_propagates_dual_stream_state_features(tmp_path):
+    train_file = _write_scale_save_file(tmp_path, "train", "fu2508", rows=2)
+    fs_dir = tmp_path / "FEATURE_SELECTION" / "10min" / "fu" / "train"
+    fs_dir.mkdir(parents=True)
+    state_features = fs_dir / "state_features.npy"
+    vae_features = fs_dir / "vae_state_features.npy"
+    rl_features = fs_dir / "rl_state_features.npy"
+
+    np.save(state_features, np.array(["feat_a", "feat_b"]))
+    np.save(vae_features, np.array(["feat_a"]))
+    np.save(rl_features, np.array(["feat_b"]))
+
+    dataset_root = tmp_path / "dataset" / "10min" / "fu"
+    manifest = _dataset_manifest_from_dict({
+        "symbol": "fu",
+        "target_freq": "10min",
+        "state_features_source_path": str(state_features),
+        "state_features_path": str(dataset_root / "state_features.npy"),
+        "sets": {
+            "train": {
+                "contracts": [
+                    {
+                        "contract": "fu2508",
+                        "input_path": str(train_file),
+                        "output_path": str(dataset_root / "train" / "fu2508.feather"),
+                    }
+                ],
+                "skipped_contracts": [],
+            },
+        },
+    })
+
+    write_stage_datasets(manifest)
+
+    assert (dataset_root / "state_features.npy").exists()
+    assert (dataset_root / "vae_state_features.npy").exists()
+    assert (dataset_root / "rl_state_features.npy").exists()
+    np.testing.assert_array_equal(np.load(dataset_root / "vae_state_features.npy"), np.array(["feat_a"]))
+    np.testing.assert_array_equal(np.load(dataset_root / "rl_state_features.npy"), np.array(["feat_b"]))

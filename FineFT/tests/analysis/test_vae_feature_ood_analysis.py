@@ -89,7 +89,7 @@ def test_analyze_feature_vae_ood_end_to_end(tmp_path: Path):
         split_dir.mkdir(parents=True, exist_ok=True)
         df.to_feather(split_dir / "c1.feather")
 
-    np.save(data_dir / "state_features.npy", np.array(feature_names))
+    np.save(data_dir / "vae_state_features.npy", np.array(feature_names))
 
     vae_dir = tmp_path / "result" / "DiHFT" / "vae_results" / dataset_name / experiment_name
     hidden_dims = [16, 8]
@@ -175,7 +175,7 @@ def test_analyze_feature_vae_ood_multi_perspective_directionality(tmp_path: Path
         split_dir.mkdir(parents=True, exist_ok=True)
         df.to_feather(split_dir / "c1.feather")
 
-    np.save(data_dir / "state_features.npy", np.array(feature_names))
+    np.save(data_dir / "vae_state_features.npy", np.array(feature_names))
 
     vae_dir = tmp_path / "result" / "DiHFT" / "vae_results" / dataset_name / experiment_name
     hidden_dims = [8, 4]
@@ -245,7 +245,7 @@ def test_analyze_feature_vae_ood_per_contract(tmp_path: Path):
     test_df_c1.to_feather(data_dir / "test" / "c1.feather")
     test_df_c2.to_feather(data_dir / "test" / "c2.feather")
 
-    np.save(data_dir / "state_features.npy", np.array(feature_names))
+    np.save(data_dir / "vae_state_features.npy", np.array(feature_names))
 
     vae_dir = tmp_path / "result" / "DiHFT" / "vae_results" / dataset_name / experiment_name
     hidden_dims = [8, 4]

@@ -27,7 +27,7 @@ python -u FineFT/analysis/feature/low_level_agent_ood_analysis.py \
     --model_path "${MODEL_PATH}" \
     --buffer_path "${BUFFER_PATH}" \
     --data_dir "${BASE_PATH}/${DATASET_NAME}" \
-    --feature_path "${BASE_PATH}/${DATASET_NAME}/state_features.npy" \
+    --feature_path "${BASE_PATH}/${DATASET_NAME}/rl_state_features.npy" \
     --split test \
     --symbol "${DATASET_NAME}" \
     --target_freq 10min \

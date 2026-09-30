@@ -646,7 +646,10 @@ def test_multi_contract_scale_save_cli_uses_train_only_robust_scaler(tmp_path):
         spike_values=[1000.0, 1000.0, 1000.0, 1000.0],
     )
 
-    _run_multi_contract_scale_save_cli(tmp_path)
+    _run_multi_contract_scale_save_cli(
+        tmp_path,
+        extra_args=["--scale_method", "robust", "--clip_mode", "hard"],
+    )
 
     output_root = tmp_path / "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/5min"
     test_output = pl.read_ipc(output_root / "test/fu2510.feather")

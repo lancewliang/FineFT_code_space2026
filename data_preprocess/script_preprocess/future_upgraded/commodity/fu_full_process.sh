@@ -864,6 +864,11 @@ run_commodity_feature_selection() {
         windows_list=(1 2 6 12 24 48)
     fi
 
+    local dual_stream_arg="--dual_stream"
+    if [ "${DUAL_STREAM:-true}" = "false" ] || [ "${DUAL_STREAM:-1}" = "0" ]; then
+        dual_stream_arg="--no_dual_stream"
+    fi
+
     PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" python -u -m operator_futures.feature_selection.muti_contract \
         --root_path "${root_path}" \
         --split_path "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST" \
@@ -874,6 +879,7 @@ run_commodity_feature_selection() {
         --orderbook_depth 5 \
         --regime_bins "${regime_bins}" \
         "${target_regime_bins_args[@]}" \
+        "${dual_stream_arg}" \
         --mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" "${CROSS_MONTH_FEATURE_COLUMNS[@]}" \
         "${feature_blacklist_args[@]}"
 }

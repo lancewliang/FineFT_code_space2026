@@ -295,21 +295,29 @@ class DatasetManifest:
     state_features_source_path: str
     state_features_path: str
     sets: dict[str, DatasetSetManifest]
+    rl_state_features_path: str = ""
+    vae_state_features_path: str = ""
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "DatasetManifest":
+        state_features_source = payload.get("state_features_source_path", "")
+        state_features_path = payload.get("state_features_path", payload.get("rl_state_features_path", ""))
+        rl_path = payload.get("rl_state_features_path", state_features_path)
+        vae_path = payload.get("vae_state_features_path", "")
         return cls(
             symbol=payload.get("symbol", ""),
             target_freq=payload.get("target_freq", ""),
             dataset_split_manifest_path=payload.get(
                 "dataset_split_manifest_path", ""
             ),
-            state_features_source_path=payload["state_features_source_path"],
-            state_features_path=payload["state_features_path"],
+            state_features_source_path=state_features_source,
+            state_features_path=state_features_path,
             sets={
                 stage: DatasetSetManifest.from_dict(stage_payload)
                 for stage, stage_payload in payload.get("sets", {}).items()
             },
+            rl_state_features_path=rl_path,
+            vae_state_features_path=vae_path,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -319,6 +327,8 @@ class DatasetManifest:
             "dataset_split_manifest_path": self.dataset_split_manifest_path,
             "state_features_source_path": self.state_features_source_path,
             "state_features_path": self.state_features_path,
+            "rl_state_features_path": self.rl_state_features_path or self.state_features_path,
+            "vae_state_features_path": self.vae_state_features_path,
             "sets": {
                 stage: set_info.to_dict() for stage, set_info in self.sets.items()
             },

@@ -585,7 +585,10 @@ class vae_risk_aware_routing:
         )
         self.test_data_path = self.single_data_path
         self.tech_indicator_list = np.load(
-            os.path.join(self.base_path, self.dataset_name, ArtifactNames.STATE_FEATURES_NPY)
+            os.path.join(self.base_path, self.dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY)
+        )
+        self.vae_indicator_list = np.load(
+            os.path.join(self.base_path, self.dataset_name, ArtifactNames.VAE_STATE_FEATURES_NPY)
         )
         self.enable_non_main_contract_defense = args.enable_non_main_contract_defense
         role_tier_indices = np.where(
@@ -676,7 +679,7 @@ class vae_risk_aware_routing:
                 path = os.path.join(root, label, ArtifactNames.MODEL_LATEST_PTH)
                 id_path = os.path.join(root, label, ArtifactNames.ID_LOGPX_NPY)
                 vae_model = MLP_VAE(
-                    INPUT_DIM=len(self.tech_indicator_list),
+                    INPUT_DIM=len(self.vae_indicator_list),
                     Z_DIM=args.z_dim,
                     hidden_dims=args.vae_hidden_dims,
                     loss_func=args.loss_type,
@@ -932,6 +935,7 @@ class vae_risk_aware_routing:
 
     def run_single_valid_df(self, df, save_path):
         self.df = df
+        self.vae_state_array = self.df[self.vae_indicator_list].values
         env = initiate_base_env(
             df=self.df,
             feature_list=self.tech_indicator_list,
@@ -962,11 +966,15 @@ class vae_risk_aware_routing:
             self.initial_state,
         )
         episode_reward_sum = 0
+        self.step_idx = 0
         env, s, r, done, info = self.initial_rollout(env, s, info)
         while not done:
             action = self.get_action(info, s, env.position, env.leverage)
             s_, r, done, info = env.step(action)
-            self.get_quantiles(s_)
+            self.step_idx += 1
+            vae_idx = min(self.step_idx, len(self.vae_state_array) - 1)
+            vae_s = self.vae_state_array[vae_idx]
+            self.get_quantiles(vae_s)
             episode_reward_sum += r
             if done:
                 break
@@ -1166,7 +1174,10 @@ class vae_risk_aware_routing:
                 env.leverage,
             )
             s, r, done, info = env.step(action)
-            self.get_quantiles(s)
+            self.step_idx += 1
+            vae_idx = min(self.step_idx, len(self.vae_state_array) - 1)
+            vae_s = self.vae_state_array[vae_idx]
+            self.get_quantiles(vae_s)
             if done:
                 break
         return env, s, r, done, info

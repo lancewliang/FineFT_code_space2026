@@ -16,7 +16,8 @@ def test_artifact_names_literals() -> None:
     assert ArtifactNames.DATASET_SPLIT_MANIFEST_JSON == "dataset_split_manifest.json"
     assert ArtifactNames.SLICE_MANIFEST_JSON == "slice_manifest.json"
     assert ArtifactNames.REGIME_THRESHOLDS_JSON == "regime_thresholds.json"
-    assert ArtifactNames.STATE_FEATURES_NPY == "state_features.npy"
+    assert ArtifactNames.VAE_STATE_FEATURES_NPY == "vae_state_features.npy"
+    assert ArtifactNames.RL_STATE_FEATURES_NPY == "rl_state_features.npy"
     assert (
         ArtifactNames.MAINTENANCE_MARGIN_RATIO_DICT_NPY
         == "maintenance_margin_ratio_dict.npy"

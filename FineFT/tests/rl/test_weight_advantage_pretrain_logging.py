@@ -550,7 +550,7 @@ def test_build_train_data_paths_keep_base_path_dataset_name_semantics():
 
     assert paths == {
         "train_data_path": "dataset_5min/fu/train",
-        "state_features_path": "dataset_5min/fu/state_features.npy",
+        "state_features_path": "dataset_5min/fu/rl_state_features.npy",
         "maintenance_margin_ratio_path": "dataset_5min/fu/maintenance_margin_ratio_dict.npy",
     }
 

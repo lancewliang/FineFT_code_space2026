@@ -146,6 +146,7 @@ def test_eval_stage_test_loads_contracts_from_test_directory(tmp_path, monkeypat
     routing.single_data_path = str(dataset_root / "test.feather")
     routing.test_path = str(tmp_path / "result" / "final_result")
     routing.tech_indicator_list = []
+    routing.vae_indicator_list = []
     routing.max_holding_number = 2
     routing.position_choices = 5
     routing.leverage_choices = [5]

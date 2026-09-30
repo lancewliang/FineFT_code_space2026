@@ -647,9 +647,10 @@ class weighted_trader:
         self.valid_data_path = os.path.join(
             self.base_path, self.dataset_name, "valid", self.label_type
         )
-        self.tech_indicator_list = np.load(
-            os.path.join(self.base_path, self.dataset_name, ArtifactNames.STATE_FEATURES_NPY)
+        state_features_path = os.path.join(
+            self.base_path, self.dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY
         )
+        self.tech_indicator_list = np.load(state_features_path)
         self.maintenance_margin_ratio_dict = np.load(
             os.path.join(
                 self.base_path, self.dataset_name, ArtifactNames.MAINTENANCE_MARGIN_RATIO_DICT_NPY

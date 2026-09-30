@@ -67,6 +67,26 @@ Scale Save 前后对 State Feature 进行的 NaN 检查，发现 NaN 时立即�
 _Avoid_: NaN 检查、空值校验
 
 ### Feature Engineering
+**双流特征解耦 (Dual-Stream Feature Decoupling)**:
+在多合约特征选择中，将针对无监督高斯密度估计模型（高层 VAE）的“平稳性优先”特征空间，与针对博弈强化学习策略网络（低层 ensemble_Qnet）的“超额收益（Alpha）优先”特征空间进行物理隔离与双流分发的架构设计；彻底消除无监督密度模型因排斥厚尾极值而误杀微观 Alpha 信号所导致的智能体盈利能力丧失。
+_Avoid_: 单体状态空间、单流特征选择、全量特征直通
+
+**VAE 机制特征流 (VAE Regime Feature Stream)**:
+经严格高斯平稳性、强分布无漂移（$	ext{PSI} \le 0.10$）、低维度（12~20 维）以及强去相关（$r \le 0.70$）约束筛选出的宏观特征集合，输出为 `vae_state_features.npy`；专供高层双轴 VAE 识别市场趋势与波动率体制，杜绝由于单边脉冲与厚尾导致的 OOD 似然崩溃与误拒识关闸。
+_Avoid_: 宏观特征集、高层状态特征、全量状态特征
+
+**RL 决策特征流 (RL Decision Feature Stream)**:
+以跨合约多尺度预测力（RankIC）与非线性拟合重要性（CatBoost）为主导，适度放宽分布漂移（$	ext{PSI} \le 0.25$）与共线性约束（$r \le 0.80$），并解禁 5 档盘口订单流不平衡（OFI）、挂单深度消耗与短周期动量的微观特征集合，输出为 `rl_state_features.npy`（50~65 维）；专供低层强化学习智能体（ensemble_Qnet）作为高容量马尔可夫决策观测状态，赋予其敏锐捕捉盘口不对称微观价差与非线性盈利契机的能力。
+_Avoid_: 强化学习特征集、低层状态特征、微观信号池
+
+**双流特征全集 (Dual-Stream Union State Features)**:
+在特征选择阶段由 VAE 机制特征流与 RL 决策特征流取并集构成的全量状态特征集合，持久化为 `state_features.npy`；用于驱动多合约特征标准化模块（`muti_contract_scale_save.py`）单次完成对所有模型可能消费列的自适应日内滚动标准化与软饱和截断，供下游模型按需执行无缝视图投影。
+_Avoid_: 并集特征表、总特征宽表
+
+**特征流配置预设集 (Stream Filter Profile)**:
+在多合约特征选择流水线内部定义的对称结构化配置契约（`StreamFilterProfile`），分别封装 VAE 机制流（`DEFAULT_VAE_PROFILE`）与 RL 决策流（`DEFAULT_RL_PROFILE`）在 PSI 漂移容限、符号一致性、相关性聚类上限、复合打分权重以及目标维度范围上的领域超参数。
+_Avoid_: 过滤参数字典、多流配置表
+
 **三级漏斗特征选择流水线 (Three-Stage Funnel Feature Selection)**:
 在多合约特征选择中，将计算成本与约束强度严格分级的漏斗流水线架构：Stage 1 极速向量化统计门禁（零方差、PSI 分布漂移、ADF 时序平稳性、RankIC 预测力与 IR 信噪比）-> Stage 2 目标决策窗口非线性拟合（单步长净化 CatBoost 与抗 OOD 优先级打分）-> Stage 3 结构化正交去重与体制审计（秩相关分层聚类、VIF 约束与方差比率极值门禁）。
 _Avoid_: 扁平特征选择、单体流水线、全量非线性拟合

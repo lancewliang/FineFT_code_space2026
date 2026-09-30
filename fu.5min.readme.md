@@ -50,7 +50,7 @@
     - `PREPROCESS_DATASET/commodity-futures/MERGE_CLEAN_FEATURE/5min/fu/<contract>/`（清洗与缺失值处理后全量特征数据）
   - **切分、特征选择与标准化目录**：
     - `PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/`（含 `dataset_split_manifest.json` 及 `train/`, `valid/`, `test/` 合约划分子目录）
-    - `PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/`（含 `feature_selection_manifest.json`, `ic_window_*.json`, `rank_ic_window_*.json`, `correlation.csv`, `cat_boost_feature_importance_*.csv`, `aggregate_metrics.csv` 以及 `train/state_features.npy`）
+    - `PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/`（含 `feature_selection_manifest.json`, `ic_window_*.json`, `rank_ic_window_*.json`, `correlation.csv`, `cat_boost_feature_importance_*.csv`, `aggregate_metrics.csv` 以及 `train/rl_state_features.npy`, `train/vae_state_features.npy`, `train/state_features.npy`）
     - `PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/5min/`（含 `scaler_manifest.json`, `scale_diagnostics.csv` 及 `train/`, `valid/`, `test/` 标准化 `.feather` 数据）
   - **日志与保证金字典**：
     - `dataset/5min/fu/maintenance_margin_ratio_dict.npy`（维持保证金比例字典）
@@ -66,7 +66,7 @@
 - **依赖输入物**（由步骤 1 预处理产出）：
   - **数据集划分清单**：`PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/dataset_split_manifest.json`
   - **标准化特征数据**：`PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/5min/`
-  - **特征选择向量**：`PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy`
+  - **特征选择解耦向量**：`PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/rl_state_features.npy` 与 `train/vae_state_features.npy`
   - **数据处理 Python 脚本**：`FineFT/datahandler/commodity_contract_dataset.py`、`valid_cross_contract_label_calibration.py`、`vae_data_creation.py`
 - **默认参数**：
   - `ROOTPATH=$(pwd)`
@@ -84,7 +84,7 @@
     - `dataset/5min/fu/dataset_manifest.json`（FineFT 数据集配置与入口元数据 JSON）
     - `dataset/5min/fu/valid/slice_manifest.json`（验证集切片划分清单 JSON）
   - **数据集与矩阵文件**：
-    - `dataset/5min/fu/state_features.npy`、`maintenance_margin_ratio_dict.npy`（状态特征与维持保证金字典）
+    - `dataset/5min/fu/rl_state_features.npy`、`vae_state_features.npy`、`maintenance_margin_ratio_dict.npy`（RL/VAE 解耦状态特征与维持保证金字典）
     - `dataset/5min/fu/train/*.feather`、`dataset/5min/fu/train/slice/df_*.feather`（训练合约数据及分块切片）
     - `dataset/5min/fu/valid/*.feather`、`valid/processed/valid_processed_*.feather`、`valid/<contract>/label_*/`（验证集切片与标签划分数据）
     - `dataset/5min/fu/test/*.feather`（测试集数据）
@@ -98,7 +98,7 @@
 - **作用**：训练 `fu` 的 5min 低层 agent，采用多 Worker 探索与权重优势预训练的并行训练机制。
 - **依赖输入物**（由步骤 2 数据准备产出）：
   - **训练集数据与切片**：`dataset/5min/fu/train/*.feather` 或 `dataset/5min/fu/train/slice/df_*.feather`
-  - **全局状态特征**：`dataset/5min/fu/state_features.npy`
+  - **RL 决策状态特征**：`dataset/5min/fu/rl_state_features.npy`
   - **保证金字典**：`dataset/5min/fu/maintenance_margin_ratio_dict.npy`
   - **训练 Python 脚本**：`FineFT/RL/DiHFT/low_level/parallel_weight_advantage_pretrain.py`
 - **默认参数**：
@@ -151,7 +151,7 @@
 - **依赖输入物**（由步骤 2 & 步骤 3 产出）：
   - **低层 Agent 训练模型权重**（由步骤 3 产出）：`result/DiHFT/low_level/fu/5min_parallel/weights_advantage_pretrain/epoch_{epoch}/trained_model.pkl`（Epoch 1 ~ 75）
   - **验证集切片与数据**（由步骤 2 产出）：`dataset/5min/fu/valid/*.feather` 及 `dataset/5min/fu/valid/processed/valid_processed_*.feather`
-  - **全局特征与保证金配置**（由步骤 2 产出）：`dataset/5min/fu/state_features.npy` 与 `maintenance_margin_ratio_dict.npy`
+  - **全局特征与保证金配置**（由步骤 2 产出）：`dataset/5min/fu/rl_state_features.npy` 与 `maintenance_margin_ratio_dict.npy`
   - **测试 Python 脚本**：`FineFT/RL/DiHFT/low_level/test_agent_index.py`
 - **默认参数**：
   - `DATASET_NAME=fu`
@@ -250,7 +250,7 @@
   - **筛选出的二维低层 Agent 清单与模型**（由步骤 3 & 步骤 5 产出）：`analysis_result/DiHFT/low_level/fu/5min_parallel/two_dimensional_selection/two_dimensional_selection_manifest.json` 及对应的 `trained_model.pkl`
   - **已训练好的 VAE 路由模型与分布数据**（由步骤 6 产出）：`result/DiHFT/vae_results/fu/5min_parallel/{slope,volatility}/label_*/` 下的 VAE 模型点与 `routing_summary.json`
   - **验证集切片与特征**（由步骤 2 产出）：`dataset/5min/fu/valid/` 及其 `processed/valid_processed_*.feather`
-  - **全局特征与参数字典**（由步骤 2 产出）：`dataset/5min/fu/state_features.npy` 与 `maintenance_margin_ratio_dict.npy`
+  - **全局特征与参数字典**（由步骤 2 产出）：`dataset/5min/fu/rl_state_features.npy`、`dataset/5min/fu/vae_state_features.npy` 与 `maintenance_margin_ratio_dict.npy`
   - **Optuna 路由 Python 脚本**：`FineFT/RL/DiHFT/high_level/vae_routing_optuna.py`
 - **默认参数**：
   - `DATASET_NAME=fu`
@@ -323,7 +323,7 @@
   - **Optuna 寻优结果表**（由步骤 7 产出）：`result/DiHFT/high_level/${DATASET_NAME}/${EXPERIMENT_NAME}/vae_risk_aware_routing_optuna/optuna_results.csv`
   - **低层 Agent 筛选清单**（由步骤 5 产出）：`analysis_result/DiHFT/low_level/${DATASET_NAME}/${EXPERIMENT_NAME}/two_dimensional_selection/two_dimensional_selection_manifest.json`
   - **已训练好的 VAE 模型**（由步骤 6 产出）：`result/DiHFT/vae_results/${DATASET_NAME}/${EXPERIMENT_NAME}/` 下各 Label 的模型权重
-  - **测试集 Feather 行情与特征**（由步骤 2 产出）：`dataset/5min/${DATASET_NAME}/test/*.feather`、`state_features.npy` 与 `maintenance_margin_ratio_dict.npy`
+  - **测试集 Feather 行情与特征**（由步骤 2 产出）：`dataset/5min/${DATASET_NAME}/test/*.feather`、`rl_state_features.npy`、`vae_state_features.npy` 与 `maintenance_margin_ratio_dict.npy`
   - **最终评估 Python 脚本**：`FineFT/RL/DiHFT/high_level/vae_routing_final_result_macro_action.py`
 - **默认参数**：
   - `ROOTPATH=$(pwd)`
@@ -359,8 +359,8 @@
 | 阶段 / 步骤 | 核心执行脚本 | 核心依赖输入物 | 关键产出物目录与核心文件 |
 | :--- | :--- | :--- | :--- |
 | **1. 数据预处理** | `main_fu_5.sh` | `data/原始下载/` (Tick/KLine CSV)<br>`config.py` (合约规则) | `PREPROCESS_DATASET/commodity-futures/`<br>(`SPLIT-TRAIN-VALID-TEST`, `FEATURE_SELECTION`, `SCALE_SAVE`) |
-| **2. FineFT 数据准备** | `commodity_data_handler_fu_5.sh` | 步骤 1 产出的 `SCALE_SAVE`, `dataset_split_manifest.json`, `state_features.npy` | `dataset/5min/fu/`<br>(`train/`, `valid/`, `test/`, `VAE_data/`, `dataset_manifest.json`) |
-| **3. 低层 Agent 并行训练** | `train_commodity_fu_5.sh` | 步骤 2 产出的 `dataset/5min/fu/train/`, `state_features.npy`, `margin_dict.npy` | `result/DiHFT/low_level/fu/5min_parallel/weights_advantage_pretrain/`<br>(`epoch_1/`~`epoch_75/trained_model.pkl`, `log/`, `pretrain_evaluation.log`) |
+| **2. FineFT 数据准备** | `commodity_data_handler_fu_5.sh` | 步骤 1 产出的 `SCALE_SAVE`, `dataset_split_manifest.json`, `rl_state_features.npy`, `vae_state_features.npy` | `dataset/5min/fu/`<br>(`train/`, `valid/`, `test/`, `VAE_data/`, `dataset_manifest.json`) |
+| **3. 低层 Agent 并行训练** | `train_commodity_fu_5.sh` | 步骤 2 产出的 `dataset/5min/fu/train/`, `rl_state_features.npy`, `margin_dict.npy` | `result/DiHFT/low_level/fu/5min_parallel/weights_advantage_pretrain/`<br>(`epoch_1/`~`epoch_75/trained_model.pkl`, `log/`, `pretrain_evaluation.log`) |
 | **4. 低层 Agent 并行测试** | `test_util_fu_5.sh` | 步骤 3 产出的 `trained_model.pkl` + 步骤 2 产出的 `valid/` 数据 | `result/DiHFT/low_level/fu/5min_parallel/weights_advantage_pretrain/epoch_{epoch}/{slope,volatility}/`<br>(`analysis_result.csv`, `trading_action_detail_*.csv`, `analysis_result.npy`) |
 | **5. 低层 Agent 二维筛选** | `low_level_fu_5.sh` | 步骤 4 产出的 `analysis_result.csv` + 步骤 2 产出的 `valid/` 数据 | `analysis_result/DiHFT/low_level/fu/5min_parallel/two_dimensional_selection/`<br>(`two_dimensional_selection_manifest.json`, `marginal_metrics.csv`, `joint_metrics.csv`, `candidate_rankings.csv`, `selected_slots.csv`) |
 | **6. VAE 并行训练与评估** | `VAE_util_fu_5.sh` | 步骤 2 产出的 `VAE_data/{slope,volatility}/<contract>/label_*.npy` + 步骤 5 的 Label 划分 | `result/DiHFT/vae_results/fu/5min_parallel/{slope,volatility}/`<br>(`label_*/model_latest.pth`, `summary.json`, `ood_logpx_*.csv`, `routing_summary.json`) |

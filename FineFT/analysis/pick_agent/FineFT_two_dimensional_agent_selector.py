@@ -1858,7 +1858,7 @@ def main() -> None:
         if args.model_output_path
         else output_dir / ArtifactNames.MODEL_PTH
     )
-    state_features_path = valid_root.parent / ArtifactNames.STATE_FEATURES_NPY
+    state_features_path = valid_root.parent / ArtifactNames.RL_STATE_FEATURES_NPY
     n_states = len(np.load(state_features_path))
     print(
         f"Assembling ensemble model (n_states={n_states}, n_actions={args.position_choices}) -> {model_output_path}...",
