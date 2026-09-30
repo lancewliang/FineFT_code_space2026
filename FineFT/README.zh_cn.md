@@ -14,7 +14,7 @@
 
 交易环境的设计位于 [`env/env_class`](env/env_class/base_env.py)，附录 C 中描述的大部分交易流程实现于 [`utils`](env/env_class/futures_util.py)。不同环境会提供不同的历史记录。
 
-要启用一个交易环境，你需要 [`df.feather`](dataset/BNBUSDT/df.feather)、[`state_features.npy`](dataset/BNBUSDT/state_features.npy) 和 [`maintenance_margin_ratio_dict.npy`](dataset/BNBUSDT/maintenance_margin_ratio_dict.npy)。前两者由前面的数据预处理流程提供，后者由[交易所](https://www.binance.com/en/futures/trading-rules/perpetual/leverage-margin)提供，用于计算维持保证金。
+要启用一个交易环境，你需要 [`df.feather`](dataset/BNBUSDT/df.feather)、[`rl_state_features.npy`](dataset/BNBUSDT/rl_state_features.npy) 与 [`vae_state_features.npy`](dataset/BNBUSDT/vae_state_features.npy) 和 [`maintenance_margin_ratio_dict.npy`](dataset/BNBUSDT/maintenance_margin_ratio_dict.npy)。前两者由前面的数据预处理流程提供，后者由[交易所](https://www.binance.com/en/futures/trading-rules/perpetual/leverage-margin)提供，用于计算维持保证金。
 
 环境的基本元素如下所示。
 

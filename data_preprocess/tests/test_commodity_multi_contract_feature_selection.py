@@ -1499,8 +1499,10 @@ def test_end_to_end_pipeline_dual_stream_selection_scale_and_vae_data_creation(t
         symbol="fu",
         target_freq="5min",
         dataset_split_manifest_path=str(tmp_path / "dataset_split_manifest.json"),
-        state_features_source_path=str(scale_root / "rl_state_features.npy"),
-        state_features_path=str(dataset_dest / "rl_state_features.npy"),
+        rl_state_features_source_path=str(scale_root / "rl_state_features.npy"),
+        rl_state_features_path=str(dataset_dest / "rl_state_features.npy"),
+        vae_state_features_source_path=str(scale_root / "vae_state_features.npy"),
+        vae_state_features_path=str(dataset_dest / "vae_state_features.npy"),
         sets={
             "train": DatasetSetManifest(
                 range=None,

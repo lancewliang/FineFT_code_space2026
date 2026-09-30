@@ -133,7 +133,7 @@ FineFT 代码提供的高保真环境中使用了 2 类特征：
 你可以直接使用类似 [`bash script_preprocess/future_upgraded/total_process/BNBUSDT/5min/20210401-20240101.sh`](script_preprocess/future_upgraded/total_process/BNBUSDT/5min/20210401-20240101.sh) 的脚本，在其中配置目标频率 `target_freq=5min`、开始日期 `start_date=2022-01-01`、结束日期 `end_date=2024-01-01`、交易对 `symbol=BNBUSDT`、用于降采样 trades、quotes 和 derivative ticker 的进程数 `max_processes_1=100`（它们占用的 RAM 较小）、用于降采样 book snapshot 25 的进程数 `max_processes_2=20`（它占用的 RAM 较大），以及用于存储结果的根路径 `root_path="."`。请注意，我们没有将完整性检查集成到该脚本中。
 
 ## 本流程的最终结果与建议
-预处理完成后，你应该会得到类似下图的结果。你可以将 `df.feather` 和 `state_features.npy` 作为 FineFT 代码的输入来构建环境。
+预处理完成后，你应该会得到类似下图的结果。你可以将 `df.feather` 和 `rl_state_features.npy` 与 `vae_state_features.npy` 作为 FineFT 代码的输入来构建环境。
 
 | 整体结果 | FineFT 的输入 |
 |------------|------------|

@@ -143,7 +143,7 @@ Since from downscaling reward data to merging features involves dealing with sin
 You can simply utilze a script like [`bash script_preprocess/future_upgraded/total_process/BNBUSDT/5min/20210401-20240101.sh`](script_preprocess/future_upgraded/total_process/BNBUSDT/5min/20210401-20240101.sh), where you can configure the target frequency `target_freq=5min`, start date `start_date=2022-01-01`, end date `end_date=2024-01-01`, symbol `symbol=BNBUSDT`, the process number for downscaling trades, quotes and derivative ticker bacasue they all occupy smaller ram `max_processes_1=100`, the process number for downscaling book snapshot 25, because it occupies large ram `max_processes_2=20` and root path for you to store you result `root_path="."`. Please notice that we do not integrate the integrity check into this script.
 
 ## The Final Result of this process & Suggestions
-After the preprocess, you should get something like the below picture. You can take the `df.feather` and `state_features.npy` as the input of FineFT code to construct the code. 
+After the preprocess, you should get something like the below picture. You can take the `df.feather` and `rl_state_features.npy` and `vae_state_features.npy` as the input of FineFT code to construct the code. 
 
 
 | Overall Result | Input of FineFT |

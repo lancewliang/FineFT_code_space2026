@@ -13,7 +13,7 @@ Utilize `pip install -r requirements.txt` to install all the indepencies.
 ## Trading Environment 
 The trading environment design is in [`env/env_class`](env/env_class/base_env.py), most of the trading process described in the Appendix C is implemented in the [`utils`](env/env_class/futures_util.py). Different environment provide different history record. 
 
-To activate a trading environment, you will need a [`df.feather`](dataset/BNBUSDT/df.feather), [`state_features.npy`](dataset/BNBUSDT/state_features.npy), which are both provided the previous data preprocess and [`maintenance_margin_ratio_dict.npy`](dataset/BNBUSDT/maintenance_margin_ratio_dict.npy), which is provided by the [exchange](https://www.binance.com/en/futures/trading-rules/perpetual/leverage-margin) to calculate the maintenance margin.
+To activate a trading environment, you will need a [`df.feather`](dataset/BNBUSDT/df.feather), [`rl_state_features.npy`](dataset/BNBUSDT/rl_state_features.npy) and [`vae_state_features.npy`](dataset/BNBUSDT/vae_state_features.npy), which are both provided the previous data preprocess and [`maintenance_margin_ratio_dict.npy`](dataset/BNBUSDT/maintenance_margin_ratio_dict.npy), which is provided by the [exchange](https://www.binance.com/en/futures/trading-rules/perpetual/leverage-margin) to calculate the maintenance margin.
 
 The environment's base elements are listed as follow.
 
