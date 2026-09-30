@@ -90,7 +90,14 @@ def _permutation_importance(feature_values, future_return, seed: int = 42) -> fl
 
 
 def _catboost_importance(
-    df: pl.DataFrame, features: list[str], future_return: np.ndarray
+    df: pl.DataFrame,
+    features: list[str],
+    future_return: np.ndarray,
+    window_length: int = 1,
+    iterations: int = 1000,
+    early_stopping_rounds: int = 30,
+    depth: int = 6,
+    random_seed: int = 42,
 ) -> dict[str, float]:
     if not features:
         return {}
@@ -102,7 +109,11 @@ def _catboost_importance(
     n_samples = len(x)
     if n_samples >= 10:
         split_idx = int(n_samples * 0.8)
-        train_pool = Pool(x[:split_idx], y[:split_idx])
+        purge_window = max(window_length, 0)
+        train_end = split_idx - purge_window
+        if train_end < 5:
+            train_end = split_idx
+        train_pool = Pool(x[:train_end], y[:train_end])
         eval_pool = Pool(x[split_idx:], y[split_idx:])
         fit_pool = train_pool
     else:
@@ -111,24 +122,24 @@ def _catboost_importance(
         fit_pool = train_pool
     try:
         model = CatBoostRegressor(
-            iterations=1000,
+            iterations=iterations,
             learning_rate=0.1,
-            depth=6,
+            depth=depth,
             loss_function="MAE",
             task_type="GPU",
-            random_seed=42,
-            early_stopping_rounds=30,
+            random_seed=random_seed,
+            early_stopping_rounds=early_stopping_rounds,
         )
         model.fit(train_pool, eval_set=eval_pool, verbose=100)
     except Exception:
         model = CatBoostRegressor(
-            iterations=1000,
+            iterations=iterations,
             learning_rate=0.1,
-            depth=6,
+            depth=depth,
             loss_function="MAE",
             task_type="CPU",
-            random_seed=42,
-            early_stopping_rounds=30,
+            random_seed=random_seed,
+            early_stopping_rounds=early_stopping_rounds,
         )
         model.fit(train_pool, eval_set=eval_pool, verbose=100)
     values = model.get_feature_importance(fit_pool)
@@ -149,7 +160,9 @@ def calculate_metric_frame(
         future_return = calculate_future_return(df, window_length)
         if future_return.size == 0:
             continue
-        catboost_values = _catboost_importance(df, features, future_return)
+        catboost_values = _catboost_importance(
+            df, features, future_return, window_length=window_length
+        )
         metric_df = df.slice(0, future_return.size)
         for feature in features:
             values = metric_df[feature].cast(pl.Float64, strict=False).to_numpy()

@@ -67,6 +67,26 @@ Scale Save 前后对 State Feature 进行的 NaN 检查，发现 NaN 时立即�
 _Avoid_: NaN 检查、空值校验
 
 ### Feature Engineering
+**三级漏斗特征选择流水线 (Three-Stage Funnel Feature Selection)**:
+在多合约特征选择中，将计算成本与约束强度严格分级的漏斗流水线架构：Stage 1 极速向量化统计门禁（零方差、PSI 分布漂移、ADF 时序平稳性、RankIC 预测力与 IR 信噪比）-> Stage 2 目标决策窗口非线性拟合（单步长净化 CatBoost 与抗 OOD 优先级打分）-> Stage 3 结构化正交去重与体制审计（秩相关分层聚类、VIF 约束与方差比率极值门禁）。
+_Avoid_: 扁平特征选择、单体流水线、全量非线性拟合
+
+**净化隔离带 (Purged Embargo Gap)**:
+在时间序列机器学习（如 CatBoost 回归树早停切分）中，为了防止远期前瞻收益率标签在训练集与早停验证集边界处发生跨期时间重叠泄露，而在训练样本末尾与验证样本起始之间强制插入的与收益前瞻步长 $w$ 严格等长的数据隔离带。
+_Avoid_: 连续切分早停、未净化验证切分、随机交叉验证
+
+**预选鲁棒截断 (Pre-Selection Winsorization)**:
+在特征选择 Stage 1 中对内存多合约原始特征实施的双侧 $5\times \text{IQR}$ 分位数软截断，用于在保持底层 Feather 磁盘数据不可变的前提下，彻底消除厚尾离群点对协方差估计和分位数分箱的扭曲。
+_Avoid_: 破坏性磁盘截断、后置截断、未截断相关性计算
+
+**跨集前向边界分布漂移 (Forward Boundary Distribution Drift)**:
+利用验证集首个主力合约（$C_{\text{valid\_early}}$）的边缘分布，检验历史训练集向样本外未来环境过渡时的跨期分布稳定性（$\text{PSI}_{\text{forward}}$），在完全不接触验证集收益标签的前提下阻断宏观均值/方差突变的非平稳特征。
+_Avoid_: 仅训练集分布审计、后验漂移检验、全量未来数据窥探
+
+**秩相关分层聚类去重 (Rank-Correlation Hierarchical Clustering)**:
+基于加权 Spearman 秩相关矩阵构建 Ward 最小方差距离树状图，将高维特征划分为语义正交特征簇，并在簇内按抗 OOD 综合打分选拔最优代表的非贪心去重方法，能有效消除多变量多重共线性（VIF 爆炸）并规避贪心算法的路径依赖。
+_Avoid_: Pearson 贪心消除、单变量相关性循环剔除
+
 
 **标准化价格偏离距离 (Standardized Price Distance)**:
 在 `multi_processing_util.py` 中以当前价格为参考基准，计算极值或均价相对当前价的偏离并除以窗口波动率 $\\sigma_P$ 得到的无量纲波动率倍数，严格保证零均值平稳与跨期尺度不变性。

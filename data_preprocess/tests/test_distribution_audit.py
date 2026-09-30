@@ -186,3 +186,65 @@ def test_pipeline_persists_distribution_audit_metrics_csv(tmp_path, monkeypatch)
     assert set(df.columns) == {"feature", "mean_psi", "max_pair_psi", "max_ks_d", "min_ks_p", "drift_passed"}
     assert df.height > 0
     assert result.manifest.distribution_audit_path == str(dist_csv)
+
+
+def test_zero_isolated_adaptive_binning_retains_ten_bins():
+    from operator_futures.feature_selection.muti_contract.distribution_audit import (
+        _compute_bin_probabilities,
+    )
+    rng = np.random.RandomState(42)
+    # 70% zeros, 30% positive values
+    n = 1000
+    zeros = np.zeros(700)
+    positives_1 = rng.exponential(1.0, 300)
+    positives_2 = rng.exponential(1.0, 300)
+
+    arr1 = np.concatenate([zeros, positives_1])
+    arr2 = np.concatenate([zeros, positives_2])
+
+    probs, total_bins = _compute_bin_probabilities([arr1, arr2], num_bins=10)
+    assert total_bins == 10
+    assert len(probs[0]) == 10
+    assert len(probs[1]) == 10
+    # First bin is the zero bin, which should hold ~70% of probability
+    assert abs(probs[0][0] - 0.70) < 0.05
+    assert abs(probs[1][0] - 0.70) < 0.05
+    assert abs(sum(probs[0]) - 1.0) < 1e-6
+    assert abs(sum(probs[1]) - 1.0) < 1e-6
+
+
+def test_forward_boundary_drift_outpost_rejects_future_drift():
+    rng = np.random.RandomState(42)
+    n = 300
+    train_frames = {
+        "c1": pl.DataFrame({
+            "stable_feat": rng.normal(0.0, 1.0, n),
+            "forward_drifting_feat": rng.normal(0.0, 1.0, n),
+        }),
+        "c2": pl.DataFrame({
+            "stable_feat": rng.normal(0.0, 1.0, n),
+            "forward_drifting_feat": rng.normal(0.0, 1.0, n),
+        }),
+    }
+    # Outpost from earliest validation contract has forward_drifting_feat shifted
+    outpost_frame = pl.DataFrame({
+        "stable_feat": rng.normal(0.0, 1.0, n),
+        "forward_drifting_feat": rng.normal(4.0, 1.0, n),
+    })
+
+    result = audit_distribution_drift(
+        frames=train_frames,
+        feature_universe=["stable_feat", "forward_drifting_feat"],
+        num_bins=10,
+        max_mean_psi=0.10,
+        max_pair_psi=0.25,
+        min_drift_survivors=1,
+        forward_outpost_frame=outpost_frame,
+        forward_outpost_max_psi=0.15,
+    )
+
+    assert "stable_feat" in result.surviving_features
+    assert "forward_drifting_feat" in result.dropped_features
+    assert result.forward_psi_by_feature["stable_feat"] <= 0.15
+    assert result.forward_psi_by_feature["forward_drifting_feat"] > 1.0
+    assert "forward_psi" in result.metrics_df.columns

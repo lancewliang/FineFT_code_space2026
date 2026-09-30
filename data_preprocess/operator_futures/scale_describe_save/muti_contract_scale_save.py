@@ -497,7 +497,8 @@ def scale_one_input(
     validate_no_nan(df, path=input_file, stage="input")
     validate_state_features_present(df, state_features, input_file)
 
-    reward_features = reward_features_for(df, args)
+    state_set = set(state_features)
+    reward_features = [f for f in reward_features_for(df, args) if f not in state_set]
     df_reward = df.select(reward_features)
 
     passthrough_targets = set(args.passthrough_features or [])
