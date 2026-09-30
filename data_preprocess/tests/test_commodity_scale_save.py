@@ -56,7 +56,6 @@ def test_scale_save_union_features_and_dual_stream_slicing(tmp_path):
     fs_dir.mkdir(parents=True, exist_ok=True)
     np.save(fs_dir / "vae_state_features.npy", np.array(vae_features))
     np.save(fs_dir / "rl_state_features.npy", np.array(rl_features))
-    np.save(fs_dir / "state_features.npy", np.array(union_features))
 
     split_base = tmp_path / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu"
     for stage, contract in [("train", "fu2601"), ("valid", "fu2602"), ("test", "fu2603")]:
@@ -70,7 +69,7 @@ def test_scale_save_union_features_and_dual_stream_slicing(tmp_path):
         "--root_path", str(tmp_path),
         "--symbols", "fu",
         "--target_freq", "5min",
-        "--feature_list_path", str(fs_dir / "state_features.npy"),
+        "--feature_selection_dir", str(fs_dir),
         "--save_path", save_path,
         "--scale_method", "rolling_zscore",
         "--rolling_window", "24",
@@ -86,14 +85,9 @@ def test_scale_save_union_features_and_dual_stream_slicing(tmp_path):
     output_root = tmp_path / save_path / "fu" / "5min"
     assert (output_root / "scaler_manifest.json").exists()
     assert (output_root / "scale_diagnostics.csv").exists()
-    assert (output_root / "state_features.npy").exists()
+    assert not (output_root / "state_features.npy").exists()
     assert (output_root / "rl_state_features.npy").exists()
     assert (output_root / "vae_state_features.npy").exists()
-
-    np.testing.assert_array_equal(
-        np.load(output_root / "state_features.npy"),
-        np.array(union_features),
-    )
     np.testing.assert_array_equal(
         np.load(output_root / "rl_state_features.npy"),
         np.array(rl_features),
@@ -141,7 +135,8 @@ def test_scale_save_preflight_validation_catches_missing_columns(tmp_path):
     union_features = ["feature_1", "feature_2", "missing_feature"]
     fs_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     fs_dir.mkdir(parents=True, exist_ok=True)
-    np.save(fs_dir / "state_features.npy", np.array(union_features))
+    np.save(fs_dir / "rl_state_features.npy", np.array(union_features))
+    np.save(fs_dir / "vae_state_features.npy", np.array(union_features))
 
     split_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train"
     split_dir.mkdir(parents=True, exist_ok=True)
@@ -156,7 +151,7 @@ def test_scale_save_preflight_validation_catches_missing_columns(tmp_path):
         "--root_path", str(tmp_path),
         "--symbols", "fu",
         "--target_freq", "5min",
-        "--feature_list_path", str(fs_dir / "state_features.npy"),
+        "--feature_selection_dir", str(fs_dir),
         "--save_path", save_path,
     ])
 

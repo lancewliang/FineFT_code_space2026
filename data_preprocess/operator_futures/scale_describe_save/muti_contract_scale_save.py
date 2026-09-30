@@ -57,6 +57,8 @@ class ScaleManifest:
     rolling_min_periods: int = 1
     clip_mode: str = "tanh"
     soft_clip_m: float = 4.0
+    rl_feature_list_path: str = ""
+    vae_feature_list_path: str = ""
 
     def to_dict(self) -> dict:
         payload = asdict(self)
@@ -172,10 +174,22 @@ parser.add_argument(
     help="the available orderbook depth",
 )
 parser.add_argument(
-    "--feature_list_path",
+    "--feature_selection_dir",
     type=str,
     default=None,
-    help="train-stage state_features.npy selected by feature selection",
+    help="Directory containing rl_state_features.npy and vae_state_features.npy",
+)
+parser.add_argument(
+    "--rl_feature_list_path",
+    type=str,
+    default=None,
+    help="Explicit path to rl_state_features.npy",
+)
+parser.add_argument(
+    "--vae_feature_list_path",
+    type=str,
+    default=None,
+    help="Explicit path to vae_state_features.npy",
 )
 parser.add_argument(
     "--passthrough_features",
@@ -196,15 +210,28 @@ def resolve_path(root_path: Path, path: str | None) -> Path | None:
     return root_path / resolved
 
 
-def default_feature_list_path(root_path: Path, args) -> Path:
-    return (
-        root_path
-        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION"
-        / args.target_freq
-        / args.symbols
-        / "train"
-        / "state_features.npy"
+def resolve_feature_paths(root_path: Path, args) -> tuple[Path, Path]:
+    if args.feature_selection_dir is not None:
+        fs_dir = resolve_path(root_path, args.feature_selection_dir)
+    else:
+        fs_dir = (
+            root_path
+            / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION"
+            / args.target_freq
+            / args.symbols
+            / "train"
+        )
+    rl_path = (
+        resolve_path(root_path, args.rl_feature_list_path)
+        if args.rl_feature_list_path is not None
+        else fs_dir / "rl_state_features.npy"
     )
+    vae_path = (
+        resolve_path(root_path, args.vae_feature_list_path)
+        if args.vae_feature_list_path is not None
+        else fs_dir / "vae_state_features.npy"
+    )
+    return rl_path, vae_path
 
 
 def load_state_features(feature_list_path: Path) -> list[str]:
@@ -212,6 +239,19 @@ def load_state_features(feature_list_path: Path) -> list[str]:
     if not state_features:
         raise ValueError(f"state feature list is empty: {feature_list_path}")
     return state_features
+
+
+def load_dual_stream_state_features(
+    rl_path: Path, vae_path: Path
+) -> tuple[list[str], list[str], list[str]]:
+    if not rl_path.exists():
+        raise FileNotFoundError(f"Missing required RL state feature file: {rl_path}")
+    if not vae_path.exists():
+        raise FileNotFoundError(f"Missing required VAE state feature file: {vae_path}")
+    rl_features = load_state_features(rl_path)
+    vae_features = load_state_features(vae_path)
+    union_features = list(dict.fromkeys(rl_features + vae_features))
+    return rl_features, vae_features, union_features
 
 
 def split_stage_inputs(data_root: Path, symbol: str, target_freq: str) -> list[tuple[str, str, Path]]:
@@ -337,7 +377,8 @@ def fit_robust_scaler(
     *,
     train_inputs: list[tuple[str, str, Path]],
     state_features: list[str],
-    feature_list_path: Path,
+    rl_feature_path: Path,
+    vae_feature_path: Path,
     args,
 ) -> ScaleManifest:
     passthrough_targets = set(args.passthrough_features or [])
@@ -387,7 +428,9 @@ def fit_robust_scaler(
             else "robust_v1"
         ),
         fit_scope="train_all_contracts",
-        feature_list_path=str(feature_list_path),
+        feature_list_path=str(rl_feature_path.parent),
+        rl_feature_list_path=str(rl_feature_path),
+        vae_feature_list_path=str(vae_feature_path),
         train_input_files=train_input_files,
         row_count=train_row_count,
         clip_enabled=not args.disable_clip,
@@ -641,11 +684,11 @@ def main(args) -> None:
     root_path = Path(args.root_path)
     data_root = resolve_path(root_path, args.data_path)
     save_root = resolve_path(root_path, args.save_path)
-    feature_list_path = resolve_path(root_path, args.feature_list_path) or default_feature_list_path(
-        root_path, args
-    )
+    rl_feature_path, vae_feature_path = resolve_feature_paths(root_path, args)
     validate_clip_args(args)
-    state_features = load_state_features(feature_list_path)
+    rl_features, vae_features, state_features = load_dual_stream_state_features(
+        rl_feature_path, vae_feature_path
+    )
 
     inputs = split_stage_inputs(data_root, args.symbols, args.target_freq)
     if not inputs:
@@ -659,19 +702,21 @@ def main(args) -> None:
     manifest = fit_robust_scaler(
         train_inputs=train_inputs,
         state_features=state_features,
-        feature_list_path=feature_list_path,
+        rl_feature_path=rl_feature_path,
+        vae_feature_path=vae_feature_path,
         args=args,
     )
     manifest_path = write_manifest(manifest, output_root)
 
     logger.info(
-        "Starting multi-contract scale-save: symbol=%s target_freq=%s inputs=%d data_root=%s save_root=%s feature_list_path=%s manifest_path=%s",
+        "Starting multi-contract scale-save: symbol=%s target_freq=%s inputs=%d data_root=%s save_root=%s rl_feature_path=%s vae_feature_path=%s manifest_path=%s",
         args.symbols,
         args.target_freq,
         len(inputs),
         data_root,
         save_root,
-        feature_list_path,
+        rl_feature_path,
+        vae_feature_path,
         manifest_path,
     )
     diagnostics_rows = []
@@ -687,11 +732,8 @@ def main(args) -> None:
             args=args,
         ))
     diagnostics_path = write_diagnostics(diagnostics_rows, output_root)
-    for feat_name in ("state_features.npy", "rl_state_features.npy", "vae_state_features.npy"):
-        src_path = feature_list_path.parent / feat_name
-        dest_path = output_root / feat_name
-        if src_path.exists() and src_path.resolve() != dest_path.resolve():
-            shutil.copyfile(src_path, dest_path)
+    shutil.copyfile(rl_feature_path, output_root / "rl_state_features.npy")
+    shutil.copyfile(vae_feature_path, output_root / "vae_state_features.npy")
     logger.info(
         "Finished multi-contract scale-save: inputs=%d diagnostics_path=%s elapsed_seconds=%.2f",
         len(inputs),

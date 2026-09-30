@@ -350,10 +350,11 @@ def test_train_stage_writes_final_features_metrics_filtered_outputs_and_manifest
     )
 
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
-    selected_feature_path = stage_dir / "state_features.npy"
-    assert selected_feature_path.exists()
-    selected_features = np.load(selected_feature_path, allow_pickle=True).tolist()
-    assert selected_features
+    assert not (stage_dir / "state_features.npy").exists()
+    rl_feature_path = stage_dir / "rl_state_features.npy"
+    assert rl_feature_path.exists()
+    rl_features = np.load(rl_feature_path, allow_pickle=True).tolist()
+    assert rl_features
     assert not (stage_dir / "state_features_candidate.npy").exists()
     assert (stage_dir / "per_contract" / "fu2601_metrics.csv").exists()
     assert (stage_dir / "per_contract" / "fu2605_metrics.csv").exists()
@@ -366,8 +367,8 @@ def test_train_stage_writes_final_features_metrics_filtered_outputs_and_manifest
     assert isinstance(manifest, FeatureSelectionResult)
     assert manifest.output_dir == stage_dir
     assert manifest.manifest.stage == "train"
-    assert manifest.manifest.selected_feature_file.endswith("train/state_features.npy")
-    assert manifest.manifest.selected_feature_count == len(selected_features)
+    assert manifest.manifest.rl_feature_file.endswith("train/rl_state_features.npy")
+    assert manifest.manifest.selected_feature_count == len(manifest.manifest.selected_features)
     assert persisted_manifest == manifest.manifest.to_dict()
     metrics = pl.read_csv(stage_dir / "aggregate_metrics.csv")
     assert {"IC_Mean", "IC_Std", "IC_Median", "Sharpe_Mean", "Sharpe_Std", "Sharpe_Median"}.issubset(metrics.columns)
@@ -447,8 +448,9 @@ def test_train_stage_front_loads_feature_blacklist_preventing_metric_evaluation(
     )
 
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
+    assert not (stage_dir / "state_features.npy").exists()
     selected_features = np.load(
-        stage_dir / "state_features.npy", allow_pickle=True
+        stage_dir / "rl_state_features.npy", allow_pickle=True
     ).tolist()
     filtered = pl.read_ipc(stage_dir / "fu2601" / "df.feather")
     aggregate = pl.read_csv(stage_dir / "aggregate_metrics.csv")
@@ -521,8 +523,9 @@ def test_front_loaded_blacklist_eliminates_borrowed_knife_correlation_dropping(t
     )
 
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
+    assert not (stage_dir / "state_features.npy").exists()
     selected_features = np.load(
-        stage_dir / "state_features.npy", allow_pickle=True
+        stage_dir / "rl_state_features.npy", allow_pickle=True
     ).tolist()
 
     assert "toxic_feature" not in selected_features
@@ -578,8 +581,9 @@ def test_train_stage_filters_fast_decay_micro_returns_by_persistence(
     )
 
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
+    assert not (stage_dir / "state_features.npy").exists()
     selected_features = np.load(
-        stage_dir / "state_features.npy", allow_pickle=True
+        stage_dir / "rl_state_features.npy", allow_pickle=True
     ).tolist()
     persisted_manifest = json.loads(
         (stage_dir / "feature_selection_manifest.json").read_text(encoding="utf-8")
@@ -694,7 +698,7 @@ def test_valid_stage_evaluates_train_features_without_writing_downstream_feature
     _write_split_contract(tmp_path, "valid", "fu2601", [1.0, 2.0, 3.0, 4.0], [4.0, 4.0, 4.0, 4.0], gamma=[9.0, 8.0, 7.0, 6.0])
     train_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     train_dir.mkdir(parents=True)
-    train_feature_file = train_dir / "state_features.npy"
+    train_feature_file = train_dir / "rl_state_features.npy"
     np.save(train_feature_file, np.array(["alpha"]))
 
     manifest = run_feature_selection(
@@ -719,7 +723,7 @@ def test_valid_stage_evaluates_train_features_without_writing_downstream_feature
     persisted_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert isinstance(manifest, FeatureSelectionResult)
     assert manifest.output_dir == stage_dir
-    assert manifest.manifest.evaluated_feature_file.endswith("train/state_features.npy")
+    assert manifest.manifest.evaluated_feature_file.endswith("train/rl_state_features.npy")
     assert persisted_manifest == manifest.manifest.to_dict()
     assert persisted_manifest["evaluated_feature_file"] == manifest.manifest.evaluated_feature_file
     assert manifest.manifest.report_only is True
@@ -729,7 +733,8 @@ def test_valid_stage_evaluates_train_features_without_writing_downstream_feature
     assert persisted_manifest["evaluated_feature_count"] == 1
     assert persisted_manifest["evaluated_features"] == ["alpha"]
     assert "filter_results" not in persisted_manifest
-    assert "selected_feature_file" not in persisted_manifest
+    assert "rl_feature_file" not in persisted_manifest
+    assert "vae_feature_file" not in persisted_manifest
     assert "filtered_outputs" not in persisted_manifest
 
 
@@ -750,7 +755,7 @@ def test_valid_stage_fails_when_train_feature_file_is_empty(tmp_path):
     _write_split_contract(tmp_path, "valid", "fu2601", [1.0, 2.0, 3.0, 4.0], [4.0, 3.0, 2.0, 1.0])
     train_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     train_dir.mkdir(parents=True)
-    np.save(train_dir / "state_features.npy", np.array([]))
+    np.save(train_dir / "rl_state_features.npy", np.array([]))
 
     with pytest.raises(ValueError, match="feature list is empty"):
         run_feature_selection(
@@ -768,7 +773,7 @@ def test_valid_stage_fails_when_train_feature_column_is_missing(tmp_path):
     _write_split_contract(tmp_path, "valid", "fu2601", [1.0, 2.0, 3.0, 4.0], [4.0, 3.0, 2.0, 1.0])
     train_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     train_dir.mkdir(parents=True)
-    np.save(train_dir / "state_features.npy", np.array(["missing_alpha"]))
+    np.save(train_dir / "rl_state_features.npy", np.array(["missing_alpha"]))
 
     with pytest.raises(ValueError, match="missing_alpha"):
         run_feature_selection(
@@ -853,7 +858,8 @@ def test_conditional_anchors_cannot_override_feature_blacklist(tmp_path, fake_ca
     )
 
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
-    selected_features = np.load(stage_dir / "state_features.npy", allow_pickle=True).tolist()
+    assert not (stage_dir / "state_features.npy").exists()
+    selected_features = np.load(stage_dir / "rl_state_features.npy", allow_pickle=True).tolist()
     assert "log_price_slope_96" not in selected_features
 
 
@@ -1122,17 +1128,16 @@ def test_dual_stream_train_stage_writes_dual_artifacts_and_union(tmp_path, fake_
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     vae_file = stage_dir / "vae_state_features.npy"
     rl_file = stage_dir / "rl_state_features.npy"
-    union_file = stage_dir / "state_features.npy"
     manifest_file = stage_dir / "feature_selection_manifest.json"
 
     assert vae_file.exists()
     assert rl_file.exists()
-    assert union_file.exists()
+    assert not (stage_dir / "state_features.npy").exists()
     assert manifest_file.exists()
 
     vae_feats = np.load(vae_file, allow_pickle=True).tolist()
     rl_feats = np.load(rl_file, allow_pickle=True).tolist()
-    union_feats = np.load(union_file, allow_pickle=True).tolist()
+    union_feats = list(dict.fromkeys(rl_feats + vae_feats))
 
     # Verify set union property
     assert set(union_feats) == set(vae_feats).union(set(rl_feats))
@@ -1246,9 +1251,10 @@ def test_dual_stream_micro_persistence_and_mandatory_isolation(tmp_path, fake_ca
     )
 
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
+    assert not (stage_dir / "state_features.npy").exists()
     vae_feats = np.load(stage_dir / "vae_state_features.npy", allow_pickle=True).tolist()
     rl_feats = np.load(stage_dir / "rl_state_features.npy", allow_pickle=True).tolist()
-    union_feats = np.load(stage_dir / "state_features.npy", allow_pickle=True).tolist()
+    union_feats = list(dict.fromkeys(rl_feats + vae_feats))
 
     # VAE stream isolation:
     # 1. wap_1_log_return_2 is dropped by persistence filter
@@ -1450,16 +1456,15 @@ def test_end_to_end_pipeline_dual_stream_selection_scale_and_vae_data_creation(t
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     vae_file = stage_dir / "vae_state_features.npy"
     rl_file = stage_dir / "rl_state_features.npy"
-    union_file = stage_dir / "state_features.npy"
     manifest_file = stage_dir / "feature_selection_manifest.json"
 
     assert vae_file.exists()
     assert rl_file.exists()
-    assert union_file.exists()
+    assert not (stage_dir / "state_features.npy").exists()
 
     vae_feats = np.load(vae_file, allow_pickle=True).tolist()
     rl_feats = np.load(rl_file, allow_pickle=True).tolist()
-    union_feats = np.load(union_file, allow_pickle=True).tolist()
+    union_feats = list(dict.fromkeys(rl_feats + vae_feats))
 
     # Manifest audit: VAE has 12-18 features, RL has 50-65 features
     assert 12 <= len(vae_feats) <= 18
@@ -1471,7 +1476,7 @@ def test_end_to_end_pipeline_dual_stream_selection_scale_and_vae_data_creation(t
         "--root_path", str(tmp_path),
         "--symbols", "fu",
         "--target_freq", "5min",
-        "--feature_list_path", str(union_file),
+        "--feature_selection_dir", str(stage_dir),
         "--save_path", "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE",
         "--scale_method", "rolling_zscore",
         "--rolling_window", "24",
@@ -1484,7 +1489,7 @@ def test_end_to_end_pipeline_dual_stream_selection_scale_and_vae_data_creation(t
     scale_save_main(scale_save_args)
 
     scale_root = tmp_path / "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/5min"
-    assert (scale_root / "state_features.npy").exists()
+    assert not (scale_root / "state_features.npy").exists()
     assert (scale_root / "rl_state_features.npy").exists()
     assert (scale_root / "vae_state_features.npy").exists()
 
@@ -1494,8 +1499,8 @@ def test_end_to_end_pipeline_dual_stream_selection_scale_and_vae_data_creation(t
         symbol="fu",
         target_freq="5min",
         dataset_split_manifest_path=str(tmp_path / "dataset_split_manifest.json"),
-        state_features_source_path=str(union_file),
-        state_features_path=str(dataset_dest / "state_features.npy"),
+        state_features_source_path=str(scale_root / "rl_state_features.npy"),
+        state_features_path=str(dataset_dest / "rl_state_features.npy"),
         sets={
             "train": DatasetSetManifest(
                 range=None,
@@ -1523,7 +1528,7 @@ def test_end_to_end_pipeline_dual_stream_selection_scale_and_vae_data_creation(t
     )
     write_stage_datasets(dataset_manifest)
 
-    assert (dataset_dest / "state_features.npy").exists()
+    assert not (dataset_dest / "state_features.npy").exists()
     assert (dataset_dest / "vae_state_features.npy").exists()
     assert (dataset_dest / "rl_state_features.npy").exists()
 

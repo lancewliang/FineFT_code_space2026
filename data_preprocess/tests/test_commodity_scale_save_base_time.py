@@ -15,10 +15,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_scale_save_passthrough_base_time_features(tmp_path):
-    # Setup state_features.npy with normal feature + BASE_TIME_FEATURE_COLUMNS
-    feature_list_file = tmp_path / "state_features.npy"
+    fs_dir = tmp_path / "fs"
+    fs_dir.mkdir(parents=True, exist_ok=True)
     all_features = ["normal_feature"] + list(BASE_TIME_FEATURE_COLUMNS)
-    np.save(feature_list_file, np.array(all_features))
+    np.save(fs_dir / "rl_state_features.npy", np.array(all_features))
+    np.save(fs_dir / "vae_state_features.npy", np.array(all_features))
 
     split_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train"
     split_dir.mkdir(parents=True, exist_ok=True)
@@ -60,7 +61,7 @@ def test_scale_save_passthrough_base_time_features(tmp_path):
         "--root_path", str(tmp_path),
         "--symbols", "fu",
         "--target_freq", "5min",
-        "--feature_list_path", str(feature_list_file),
+        "--feature_selection_dir", str(fs_dir),
         "--save_path", save_path,
         "--passthrough_features", *BASE_TIME_FEATURE_COLUMNS,
     ])
@@ -176,9 +177,11 @@ def test_log_volatility_transformation_in_scale_save(tmp_path):
         VOLATILITY_LOG_EPSILON,
     )
 
-    feature_list_file = tmp_path / "state_features.npy"
+    fs_dir = tmp_path / "fs_vol"
+    fs_dir.mkdir(parents=True, exist_ok=True)
     features = ["realized_volatility_192", "normal_feature"]
-    np.save(feature_list_file, np.array(features))
+    np.save(fs_dir / "rl_state_features.npy", np.array(features))
+    np.save(fs_dir / "vae_state_features.npy", np.array(features))
 
     split_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train"
     split_dir.mkdir(parents=True, exist_ok=True)
@@ -212,7 +215,7 @@ def test_log_volatility_transformation_in_scale_save(tmp_path):
         "--root_path", str(tmp_path),
         "--symbols", "fu",
         "--target_freq", "5min",
-        "--feature_list_path", str(feature_list_file),
+        "--feature_selection_dir", str(fs_dir),
         "--save_path", save_path,
         "--scale_method", "robust",
         "--clip_mode", "hard",
@@ -317,9 +320,11 @@ def test_adr0030_blacklist_coverage():
 
 
 def test_volume_activity_log_transformation_in_scale_save(tmp_path):
-    feature_list_file = tmp_path / "state_features.npy"
+    fs_dir = tmp_path / "fs_vma"
+    fs_dir.mkdir(parents=True, exist_ok=True)
     features = ["vma_24_std_norm_origin", "buy_volume_oe_trend_6"]
-    np.save(feature_list_file, np.array(features))
+    np.save(fs_dir / "rl_state_features.npy", np.array(features))
+    np.save(fs_dir / "vae_state_features.npy", np.array(features))
 
     split_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train"
     split_dir.mkdir(parents=True, exist_ok=True)
@@ -353,7 +358,7 @@ def test_volume_activity_log_transformation_in_scale_save(tmp_path):
         "--root_path", str(tmp_path),
         "--symbols", "fu",
         "--target_freq", "5min",
-        "--feature_list_path", str(feature_list_file),
+        "--feature_selection_dir", str(fs_dir),
         "--save_path", save_path,
     ])
 
@@ -370,9 +375,11 @@ def test_volume_activity_log_transformation_in_scale_save(tmp_path):
 
 
 def test_rolling_zscore_and_tanh_soft_saturation_in_scale_save(tmp_path):
-    feature_list_file = tmp_path / "state_features.npy"
+    fs_dir = tmp_path / "fs_outlier"
+    fs_dir.mkdir(parents=True, exist_ok=True)
     features = ["normal_feature", "outlier_feature"]
-    np.save(feature_list_file, np.array(features))
+    np.save(fs_dir / "rl_state_features.npy", np.array(features))
+    np.save(fs_dir / "vae_state_features.npy", np.array(features))
 
     split_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train"
     split_dir.mkdir(parents=True, exist_ok=True)
@@ -407,7 +414,7 @@ def test_rolling_zscore_and_tanh_soft_saturation_in_scale_save(tmp_path):
         "--root_path", str(tmp_path),
         "--symbols", "fu",
         "--target_freq", "5min",
-        "--feature_list_path", str(feature_list_file),
+        "--feature_selection_dir", str(fs_dir),
         "--save_path", save_path,
         "--scale_method", "rolling_zscore",
         "--rolling_window", "48",

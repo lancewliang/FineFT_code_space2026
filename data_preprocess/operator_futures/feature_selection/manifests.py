@@ -121,7 +121,8 @@ class FeatureSelectionManifest:
     windows_list: list[int]
     aggregate_metrics_path: str
     contracts: list[FeatureSelectionContractRecord] = field(default_factory=list)
-    selected_feature_file: str | None = None
+    rl_feature_file: str | None = None
+    vae_feature_file: str | None = None
     selected_feature_count: int | None = None
     selected_features: list[str] | None = None
     composite_drop_ratio: float | None = None
@@ -158,8 +159,10 @@ class FeatureSelectionManifest:
             "stage": self.stage,
             "split_input_dir": self.split_input_dir,
         }
-        if self.selected_feature_file is not None:
-            payload["selected_feature_file"] = self.selected_feature_file
+        if self.rl_feature_file is not None:
+            payload["rl_feature_file"] = self.rl_feature_file
+        if self.vae_feature_file is not None:
+            payload["vae_feature_file"] = self.vae_feature_file
         if self.selected_feature_count is not None:
             payload["selected_feature_count"] = self.selected_feature_count
         if self.selected_features is not None:
@@ -269,7 +272,8 @@ class FeatureSelectionManifest:
             windows_list=list(data["windows_list"]),
             aggregate_metrics_path=data["aggregate_metrics_path"],
             contracts=contracts,
-            selected_feature_file=data.get("selected_feature_file"),
+            rl_feature_file=data.get("rl_feature_file"),
+            vae_feature_file=data.get("vae_feature_file"),
             selected_feature_count=data.get("selected_feature_count"),
             selected_features=data.get("selected_features"),
             composite_drop_ratio=data.get("composite_drop_ratio"),

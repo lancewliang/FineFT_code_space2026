@@ -625,10 +625,9 @@ def _run_dual_stream_train_stage(
     assert set(final_selected) == union_set
 
     # Persist dual-stream artifacts and filtered contract datasets
-    vae_file, rl_file, union_file = io.save_dual_stream_features(
+    vae_file, rl_file = io.save_dual_stream_features(
         vae_features=vae_selected,
         rl_features=rl_selected,
-        union_features=final_selected,
     )
     filtered_outputs = io.write_filtered_outputs(frames, final_selected)
 
@@ -652,7 +651,8 @@ def _run_dual_stream_train_stage(
         target_freq=config.target_freq,
         stage=config.stage,
         split_input_dir=str(io.input_dir),
-        selected_feature_file=str(union_file),
+        rl_feature_file=str(rl_file),
+        vae_feature_file=str(vae_file),
         selected_feature_count=len(final_selected),
         selected_features=final_selected,
         stream_mode="dual",
@@ -931,7 +931,7 @@ def _run_single_stream_train_stage(
         target_freq=config.target_freq,
         stage=config.stage,
         split_input_dir=str(io.input_dir),
-        selected_feature_file=str(selected_file),
+        rl_feature_file=str(selected_file),
         selected_feature_count=len(final_selected),
         selected_features=final_selected,
         windows_list=list(config.predictive.windows_list),
@@ -1081,7 +1081,7 @@ def _run_validation_stage(
             / config.target_freq
             / config.symbol
             / "train"
-            / "state_features.npy"
+            / "rl_state_features.npy"
         ),
         evaluated_feature_count=len(feature_universe),
         evaluated_features=feature_universe,

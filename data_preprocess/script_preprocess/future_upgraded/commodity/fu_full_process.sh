@@ -519,7 +519,7 @@ run_commodity_scale_save() {
         --rolling_window 48 \
         --clip_mode "tanh" \
         --soft_clip_m 4.0 \
-        --feature_list_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/${target_freq}/${symbol}/train/state_features.npy" \
+        --feature_selection_dir "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/${target_freq}/${symbol}/train" \
         --passthrough_features "${BASE_TIME_FEATURE_COLUMNS[@]}"
 }
 

@@ -58,9 +58,10 @@ def test_feature_selection_excludes_base_time_from_metrics_and_appends_to_final(
         mandatory_state_features=list(BASE_TIME_FEATURE_COLUMNS),
     )
 
-    state_features_file = res.output_dir / "state_features.npy"
-    assert state_features_file.exists()
-    final_features = np.load(state_features_file, allow_pickle=True).tolist()
+    assert not (res.output_dir / "state_features.npy").exists()
+    rl_features_file = res.output_dir / "rl_state_features.npy"
+    assert rl_features_file.exists()
+    final_features = np.load(rl_features_file, allow_pickle=True).tolist()
 
     # BASE_TIME_FEATURE_COLUMNS must appear at the end of final_features
     for col in BASE_TIME_FEATURE_COLUMNS:

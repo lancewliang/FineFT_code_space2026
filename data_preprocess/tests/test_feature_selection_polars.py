@@ -567,8 +567,8 @@ def _run_multi_contract_scale_save_cli(
         "commodity_futures",
         "--orderbook_depth",
         "5",
-        "--feature_list_path",
-        "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy",
+        "--feature_selection_dir",
+        "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train",
     ]
     if extra_args:
         command.extend(extra_args)
@@ -591,12 +591,13 @@ def test_multi_contract_scale_save_cli_scans_all_split_stage_contracts(tmp_path)
         tmp_path
         / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/valid/fu2605.feather"
     )
-    feature_file = (
+    fs_dir = (
         tmp_path
-        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy"
+        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     )
-    feature_file.parent.mkdir(parents=True)
-    np.save(feature_file, np.array(["feature_a"]))
+    fs_dir.mkdir(parents=True, exist_ok=True)
+    np.save(fs_dir / "rl_state_features.npy", np.array(["feature_a"]))
+    np.save(fs_dir / "vae_state_features.npy", np.array(["feature_a"]))
 
     result = _run_multi_contract_scale_save_cli(tmp_path)
 
@@ -624,12 +625,13 @@ def test_multi_contract_scale_save_cli_scans_all_split_stage_contracts(tmp_path)
 
 
 def test_multi_contract_scale_save_cli_uses_train_only_robust_scaler(tmp_path):
-    feature_file = (
+    fs_dir = (
         tmp_path
-        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy"
+        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     )
-    feature_file.parent.mkdir(parents=True)
-    np.save(feature_file, np.array(["wap_1", "awap", "spike_feature"]))
+    fs_dir.mkdir(parents=True, exist_ok=True)
+    np.save(fs_dir / "rl_state_features.npy", np.array(["wap_1", "awap", "spike_feature"]))
+    np.save(fs_dir / "vae_state_features.npy", np.array(["wap_1", "awap", "spike_feature"]))
 
     _write_multi_scale_fixture(
         tmp_path
@@ -680,12 +682,13 @@ def test_multi_contract_scale_save_cli_uses_train_only_robust_scaler(tmp_path):
 
 
 def test_multi_contract_scale_save_cli_rejects_missing_split_stage_inputs(tmp_path):
-    feature_file = (
+    fs_dir = (
         tmp_path
-        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy"
+        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     )
-    feature_file.parent.mkdir(parents=True)
-    np.save(feature_file, np.array(["feature_a"]))
+    fs_dir.mkdir(parents=True, exist_ok=True)
+    np.save(fs_dir / "rl_state_features.npy", np.array(["feature_a"]))
+    np.save(fs_dir / "vae_state_features.npy", np.array(["feature_a"]))
 
     result = _run_multi_contract_scale_save_cli(tmp_path, check=False)
 
@@ -701,12 +704,13 @@ def test_multi_contract_scale_save_cli_rejects_missing_selected_feature(tmp_path
         / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train/fu2601.feather"
     )
     _write_scale_fixture(input_file)
-    feature_file = (
+    fs_dir = (
         tmp_path
-        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy"
+        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     )
-    feature_file.parent.mkdir(parents=True)
-    np.save(feature_file, np.array(["missing_feature"]))
+    fs_dir.mkdir(parents=True, exist_ok=True)
+    np.save(fs_dir / "rl_state_features.npy", np.array(["missing_feature"]))
+    np.save(fs_dir / "vae_state_features.npy", np.array(["missing_feature"]))
 
     result = _run_multi_contract_scale_save_cli(tmp_path, check=False)
 
@@ -721,12 +725,13 @@ def test_multi_contract_scale_save_cli_rejects_missing_train_split_inputs(tmp_pa
         / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/valid/fu2601.feather"
     )
     _write_scale_fixture(input_file)
-    feature_file = (
+    fs_dir = (
         tmp_path
-        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy"
+        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     )
-    feature_file.parent.mkdir(parents=True)
-    np.save(feature_file, np.array(["feature_a"]))
+    fs_dir.mkdir(parents=True, exist_ok=True)
+    np.save(fs_dir / "rl_state_features.npy", np.array(["feature_a"]))
+    np.save(fs_dir / "vae_state_features.npy", np.array(["feature_a"]))
 
     result = _run_multi_contract_scale_save_cli(tmp_path, check=False)
 
@@ -740,12 +745,13 @@ def test_multi_contract_scale_save_cli_rejects_invalid_clip_bounds(tmp_path):
         / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train/fu2601.feather"
     )
     _write_scale_fixture(input_file)
-    feature_file = (
+    fs_dir = (
         tmp_path
-        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy"
+        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     )
-    feature_file.parent.mkdir(parents=True)
-    np.save(feature_file, np.array(["feature_a"]))
+    fs_dir.mkdir(parents=True, exist_ok=True)
+    np.save(fs_dir / "rl_state_features.npy", np.array(["feature_a"]))
+    np.save(fs_dir / "vae_state_features.npy", np.array(["feature_a"]))
 
     result = _run_multi_contract_scale_save_cli(
         tmp_path,
@@ -803,12 +809,13 @@ def test_multi_contract_scale_save_cli_rejects_empty_train_feature_list(tmp_path
         / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train/fu2601.feather"
     )
     _write_scale_fixture(input_file)
-    feature_file = (
+    fs_dir = (
         tmp_path
-        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train/state_features.npy"
+        / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     )
-    feature_file.parent.mkdir(parents=True)
-    np.save(feature_file, np.array([]))
+    fs_dir.mkdir(parents=True, exist_ok=True)
+    np.save(fs_dir / "rl_state_features.npy", np.array([]))
+    np.save(fs_dir / "vae_state_features.npy", np.array([]))
 
     result = _run_multi_contract_scale_save_cli(tmp_path, check=False)
 

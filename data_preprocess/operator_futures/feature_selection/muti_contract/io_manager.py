@@ -103,17 +103,27 @@ class PipelineIOManager:
                 first_frame, orderbook_depth=self.config.orderbook_depth
             )
         else:
-            train_feature_file = (
+            train_dir = (
                 Path(self.config.root_path)
                 / self.config.save_path
                 / self.config.target_freq
                 / self.config.symbol
                 / "train"
-                / "state_features.npy"
             )
-            raw_universe = load_feature_list(train_feature_file)
-        if not raw_universe:
-            raise ValueError(f"{self.config.stage} feature universe is empty")
+            rl_file = train_dir / "rl_state_features.npy"
+            vae_file = train_dir / "vae_state_features.npy"
+            raw_universe: list[str] = []
+            seen: set[str] = set()
+            for path in (rl_file, vae_file):
+                if path.exists():
+                    for feat in load_feature_list(path):
+                        if feat not in seen:
+                            seen.add(feat)
+                            raw_universe.append(feat)
+            if not raw_universe:
+                raise FileNotFoundError(
+                    f"Missing train feature files in {train_dir}: neither rl_state_features.npy nor vae_state_features.npy found"
+                )
         return raw_universe
 
     def load_validation_outpost_frame(
@@ -193,7 +203,7 @@ class PipelineIOManager:
         return outputs
 
     def save_selected_features(self, selected_features: list[str]) -> Path:
-        selected_file = self.output_dir / "state_features.npy"
+        selected_file = self.output_dir / "rl_state_features.npy"
         np.save(selected_file, np.array(selected_features))
         return selected_file
 
@@ -201,15 +211,12 @@ class PipelineIOManager:
         self,
         vae_features: list[str],
         rl_features: list[str],
-        union_features: list[str],
-    ) -> tuple[Path, Path, Path]:
+    ) -> tuple[Path, Path]:
         vae_file = self.output_dir / "vae_state_features.npy"
         rl_file = self.output_dir / "rl_state_features.npy"
-        union_file = self.output_dir / "state_features.npy"
         np.save(vae_file, np.array(vae_features))
         np.save(rl_file, np.array(rl_features))
-        np.save(union_file, np.array(union_features))
-        return vae_file, rl_file, union_file
+        return vae_file, rl_file
 
     def save_manifest(self, manifest: FeatureSelectionManifest) -> Path:
         manifest_path = self.output_dir / "feature_selection_manifest.json"
