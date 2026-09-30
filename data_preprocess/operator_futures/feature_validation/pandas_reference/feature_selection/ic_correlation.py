@@ -203,7 +203,7 @@ def main(args):
             args.symbols,
             args.target_freq,
             "{}-{}".format(args.start_date, args.end_date),
-            "state_features.npy",
+            "rl_state_features.npy",
         ),
         state_feature,
     )

@@ -193,11 +193,10 @@ parser.add_argument(
 )
 parser.add_argument(
     "--passthrough_features",
-    "--passthrough_state_features",
     dest="passthrough_features",
     nargs="*",
     default=None,
-    help="state features to passthrough without scaling",
+    help="features to passthrough without scaling",
 )
 
 

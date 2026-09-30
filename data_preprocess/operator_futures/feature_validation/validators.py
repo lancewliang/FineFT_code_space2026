@@ -158,7 +158,7 @@ def validate_scale_save(config: ValidationConfig) -> StageResult:
             / config.symbol
             / config.target_freq
             / f"{config.start_date}-{config.end_date}"
-            / "state_features.npy"
+            / "rl_state_features.npy"
         )
         if not state_path.exists():
             raise FileNotFoundError(str(state_path))

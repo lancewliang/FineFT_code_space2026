@@ -150,7 +150,7 @@ def main(args):
 
     if args.ic_choice == "ic":
         out.write_ipc(output_dir / "df.feather")
-        np.save(output_dir / "state_features.npy", np.array(selected_feature_names))
+        np.save(output_dir / "rl_state_features.npy", np.array(selected_feature_names))
     elif args.ic_choice == "rank_ic":
         out.write_ipc(output_dir / "df_rank.feather")
         np.save(output_dir / "state_features_rank.npy", np.array(selected_feature_names))

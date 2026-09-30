@@ -41,7 +41,7 @@ def build_union_state_features(feature_lists: Iterable[Sequence[str]]) -> list[s
 def _load_state_features(path: Path, contract: str) -> list[str]:
     if not path.exists():
         raise FileNotFoundError(
-            f"Missing state_features.npy for contract {contract}: {path}"
+            f"Missing rl_state_features.npy for contract {contract}: {path}"
         )
     return [str(item) for item in np.load(path, allow_pickle=True).tolist()]
 
@@ -95,7 +95,7 @@ def write_contract_feature_union(
     output_dir = root_path / save_path / symbol / target_freq / date_range
     feature_base_path = candidate_path if candidate_path is not None else scale_save_path
     feature_file_name = (
-        "state_features_candidate.npy" if candidate_path is not None else "state_features.npy"
+        "state_features_candidate.npy" if candidate_path is not None else "rl_state_features.npy"
     )
 
     contract_features: dict[str, list[str]] = {}
@@ -163,11 +163,11 @@ def write_contract_feature_union(
             )
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    np.save(output_dir / "state_features.npy", np.array(union))
+    np.save(output_dir / "rl_state_features.npy", np.array(union))
     for contract, (contract_output_dir, out) in finalized_frames.items():
         contract_output_dir.mkdir(parents=True, exist_ok=True)
         out.write_ipc(contract_output_dir / "df.feather")
-        np.save(contract_output_dir / "state_features.npy", np.array(union))
+        np.save(contract_output_dir / "rl_state_features.npy", np.array(union))
 
     manifest = FeatureUnionManifest(
         symbol=symbol,

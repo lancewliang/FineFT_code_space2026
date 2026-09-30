@@ -146,7 +146,7 @@ def resolve_scale_input_paths(args, symbol_parts):
         )
         if args.ic_choice == "ic":
             df_name = "df"
-            state_name = "state_features"
+            state_name = "rl_state_features"
         elif args.ic_choice == "rank_ic":
             df_name = "df_rank"
             state_name = "state_features_rank"
@@ -160,7 +160,7 @@ def resolve_scale_input_paths(args, symbol_parts):
     stage_dir = Path(args.data_path).joinpath(
         args.target_freq, args.symbols, args.feature_selection_stage
     )
-    return stage_dir / args.contract / "df.feather", stage_dir / "state_features.npy"
+    return stage_dir / args.contract / "df.feather", stage_dir / "rl_state_features.npy"
 
 
 def main(args):
@@ -220,7 +220,7 @@ def main(args):
     )
     out.write_ipc(output_file)
     out.write_csv(output_dir / "df.csv")
-    np.save(output_dir / "state_features.npy", np.array(state_feature))
+    np.save(output_dir / "rl_state_features.npy", np.array(state_feature))
     df_describe.write_csv(output_dir / "df_describe.csv")
     logger.info(
         "Finished scale-save process: rows=%d columns=%d elapsed_seconds=%.2f",

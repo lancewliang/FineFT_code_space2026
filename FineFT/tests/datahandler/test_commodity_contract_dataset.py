@@ -16,6 +16,7 @@ from datahandler.commodity_contract_dataset import (
     write_stage_datasets,
     write_train_slices,
 )
+from common import ArtifactNames
 from datahandler.manifests import (
     DatasetManifest,
     DatasetSkippedContract,
@@ -97,6 +98,15 @@ def _write_scale_save_file(root, stage, contract, rows=2):
 
 
 def _dataset_manifest_from_dict(manifest):
+    rl_src = manifest.get("rl_state_features_source_path", manifest.get("state_features_source_path", ""))
+    rl_dest = manifest.get("rl_state_features_path", "")
+    if not rl_dest:
+        dest_p = Path(manifest.get("state_features_path", "dataset/fu/state_features.npy")).parent
+        rl_dest = str(dest_p / ArtifactNames.RL_STATE_FEATURES_NPY)
+    vae_src = manifest.get("vae_state_features_source_path", "")
+    vae_dest = manifest.get("vae_state_features_path", "")
+    if not vae_dest and vae_src:
+        vae_dest = str(Path(rl_dest).parent / ArtifactNames.VAE_STATE_FEATURES_NPY)
     payload = {
         "symbol": manifest.get("symbol", "fu"),
         "target_freq": manifest.get("target_freq", "10min"),
@@ -104,11 +114,10 @@ def _dataset_manifest_from_dict(manifest):
             "dataset_split_manifest_path",
             "dataset_split_manifest.json",
         ),
-        "state_features_source_path": manifest.get(
-            "state_features_source_path",
-            "",
-        ),
-        "state_features_path": manifest.get("state_features_path", ""),
+        "rl_state_features_source_path": rl_src,
+        "rl_state_features_path": rl_dest,
+        "vae_state_features_source_path": vae_src,
+        "vae_state_features_path": vae_dest,
         "sets": manifest.get("sets", {}),
     }
     return DatasetManifest.from_dict(payload)
@@ -197,17 +206,19 @@ def test_build_dataset_manifest_uses_split_manifest_and_stage_scale_save_paths(t
         split_manifest=split_manifest,
         dataset_split_manifest_path=split_manifest_path,
         input_root=tmp_path / "SCALE_SAVE",
-        state_features_path=tmp_path / "FEATURE_SELECTION" / "state_features.npy",
         output_root=tmp_path / "dataset" / "10min",
         symbol="fu",
         target_freq="10min",
         chunk_length=2,
         early_stop=1,
+        rl_state_features_path=tmp_path / "FEATURE_SELECTION" / "rl_state_features.npy",
+        vae_state_features_path=tmp_path / "FEATURE_SELECTION" / "vae_state_features.npy",
     )
 
     assert isinstance(manifest, DatasetManifest)
     assert manifest.dataset_split_manifest_path.endswith("dataset_split_manifest.json")
-    assert manifest.state_features_path.endswith("dataset/10min/fu/state_features.npy")
+    assert manifest.rl_state_features_path.endswith("dataset/10min/fu/rl_state_features.npy")
+    assert manifest.vae_state_features_path.endswith("dataset/10min/fu/vae_state_features.npy")
     train_contracts = {
         item.contract: item for item in manifest.sets["train"].contracts
     }
@@ -237,15 +248,15 @@ def test_write_stage_datasets_copies_stage_files_and_state_features(tmp_path):
     train_file = _write_scale_save_file(tmp_path, "train", "fu2508", rows=3)
     valid_file = _write_scale_save_file(tmp_path, "valid", "fu2508", rows=2)
     test_file = _write_scale_save_file(tmp_path, "test", "fu2509", rows=2)
-    state_features = tmp_path / "FEATURE_SELECTION" / "10min" / "fu" / "train" / "state_features.npy"
+    state_features = tmp_path / "FEATURE_SELECTION" / "10min" / "fu" / "train" / "rl_state_features.npy"
     state_features.parent.mkdir(parents=True)
     np.save(state_features, np.array(["feature_a"]))
     dataset_root = tmp_path / "dataset" / "10min" / "fu"
     manifest = _dataset_manifest_from_dict({
         "symbol": "fu",
         "target_freq": "10min",
-        "state_features_source_path": str(state_features),
-        "state_features_path": str(dataset_root / "state_features.npy"),
+        "rl_state_features_source_path": str(state_features),
+        "rl_state_features_path": str(dataset_root / ArtifactNames.RL_STATE_FEATURES_NPY),
         "sets": {
             "train": {
                 "contracts": [
@@ -286,7 +297,8 @@ def test_write_stage_datasets_copies_stage_files_and_state_features(tmp_path):
     assert pd.read_feather(dataset_root / "train" / "fu2508.feather")[
         "feature_a"
     ].tolist() == [0, 1, 2]
-    assert np.load(dataset_root / "state_features.npy", allow_pickle=True).tolist() == [
+    assert not (dataset_root / "state_features.npy").exists()
+    assert np.load(dataset_root / ArtifactNames.RL_STATE_FEATURES_NPY, allow_pickle=True).tolist() == [
         "feature_a"
     ]
     assert manifest.sets["train"].contracts[0].output_row_count == 3
@@ -299,7 +311,7 @@ def test_write_stage_datasets_fails_when_state_features_missing(tmp_path):
     train_file = _write_scale_save_file(tmp_path, "train", "fu2508", rows=2)
     dataset_root = tmp_path / "dataset" / "10min" / "fu"
     manifest = _dataset_manifest_from_dict({
-        "state_features_source_path": str(tmp_path / "missing" / "state_features.npy"),
+        "state_features_source_path": str(tmp_path / "missing" / ArtifactNames.RL_STATE_FEATURES_NPY),
         "state_features_path": str(dataset_root / "state_features.npy"),
         "sets": {
             "train": {
@@ -320,7 +332,7 @@ def test_write_stage_datasets_fails_when_state_features_missing(tmp_path):
 
 
 def test_write_stage_datasets_fails_when_scale_save_file_missing(tmp_path):
-    state_features = tmp_path / "FEATURE_SELECTION" / "state_features.npy"
+    state_features = tmp_path / "FEATURE_SELECTION" / ArtifactNames.RL_STATE_FEATURES_NPY
     state_features.parent.mkdir(parents=True)
     np.save(state_features, np.array(["feature_a"]))
     dataset_root = tmp_path / "dataset" / "10min" / "fu"
@@ -347,7 +359,7 @@ def test_write_stage_datasets_fails_when_scale_save_file_missing(tmp_path):
 
 def test_write_stage_datasets_fails_when_state_features_empty(tmp_path):
     train_file = _write_scale_save_file(tmp_path, "train", "fu2508", rows=2)
-    state_features = tmp_path / "FEATURE_SELECTION" / "state_features.npy"
+    state_features = tmp_path / "FEATURE_SELECTION" / ArtifactNames.RL_STATE_FEATURES_NPY
     state_features.parent.mkdir(parents=True)
     np.save(state_features, np.array([]))
     dataset_root = tmp_path / "dataset" / "10min" / "fu"
@@ -374,7 +386,7 @@ def test_write_stage_datasets_fails_when_state_features_empty(tmp_path):
 
 def test_write_stage_datasets_fails_when_copied_stage_data_empty(tmp_path):
     train_file = _write_scale_save_file(tmp_path, "train", "fu2508", rows=0)
-    state_features = tmp_path / "FEATURE_SELECTION" / "state_features.npy"
+    state_features = tmp_path / "FEATURE_SELECTION" / ArtifactNames.RL_STATE_FEATURES_NPY
     state_features.parent.mkdir(parents=True)
     np.save(state_features, np.array(["feature_a"]))
     dataset_root = tmp_path / "dataset" / "10min" / "fu"
@@ -489,9 +501,11 @@ def test_commodity_data_handler_scripts_use_contract_dataset_tool():
         assert "dataset_split_manifest.json" in text
         assert "--input_root" in text
         assert "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE" in text
-        assert ("--state_features_path" in text or "--rl_state_features_path" in text)
+        assert "--rl_state_features_path" in text
+        assert "--state_features_path" not in text
         assert "FEATURE_SELECTION" in text
-        assert ("train/state_features.npy" in text or "train/rl_state_features.npy" in text)
+        assert "train/rl_state_features.npy" in text
+        assert "train/state_features.npy" not in text
         assert "valid_cross_contract_label_calibration.py" in text
         assert '--valid_dir "dataset/${TARGET_FREQ}/${SYMBOL}/valid"' in text
         assert "--data_path" not in text
@@ -544,17 +558,17 @@ def test_run_dataset_generation_writes_manifest_stage_files_and_train_slices(tmp
     _write_scale_save_file(tmp_path, "train", "fu2509", rows=2)
     _write_scale_save_file(tmp_path, "valid", "fu2508", rows=2)
     _write_scale_save_file(tmp_path, "test", "fu2509", rows=2)
-    state_features = tmp_path / "FEATURE_SELECTION" / "10min" / "fu" / "train" / "state_features.npy"
+    state_features = tmp_path / "FEATURE_SELECTION" / "10min" / "fu" / "train" / "rl_state_features.npy"
     state_features.parent.mkdir(parents=True)
     np.save(state_features, np.array(["feature_a"]))
 
     returned_manifest = run_dataset_generation(
         dataset_split_manifest_path=manifest_path,
         input_root=tmp_path / "SCALE_SAVE",
-        state_features_path=state_features,
         output_root=tmp_path / "dataset" / "10min",
         symbol="fu",
         target_freq="10min",
+        rl_state_features_path=state_features,
         chunk_length=4,
         early_stop=1,
     )
@@ -747,11 +761,9 @@ def test_write_stage_datasets_propagates_dual_stream_state_features(tmp_path):
     train_file = _write_scale_save_file(tmp_path, "train", "fu2508", rows=2)
     fs_dir = tmp_path / "FEATURE_SELECTION" / "10min" / "fu" / "train"
     fs_dir.mkdir(parents=True)
-    state_features = fs_dir / "state_features.npy"
     vae_features = fs_dir / "vae_state_features.npy"
     rl_features = fs_dir / "rl_state_features.npy"
 
-    np.save(state_features, np.array(["feat_a", "feat_b"]))
     np.save(vae_features, np.array(["feat_a"]))
     np.save(rl_features, np.array(["feat_b"]))
 
@@ -759,8 +771,10 @@ def test_write_stage_datasets_propagates_dual_stream_state_features(tmp_path):
     manifest = _dataset_manifest_from_dict({
         "symbol": "fu",
         "target_freq": "10min",
-        "state_features_source_path": str(state_features),
-        "state_features_path": str(dataset_root / "state_features.npy"),
+        "rl_state_features_source_path": str(rl_features),
+        "rl_state_features_path": str(dataset_root / ArtifactNames.RL_STATE_FEATURES_NPY),
+        "vae_state_features_source_path": str(vae_features),
+        "vae_state_features_path": str(dataset_root / ArtifactNames.VAE_STATE_FEATURES_NPY),
         "sets": {
             "train": {
                 "contracts": [
@@ -777,7 +791,7 @@ def test_write_stage_datasets_propagates_dual_stream_state_features(tmp_path):
 
     write_stage_datasets(manifest)
 
-    assert (dataset_root / "state_features.npy").exists()
+    assert not (dataset_root / "state_features.npy").exists()
     assert (dataset_root / "vae_state_features.npy").exists()
     assert (dataset_root / "rl_state_features.npy").exists()
     np.testing.assert_array_equal(np.load(dataset_root / "vae_state_features.npy"), np.array(["feat_a"]))

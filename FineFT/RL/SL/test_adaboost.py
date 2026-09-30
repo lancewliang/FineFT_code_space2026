@@ -4,6 +4,7 @@ import argparse
 import joblib
 
 sys.path.append(".")
+from common import ArtifactNames
 from datahandler.create_data_adaboost import SL_data
 import numpy as np
 from env.env_initiate.simple_initiate import initiate_simple_env
@@ -123,7 +124,7 @@ class trader(object):
         self.dataset_name = args.dataset_name
 
         self.tech_indicator_list = np.load(
-            os.path.join(self.base_path, self.dataset_name, "state_features.npy")
+            os.path.join(self.base_path, self.dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY)
         )
         self.maintenance_margin_ratio_dict = np.load(
             os.path.join(

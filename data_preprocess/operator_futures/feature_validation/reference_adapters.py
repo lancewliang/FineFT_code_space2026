@@ -276,7 +276,7 @@ def recompute_ic_state_features(config: ValidationConfig, start_date: str, end_d
 def recompute_scale_save(config: ValidationConfig, start_date: str, end_date: str) -> pd.DataFrame:
     root = config.root_path / "PREPROCESS_DATASET" / "commodity-futures" / "IC_RESULT" / config.symbol / config.target_freq / f"{start_date}-{end_date}"
     df = read_feather_frame(root / "df.feather")
-    state_feature = read_state_features(root / "state_features.npy")
+    state_feature = read_state_features(root / "rl_state_features.npy")
     reward_features = _commodity_reward_columns(df, config.orderbook_depth)
     state_feature = [column for column in state_feature if column in df.columns]
     df_reward = df[reward_features]
@@ -292,7 +292,7 @@ def load_reference_report_data(config: ValidationConfig, start_date: str, end_da
     root = config.root_path / "PREPROCESS_DATASET" / "commodity-futures" / "IC_RESULT" / config.symbol / config.target_freq / f"{start_date}-{end_date}"
     return {
         "df": str(root / "df.feather"),
-        "state_features": str(root / "state_features.npy"),
+        "state_features": str(root / "rl_state_features.npy"),
         "describe": str(root / "df_describe.csv"),
     }
 

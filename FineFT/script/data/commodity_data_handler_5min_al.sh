@@ -14,7 +14,8 @@ cd "${ROOTPATH}"
 python FineFT/datahandler/commodity_contract_dataset.py \
   --dataset_split_manifest_path "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/${TARGET_FREQ}/${SYMBOL}/dataset_split_manifest.json" \
   --input_root "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE" \
-  --state_features_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/${TARGET_FREQ}/${SYMBOL}/train/state_features.npy" \
+  --rl_state_features_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/${TARGET_FREQ}/${SYMBOL}/train/rl_state_features.npy" \
+  --vae_state_features_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/${TARGET_FREQ}/${SYMBOL}/train/vae_state_features.npy" \
   --output_root "dataset/${TARGET_FREQ}" \
   --symbol "${SYMBOL}" \
   --target_freq "${TARGET_FREQ}" \

@@ -1,8 +1,16 @@
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
 import os
 import argparse
 import torch
+
+FINEFT_ROOT = Path(__file__).resolve().parents[1]
+if str(FINEFT_ROOT) not in sys.path:
+    sys.path.insert(0, str(FINEFT_ROOT))
+
+from common import ArtifactNames
 from torch.utils.data import Dataset, DataLoader
 
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -61,7 +69,7 @@ def make_data(args):
     valid_data_path = os.path.join(args.base_path, args.dataset_name, "valid.feather")
     test_data_path = os.path.join(args.base_path, args.dataset_name, "test.feather")
     state_name_path = os.path.join(
-        args.base_path, args.dataset_name, "state_features.npy"
+        args.base_path, args.dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY
     )
     state_features = np.load(state_name_path)
     save_path = os.path.join(args.save_path, args.dataset_name, "SL_data")

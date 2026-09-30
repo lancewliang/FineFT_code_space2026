@@ -272,7 +272,7 @@ def main(args) -> IcCorrelationResult:
     )
     out.write_ipc(output_dir / "df.feather")
     out.write_csv(output_dir / "df.csv")
-    np.save(output_dir / "state_features.npy", np.array(state_feature))
+    np.save(output_dir / "rl_state_features.npy", np.array(state_feature))
     logger.info(
         "Finished IC correlation process: rows=%d columns=%d elapsed_seconds=%.2f",
         out.height,

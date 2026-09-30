@@ -84,10 +84,10 @@ if [ -f "${SUMMARY_PATH}" ]; then
         fi
     done < <(run_commodity_summary_contracts "${SUMMARY_PATH}")
     feature_union_dir="${ROOTPATH}/PREPROCESS_DATASET/commodity-futures/FEATURE_UNION/${SYMBOL}/${TARGET_FREQ}/${START_DATE}-${END_DATE}"
-    if [ -f "${feature_union_dir}/state_features.npy" ]; then
-        echo "Validated commodity feature union state features: symbol=${SYMBOL} path=${feature_union_dir}/state_features.npy"
+    if [ -f "${feature_union_dir}/rl_state_features.npy" ]; then
+        echo "Validated commodity feature union state features: symbol=${SYMBOL} path=${feature_union_dir}/rl_state_features.npy"
     else
-        echo "Missing commodity feature union state_features.npy: path=${feature_union_dir}/state_features.npy" >&2
+        echo "Missing commodity feature union rl_state_features.npy: path=${feature_union_dir}/rl_state_features.npy" >&2
         missing=1
     fi
     if [ -f "${feature_union_dir}/feature_union_manifest.json" ]; then

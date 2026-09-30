@@ -98,34 +98,30 @@ def _build_slice_plan(
 
 
 def build_dataset_manifest(
-    split_manifest,
-    dataset_split_manifest_path,
-    input_root,
-    state_features_path,
-    output_root,
-    symbol,
-    target_freq,
-    chunk_length,
-    early_stop,
-    rl_state_features_path=None,
-    vae_state_features_path=None,
-):
-    source_feat_str = (
-        str(state_features_path)
-        if state_features_path is not None
-        else (str(rl_state_features_path) if rl_state_features_path is not None else "")
-    )
+    split_manifest: DatasetSplitManifest,
+    dataset_split_manifest_path: Path | str,
+    input_root: Path | str,
+    output_root: Path | str,
+    symbol: str,
+    target_freq: str,
+    chunk_length: int,
+    early_stop: int,
+    rl_state_features_path: Path | str,
+    vae_state_features_path: Path | str | None = None,
+) -> DatasetManifest:
     dest_rl = str(Path(output_root) / symbol / ArtifactNames.RL_STATE_FEATURES_NPY)
-    dest_vae = str(Path(output_root) / symbol / ArtifactNames.VAE_STATE_FEATURES_NPY)
-    feat_filename = Path(source_feat_str).name if source_feat_str else ArtifactNames.RL_STATE_FEATURES_NPY
-    manifest_state_path = str(Path(output_root) / symbol / feat_filename)
+    dest_vae = (
+        str(Path(output_root) / symbol / ArtifactNames.VAE_STATE_FEATURES_NPY)
+        if vae_state_features_path is not None
+        else ""
+    )
     manifest = DatasetManifest(
         symbol=symbol,
         target_freq=target_freq,
         dataset_split_manifest_path=str(dataset_split_manifest_path),
-        state_features_source_path=source_feat_str,
-        state_features_path=manifest_state_path,
+        rl_state_features_source_path=str(rl_state_features_path),
         rl_state_features_path=dest_rl,
+        vae_state_features_source_path=str(vae_state_features_path) if vae_state_features_path is not None else "",
         vae_state_features_path=dest_vae,
         sets={},
     )
@@ -168,35 +164,30 @@ def build_dataset_manifest(
     return manifest
 
 
-def write_stage_datasets(manifest):
-    state_features_source_path = Path(manifest.state_features_source_path)
-    if not state_features_source_path.exists():
+def write_stage_datasets(manifest: DatasetManifest) -> None:
+    rl_src = Path(manifest.rl_state_features_source_path)
+    if not rl_src.exists():
         raise FileNotFoundError(
-            f"Missing selected state_features: {state_features_source_path}"
+            f"Missing required RL state features: {rl_src}"
         )
-    state_features = np.load(state_features_source_path, allow_pickle=True).tolist()
-    if not state_features:
-        raise ValueError(f"state feature list is empty: {state_features_source_path}")
+    rl_features = np.load(rl_src, allow_pickle=True).tolist()
+    if not rl_features:
+        raise ValueError(f"RL state feature list is empty: {rl_src}")
 
-    dest_dir = Path(manifest.state_features_path).parent if manifest.state_features_path else Path(manifest.rl_state_features_path).parent
+    dest_dir = Path(manifest.rl_state_features_path).parent
     dest_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(rl_src, dest_dir / ArtifactNames.RL_STATE_FEATURES_NPY)
 
-    rl_dest = dest_dir / ArtifactNames.RL_STATE_FEATURES_NPY
-    rl_src = state_features_source_path.parent / ArtifactNames.RL_STATE_FEATURES_NPY
-    if rl_src.exists():
-        shutil.copyfile(rl_src, rl_dest)
-    else:
-        shutil.copyfile(state_features_source_path, rl_dest)
-
-    vae_dest = dest_dir / ArtifactNames.VAE_STATE_FEATURES_NPY
-    vae_src = state_features_source_path.parent / ArtifactNames.VAE_STATE_FEATURES_NPY
-    if vae_src.exists():
-        shutil.copyfile(vae_src, vae_dest)
-    elif state_features_source_path.name == ArtifactNames.VAE_STATE_FEATURES_NPY:
-        shutil.copyfile(state_features_source_path, vae_dest)
-
-    if state_features_source_path.name == "state_features.npy":
-        shutil.copyfile(state_features_source_path, dest_dir / "state_features.npy")
+    if manifest.vae_state_features_source_path:
+        vae_src = Path(manifest.vae_state_features_source_path)
+        if not vae_src.exists():
+            raise FileNotFoundError(
+                f"Missing required VAE state features: {vae_src}"
+            )
+        vae_features = np.load(vae_src, allow_pickle=True).tolist()
+        if not vae_features:
+            raise ValueError(f"VAE state feature list is empty: {vae_src}")
+        shutil.copyfile(vae_src, dest_dir / ArtifactNames.VAE_STATE_FEATURES_NPY)
 
     for stage, set_info in manifest.sets.items():
         contracts_total_count = 0
@@ -362,17 +353,16 @@ def write_train_slices(manifest):
 
 
 def run_dataset_generation(
-    dataset_split_manifest_path,
-    input_root,
-    state_features_path,
-    output_root,
-    symbol,
-    target_freq,
-    chunk_length=3200,
-    early_stop=320,
-    rl_state_features_path=None,
-    vae_state_features_path=None,
-):
+    dataset_split_manifest_path: Path | str,
+    input_root: Path | str,
+    output_root: Path | str,
+    symbol: str,
+    target_freq: str,
+    rl_state_features_path: Path | str,
+    vae_state_features_path: Path | str | None = None,
+    chunk_length: int = 3200,
+    early_stop: int = 320,
+) -> DatasetManifest:
     split_manifest = load_dataset_split_manifest(
         dataset_split_manifest_path,
         symbol=symbol,
@@ -383,7 +373,6 @@ def run_dataset_generation(
         split_manifest=split_manifest,
         dataset_split_manifest_path=dataset_split_manifest_path,
         input_root=input_root,
-        state_features_path=state_features_path,
         output_root=output_root,
         symbol=symbol,
         target_freq=target_freq,
@@ -408,8 +397,7 @@ def build_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_split_manifest_path", type=Path, required=True)
     parser.add_argument("--input_root", type=Path, required=True)
-    parser.add_argument("--state_features_path", type=Path, default=None)
-    parser.add_argument("--rl_state_features_path", type=Path, default=None)
+    parser.add_argument("--rl_state_features_path", type=Path, required=True)
     parser.add_argument("--vae_state_features_path", type=Path, default=None)
     parser.add_argument("--output_root", type=Path, required=True)
     parser.add_argument("--symbol", type=str, required=True)
@@ -421,20 +409,16 @@ def build_parser():
 
 def main(args=None):
     parsed = build_parser().parse_args(args)
-    feat_path = parsed.rl_state_features_path or parsed.state_features_path
-    if feat_path is None:
-        raise ValueError("Either --rl_state_features_path or --state_features_path must be provided.")
     run_dataset_generation(
         dataset_split_manifest_path=parsed.dataset_split_manifest_path,
         input_root=parsed.input_root,
-        state_features_path=feat_path,
         output_root=parsed.output_root,
         symbol=parsed.symbol,
         target_freq=parsed.target_freq,
-        chunk_length=parsed.chunk_length,
-        early_stop=parsed.early_stop,
         rl_state_features_path=parsed.rl_state_features_path,
         vae_state_features_path=parsed.vae_state_features_path,
+        chunk_length=parsed.chunk_length,
+        early_stop=parsed.early_stop,
     )
 
 
