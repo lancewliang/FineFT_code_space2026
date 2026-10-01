@@ -1,262 +1,33 @@
 source data_preprocess/script_preprocess/future_upgraded/commodity/commodity_process.sh
 
-COMMODITY_COMMON_FEATURE_BLACKLIST=(
-    open
-    high
-    low
-    open_interest
-    vwap
-    awap
-    twap
-    open_buy
-    open_sell
-    high_buy
-    high_sell
-    low_buy
-    low_sell
-    close_buy
-    close_sell
-    vwap_buy
-    vwap_sell
-    awap_buy
-    awap_sell
-    twap_buy
-    twap_sell
-    tradeval
-    volume_buy
-    volume_sell
-    buy_volume
-    sell_volume
-    tradeval_buy
-    tradeval_sell
-    midprice
-    wap_1
-    wap_2
-    buy_wap
-    sell_wap
-    buy_volume_oe
-    sell_volume_oe
-    # Blacklisted OOD features (ADR-0019)
-    contract_month_sin
-    contract_month_cos
-    cm_current_main_log_price_ratio
-    cm_current_main_relative_price_spread
-    cm_current_sub_log_price_ratio
-    cm_current_sub_relative_price_spread
-    cm_main_sub_log_price_ratio
-    cm_main_sub_relative_price_spread
-    prev_2_day_trade_up_ratio
-    prev_day_lower_shadow_to_range
-    prev_5_day_trade_imbalance
-    prev_2_day_trade_imbalance
-    prev_2_day_turnover_rate
-    prev_day_body_to_range
-    prev_week_twap_deviation_pct
-    prev_15_day_turnover_rate
-    prev_day_range_pct
-    prev_day_body_pct
-    prev_day_upper_shadow_pct
-    prev_30_day_trade_down_ratio
-    prev_10_day_trade_imbalance
-    prev_week_body_to_range
-    prev_week_upper_shadow_to_range
-    prev_week_open_interest_change
-    prev_15_day_open_interest_change
-    prev_week_range_pct
-    prev_6_week_open_interest_change
-    prev_day_limit_up_single_sided_ratio
-    prev_day_limit_down_single_sided_ratio
-    prev_2_day_limit_up_single_sided_ratio
-    prev_2_day_limit_down_single_sided_ratio
-    # Blacklisted OOD features (ADR-0020)
-    # Price Limit Indicators (state blacklist, preserved in reward/execution schema)
-    limit_up_single_sided_ratio
-    limit_down_single_sided_ratio
-    limit_up_ask_depth_ratio_5
-    limit_down_bid_depth_ratio_5
-    limit_depth_imbalance_ratio_5
-    # Orderbook Spread Discrete Log Return Pulses
-    buy_spread_oe_max_log_return_2
-    sell_spread_oe_max_log_return_2
-    # Cross Month Open Interest Share
-    cm_m1_m2_open_interest_share_m2
-    cm_m2_m3_open_interest_share_m3
-    # ROC Standardized Normalization Spurious Ratios
-    roc_6_std_norm_origin
-    roc_12_std_norm_origin
-    roc_24_std_norm_origin
-    roc_48_std_norm_origin
-    roc_96_std_norm_origin
-    roc_192_std_norm_origin
-    roc_6_std_norm
-    roc_12_std_norm
-    roc_24_std_norm
-    roc_48_std_norm
-    roc_96_std_norm
-    roc_192_std_norm
-    # Multi-Day / Multi-Week Lagging Quantile Ranks
-    prev_5_day_trade_imbalance_quantile_rank
-    prev_2_day_trade_down_ratio_quantile_rank
-    prev_5_day_trade_up_ratio_quantile_rank
-    prev_15_day_trade_down_ratio_quantile_rank
-    prev_week_body_to_range_quantile_rank
-    prev_10_day_trade_up_ratio_quantile_rank
-    prev_day_upper_shadow_pct_quantile_rank
-    prev_30_day_trade_down_ratio_quantile_rank
-    prev_4_week_trade_up_ratio_quantile_rank
-    prev_15_day_turnover_rate_quantile_rank
-    prev_2_day_trade_imbalance_quantile_rank
-    prev_2_week_open_interest_change_quantile_rank
-    prev_4_week_turnover_rate_quantile_rank
-    prev_week_trade_down_ratio_quantile_rank
-    prev_30_day_open_interest_change_quantile_rank
-    prev_30_day_turnover_rate_quantile_rank
-    prev_week_twap_deviation_pct_quantile_rank
-    prev_2_week_turnover_rate_quantile_rank
-    prev_week_open_interest_change_quantile_rank
-    prev_30_day_trade_imbalance_quantile_rank
-    prev_6_week_trade_down_ratio_quantile_rank
-    prev_day_close_position_quantile_rank
-    prev_15_day_open_interest_change_quantile_rank
-    prev_6_week_turnover_rate_quantile_rank
-    prev_2_day_turnover_rate_quantile_rank
-    prev_week_lower_shadow_to_range_quantile_rank
-    prev_day_trade_up_ratio_quantile_rank
-    prev_5_day_open_interest_change_quantile_rank
-    prev_15_day_trade_imbalance_quantile_rank
-    prev_10_day_trade_imbalance_quantile_rank
-    # Blacklisted OOD features (ADR-0022)
-    contract_life_remaining_ratio
-    imin_192_origin
-    imin_192
-    imax_192_origin
-    imax_192
-    # Blacklisted Non-Stationary Microstructure Depth Increments & Trade Counts (ADR-0023)
-    ask_size_topk_size_1_increments
-    ask_size_topk_size_2_increments
-    ask_size_topk_size_3_increments
-    ask_size_topk_size_4_increments
-    ask_size_topk_size_5_increments
-    bid_size_topk_size_1_increments
-    bid_size_topk_size_2_increments
-    bid_size_topk_size_3_increments
-    bid_size_topk_size_4_increments
-    bid_size_topk_size_5_increments
-    ntrade_estimated
-    ntrade_estimated_up_udnorm
-    ntrade_estimated_down_udnorm
-    ntrade_estimated_flat_udnorm
-    ntrade_estimated_updownflat_vol_udnorm
-    # Blacklisted Non-Stationary Long-Period Macro Volatility (ADR-0024)
-    parkinson_volatility_96
-    parkinson_volatility_192
-    # Blacklisted High-OOD Microstructure Spreads, Lifecycle Shares & Directional Counts (ADR-0027)
-    sell_spread_oe_max_trend_192
-    cm_main_sub_open_interest_share_sub
-    cm_current_sub_open_interest_share_current
-    cm_current_main_open_interest_share_current
-    cntn_192_origin
-    cntp_192_origin
-    # Blacklisted Long-Window Uncentered Nominal Price Ratios (ADR-0028)
-    pivot_s1_192_origin
-    pivot_r1_192_origin
-    pivot_pp_192_origin
-    pivot_s2_192_origin
-    pivot_r2_192_origin
-    bollinger_upper_192_origin
-    bollinger_lower_192_origin
-    min_192_origin
-    max_192_origin
-    # Blacklisted Residual Uncentered Price Ratios, Volume Shares & Microstructure Spreads (ADR-0030)
-    min_96_origin
-    max_96_origin
-    pivot_s2_48_origin
-    pivot_s1_24_origin
-    pivot_s1_6_origin
-    bollinger_lower_12_origin
-    max_192_std_norm_origin
-    cm_current_main_spread_rolling_zscore_192
-    cm_main_sub_spread_rolling_zscore_192
-    cm_main_sub_volume_share_sub
-    cm_current_main_volume_share_current
-    cm_current_sub_volume_share_current
-    sell_spread_oe_max_trend_6
-    buy_spread_oe_max_trend_6
-    buy_spread_oe_max
-    sell_spread_oe_max
-)
+# ==============================================================================
+# Commodity Feature Blacklists
+# Single Source of Truth: data_preprocess/operator_futures/feature_selection/commodity_feature_blacklists.json
+# Queried via: data_preprocess/operator_futures/feature_selection/blacklists.py
+# Scopes: global (hygiene), vae (macro drift), rl_agent
+# Frequencies: 1min, 5min, 10min, 30min
+# ==============================================================================
+COMMODITY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COMMODITY_FEATURE_BLACKLISTS_PY="$(cd "${COMMODITY_SCRIPT_DIR}/../../.." && pwd)/operator_futures/feature_selection/blacklists.py"
 
-# Frequency-specific feature blacklists (ADR-0032: Physical Window Truncation)
-COMMODITY_10MIN_FEATURE_BLACKLIST=(
-    realized_volatility_192
-    ema_slope_192
-    log_price_slope_96
-    bollinger_bandwidth_96_origin
-    vma_192_std_norm_origin
-    cntd_96_origin
-    macro_trade_imbalance_continuous_240
-    cvd_slope_192
-    cvd_slope_96
-    sell_volume_oe_trend_192
-    wvma_192_origin
-    wvma_96_origin
-    imax_96_origin
-    imin_96_origin
-    rsv_96_std_norm_origin
-    corr_192_origin
-    relative_amount_192
-    trend_to_noise_96
-    log_return_vol_quantile_192
-)
+get_commodity_global_hygiene_blacklist() {
+    python "${COMMODITY_FEATURE_BLACKLISTS_PY}" --stream global
+}
 
-# 5min frequency retains w=96 (1 trading day cycle), blacklists w>=192 multi-day macro
-COMMODITY_5MIN_FEATURE_BLACKLIST=(
-    realized_volatility_192
-    ema_slope_192
-    vma_192_std_norm_origin
-    macro_trade_imbalance_continuous_240
-    cvd_slope_192
-    sell_volume_oe_trend_192
-    wvma_192_origin
-    corr_192_origin
-    relative_amount_192
-    log_return_vol_quantile_192
-)
+get_commodity_vae_feature_blacklist() {
+    local target_freq=${1:-10min}
+    python "${COMMODITY_FEATURE_BLACKLISTS_PY}" --stream vae --freq "${target_freq}"
+}
 
-# 1min frequency retains w=96 (1.6h) and w=192 (3.2h) as purely intraday signals
-COMMODITY_1MIN_FEATURE_BLACKLIST=()
-
-# 30min frequency: w>=48 spans multiple trading days
-COMMODITY_30MIN_FEATURE_BLACKLIST=(
-    "${COMMODITY_10MIN_FEATURE_BLACKLIST[@]}"
-)
-
-# Backward-compatibility alias
-COMMODITY_FU_FEATURE_BLACKLIST=("${COMMODITY_COMMON_FEATURE_BLACKLIST[@]}")
+get_commodity_rl_feature_blacklist() {
+    local target_freq=${1:-10min}
+    python "${COMMODITY_FEATURE_BLACKLISTS_PY}" --stream rl --freq "${target_freq}"
+}
 
 get_commodity_feature_blacklist() {
     local target_freq=${1:-10min}
-    local freq_blacklist=()
-    case "${target_freq}" in
-        10min)
-            freq_blacklist=("${COMMODITY_10MIN_FEATURE_BLACKLIST[@]}")
-            ;;
-        5min)
-            freq_blacklist=("${COMMODITY_5MIN_FEATURE_BLACKLIST[@]}")
-            ;;
-        1min)
-            freq_blacklist=("${COMMODITY_1MIN_FEATURE_BLACKLIST[@]}")
-            ;;
-        30min)
-            freq_blacklist=("${COMMODITY_30MIN_FEATURE_BLACKLIST[@]}")
-            ;;
-        *)
-            freq_blacklist=()
-            ;;
-    esac
-    printf "%s\n" "${COMMODITY_COMMON_FEATURE_BLACKLIST[@]}" "${freq_blacklist[@]}"
+    get_commodity_vae_feature_blacklist "${target_freq}"
 }
-
 
 run_commodity_logged_step() {
     local log_dir=$1
@@ -844,14 +615,42 @@ run_commodity_feature_selection() {
     local symbol=$4
     local root_path=$5
     local regime_bins=${6:-${REGIME_BINS:-3}}
-    local effective_blacklist=()
-    while IFS= read -r item; do
-        [ -n "$item" ] && effective_blacklist+=("$item")
-    done < <(get_commodity_feature_blacklist "${target_freq}")
+
+    local dual_stream_arg="--dual_stream"
+    local is_dual_stream=1
+    if [ "${DUAL_STREAM:-true}" = "false" ] || [ "${DUAL_STREAM:-1}" = "0" ]; then
+        dual_stream_arg="--no_dual_stream"
+        is_dual_stream=0
+    fi
 
     local feature_blacklist_args=()
-    if [ "${#effective_blacklist[@]}" -gt 0 ]; then
-        feature_blacklist_args=(--feature_blacklist "${effective_blacklist[@]}")
+    local vae_feature_blacklist_args=()
+    local rl_feature_blacklist_args=()
+
+    if [ "$is_dual_stream" -eq 1 ]; then
+        local vae_blacklist=()
+        while IFS= read -r item; do
+            [ -n "$item" ] && vae_blacklist+=("$item")
+        done < <(get_commodity_vae_feature_blacklist "${target_freq}")
+        if [ "${#vae_blacklist[@]}" -gt 0 ]; then
+            vae_feature_blacklist_args=(--vae_feature_blacklist "${vae_blacklist[@]}")
+        fi
+
+        local rl_blacklist=()
+        while IFS= read -r item; do
+            [ -n "$item" ] && rl_blacklist+=("$item")
+        done < <(get_commodity_rl_feature_blacklist "${target_freq}")
+        if [ "${#rl_blacklist[@]}" -gt 0 ]; then
+            rl_feature_blacklist_args=(--rl_feature_blacklist "${rl_blacklist[@]}")
+        fi
+    else
+        local legacy_blacklist=()
+        while IFS= read -r item; do
+            [ -n "$item" ] && legacy_blacklist+=("$item")
+        done < <(get_commodity_feature_blacklist "${target_freq}")
+        if [ "${#legacy_blacklist[@]}" -gt 0 ]; then
+            feature_blacklist_args=(--feature_blacklist "${legacy_blacklist[@]}")
+        fi
     fi
 
     local target_regime_bins_args=()
@@ -862,11 +661,6 @@ run_commodity_feature_selection() {
     local windows_list=(1 2 6 12 24 48 96)
     if [ "${target_freq}" = "10min" ]; then
         windows_list=(1 2 6 12 24 48)
-    fi
-
-    local dual_stream_arg="--dual_stream"
-    if [ "${DUAL_STREAM:-true}" = "false" ] || [ "${DUAL_STREAM:-1}" = "0" ]; then
-        dual_stream_arg="--no_dual_stream"
     fi
 
     PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" python -u -m operator_futures.feature_selection.muti_contract \
@@ -881,7 +675,9 @@ run_commodity_feature_selection() {
         "${target_regime_bins_args[@]}" \
         "${dual_stream_arg}" \
         --mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" "${CROSS_MONTH_FEATURE_COLUMNS[@]}" \
-        "${feature_blacklist_args[@]}"
+        "${feature_blacklist_args[@]}" \
+        "${vae_feature_blacklist_args[@]}" \
+        "${rl_feature_blacklist_args[@]}"
 }
 
 run_commodity_maintenance_margin_dict() {

@@ -16,6 +16,7 @@ from operator_futures.feature_selection.muti_contract import metrics
 from operator_futures.feature_selection.muti_contract.pipeline import (
     _state_features,
     build_parser,
+    main,
     run_feature_selection,
 )
 from operator_futures.feature_selection.manifests import FeatureSelectionResult
@@ -319,6 +320,93 @@ def test_parser_accepts_runtime_feature_blacklist():
     )
 
     assert args.feature_blacklist == ["wap_1", "last_price"]
+
+def test_parser_accepts_dual_stream_flags():
+    args_default = build_parser().parse_args(
+        ["--symbol", "fu", "--target_freq", "5min", "--stage", "train"]
+    )
+    assert args_default.dual_stream is True
+
+    args_enabled = build_parser().parse_args(
+        ["--symbol", "fu", "--target_freq", "5min", "--stage", "train", "--dual_stream"]
+    )
+    assert args_enabled.dual_stream is True
+
+    args_disabled = build_parser().parse_args(
+        ["--symbol", "fu", "--target_freq", "5min", "--stage", "train", "--no_dual_stream"]
+    )
+    assert args_disabled.dual_stream is False
+
+
+def test_main_forwards_dual_stream_to_run_feature_selection(monkeypatch):
+    captured_kwargs = {}
+
+    def mock_run_feature_selection(**kwargs):
+        captured_kwargs.update(kwargs)
+        return None
+
+    monkeypatch.setattr(
+        "operator_futures.feature_selection.muti_contract.pipeline.run_feature_selection",
+        mock_run_feature_selection,
+    )
+    main(["--symbol", "fu", "--target_freq", "5min", "--stage", "train"])
+    assert captured_kwargs.get("dual_stream") is True
+
+    captured_kwargs.clear()
+    main(["--symbol", "fu", "--target_freq", "5min", "--stage", "train", "--no_dual_stream"])
+    assert captured_kwargs.get("dual_stream") is False
+
+
+def test_parser_accepts_stream_specific_blacklists():
+    args = build_parser().parse_args([
+        "--symbol", "fu",
+        "--target_freq", "10min",
+        "--stage", "train",
+        "--vae_feature_blacklist", "realized_volatility_192", "ema_slope_192",
+        "--rl_feature_blacklist", "bad_rl_feat",
+    ])
+    assert args.vae_feature_blacklist == ["realized_volatility_192", "ema_slope_192"]
+    assert args.rl_feature_blacklist == ["bad_rl_feat"]
+
+
+def test_main_forwards_stream_specific_blacklists_to_run_feature_selection(monkeypatch):
+    captured_kwargs = {}
+
+    def mock_run_feature_selection(**kwargs):
+        captured_kwargs.update(kwargs)
+        return None
+
+    monkeypatch.setattr(
+        "operator_futures.feature_selection.muti_contract.pipeline.run_feature_selection",
+        mock_run_feature_selection,
+    )
+    main([
+        "--symbol", "fu",
+        "--target_freq", "10min",
+        "--stage", "train",
+        "--vae_feature_blacklist", "realized_volatility_192",
+        "--rl_feature_blacklist", "bad_rl_feat",
+    ])
+    assert captured_kwargs.get("vae_feature_blacklist") == ["realized_volatility_192"]
+    assert captured_kwargs.get("rl_feature_blacklist") == ["bad_rl_feat"]
+
+
+def test_build_config_from_legacy_kwargs_attaches_stream_blacklists():
+    from operator_futures.feature_selection.muti_contract.pipeline import (
+        _build_config_from_legacy_kwargs,
+    )
+
+    config = _build_config_from_legacy_kwargs(
+        root_path=Path("/tmp"),
+        symbol="fu",
+        target_freq="10min",
+        stage="train",
+        vae_feature_blacklist=["common_hygiene", "feat_vae_1", "feat_vae_2"],
+        rl_feature_blacklist=["common_hygiene", "feat_rl_1"],
+    )
+    assert config.vae_profile.feature_blacklist == ("common_hygiene", "feat_vae_1", "feat_vae_2")
+    assert config.rl_profile.feature_blacklist == ("common_hygiene", "feat_rl_1")
+    assert config.hygiene.feature_blacklist == ("common_hygiene",)
 
 
 def test_train_stage_writes_final_features_metrics_filtered_outputs_and_manifest(tmp_path, fake_catboost):
@@ -924,6 +1012,7 @@ def test_stream_filter_profile_immutability_and_defaults():
     assert DEFAULT_VAE_PROFILE.catboost_weight == 0.20
     assert DEFAULT_VAE_PROFILE.filter_micro_persistence is True
     assert DEFAULT_VAE_PROFILE.mandatory_feature_pattern == r"^(base_time_|time_|trading_minute_)"
+    assert DEFAULT_VAE_PROFILE.feature_blacklist == ()
 
     # Verify RL Profile canonical values
     assert DEFAULT_RL_PROFILE.name == "rl_decision"
@@ -933,13 +1022,14 @@ def test_stream_filter_profile_immutability_and_defaults():
     assert DEFAULT_RL_PROFILE.min_sign_consistency == 0.65
     assert DEFAULT_RL_PROFILE.min_rank_ic_ir == 0.30
     assert DEFAULT_RL_PROFILE.max_correlation == 0.80
-    assert DEFAULT_RL_PROFILE.min_clusters == 50
-    assert DEFAULT_RL_PROFILE.max_clusters == 65
+    assert DEFAULT_RL_PROFILE.min_clusters == 55
+    assert DEFAULT_RL_PROFILE.max_clusters == 70
     assert DEFAULT_RL_PROFILE.psi_weight == 0.15
     assert DEFAULT_RL_PROFILE.rank_ic_weight == 0.50
     assert DEFAULT_RL_PROFILE.catboost_weight == 0.35
     assert DEFAULT_RL_PROFILE.filter_micro_persistence is False
     assert DEFAULT_RL_PROFILE.mandatory_feature_pattern is None
+    assert DEFAULT_RL_PROFILE.feature_blacklist == ()
 
     # Verify frozen immutability
     with pytest.raises(Exception):
@@ -1564,3 +1654,139 @@ def test_end_to_end_pipeline_dual_stream_selection_scale_and_vae_data_creation(t
     rl_state_obs = train_contract_df[rl_feats].values
     assert rl_state_obs.shape == (row_count, len(rl_feats))
     assert not np.isnan(rl_state_obs).any()
+
+
+
+def test_evaluate_stream_branch_intra_cluster_secondary_recruitment():
+    from operator_futures.feature_selection.muti_contract.pipeline import _evaluate_stream_branch
+    from operator_futures.feature_selection.muti_contract.types import StreamFilterProfile
+
+    np.random.seed(42)
+    n = 100
+    z1 = np.random.randn(n)
+    z2 = np.random.randn(n)
+    f1 = z1
+    f2 = 0.85 * z1 + np.sqrt(1 - 0.85**2) * np.random.randn(n)
+    f3 = z2
+    f4 = 0.85 * z2 + np.sqrt(1 - 0.85**2) * np.random.randn(n)
+
+    df = pl.DataFrame({"f1": f1, "f2": f2, "f3": f3, "f4": f4})
+    frames = {"c1": df}
+
+    profile = StreamFilterProfile(
+        name="test_stream",
+        max_mean_psi=0.50,
+        max_pair_psi=0.50,
+        min_abs_ic=0.0,
+        min_sign_consistency=0.0,
+        min_rank_ic_ir=0.0,
+        max_correlation=0.70,
+        min_clusters=3,
+        max_clusters=3,
+        psi_weight=0.33,
+        rank_ic_weight=0.33,
+        catboost_weight=0.34,
+        filter_micro_persistence=False,
+    )
+
+    aggregate_metrics_df = pl.DataFrame({
+        "feature": ["f1", "f2", "f3", "f4"],
+        "RankIC_Mean": [0.05, 0.04, 0.03, 0.02],
+        "RankIC_Std": [0.01, 0.01, 0.01, 0.01],
+        "IC_Std": [0.01, 0.01, 0.01, 0.01],
+    })
+    dist_metrics_df = pl.DataFrame({
+        "feature": ["f1", "f2", "f3", "f4"],
+        "mean_psi": [0.01, 0.01, 0.01, 0.01],
+        "max_pair_psi": [0.01, 0.01, 0.01, 0.01],
+    })
+    catboost_imp = {"f1": 10.0, "f2": 8.0, "f3": 6.0, "f4": 4.0}
+    sign_cons = {"f1": 1.0, "f2": 1.0, "f3": 1.0, "f4": 1.0}
+
+    selected, drops, audit = _evaluate_stream_branch(
+        profile=profile,
+        candidate_features=["f1", "f2", "f3", "f4"],
+        aggregate_metrics_df=aggregate_metrics_df,
+        dist_metrics_df=dist_metrics_df,
+        frames=frames,
+        mandatory_features=[],
+        persistence_diagnostics=None,
+        min_half_life_bars=0.0,
+        active_persistence_pattern=None,
+        raw_universe_size=4,
+        catboost_mean_importance=catboost_imp,
+        sign_consistency_map=sign_cons,
+        retained_anchors=[],
+    )
+
+    # 4 features formed 2 clusters; with min_clusters=3, secondary recruitment took 1 member to reach 3
+    assert len(selected) == 3
+    assert "f2" in selected
+
+
+def test_evaluate_stream_branch_filters_stream_blacklist():
+    from operator_futures.feature_selection.muti_contract.pipeline import _evaluate_stream_branch
+    from operator_futures.feature_selection.muti_contract.types import StreamFilterProfile
+
+    np.random.seed(42)
+    n = 100
+    df = pl.DataFrame({
+        "f1": np.random.randn(n),
+        "f2": np.random.randn(n),
+        "f3": np.random.randn(n),
+    })
+    frames = {"c1": df}
+
+    profile = StreamFilterProfile(
+        name="test_stream",
+        max_mean_psi=0.50,
+        max_pair_psi=0.50,
+        min_abs_ic=0.0,
+        min_sign_consistency=0.0,
+        min_rank_ic_ir=0.0,
+        max_correlation=0.70,
+        min_clusters=1,
+        max_clusters=5,
+        psi_weight=0.33,
+        rank_ic_weight=0.33,
+        catboost_weight=0.34,
+        filter_micro_persistence=False,
+        feature_blacklist=("f2", "man_drop"),
+    )
+
+    aggregate_metrics_df = pl.DataFrame({
+        "feature": ["f1", "f2", "f3"],
+        "RankIC_Mean": [0.05, 0.04, 0.03],
+        "RankIC_Std": [0.01, 0.01, 0.01],
+        "IC_Std": [0.01, 0.01, 0.01],
+    })
+    dist_metrics_df = pl.DataFrame({
+        "feature": ["f1", "f2", "f3"],
+        "mean_psi": [0.01, 0.01, 0.01],
+        "max_pair_psi": [0.01, 0.01, 0.01],
+    })
+    catboost_imp = {"f1": 10.0, "f2": 8.0, "f3": 6.0}
+    sign_cons = {"f1": 1.0, "f2": 1.0, "f3": 1.0}
+
+    selected, drops, audit = _evaluate_stream_branch(
+        profile=profile,
+        candidate_features=["f1", "f2", "f3"],
+        aggregate_metrics_df=aggregate_metrics_df,
+        dist_metrics_df=dist_metrics_df,
+        frames=frames,
+        mandatory_features=["man_keep", "man_drop"],
+        persistence_diagnostics=None,
+        min_half_life_bars=0.0,
+        active_persistence_pattern=None,
+        raw_universe_size=3,
+        catboost_mean_importance=catboost_imp,
+        sign_consistency_map=sign_cons,
+        retained_anchors=["f2"],  # Should be barred by profile blacklist
+    )
+
+    assert "f2" not in selected
+    assert "man_drop" not in selected
+    assert "man_keep" in selected
+    assert "Stream Blacklist Dropped" in drops
+    assert "f2" in drops["Stream Blacklist Dropped"]
+    assert audit.dropped_counts["Stream Blacklist Dropped"] == 1

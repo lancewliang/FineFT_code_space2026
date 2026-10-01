@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 import logging
 from pathlib import Path
@@ -97,6 +98,46 @@ def _build_config_from_legacy_kwargs(**kwargs) -> FeatureSelectionPipelineConfig
         "persistence_filter_pattern", DEFAULT_PERSISTENCE_FILTER_PATTERN
     )
 
+    vae_profile = (
+        replace(
+            kwargs.get("vae_profile", DEFAULT_VAE_PROFILE),
+            feature_blacklist=tuple(kwargs["vae_feature_blacklist"]),
+        )
+        if kwargs.get("vae_feature_blacklist") is not None
+        else kwargs.get("vae_profile", DEFAULT_VAE_PROFILE)
+    )
+    rl_profile = (
+        replace(
+            kwargs.get("rl_profile", DEFAULT_RL_PROFILE),
+            feature_blacklist=tuple(kwargs["rl_feature_blacklist"]),
+        )
+        if kwargs.get("rl_feature_blacklist") is not None
+        else kwargs.get("rl_profile", DEFAULT_RL_PROFILE)
+    )
+
+    raw_blacklist = list(kwargs.get("feature_blacklist") or ())
+    vae_bl = (
+        kwargs.get("vae_feature_blacklist")
+        if kwargs.get("vae_feature_blacklist") is not None
+        else (vae_profile.feature_blacklist if vae_profile.feature_blacklist else None)
+    )
+    rl_bl = (
+        kwargs.get("rl_feature_blacklist")
+        if kwargs.get("rl_feature_blacklist") is not None
+        else (rl_profile.feature_blacklist if rl_profile.feature_blacklist else None)
+    )
+
+    if vae_bl is not None and rl_bl is not None:
+        effective_hygiene_blacklist = tuple(
+            sorted(set(raw_blacklist).union(set(vae_bl).intersection(set(rl_bl))))
+        )
+    elif vae_bl is not None:
+        effective_hygiene_blacklist = tuple(
+            sorted(set(raw_blacklist).union(set(vae_bl)))
+        )
+    else:
+        effective_hygiene_blacklist = tuple(raw_blacklist)
+
     return FeatureSelectionPipelineConfig(
         root_path=root_path,
         symbol=symbol,
@@ -113,7 +154,7 @@ def _build_config_from_legacy_kwargs(**kwargs) -> FeatureSelectionPipelineConfig
         mandatory_state_features=tuple(kwargs.get("mandatory_state_features") or ()),
         persistence_filter_pattern=persistence_pattern,
         hygiene=DataHygieneConfig(
-            feature_blacklist=tuple(kwargs.get("feature_blacklist") or ()),
+            feature_blacklist=effective_hygiene_blacklist,
             feature_ablation_patterns=tuple(
                 kwargs.get("feature_ablation_patterns") or ()
             ),
@@ -167,8 +208,8 @@ def _build_config_from_legacy_kwargs(**kwargs) -> FeatureSelectionPipelineConfig
             ),
         ),
         dual_stream=bool(kwargs.get("dual_stream", False)),
-        vae_profile=kwargs.get("vae_profile", DEFAULT_VAE_PROFILE),
-        rl_profile=kwargs.get("rl_profile", DEFAULT_RL_PROFILE),
+        vae_profile=vae_profile,
+        rl_profile=rl_profile,
     )
 
 
@@ -222,6 +263,14 @@ def _evaluate_stream_branch(
 
     pool = list(candidate_features)
     filter_drops: dict[str, list[str]] = {}
+
+    if profile.feature_blacklist:
+        stream_blacklist_set = set(profile.feature_blacklist)
+        stream_mandatory = [f for f in stream_mandatory if f not in stream_blacklist_set]
+        stream_dropped = [f for f in pool if f in stream_blacklist_set]
+        pool = [f for f in pool if f not in stream_blacklist_set]
+        if stream_dropped:
+            filter_drops["Stream Blacklist Dropped"] = stream_dropped
 
     # (a) Distribution Drift Gating
     psi_dropped: list[str] = []
@@ -376,7 +425,11 @@ def _evaluate_stream_branch(
 
     if retained_anchors:
         for a in retained_anchors:
-            if a not in selected_candidates and a not in stream_mandatory:
+            if (
+                a not in selected_candidates
+                and a not in stream_mandatory
+                and (not profile.feature_blacklist or a not in set(profile.feature_blacklist))
+            ):
                 selected_candidates.append(a)
 
     final_stream_features = selected_candidates + stream_mandatory
@@ -583,10 +636,11 @@ def _run_dual_stream_train_stage(
 
     rl_anchors: list[str] = []
     if config.regime.enable_conditional_anchors and retained_anchors:
+        rl_blacklist_set = set(config.rl_profile.feature_blacklist)
         rl_anchors = [
             a
             for a in retained_anchors
-            if a in raw_universe and a not in blacklist_set
+            if a in raw_universe and a not in blacklist_set and a not in rl_blacklist_set
         ]
 
     # Branch A: VAE Regime Stream Evaluation
@@ -1280,6 +1334,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.05,
     )
+    parser.add_argument(
+        "--vae_feature_blacklist",
+        nargs="*",
+        default=None,
+        help="Stream-specific feature blacklist for VAE regime stream.",
+    )
+    parser.add_argument(
+        "--rl_feature_blacklist",
+        nargs="*",
+        default=None,
+        help="Stream-specific feature blacklist for RL decision stream.",
+    )
     return parser
 
 
@@ -1318,4 +1384,6 @@ def main(argv=None):
         dedup_method=args.dedup_method,
         max_vif=args.max_vif,
         fdr_threshold=args.fdr_threshold,
+        vae_feature_blacklist=args.vae_feature_blacklist,
+        rl_feature_blacklist=args.rl_feature_blacklist,
     )

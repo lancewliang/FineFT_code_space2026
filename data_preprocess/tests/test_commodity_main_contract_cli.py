@@ -1661,18 +1661,24 @@ def test_commodity_full_process_shell_passes_feature_blacklist():
         REPO_ROOT
         / "data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
     )
+    json_path = (
+        REPO_ROOT
+        / "data_preprocess/operator_futures/feature_selection/commodity_feature_blacklists.json"
+    )
     text = script.read_text(encoding="utf-8")
+    json_text = json_path.read_text(encoding="utf-8")
 
-    assert "--feature_blacklist" in text
-    assert "open" in text
-    assert "high" in text
-    assert "low" in text
-    assert "open_interest" in text
-    assert "wap_1" in text
-    assert "midprice" in text
-    assert "buy_volume_oe" in text
-    assert "volume_buy" in text
-    assert "mark_price" not in text
+    assert "--vae_feature_blacklist" in text
+    assert "--rl_feature_blacklist" in text
+    assert "open" in json_text
+    assert "high" in json_text
+    assert "low" in json_text
+    assert "open_interest" in json_text
+    assert "wap_1" in json_text
+    assert "midprice" in json_text
+    assert "buy_volume_oe" in json_text
+    assert "volume_buy" in json_text
+    assert "mark_price" not in json_text
     assert '"ask${level}_price"' not in text
     assert '"bid${level}_size"' not in text
 
@@ -1682,13 +1688,19 @@ def test_commodity_full_process_shell_frequency_aware_feature_blacklist():
         REPO_ROOT
         / "data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
     )
+    json_path = (
+        REPO_ROOT
+        / "data_preprocess/operator_futures/feature_selection/commodity_feature_blacklists.json"
+    )
     text = script.read_text(encoding="utf-8")
+    json_text = json_path.read_text(encoding="utf-8")
 
-    assert "COMMODITY_COMMON_FEATURE_BLACKLIST=(" in text
-    assert "COMMODITY_10MIN_FEATURE_BLACKLIST=(" in text
-    assert "COMMODITY_5MIN_FEATURE_BLACKLIST=(" in text
-    assert "COMMODITY_1MIN_FEATURE_BLACKLIST=(" in text
+    assert "COMMODITY_FEATURE_BLACKLISTS_PY=" in text
     assert "get_commodity_feature_blacklist" in text
+    assert json_path.exists()
+    assert "\"10min\"" in json_text
+    assert "\"5min\"" in json_text
+    assert "\"1min\"" in json_text
 
     # Verify 10min blacklist includes all 19 macro features
     expected_10min_macro_features = [
@@ -1713,7 +1725,7 @@ def test_commodity_full_process_shell_frequency_aware_feature_blacklist():
         "log_return_vol_quantile_192",
     ]
     for feat in expected_10min_macro_features:
-        assert feat in text
+        assert feat in json_text
 
     # Execute bash snippet to test dynamic dispatch
     import subprocess
@@ -1760,13 +1772,18 @@ def test_commodity_full_process_shell_preserves_cross_month_features():
         REPO_ROOT
         / "data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
     )
+    json_path = (
+        REPO_ROOT
+        / "data_preprocess/operator_futures/feature_selection/commodity_feature_blacklists.json"
+    )
     text = script.read_text(encoding="utf-8")
+    json_text = json_path.read_text(encoding="utf-8")
 
     assert "CROSS_MONTH_FEATURE_COLUMNS=(" in text
     assert "cm_contract_role_main" in text
-    assert "cm_current_main_log_price_ratio" in text
-    assert "cm_current_sub_log_price_ratio" in text
-    assert "cm_main_sub_log_price_ratio" in text
+    assert "cm_current_main_log_price_ratio" in json_text
+    assert "cm_current_sub_log_price_ratio" in json_text
+    assert "cm_main_sub_log_price_ratio" in json_text
     assert "cm_m1_m2_log_price_spread_velocity_10m" in text
     assert "cm_m1_m2_m3_butterfly_spread_velocity_10m" in text
     assert "PRICE_LIMIT_RATIO_FEATURE_COLUMNS=(" in text
@@ -1869,14 +1886,19 @@ def test_commodity_full_process_shell_excludes_ood_features_and_enforces_clippin
         REPO_ROOT
         / "data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
     )
+    json_path = (
+        REPO_ROOT
+        / "data_preprocess/operator_futures/feature_selection/commodity_feature_blacklists.json"
+    )
     text = script.read_text(encoding="utf-8")
+    json_text = json_path.read_text(encoding="utf-8")
 
     # Blacklist must contain ADR-0022 OOD features
-    assert "contract_life_remaining_ratio" in text
-    assert "imin_192_origin" in text
-    assert "imin_192" in text
-    assert "imax_192_origin" in text
-    assert "imax_192" in text
+    assert "contract_life_remaining_ratio" in json_text
+    assert "imin_192_origin" in json_text
+    assert "imin_192" in json_text
+    assert "imax_192_origin" in json_text
+    assert "imax_192" in json_text
 
     # contract_life_remaining_ratio must be removed from BASE_TIME_FEATURE_COLUMNS
     base_time_start = text.index("BASE_TIME_FEATURE_COLUMNS=(")
@@ -1890,3 +1912,128 @@ def test_commodity_full_process_shell_excludes_ood_features_and_enforces_clippin
     scale_save_def = text[scale_save_start:scale_save_end]
     assert "--clip_min -5.0" in scale_save_def
     assert "--clip_max 5.0" in scale_save_def
+
+
+def test_commodity_full_process_shell_decoupled_dual_stream_blacklists():
+    script = (
+        REPO_ROOT
+        / "data_preprocess/script_preprocess/future_upgraded/commodity/fu_full_process.sh"
+    )
+    text = script.read_text(encoding="utf-8")
+
+    assert "get_commodity_global_hygiene_blacklist" in text
+    assert "get_commodity_vae_feature_blacklist" in text
+    assert "get_commodity_rl_feature_blacklist" in text
+    assert '"${vae_feature_blacklist_args[@]}"' in text
+    assert '"${rl_feature_blacklist_args[@]}"' in text
+
+    cmd = f"""bash -c '
+    source "{script}"
+    echo "===GLOBAL==="
+    get_commodity_global_hygiene_blacklist
+    echo "===VAE_10MIN==="
+    get_commodity_vae_feature_blacklist "10min"
+    echo "===RL_10MIN==="
+    get_commodity_rl_feature_blacklist "10min"
+    echo "===VAE_5MIN==="
+    get_commodity_vae_feature_blacklist "5min"
+    echo "===VAE_1MIN==="
+    get_commodity_vae_feature_blacklist "1min"
+    '"""
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
+    out = result.stdout
+
+    sections = {}
+    current_key = None
+    for line in out.strip().splitlines():
+        line = line.strip()
+        if line.startswith("===") and line.endswith("==="):
+            current_key = line.strip("=")
+            sections[current_key] = set()
+        elif current_key and line:
+            sections[current_key].add(line)
+
+    # Global Hygiene MUST contain unnormalized prices and leakage, but NOT scale-invariant macro trend
+    assert "open" in sections["GLOBAL"]
+    assert "contract_life_remaining_ratio" in sections["GLOBAL"]
+    assert "min_96_origin" in sections["GLOBAL"]
+    assert "log_price_slope_96" not in sections["GLOBAL"]
+    assert "realized_volatility_192" not in sections["GLOBAL"]
+    assert "prev_2_week_open_interest_change_quantile_rank" not in sections["GLOBAL"]
+
+    # VAE 10min includes macro drift features
+    assert "log_price_slope_96" in sections["VAE_10MIN"]
+    assert "realized_volatility_192" in sections["VAE_10MIN"]
+    assert "prev_2_week_open_interest_change_quantile_rank" in sections["VAE_10MIN"]
+
+    # RL 10min includes global hygiene but liberates all macro drift features
+    assert "open" in sections["RL_10MIN"]
+    assert "contract_life_remaining_ratio" in sections["RL_10MIN"]
+    assert "log_price_slope_96" not in sections["RL_10MIN"]
+    assert "realized_volatility_192" not in sections["RL_10MIN"]
+    assert "prev_2_week_open_interest_change_quantile_rank" not in sections["RL_10MIN"]
+
+    # VAE 5min includes 192 but NOT 96 (preserving 1-day signals)
+    assert "realized_volatility_192" in sections["VAE_5MIN"]
+    assert "log_price_slope_96" not in sections["VAE_5MIN"]
+
+    # VAE 1min does NOT include 192 or 96 (preserving intraday signals)
+    assert "realized_volatility_192" not in sections["VAE_1MIN"]
+    assert "log_price_slope_96" not in sections["VAE_1MIN"]
+
+
+def test_commodity_feature_blacklists_single_file_and_python_resolution():
+    from operator_futures.feature_selection.blacklists import (
+        DEFAULT_BLACKLIST_JSON_PATH,
+        load_commodity_feature_blacklists,
+        get_commodity_global_hygiene_blacklist,
+        get_commodity_stream_blacklists,
+        get_commodity_vae_feature_blacklist,
+        get_commodity_rl_feature_blacklist,
+    )
+
+    assert DEFAULT_BLACKLIST_JSON_PATH.exists()
+    data = load_commodity_feature_blacklists()
+
+    # Scope checks: global, vae, rl_agent
+    assert "scopes" in data
+    assert "global" in data["scopes"]
+    assert "vae" in data["scopes"]
+    assert "rl_agent" in data["scopes"]
+
+    # Frequencies: 1min, 5min, 10min, 30min
+    assert "frequencies" in data
+    for freq in ("1min", "5min", "10min", "30min"):
+        assert freq in data["frequencies"]
+        assert "vae" in data["frequencies"][freq]
+        assert "rl_agent" in data["frequencies"][freq]
+
+    # Global hygiene list length and content
+    global_list = get_commodity_global_hygiene_blacklist()
+    assert len(global_list) == 88
+    assert "open" in global_list
+    assert "contract_life_remaining_ratio" in global_list
+    assert "min_96_origin" in global_list
+
+    # Stream resolution for 10min
+    vae_10min, rl_10min = get_commodity_stream_blacklists("10min")
+    assert len(vae_10min) == 189
+    assert len(rl_10min) == 88
+
+    # Intersection must be exactly the global hygiene blacklist
+    assert set(vae_10min).intersection(set(rl_10min)) == set(global_list)
+
+    # RL stream must NOT blacklist macro features
+    for macro_feat in (
+        "realized_volatility_192",
+        "ema_slope_192",
+        "log_price_slope_96",
+        "prev_5_day_trade_imbalance_quantile_rank",
+        "cm_current_main_spread_rolling_zscore_192",
+    ):
+        assert macro_feat in vae_10min
+        assert macro_feat not in rl_10min
+
+    # Direct helper getters
+    assert get_commodity_vae_feature_blacklist("10min") == vae_10min
+    assert get_commodity_rl_feature_blacklist("10min") == rl_10min

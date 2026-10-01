@@ -105,6 +105,7 @@ class StreamFilterProfile:
     catboost_weight: float
     filter_micro_persistence: bool
     mandatory_feature_pattern: str | None = None
+    feature_blacklist: tuple[str, ...] = field(default_factory=tuple)
 
 
 DEFAULT_VAE_PROFILE = StreamFilterProfile(
@@ -122,6 +123,7 @@ DEFAULT_VAE_PROFILE = StreamFilterProfile(
     catboost_weight=0.20,
     filter_micro_persistence=True,
     mandatory_feature_pattern=r"^(base_time_|time_|trading_minute_)",
+    feature_blacklist=(),
 )
 
 DEFAULT_RL_PROFILE = StreamFilterProfile(
@@ -132,13 +134,14 @@ DEFAULT_RL_PROFILE = StreamFilterProfile(
     min_sign_consistency=0.65,
     min_rank_ic_ir=0.30,
     max_correlation=0.80,
-    min_clusters=50,
-    max_clusters=65,
+    min_clusters=55,
+    max_clusters=70,
     psi_weight=0.15,
     rank_ic_weight=0.50,
     catboost_weight=0.35,
     filter_micro_persistence=False,
     mandatory_feature_pattern=None,
+    feature_blacklist=(),
 )
 
 
