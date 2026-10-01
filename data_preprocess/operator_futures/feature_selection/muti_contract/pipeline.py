@@ -346,11 +346,23 @@ def _evaluate_stream_branch(
                 cluster_ids = fcluster(z, t=target_max_candidates, criterion="maxclust")
                 num_clusters = len(np.unique(cluster_ids))
 
-            cluster_selected = []
+            cluster_members = []
             for cid in sorted(np.unique(cluster_ids)):
                 members = [pool[idx] for idx, c in enumerate(cluster_ids) if c == cid]
                 members_sorted = sorted(members, key=lambda f: pool.index(f))
-                cluster_selected.append(members_sorted[0])
+                cluster_members.append(members_sorted)
+
+            cluster_selected = [m[0] for m in cluster_members]
+            if len(cluster_selected) < target_min_candidates and len(pool) > len(cluster_selected):
+                remaining_candidates = []
+                for members in cluster_members:
+                    remaining_candidates.extend(members[1:])
+                remaining_candidates.sort(key=lambda f: pool.index(f))
+                deficit = min(
+                    target_max_candidates - len(cluster_selected),
+                    len(remaining_candidates),
+                )
+                cluster_selected.extend(remaining_candidates[:deficit])
 
             cluster_dropped = [f for f in pool if f not in set(cluster_selected)]
             selected_candidates = cluster_selected
@@ -1298,6 +1310,7 @@ def main(argv=None):
         enable_conditional_anchors=args.enable_conditional_anchors,
         regime_bins=args.regime_bins,
         target_regime_bins=_parse_target_regime_bins(args.target_regime_bins),
+        dual_stream=args.dual_stream,
         max_mean_psi=args.max_mean_psi,
         max_pair_psi=args.max_pair_psi,
         min_drift_survivors=args.min_drift_survivors,
