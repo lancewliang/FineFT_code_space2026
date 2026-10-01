@@ -63,3 +63,5 @@ python FineFT/datahandler/vae_data_creation.py \
   --save_path "dataset/${TARGET_FREQ}" \
   --source_split "train" \
   --labeling_method "volatility"
+
+cp "dataset/${SYMBOL}/maintenance_margin_ratio_dict.npy" "dataset/${TARGET_FREQ}/${SYMBOL}"
