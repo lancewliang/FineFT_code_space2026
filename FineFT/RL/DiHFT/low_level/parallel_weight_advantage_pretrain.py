@@ -483,13 +483,31 @@ parser.add_argument(
     default=20,
     help="number of parallel worker processes for sub-agent evaluation process pool",
 )
+def _str2bool(v: str | bool) -> bool:
+    if isinstance(v, bool):
+        return v
+    if str(v).lower() in ("yes", "true", "t", "y", "1"):
+        return True
+    elif str(v).lower() in ("no", "false", "f", "n", "0"):
+        return False
+    raise argparse.ArgumentTypeError(f"Boolean value expected, got {v!r}")
+
+
 parser.add_argument(
     "--load_pretrain_model",
     "--load_pretrained_model",
     dest="load_pretrain_model",
-    action="store_true",
+    type=_str2bool,
+    nargs="?",
+    const=True,
     default=True,
     help="whether to read pre-trained model and skip pretraining",
+)
+parser.add_argument(
+    "--no_load_pretrain_model",
+    dest="load_pretrain_model",
+    action="store_false",
+    help="do not read pre-trained model and run pretraining",
 )
 
 

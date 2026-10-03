@@ -2409,6 +2409,15 @@ def test_parallel_parser_load_pretrain_model_flags():
     args_alias = pwap.parser.parse_args(["--load_pretrained_model"])
     assert args_alias.load_pretrain_model is True
 
+    args_false = pwap.parser.parse_args(["--load_pretrain_model", "False"])
+    assert args_false.load_pretrain_model is False
+
+    args_true = pwap.parser.parse_args(["--load_pretrain_model", "True"])
+    assert args_true.load_pretrain_model is True
+
+    args_no = pwap.parser.parse_args(["--no_load_pretrain_model"])
+    assert args_no.load_pretrain_model is False
+
 
 def test_run_exhaustive_warmup_saves_buffer_and_loads_to_skip_exploration(tmp_path, monkeypatch):
     import os

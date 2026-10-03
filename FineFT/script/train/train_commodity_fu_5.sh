@@ -17,7 +17,7 @@ python -u FineFT/RL/DiHFT/low_level/parallel_weight_advantage_pretrain.py \
     --base_path dataset/5min \
     --dataset_name fu --experiment_name "${EXPERIMENT_NAME}" \
     --result_path result/DiHFT/low_level \
-    --initial_wallet_balance 6000 --batch_size 80190 --update_times=800 --diverse_num_workers 96 \
+    --initial_wallet_balance 10000 --batch_size 80190 --update_times=800 --diverse_num_workers 96 \
     --max_holding_number 1 --short_estimated_rate 0 --long_estimated_rate 0 \
     --position_choices 3 --transcation_cost 0.008 --n_step 18 --gamma 0.992 \
     --order_book_depth 5 --early_stop 2  --N 13 --buffer_size 1000000 \
