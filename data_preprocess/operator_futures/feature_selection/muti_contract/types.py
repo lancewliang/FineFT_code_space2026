@@ -29,10 +29,10 @@ class DataHygieneConfig:
 @dataclass(frozen=True)
 class DistributionAuditConfig:
     num_bins: int = 10
-    max_mean_psi: float = 0.10
-    max_pair_psi: float = 0.25
+    max_mean_psi: float = 0.45
+    max_pair_psi: float = 1.30
     min_drift_survivors: int = 20
-    forward_outpost_max_psi: float = 0.15
+    forward_outpost_max_psi: float = 0.80
 
 
 @dataclass(frozen=True)
@@ -48,13 +48,13 @@ class StationarityAuditConfig:
 
 @dataclass(frozen=True)
 class PredictiveAuditConfig:
-    min_abs_ic: float = 0.02
-    min_sign_consistency: float = 0.75
-    min_rank_ic_ir: float = 0.40
+    min_abs_ic: float = 0.010
+    min_sign_consistency: float = 0.55
+    min_rank_ic_ir: float = 0.18
     target_decision_window: int = 6
     windows_list: tuple[int, ...] = (1, 2, 6, 12, 24, 48)
     fdr_threshold: float = 0.05
-    ic_anomaly_ceiling: float = 0.30
+    ic_anomaly_ceiling: float = 0.45
     rank_ic_mode: str = "absolute"
     max_metric_std: float = 1.0
 
@@ -62,7 +62,7 @@ class PredictiveAuditConfig:
 @dataclass(frozen=True)
 class NonlinearScoringConfig:
     decision_window: int = 6
-    composite_drop_ratio: float = 0.10
+    composite_drop_ratio: float = 0.05
     early_stopping_rounds: int = 30
     catboost_depth: int = 6
     catboost_iterations: int = 1000
@@ -128,17 +128,17 @@ DEFAULT_VAE_PROFILE = StreamFilterProfile(
 
 DEFAULT_RL_PROFILE = StreamFilterProfile(
     name="rl_decision",
-    max_mean_psi=0.25,
-    max_pair_psi=0.35,
-    min_abs_ic=0.020,
-    min_sign_consistency=0.65,
-    min_rank_ic_ir=0.30,
+    max_mean_psi=0.45,
+    max_pair_psi=1.30,
+    min_abs_ic=0.010,
+    min_sign_consistency=0.55,
+    min_rank_ic_ir=0.18,
     max_correlation=0.80,
-    min_clusters=55,
-    max_clusters=70,
+    min_clusters=100,
+    max_clusters=155,
     psi_weight=0.15,
-    rank_ic_weight=0.50,
-    catboost_weight=0.35,
+    rank_ic_weight=0.70,
+    catboost_weight=0.15,
     filter_micro_persistence=False,
     mandatory_feature_pattern=None,
     feature_blacklist=(),
