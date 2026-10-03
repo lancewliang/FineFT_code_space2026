@@ -117,3 +117,12 @@ def initiate_demo_env(
         regime_grid_ids_array=regime_grid_ids_array,
     )
     return env
+
+
+def create_demo_env_from_pack(
+    pack,
+    env_kwargs: dict,
+    initial_state: tuple | None = None,
+):
+    from RL.DiHFT.low_level.shared_data_manager import create_demo_env_from_pack as _impl
+    return _impl(pack, env_kwargs, initial_state)

@@ -70,7 +70,7 @@ def test_persistent_pool_reuses_workers_across_epochs(monkeypatch):
 
     fake_procs = [FakeProcess(pid=1001), FakeProcess(pid=1002)]
 
-    def fake_start(trainer, train_df_cache, env_kwargs, shared_model=None):
+    def fake_start(trainer, train_df_cache, env_kwargs, shared_model=None, shared_market_data=None):
         trainer.worker_processes = fake_procs
         trainer.worker_task_queue = MagicMock()
         trainer.worker_result_queue = MagicMock()

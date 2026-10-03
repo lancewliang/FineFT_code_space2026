@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -1550,28 +1553,28 @@ def create_optimal_q_table(
 
 def create_optimal_q_table_from_df(
     df: pd.DataFrame,
-    max_holding_number=8,
-    position_choices=9,  # (must be an odd number, the minum of trading equals to (max_holder_number)/((action_dim-1)/2)s))
-    leverage_choice=[
+    max_holding_number: int | float = 8,
+    position_choices: int = 9,  # (must be an odd number, the minum of trading equals to (max_holder_number)/((action_dim-1)/2)s))
+    leverage_choice: Sequence[int | float] = [
         5
     ],  # recommend only use one leverage choice, because the leverage does not influence the return directly, the position
     # itself is enough to show the risk preference
-    long_estimated_rate=0.0005,
-    short_estimated_rate=0,
-    commission_rate=0.0002,
+    long_estimated_rate: float = 0.0005,
+    short_estimated_rate: float = 0.0,
+    commission_rate: float = 0.0002,
     # the default is for btcusdt perpetual contract
-    max_punishment=1e10,
-    gamma=1,
-    order_book_depth=25,
-    allow_reverse_position=False,
+    max_punishment: float = 1e10,
+    gamma: float = 1.0,
+    order_book_depth: int = 25,
+    allow_reverse_position: bool = False,
     # optional limit up/down reward shaping (arrays auto-extracted from df when
     # the columns are present; shaping only applies if enable_limit_reward=True)
-    enable_limit_reward=False,
-    limit_hold_bonus=1.0,
-    limit_stay_bonus=0.5,
-    limit_reverse_penalty=1.5,
-    near_limit_threshold=0.003,
-):
+    enable_limit_reward: bool = False,
+    limit_hold_bonus: float = 1.0,
+    limit_stay_bonus: float = 0.5,
+    limit_reverse_penalty: float = 1.5,
+    near_limit_threshold: float = 0.003,
+) -> np.ndarray:
     bid_prices_names = ["bid{}_price".format(i) for i in range(1, order_book_depth + 1)]
     ask_prices_names = ["ask{}_price".format(i) for i in range(1, order_book_depth + 1)]
     bid_sizes_names = ["bid{}_size".format(i) for i in range(1, order_book_depth + 1)]
@@ -1586,7 +1589,7 @@ def create_optimal_q_table_from_df(
     ask_qtys_array = df[ask_sizes_names].values
     bid_qtys_array = df[bid_sizes_names].values
 
-    def _col(name):
+    def _col(name: str) -> np.ndarray | None:
         return df[name].values if name in df.columns else None
 
     is_limit_up_array = (

@@ -92,7 +92,7 @@ def test_df_rollout_worker_runner_run_task_atomic(monkeypatch):
             self.unrealized_pnl = 0.0
             self.wallet_balance = 1000.0
 
-        def reset(self):
+        def reset(self, initial_state=None):
             return np.array([0.1, 0.2]), {
                 "previous_action": 0,
                 "avaliable_action": [1, 1, 1],
@@ -177,7 +177,7 @@ def test_run_epoch_exploration_task_pool_dispatch_and_collection(monkeypatch):
 
     result_queue = queue.Queue()
 
-    def mock_start_workers(tr, train_df_cache, env_kwargs):
+    def mock_start_workers(tr, train_df_cache, env_kwargs, **kwargs):
         task_q = MockTaskQueue()
         tr.worker_task_queue = task_q
         tr.worker_result_queue = result_queue
@@ -413,7 +413,7 @@ def test_run_epoch_exploration_logs_exception_on_failure(monkeypatch):
         )
     )
 
-    def mock_start_workers(tr, train_df_cache, env_kwargs):
+    def mock_start_workers(tr, train_df_cache, env_kwargs, **kwargs):
         task_q = queue.Queue()
         tr.worker_task_queue = task_q
         tr.worker_result_queue = result_queue
@@ -637,30 +637,27 @@ def test_shm_cache_optimization_for_worker_pool(tmp_path, monkeypatch):
 
     pdt.start_parallel_workers(trainer, train_df_cache, {}, shared_model=eval_net)
 
-    assert trainer.shm_df_cache_path is not None
-    assert os.path.exists(trainer.shm_df_cache_path)
+    # In Phase 2, shared memory market data registry eliminates /dev/shm .pkl file dumping
+    assert trainer.shm_df_cache_path is None
 
     for process in trainer.worker_processes:
         cfg = process.worker_config
         assert "train_df_cache_path" in cfg
-        assert cfg["train_df_cache_path"] == trainer.shm_df_cache_path
+        assert cfg["train_df_cache_path"] is None
         assert cfg["shared_model"] is eval_net
 
-        # Verify runner loads correctly from shm cache path
+        # Verify runner initializes and accesses data without disk files
         runner = pdt.DfRolloutWorkerRunner(cfg)
         assert 0 in runner.train_df_by_df
         assert len(runner.train_df_by_df[0]) == 2
 
-    # Verify shutdown removes shm cache files
+    # Verify shutdown leaves no shm cache files
     task_q = queue.Queue()
     task_q.cancel_join_thread = MagicMock()
     trainer.worker_task_queue = task_q
     trainer.worker_result_queue = MagicMock()
-    df_path = trainer.shm_df_cache_path
 
     pdt.shutdown_exploration_workers(trainer)
-
-    assert not os.path.exists(df_path)
     assert trainer.shm_df_cache_path is None
 
 

@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import pandas as pd
 import torch
 
 if TYPE_CHECKING:
@@ -47,9 +48,14 @@ if TYPE_CHECKING:
 
 
 from model.low_level import ensemble_Qnet
+from env.env_class.futures_util import map_action_to_position_leverage
 from RL.DiHFT.low_level.pretrain_qtable_diagnostics import (
     build_initial_state,
     create_demo_env,
+)
+from RL.DiHFT.low_level.shared_data_manager import (
+    SharedMarketDataPack,
+    create_demo_env_from_pack,
 )
 from RL.DiHFT.low_level.parallel_pretrain import (
     StackedTransitionSampler,
@@ -632,11 +638,19 @@ class DfRolloutWorkerRunner:
     def __init__(self, worker_config):
         torch.set_num_threads(1)
         self.df_indices = worker_config["df_indices"]
-        if "train_df_cache_path" in worker_config and worker_config["train_df_cache_path"]:
-            with open(worker_config["train_df_cache_path"], "rb") as f:
-                self.train_df_by_df = pickle.load(f)
+        self.shared_market_data = (
+            worker_config["shared_market_data"]
+            if "shared_market_data" in worker_config
+            else None
+        )
+        if self.shared_market_data is None:
+            if "train_df_cache_path" in worker_config and worker_config["train_df_cache_path"]:
+                with open(worker_config["train_df_cache_path"], "rb") as f:
+                    self.train_df_by_df = pickle.load(f)
+            else:
+                self.train_df_by_df = worker_config["train_df_by_df"]
         else:
-            self.train_df_by_df = worker_config["train_df_by_df"]
+            self.train_df_by_df = None
         self.env_kwargs = worker_config["env_kwargs"]
         self.device = "cpu"
         self.leverage_choices = worker_config["leverage_choices"]
@@ -656,21 +670,54 @@ class DfRolloutWorkerRunner:
             elif "state_dict" in worker_config and worker_config["state_dict"]:
                 load_worker_state_dict(self.model, worker_config["state_dict"])
         self.model.eval()
+        self.cached_envs = {}
         # df_index -> 该 df 当前探索任务的回合状态
         self.episodes = {}
 
+    def _get_initial_state_and_env(self, df_index: int, initial_action: int):
+        if self.shared_market_data is not None:
+            pack = self.shared_market_data[df_index]
+            current_markprice = float(pack.markprice_tensor[0].item())
+            initial_position, initial_leverage = map_action_to_position_leverage(
+                initial_action, self.leverage_choices, self.position_list
+            )
+            initial_margin = abs(
+                float(initial_position * current_markprice / initial_leverage)
+            )
+            initial_state = (
+                self.initial_wallet_balance,
+                initial_margin,
+                self.initial_unrealized_pnL,
+                initial_position,
+                initial_leverage,
+            )
+            if df_index not in self.cached_envs:
+                self.cached_envs[df_index] = create_demo_env_from_pack(
+                    pack, self.env_kwargs, initial_state=initial_state
+                )
+            env = self.cached_envs[df_index]
+        else:
+            train_df = self.train_df_by_df[df_index]
+            _, _, _, initial_state = build_initial_state(
+                train_df,
+                initial_action,
+                self.leverage_choices,
+                self.position_list,
+                self.initial_wallet_balance,
+                self.initial_unrealized_pnL,
+            )
+            if df_index not in self.cached_envs:
+                self.cached_envs[df_index] = create_demo_env(
+                    train_df, self.env_kwargs, initial_state
+                )
+            env = self.cached_envs[df_index]
+        return env, initial_state
+
     def run_task(self, task: ExploreTask) -> WorkerRoundResult:
-        train_df = self.train_df_by_df[task.df_index]
-        _, _, _, initial_state = build_initial_state(
-            train_df,
-            task.initial_action,
-            self.leverage_choices,
-            self.position_list,
-            self.initial_wallet_balance,
-            self.initial_unrealized_pnL,
+        env, initial_state = self._get_initial_state_and_env(
+            task.df_index, task.initial_action
         )
-        env = create_demo_env(train_df, self.env_kwargs, initial_state)
-        state, info = env.reset()
+        state, info = env.reset(initial_state=initial_state)
         episode = _WorkerEpisode(env=env, state=state, info=info, done=False)
 
         self.model.eval()
@@ -750,17 +797,10 @@ class DfRolloutWorkerRunner:
 
     def reset_task(self, message):
         """按 message.df_index 为对应数据文件重建 env 并重置回合状态。"""
-        train_df = self.train_df_by_df[message.df_index]
-        _, _, _, initial_state = build_initial_state(
-            train_df,
-            message.initial_action,
-            self.leverage_choices,
-            self.position_list,
-            self.initial_wallet_balance,
-            self.initial_unrealized_pnL,
+        env, initial_state = self._get_initial_state_and_env(
+            message.df_index, message.initial_action
         )
-        env = create_demo_env(train_df, self.env_kwargs, initial_state)
-        state, info = env.reset()
+        state, info = env.reset(initial_state=initial_state)
         self.episodes[message.df_index] = _WorkerEpisode(
             env=env,
             state=state,
@@ -891,14 +931,13 @@ class DfRolloutWorkerRunner:
 
 def start_parallel_workers(
     trainer: Weighted_Contexts_DQN,
-    train_df_cache: dict[int, pd.DataFrame],
-    env_kwargs: dict[str, Any],
+    train_df_cache: dict[int, pd.DataFrame] | None = None,
+    env_kwargs: dict[str, Any] = None,
     shared_model: nn.Module | None = None,
+    shared_market_data: SharedMarketDataPack | None = None,
 ):
     """启动多样化探索通用子进程池（Diverse Rollout Task Pool）。"""
-    logger.info(
-            "diverse rollout worker pool start"        
-        )
+    logger.info("diverse rollout worker pool start")
     trainer.worker_processes = []
     worker_context = create_worker_context()
     task_queue = worker_context.Queue()
@@ -911,20 +950,22 @@ def start_parallel_workers(
     num_workers = trainer.diverse_num_workers
     log_file_path = configure_logger(trainer.dataset_name, trainer.experiment_name)
 
-    shm_dir = "/dev/shm" if os.path.exists("/dev/shm") else tempfile.gettempdir()
-    shm_df_cache_path = os.path.join(
-        shm_dir,
-        f"fineft_train_df_{os.getpid()}_{trainer.dataset_name}_{trainer.experiment_name}.pkl",
-    )
-    with open(shm_df_cache_path, "wb") as f:
-        pickle.dump(train_df_cache, f, protocol=pickle.HIGHEST_PROTOCOL)
-    trainer.shm_df_cache_path = shm_df_cache_path
+    if shared_market_data is None and train_df_cache is not None:
+        first_val = next(iter(train_df_cache.values()), None)
+        if isinstance(first_val, pd.DataFrame) and env_kwargs is not None and "feature_list" in env_kwargs:
+            shared_market_data = SharedMarketDataPack.from_dataframes(
+                train_df_cache, env_kwargs
+            )
+    trainer.shared_market_data = shared_market_data
+    trainer.shm_df_cache_path = None
 
     for worker_id in range(num_workers):
         worker_config = {
             "worker_id": worker_id,
             "df_indices": effective_df_indices,
-            "train_df_cache_path": shm_df_cache_path,
+            "shared_market_data": shared_market_data,
+            "train_df_by_df": train_df_cache if shared_market_data is None else None,
+            "train_df_cache_path": None,
             "shared_model": shared_model,
             "env_kwargs": env_kwargs,
             "device": "cpu",
@@ -991,13 +1032,8 @@ def shutdown_exploration_workers(trainer: Weighted_Contexts_DQN):
     trainer.worker_task_queue = None
     trainer.worker_result_queue = None
 
-    if trainer.shm_df_cache_path is not None:
-        try:
-            if os.path.isfile(trainer.shm_df_cache_path):
-                os.remove(trainer.shm_df_cache_path)
-        except OSError:
-            pass
-        trainer.shm_df_cache_path = None
+    trainer.shared_market_data = None
+    trainer.shm_df_cache_path = None
 
     if alive_pids:
         raise RuntimeError(
@@ -1262,12 +1298,13 @@ def is_buffer_full(
 def run_epoch_exploration(
     trainer: Weighted_Contexts_DQN,
     epoch_index: int,
-    train_df_cache: dict[int, pd.DataFrame],
-    env_kwargs: dict[str, Any],
-    buffer_diverse: RegimeStratifiedReplayBuffer,
-    step_counter_diverse: int,
-    round_counter: int,
-    diverse_rollout_latest_metrics_by_df: dict[int, Any],
+    train_df_cache: dict[int, pd.DataFrame] | None = None,
+    env_kwargs: dict[str, Any] = None,
+    buffer_diverse: RegimeStratifiedReplayBuffer = None,
+    step_counter_diverse: int = 0,
+    round_counter: int = 0,
+    diverse_rollout_latest_metrics_by_df: dict[int, Any] = None,
+    shared_market_data: SharedMarketDataPack | None = None,
 ):
     """一个 epoch 的完整探索阶段：启动任务池 -> 并发拉取探索 -> 彻底关闭。
 
@@ -1281,7 +1318,12 @@ def run_epoch_exploration(
 
     try:
         if should_manage_lifecycle:
-            start_parallel_workers(trainer, train_df_cache, env_kwargs)
+            start_parallel_workers(
+                trainer,
+                train_df_cache=train_df_cache,
+                env_kwargs=env_kwargs,
+                shared_market_data=shared_market_data,
+            )
         total_tasks = 0
         for context_index in range(trainer.N):
             for initial_action in range(trainer.position_choices):
@@ -1435,11 +1477,15 @@ def run_parallel_diverse_training(
             },
             initial_state_dict=trainer.eval_net.state_dict(),
         )
+        shared_market_data = SharedMarketDataPack.from_dataframes(
+            train_df_cache, env_kwargs
+        )
         pool = PersistentRolloutPool(
             trainer=trainer,
-            train_df_cache=train_df_cache,
+            train_df_cache=None,
             env_kwargs=env_kwargs,
             shared_manager=shared_manager,
+            shared_market_data=shared_market_data,
         )
 
     round_counter = 0

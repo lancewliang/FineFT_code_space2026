@@ -1,7 +1,6 @@
 import sys
 
 sys.path.append(".")
-import pandas as pd
 import numpy as np
 try:
     import gym
@@ -133,8 +132,8 @@ class Demo_Env(Base_Env):
             near_limit_threshold=near_limit_threshold,
         )
 
-    def reset(self):
-        state, info = super(Demo_Env, self).reset()
+    def reset(self, initial_state: tuple[float, float, float, float, float] | None = None):
+        state, info = super(Demo_Env, self).reset(initial_state=initial_state)
         info["q_value"] = self.q_table[self.day][info["previous_action"]]
         return state, info
 

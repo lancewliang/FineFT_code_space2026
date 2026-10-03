@@ -1,4 +1,3 @@
-import pandas as pd
 import numpy as np
 import sys
 try:
@@ -444,9 +443,11 @@ class Base_Env(gym.Env):
             [leverage for _, leverage in allowed_pairs],
         )
 
-    def reset(self):
+    def reset(self, initial_state: tuple[float, float, float, float, float] | None = None):
         self.day = 0
         self.terminal = self.day >= len(self.state_array) - self.early_stop - 1
+        if initial_state is not None:
+            self.initial_state = initial_state
         (
             self.wallet_balance,
             self.initial_margin,

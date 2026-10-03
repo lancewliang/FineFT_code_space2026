@@ -957,7 +957,7 @@ def test_run_parallel_diverse_training_completes_exploration_before_training(
         pdt, "shutdown_exploration_workers", lambda tr: events.append("shutdown_workers")
     )
 
-    def mock_start_workers(trainer, train_df_cache, env_kwargs, shared_model=None):
+    def mock_start_workers(trainer, train_df_cache, env_kwargs, shared_model=None, shared_market_data=None):
         events.append("start_workers")
         trainer.worker_result_queue = queue.Queue()
         trainer.worker_task_queue = queue.Queue()
@@ -1101,7 +1101,7 @@ def test_run_parallel_diverse_training_skips_exploration_after_three_stale_epoch
         pdt, "shutdown_exploration_workers", lambda tr: events.append("shutdown_workers")
     )
 
-    def mock_start_workers(trainer, train_df_cache, env_kwargs, shared_model=None):
+    def mock_start_workers(trainer, train_df_cache, env_kwargs, shared_model=None, shared_market_data=None):
         events.append("start_workers")
         trainer.worker_result_queue = queue.Queue()
         trainer.worker_task_queue = queue.Queue()
@@ -1337,7 +1337,7 @@ def test_run_epoch_exploration_stops_early_when_buffer_becomes_full(monkeypatch)
     trainer.eval_net = object()
     trainer.buffer_size = 2  # 上限为 2
 
-    def fake_start(tr, train_df_cache, env_kwargs):
+    def fake_start(tr, train_df_cache, env_kwargs, **kwargs):
         trainer.worker_result_queue = queue.Queue()
         trainer.worker_input_queues = {0: DummyInputQueue(0, trainer.worker_result_queue)}
 
@@ -1505,7 +1505,7 @@ def test_df_rollout_worker_runner_tracks_episodes_per_df(monkeypatch):
             self.unrealized_pnl = 0.0
             self.wallet_balance = 100.0
 
-        def reset(self):
+        def reset(self, initial_state=None):
             return (np.zeros(2), {"avaiable_action_list": [0, 1]})
 
         def step(self, action):

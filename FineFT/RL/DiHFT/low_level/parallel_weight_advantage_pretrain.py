@@ -831,6 +831,7 @@ class Weighted_Contexts_DQN:
         self.worker_processes = []
         self.worker_input_queues = {}
         self.shm_df_cache_path: str | None = None
+        self.shared_market_data = None
         self.eval_num_workers = args.eval_num_workers
         self.pretrain_eval_num_workers = self.eval_num_workers
         if self.eval_num_workers <= 0:
