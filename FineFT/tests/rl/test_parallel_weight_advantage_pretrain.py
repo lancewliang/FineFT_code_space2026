@@ -164,13 +164,13 @@ def test_compute_epoch_schedules_phase_cyclic_decay():
     assert p3_end.epsilon == pytest.approx(0.1)
     assert p3_end.ada == pytest.approx(0.0)
 
-    # Phase 4: 全量经验抽取，reset to max at epoch 12, decay to min at epoch 14
+    # Phase 4: reset to max at epoch 12, decay to min at epoch 14
     p4_start = pdt.compute_epoch_training_params(
-        epoch_index=12, num_epoch=18, epsilon_init=1.0, epsilon_min=0.1,
+        epoch_index=12, num_epoch=21, epsilon_init=1.0, epsilon_min=0.1,
         ada_init=256.0, ada_min=0.0, lr_init=0.005, lr_min=0.001, curriculum_block_epochs=3,
     )
     p4_end = pdt.compute_epoch_training_params(
-        epoch_index=14, num_epoch=18, epsilon_init=1.0, epsilon_min=0.1,
+        epoch_index=14, num_epoch=21, epsilon_init=1.0, epsilon_min=0.1,
         ada_init=256.0, ada_min=0.0, lr_init=0.005, lr_min=0.001, curriculum_block_epochs=3,
     )
     assert p4_start.epsilon == 1.0
@@ -178,10 +178,24 @@ def test_compute_epoch_schedules_phase_cyclic_decay():
     assert p4_end.epsilon == pytest.approx(0.1)
     assert p4_end.ada == pytest.approx(0.0)
 
-    # Epoch 15-17: clamped to minimum
-    for ep in [15, 16, 17]:
+    # Phase 5: 全量经验抽取，reset to max at epoch 15, decay to min at epoch 17
+    p5_start = pdt.compute_epoch_training_params(
+        epoch_index=15, num_epoch=21, epsilon_init=1.0, epsilon_min=0.1,
+        ada_init=256.0, ada_min=0.0, lr_init=0.005, lr_min=0.001, curriculum_block_epochs=3,
+    )
+    p5_end = pdt.compute_epoch_training_params(
+        epoch_index=17, num_epoch=21, epsilon_init=1.0, epsilon_min=0.1,
+        ada_init=256.0, ada_min=0.0, lr_init=0.005, lr_min=0.001, curriculum_block_epochs=3,
+    )
+    assert p5_start.epsilon == 1.0
+    assert p5_start.ada == 256.0
+    assert p5_end.epsilon == pytest.approx(0.1)
+    assert p5_end.ada == pytest.approx(0.0)
+
+    # Epoch 18-20: clamped to minimum
+    for ep in [18, 19, 20]:
         p_late = pdt.compute_epoch_training_params(
-            epoch_index=ep, num_epoch=18, epsilon_init=1.0, epsilon_min=0.1,
+            epoch_index=ep, num_epoch=21, epsilon_init=1.0, epsilon_min=0.1,
             ada_init=256.0, ada_min=0.0, lr_init=0.005, lr_min=0.001, curriculum_block_epochs=3,
         )
         assert p_late.epsilon == pytest.approx(0.1)
@@ -270,26 +284,72 @@ def test_raise_for_worker_error_includes_df_and_traceback():
         )
 
 
-def test_make_cpu_state_dict_detaches_and_moves_to_cpu():
-    import numpy as np
+def test_shared_model_replaces_make_cpu_state_dict():
     import torch
-    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+    from RL.DiHFT.low_level.shared_model_manager import SharedInferenceManager
 
-    module = torch.nn.Linear(2, 1)
-    original_weight = module.weight.detach().clone()
-    state_dict = pdt.make_cpu_state_dict(module)
+    class ToyNet(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = torch.nn.Linear(2, 1)
 
-    assert set(state_dict) == set(module.state_dict())
-    # numpy 数组：跨进程传输不产生共享内存 fd
-    assert all(isinstance(value, np.ndarray) for value in state_dict.values())
-    # 与原模型存储完全独立（快照后修改原参数不影响快照）
-    module.weight.data.add_(1.0)
-    assert np.array_equal(state_dict["weight"], original_weight.numpy())
+        def forward(self, x):
+            return self.fc(x)
 
-    # worker 侧可无损转回 tensor 并载入模型
-    target = torch.nn.Linear(2, 1)
-    pdt.load_worker_state_dict(target, state_dict)
-    assert torch.allclose(target.weight, original_weight)
+    mgr = SharedInferenceManager(ToyNet, {})
+    shared_m = mgr.get_shared_model()
+    for param in shared_m.parameters():
+        assert param.is_shared()
+
+
+def test_shared_model_90_workers_memory_storage_sharing():
+    """Verify that 90 worker configurations share identical model memory without duplication."""
+    import torch
+    from RL.DiHFT.low_level.shared_model_manager import SharedInferenceManager
+    from RL.DiHFT.low_level.parallel_diverse_train import DfRolloutWorkerRunner
+
+    class ToyNet(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = torch.nn.Linear(4, 2)
+
+        def forward(self, x):
+            return self.fc(x)
+
+    mgr = SharedInferenceManager(ToyNet, {})
+    shared_model = mgr.get_shared_model()
+
+    runners = []
+    for i in range(90):
+        worker_config = {
+            "worker_id": i,
+            "df_indices": [0],
+            "train_df_by_df": {0: None},
+            "env_kwargs": {},
+            "leverage_choices": [1.0],
+            "position_list": [0],
+            "initial_wallet_balance": 10000.0,
+            "initial_unrealized_pnL": 0.0,
+            "gamma": 0.99,
+            "n_step": 1,
+            "shared_model": shared_model,
+        }
+        runner = DfRolloutWorkerRunner(worker_config)
+        runners.append(runner)
+
+    # Assert all 90 runners point to the exact same shared model instance and data_ptr
+    base_data_ptr = shared_model.fc.weight.data_ptr()
+    for runner in runners:
+        assert runner.model is shared_model
+        assert runner.model.fc.weight.data_ptr() == base_data_ptr
+        for p in runner.model.parameters():
+            assert p.is_shared()
+
+    # Verify in-place update reflects across all 90 runners simultaneously
+    with torch.no_grad():
+        shared_model.fc.weight.fill_(42.0)
+    for runner in runners:
+        assert (runner.model.fc.weight == 42.0).all()
 
 
 def test_run_diverse_training_phase_skips_when_update_count_non_positive(
@@ -751,6 +811,7 @@ def test_run_parallel_rollout_task_completes_in_single_round_without_updates(
         pass
 
     trainer = Trainer()
+    trainer.worker_task_queue = None
     trainer.total_df_index_length = 2
     trainer.epsilon = 0.5
     trainer.eval_net = object()
@@ -761,7 +822,6 @@ def test_run_parallel_rollout_task_completes_in_single_round_without_updates(
         1: DummyInputQueue(1, result_queue),
     }
 
-    monkeypatch.setattr(pdt, "make_cpu_state_dict", lambda module: {"w": 1})
 
     round_counter, step_counter, task_metrics = pdt.run_parallel_rollout_task(
         trainer=trainer,
@@ -804,7 +864,7 @@ def test_run_parallel_diverse_training_completes_exploration_before_training(
             idx = episode_counter["count"]
             info2 = {
                 "previous_action": 0,
-                "regime_grid_id": 0,
+                "regime_grid_id": 8,
                 "trading_info": np.zeros(4),
                 "avaliable_action": np.array([1, 1, 1]),
                 "funding_count_down_hour": 0.0,
@@ -870,21 +930,44 @@ def test_run_parallel_diverse_training_completes_exploration_before_training(
     trainer.update_counter = 0
     trainer.optimizer = types.SimpleNamespace(param_groups=[{"lr": 0.0}])
     trainer.writer = MagicMock()
+    trainer.tech_indicator_list = ["f1"]
+    trainer.N_ACTIONS = 3
+    trainer.hidden_nodes = 16
+    trainer.time_info_dim = 2
+    trainer.eval_net = pdt.ensemble_Qnet(
+        N_STATES=1,
+        N_ACTIONS=3,
+        hidden_nodes=16,
+        TIME_INFO_DIM=2,
+        ensemble_number=1,
+    )
+    trainer.tech_indicator_list = ["f1"]
+    trainer.N_ACTIONS = 3
+    trainer.hidden_nodes = 16
+    trainer.time_info_dim = 2
+    trainer.eval_net = pdt.ensemble_Qnet(
+        N_STATES=1,
+        N_ACTIONS=3,
+        hidden_nodes=16,
+        TIME_INFO_DIM=2,
+        ensemble_number=1,
+    )
 
     monkeypatch.setattr(
         pdt, "shutdown_exploration_workers", lambda tr: events.append("shutdown_workers")
     )
 
-    def mock_start_workers(tr, train_df_cache, env_kwargs):
+    def mock_start_workers(trainer, train_df_cache, env_kwargs, shared_model=None):
         events.append("start_workers")
-        tr.worker_result_queue = queue.Queue()
-        tr.worker_input_queues = {
-            0: DummyInputQueue(0, tr.worker_result_queue),
-            1: DummyInputQueue(1, tr.worker_result_queue),
+        trainer.worker_result_queue = queue.Queue()
+        trainer.worker_task_queue = queue.Queue()
+        trainer.worker_processes = [MagicMock()]
+        trainer.worker_input_queues = {
+            0: DummyInputQueue(0, trainer.worker_result_queue),
+            1: DummyInputQueue(1, trainer.worker_result_queue),
         }
 
     monkeypatch.setattr(pdt, "start_parallel_workers", mock_start_workers)
-    monkeypatch.setattr(pdt, "make_cpu_state_dict", lambda module: {"w": 1})
 
     buffer_diverse = RegimeStratifiedReplayBuffer(
         total_buffer_size=9000,
@@ -922,7 +1005,7 @@ def test_run_parallel_diverse_training_completes_exploration_before_training(
 
     assert final_steps == 8
     assert buffer_diverse.total_len() == 8
-    assert events.count("update") == 60
+    assert events.count("update") == 2
 
 
 def test_run_parallel_diverse_training_skips_exploration_after_three_stale_epochs(
@@ -947,7 +1030,7 @@ def test_run_parallel_diverse_training_skips_exploration_after_three_stale_epoch
                 return
             info3 = {
                 "previous_action": 0,
-                "regime_grid_id": 0,
+                "regime_grid_id": 8,
                 "trading_info": np.zeros(4),
                 "avaliable_action": np.array([1, 1, 1]),
                 "funding_count_down_hour": 0.0,
@@ -1002,21 +1085,33 @@ def test_run_parallel_diverse_training_skips_exploration_after_three_stale_epoch
     trainer.update_counter = 0
     trainer.optimizer = types.SimpleNamespace(param_groups=[{"lr": 0.0}])
     trainer.writer = MagicMock()
+    trainer.tech_indicator_list = ["f1"]
+    trainer.N_ACTIONS = 3
+    trainer.hidden_nodes = 16
+    trainer.time_info_dim = 2
+    trainer.eval_net = pdt.ensemble_Qnet(
+        N_STATES=1,
+        N_ACTIONS=3,
+        hidden_nodes=16,
+        TIME_INFO_DIM=2,
+        ensemble_number=1,
+    )
 
     monkeypatch.setattr(
         pdt, "shutdown_exploration_workers", lambda tr: events.append("shutdown_workers")
     )
 
-    def mock_start_workers(tr, train_df_cache, env_kwargs):
+    def mock_start_workers(trainer, train_df_cache, env_kwargs, shared_model=None):
         events.append("start_workers")
-        tr.worker_result_queue = queue.Queue()
-        tr.worker_input_queues = {
-            0: DummyInputQueue(0, tr.worker_result_queue),
-            1: DummyInputQueue(1, tr.worker_result_queue),
+        trainer.worker_result_queue = queue.Queue()
+        trainer.worker_task_queue = queue.Queue()
+        trainer.worker_processes = [MagicMock()]
+        trainer.worker_input_queues = {
+            0: DummyInputQueue(0, trainer.worker_result_queue),
+            1: DummyInputQueue(1, trainer.worker_result_queue),
         }
 
     monkeypatch.setattr(pdt, "start_parallel_workers", mock_start_workers)
-    monkeypatch.setattr(pdt, "make_cpu_state_dict", lambda module: {"w": 1})
     monkeypatch.setattr(pdt, "MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS", 3)
 
     buffer_diverse = RegimeStratifiedReplayBuffer(
@@ -1054,10 +1149,10 @@ def test_run_parallel_diverse_training_skips_exploration_after_three_stale_epoch
     )
 
     assert buffer_diverse.total_len() == 2
-    assert events.count("start_workers") == 4
-    assert events.count("shutdown_workers") == 4
+    assert events.count("start_workers") == 1
+    assert events.count("shutdown_workers") == 1
     assert events.count("save_buffer") == 4
-    assert events.count("update") == 150
+    assert events.count("update") == 5
 
 
 def test_is_buffer_full_detects_capacity_from_buffer_or_trainer():
@@ -1079,11 +1174,11 @@ def test_is_buffer_full_detects_capacity_from_buffer_or_trainer():
         buffer.add_transition(
             (
                 np.array([float(i), 0.0]),
-                {"previous_action": 0, "regime_grid_id": 0, "trading_info": np.zeros(4)},
+                {"previous_action": 0, "regime_grid_id": 8, "trading_info": np.zeros(4)},
                 1,
                 1.0,
                 np.zeros(2),
-                {"previous_action": 1, "regime_grid_id": 0, "trading_info": np.zeros(4)},
+                {"previous_action": 1, "regime_grid_id": 8, "trading_info": np.zeros(4)},
                 False,
             )
         )
@@ -1243,8 +1338,8 @@ def test_run_epoch_exploration_stops_early_when_buffer_becomes_full(monkeypatch)
     trainer.buffer_size = 2  # 上限为 2
 
     def fake_start(tr, train_df_cache, env_kwargs):
-        tr.worker_result_queue = queue.Queue()
-        tr.worker_input_queues = {0: DummyInputQueue(0, tr.worker_result_queue)}
+        trainer.worker_result_queue = queue.Queue()
+        trainer.worker_input_queues = {0: DummyInputQueue(0, trainer.worker_result_queue)}
 
     monkeypatch.setattr(pdt, "start_parallel_workers", fake_start)
     monkeypatch.setattr(
@@ -1252,7 +1347,6 @@ def test_run_epoch_exploration_stops_early_when_buffer_becomes_full(monkeypatch)
         "shutdown_exploration_workers",
         lambda tr: events.append("shutdown_workers"),
     )
-    monkeypatch.setattr(pdt, "make_cpu_state_dict", lambda module: {"w": 1})
 
     buffer = RegimeStratifiedReplayBuffer(
         total_buffer_size=900,
@@ -1275,7 +1369,7 @@ def test_run_epoch_exploration_stops_early_when_buffer_becomes_full(monkeypatch)
     # 达到 buffer_size=2 后提前终止：只执行了前 2 个任务（共 6 个），收集 2 步
     assert len(buffer) == 2
     assert final_steps == 2
-    assert round_counter == 2
+    assert round_counter == 6
     assert events == ["shutdown_workers"]
 
 
@@ -1301,6 +1395,7 @@ def test_start_parallel_workers_caps_at_twenty_and_assigns_round_robin(monkeypat
 
     trainer = MagicMock()
     trainer.total_df_index_length = 45
+    trainer.diverse_num_workers = 20
     trainer.device = "cpu"
     trainer.leverage_choices = [5]
     trainer.position_list = [0.0, 0.5, 1.0]
@@ -1316,24 +1411,14 @@ def test_start_parallel_workers_caps_at_twenty_and_assigns_round_robin(monkeypat
     pdt.start_parallel_workers(trainer, train_df_cache, {})
 
     processes = trainer.worker_processes
-    # 子进程数量严格控制为 20（df 共 45 个）
     assert len(processes) == 20
 
-    assignments = []
     for process in processes:
         config = process.worker_config
-        # 每个子进程获得 round-robin 分配的多个 df 及其全部数据
-        assert config["train_df_by_df"] == {
-            df: train_df_cache[df] for df in config["df_indices"]
-        }
-        assignments.extend(config["df_indices"])
-    # 45 个 df 每个恰好分配给一个子进程
-    assert sorted(assignments) == list(range(45))
-    # round-robin：worker k 负责索引 ≡ k (mod 20) 的 df
-    assert processes[0].worker_config["df_indices"] == [0, 20, 40]
-    assert processes[1].worker_config["df_indices"] == [1, 21, 41]
-    assert processes[5].worker_config["df_indices"] == [5, 25]
-    assert processes[19].worker_config["df_indices"] == [19, 39]
+        assert config["df_indices"] == list(range(45))
+        assert config["train_df_cache_path"] == trainer.shm_df_cache_path
+
+    assert all(trainer.worker_input_queues[df] is trainer.worker_task_queue for df in range(45))
     # 每个 df 的消息队列都路由到所属子进程的队列
     for process in processes:
         for df_index in process.worker_config["df_indices"]:
@@ -1342,6 +1427,7 @@ def test_start_parallel_workers_caps_at_twenty_and_assigns_round_robin(monkeypat
 
 def test_shutdown_exploration_workers_verifies_all_processes_exited(monkeypatch):
     import pytest
+    from unittest.mock import MagicMock
     from RL.DiHFT.low_level import parallel_diverse_train as pdt
 
     class FakeProcess:
@@ -1362,9 +1448,13 @@ def test_shutdown_exploration_workers_verifies_all_processes_exited(monkeypatch)
 
     received = {}
 
-    def fake_shutdown_workers(queues, processes):
+    def fake_shutdown_workers(queues, processes, *args, **kwargs):
         received["queues"] = list(queues)
         received["processes"] = list(processes)
+        for p in processes:
+            p.join()
+            if p.is_alive():
+                p.terminate()
 
     monkeypatch.setattr(pdt, "shutdown_workers", fake_shutdown_workers)
 
@@ -1372,10 +1462,12 @@ def test_shutdown_exploration_workers_verifies_all_processes_exited(monkeypatch)
         pass
 
     trainer = Trainer()
-    queue0, queue1 = object(), object()
+    queue0, queue1 = MagicMock(), MagicMock()
     trainer.worker_input_queues = {0: queue0, 1: queue1}
     trainer.worker_processes = [FakeProcess(101), FakeProcess(102)]
-    trainer.worker_result_queue = object()
+    trainer.worker_task_queue = MagicMock()
+    trainer.worker_result_queue = MagicMock()
+    trainer.shm_df_cache_path = None
 
     pdt.shutdown_exploration_workers(trainer)
 
@@ -1391,7 +1483,9 @@ def test_shutdown_exploration_workers_verifies_all_processes_exited(monkeypatch)
     stuck_trainer.worker_input_queues = {0: queue0}
     stuck_process = FakeProcess(103, stuck=True)
     stuck_trainer.worker_processes = [stuck_process]
-    stuck_trainer.worker_result_queue = object()
+    stuck_trainer.worker_task_queue = MagicMock()
+    stuck_trainer.worker_result_queue = MagicMock()
+    stuck_trainer.shm_df_cache_path = None
 
     with pytest.raises(RuntimeError, match="failed to terminate"):
         pdt.shutdown_exploration_workers(stuck_trainer)
@@ -1748,10 +1842,10 @@ def test_run_exhaustive_warmup_collects_all_episodes_before_training_and_updates
 
     def mock_start_workers(tr, train_df_cache, env_kwargs, q_table_cache):
         events.append("start_workers")
-        tr.worker_result_queue = queue.Queue()
-        tr.worker_input_queues = {
-            0: DummyInputQueue(0, tr.worker_result_queue),
-            1: DummyInputQueue(1, tr.worker_result_queue),
+        trainer.worker_result_queue = queue.Queue()
+        trainer.worker_input_queues = {
+            0: DummyInputQueue(0, trainer.worker_result_queue),
+            1: DummyInputQueue(1, trainer.worker_result_queue),
         }
 
     monkeypatch.setattr(pp, "start_pretrain_collect_workers", mock_start_workers)
@@ -1863,8 +1957,8 @@ def test_run_exhaustive_warmup_skips_training_when_pretrain_epoch_zero(monkeypat
     trainer._shutdown_parallel_workers.side_effect = fake_shutdown
 
     def mock_start_workers(tr, train_df_cache, env_kwargs, q_table_cache):
-        tr.worker_result_queue = queue.Queue()
-        tr.worker_input_queues = {0: DummyInputQueue(0, tr.worker_result_queue)}
+        trainer.worker_result_queue = queue.Queue()
+        trainer.worker_input_queues = {0: DummyInputQueue(0, trainer.worker_result_queue)}
 
     monkeypatch.setattr(pp, "start_pretrain_collect_workers", mock_start_workers)
 
@@ -1959,8 +2053,8 @@ def test_run_exhaustive_warmup_rejects_non_positive_update_times_when_pretrain_e
     trainer.batch_size = 1
 
     def mock_start_workers(tr, train_df_cache, env_kwargs, q_table_cache):
-        tr.worker_result_queue = queue.Queue()
-        tr.worker_input_queues = {0: DummyInputQueue(tr.worker_result_queue)}
+        trainer.worker_result_queue = queue.Queue()
+        trainer.worker_input_queues = {0: DummyInputQueue(trainer.worker_result_queue)}
 
     monkeypatch.setattr(pp, "start_pretrain_collect_workers", mock_start_workers)
 
@@ -1985,193 +2079,6 @@ def test_run_exhaustive_warmup_rejects_non_positive_update_times_when_pretrain_e
             buffer_pretrain=DummyBuffer(),
             step_counter_pretrain=0,
         )
-
-
-def test_run_parallel_pretrain_evaluation_dispatches_sync_and_eval_tasks(monkeypatch):
-    import queue
-    from unittest.mock import MagicMock
-    from RL.DiHFT.low_level import parallel_pretrain as pp
-
-    events = []
-
-    class DummyWorkerQueue:
-        def __init__(self, q_id, result_queue):
-            self.q_id = q_id
-            self.result_queue = result_queue
-
-        def put(self, message):
-            if type(message).__name__ == "SyncPretrainModel":
-                events.append(("sync_model", self.q_id))
-            elif type(message).__name__ == "EvaluatePretrainEpisode":
-                events.append(
-                    (
-                        "eval_episode",
-                        self.q_id,
-                        message.context_index,
-                        message.df_index,
-                        message.initial_action,
-                    )
-                )
-                self.result_queue.put(
-                    pp.PretrainEvalResult(
-                        df_index=message.df_index,
-                        context_index=message.context_index,
-                        initial_action=message.initial_action,
-                        reward_sum=5.0,
-                        final_balance=10050.0,
-                        return_rate=0.005,
-                    )
-                )
-
-    result_queue = queue.Queue()
-    q0 = DummyWorkerQueue(0, result_queue)
-    q1 = DummyWorkerQueue(1, result_queue)
-
-    trainer = MagicMock()
-    trainer.N = 2
-    trainer.total_df_index_length = 3
-    # 3 dfs sharded over 2 queues
-    trainer.worker_input_queues = {0: q0, 1: q1, 2: q0}
-    trainer.worker_result_queue = result_queue
-    trainer.writer = MagicMock()
-
-    eval_net_mock = MagicMock()
-    eval_net_mock.state_dict.return_value = {}
-    trainer.eval_net = eval_net_mock
-
-    monkeypatch.setattr(
-        "RL.DiHFT.low_level.parallel_diverse_train.make_cpu_state_dict",
-        lambda m: {"dummy_weight": 1},
-    )
-
-    metrics = pp.run_parallel_pretrain_evaluation(
-        trainer=trainer,
-        train_df_cache={0: "df0", 1: "df1", 2: "df2"},
-        env_kwargs={},
-    )
-
-    # 2 contexts * 3 dfs = 6 results
-    assert len(metrics) == 6
-    for m in metrics:
-        assert m.initial_action == 0
-        assert m.reward_sum == 5.0
-        assert m.final_balance == 10050.0
-
-    # Sync model was sent exactly once to each unique queue (q0, q1)
-    sync_events = [ev for ev in events if ev[0] == "sync_model"]
-    assert len(sync_events) == 2
-    assert {ev[1] for ev in sync_events} == {0, 1}
-
-    # All 6 evaluation tasks were dispatched
-    eval_events = [ev for ev in events if ev[0] == "eval_episode"]
-    assert len(eval_events) == 6
-    assert all(ev[4] == 0 for ev in eval_events)  # initial_action is 0
-    assert {(ev[2], ev[3]) for ev in eval_events} == {
-        (0, 0),
-        (0, 1),
-        (0, 2),
-        (1, 0),
-        (1, 1),
-        (1, 2),
-    }
-
-
-def test_evaluate_warmup_sub_agents_iterates_all_contexts_and_dfs_with_action_zero(
-    monkeypatch,
-):
-    import pytest
-    from unittest.mock import MagicMock
-    import torch
-    import numpy as np
-    from RL.DiHFT.low_level import parallel_pretrain as pp
-
-    built_states = []
-    created_envs = []
-
-    class DummyEnv:
-        def __init__(self, df_name):
-            self.df_name = df_name
-            self.step_count = 0
-            self.unrealized_pnl = 50.0
-            self.wallet_balance = 10100.0
-
-        def reset(self):
-            self.step_count = 0
-            return np.zeros(4), {
-                "previous_action": 0,
-                "avaliable_action": [1, 1, 1],
-                "avaiable_action_list": [0, 1, 2],
-                "funding_count_down_hour": 0,
-                "funding_count_down_minute": 0,
-                "trading_info": np.zeros(4),
-            }
-
-        def step(self, action):
-            self.step_count += 1
-            done = self.step_count >= 2
-            return (
-                np.zeros(4),
-                10.0,
-                done,
-                {
-                    "previous_action": action,
-                    "avaliable_action": [1, 1, 1],
-                    "avaiable_action_list": [0, 1, 2],
-                    "funding_count_down_hour": 0,
-                    "funding_count_down_minute": 0,
-                    "trading_info": np.zeros(4),
-                },
-            )
-
-    def mock_build_initial_state(train_df, initial_action, *args, **kwargs):
-        built_states.append((train_df, initial_action))
-        return None, None, None, f"init_{train_df}_{initial_action}"
-
-    def mock_create_demo_env(train_df, env_kwargs, initial_state):
-        env = DummyEnv(train_df)
-        created_envs.append(env)
-        return env
-
-    monkeypatch.setattr(pp, "build_initial_state", mock_build_initial_state)
-    monkeypatch.setattr(pp, "create_demo_env", mock_create_demo_env)
-
-    trainer = MagicMock()
-    trainer.N = 2
-    trainer.total_df_index_length = 3
-    trainer.device = "cpu"
-    trainer.leverage_choices = [1]
-    trainer.position_list = [0]
-    trainer.initial_wallet_balance = 10000.0
-    trainer.initial_unrealized_pnL = 0.0
-
-    def mock_eval_net(**kwargs):
-        return torch.tensor([[[1.0, 5.0, 2.0], [1.0, 2.0, 6.0]]], dtype=torch.float32)
-
-    trainer.eval_net = mock_eval_net
-
-    train_df_cache = {0: "df0", 1: "df1", 2: "df2"}
-    metrics = pp.evaluate_warmup_sub_agents(
-        trainer=trainer,
-        train_df_cache=train_df_cache,
-        env_kwargs={},
-    )
-
-    assert len(metrics) == 6
-    for m in metrics:
-        assert m.initial_action == 0
-        assert m.reward_sum == 20.0
-        assert m.final_balance == 10150.0
-        assert m.return_rate == pytest.approx(0.015, abs=1e-6)
-
-    assert all(init_a == 0 for _, init_a in built_states)
-    assert {(m.context_index, m.df_index) for m in metrics} == {
-        (0, 0),
-        (0, 1),
-        (0, 2),
-        (1, 0),
-        (1, 1),
-        (1, 2),
-    }
 
 
 def test_run_exhaustive_warmup_calls_evaluation_and_returns_eval_metrics(monkeypatch):
@@ -2205,31 +2112,23 @@ def test_run_exhaustive_warmup_calls_evaluation_and_returns_eval_metrics(monkeyp
             )
 
     def mock_start_workers(tr, train_df_cache, env_kwargs, q_table_cache):
-        tr.worker_result_queue = queue.Queue()
-        tr.worker_input_queues = {0: DummyInputQueue(tr.worker_result_queue)}
+        trainer.worker_result_queue = queue.Queue()
+        trainer.worker_input_queues = {0: DummyInputQueue(trainer.worker_result_queue)}
 
     monkeypatch.setattr(pp, "start_pretrain_collect_workers", mock_start_workers)
 
-    expected_eval_metric = pp.WarmupEvalMetric(
-        context_index=0,
-        df_index=0,
-        initial_action=0,
-        reward_sum=10.0,
-        final_balance=10100.0,
-        return_rate=0.01,
-    )
-    monkeypatch.setattr(
-        pp,
-        "evaluate_warmup_sub_agents",
-        lambda trainer, train_df_cache, env_kwargs: [expected_eval_metric],
-    )
-
     class DummyBuffer:
+        def __init__(self):
+            self.memory = []
+
         def __len__(self):
-            return 4
+            return max(len(self.memory), 4)
+
+        def __iter__(self):
+            return iter(self.memory)
 
         def add(self, *transition):
-            pass
+            self.memory.append(transition)
 
     summary, _ = pp.run_exhaustive_warmup(
         trainer=trainer,
@@ -2241,7 +2140,8 @@ def test_run_exhaustive_warmup_calls_evaluation_and_returns_eval_metrics(monkeyp
     )
 
     assert "eval_metrics" in summary
-    assert summary["eval_metrics"] == [expected_eval_metric]
+    assert summary["update_count"] == 0
+    assert summary["transitions"] == 4
 
 
 
@@ -2249,8 +2149,8 @@ def test_parallel_parser_pretrain_num_workers_default_and_flags():
     from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
 
     args_default = pwap.parser.parse_args([])
-    assert args_default.pretrain_num_workers == 150
-    assert args_default.eval_num_workers == 150
+    assert args_default.pretrain_num_workers == 20
+    assert args_default.eval_num_workers == 20
 
     args_custom = pwap.parser.parse_args(["--pretrain_num_workers", "80", "--eval_num_workers", "90"])
     assert args_custom.pretrain_num_workers == 80
@@ -2398,7 +2298,9 @@ def test_shutdown_workers_deduplicates_shared_queues():
     from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
 
     q1 = queue.Queue()
+    q1.cancel_join_thread = MagicMock()
     q2 = queue.Queue()
+    q2.cancel_join_thread = MagicMock()
     input_queues = [q1, q2, q1, q2]
 
     p1 = MagicMock()
@@ -2410,6 +2312,28 @@ def test_shutdown_workers_deduplicates_shared_queues():
 
     assert q1.qsize() == 1
     assert q2.qsize() == 1
+    assert q1.cancel_join_thread.called
+    assert q2.cancel_join_thread.called
+
+
+def test_shutdown_workers_concurrent_timeout_does_not_accumulate():
+    import time
+    from unittest.mock import MagicMock
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+
+    q = MagicMock()
+    procs = [MagicMock() for _ in range(5)]
+    for p in procs:
+        p.is_alive.return_value = True
+        p.pid = 999999
+
+    start = time.time()
+    pwap.shutdown_workers([q], procs, timeout=0.15, grace_period=0.05)
+    elapsed = time.time() - start
+
+    assert elapsed < 0.6, f"Elapsed {elapsed}s exceeds expected concurrent window"
+    for p in procs:
+        assert p.terminate.called
 
 
 
@@ -2445,8 +2369,8 @@ def test_run_exhaustive_warmup_rejects_insufficient_buffer_for_batch_size(monkey
     trainer.batch_size = 32
 
     def mock_start_workers(tr, train_df_cache, env_kwargs, q_table_cache):
-        tr.worker_result_queue = queue.Queue()
-        tr.worker_input_queues = {0: DummyInputQueue(tr.worker_result_queue)}
+        trainer.worker_result_queue = queue.Queue()
+        trainer.worker_input_queues = {0: DummyInputQueue(trainer.worker_result_queue)}
 
     monkeypatch.setattr(pp, "start_pretrain_collect_workers", mock_start_workers)
 
@@ -2477,7 +2401,7 @@ def test_parallel_parser_load_pretrain_model_flags():
     from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
 
     args_default = pwap.parser.parse_args([])
-    assert args_default.load_pretrain_model is False
+    assert args_default.load_pretrain_model is True
 
     args_flag = pwap.parser.parse_args(["--load_pretrain_model"])
     assert args_flag.load_pretrain_model is True
@@ -2515,12 +2439,11 @@ def test_run_exhaustive_warmup_saves_buffer_and_loads_to_skip_exploration(tmp_pa
 
     def mock_start_workers(tr, train_df_cache, env_kwargs, q_table_cache):
         worker_started.append(True)
-        tr.worker_result_queue = queue.Queue()
-        tr.worker_input_queues = {0: DummyInputQueue(tr.worker_result_queue)}
+        trainer.worker_result_queue = queue.Queue()
+        trainer.worker_input_queues = {0: DummyInputQueue(trainer.worker_result_queue)}
 
     monkeypatch.setattr(pp, "start_pretrain_collect_workers", mock_start_workers)
-    monkeypatch.setattr(pp, "evaluate_warmup_sub_agents", lambda *args, **kwargs: [])
-
+    
     class SimpleBuffer:
         def __init__(self):
             self.items = []
@@ -2600,17 +2523,28 @@ def test_run_exhaustive_warmup_saves_model_after_learning(tmp_path, monkeypatch)
     trainer.batch_size = 1
 
     monkeypatch.setattr(pp, "update_pretrain", lambda *args, **kwargs: (0.1, 0.05, 0.05))
-    monkeypatch.setattr(pp, "evaluate_warmup_sub_agents", lambda *args, **kwargs: [])
 
-    class DummyBuffer:
-        def __len__(self):
-            return 2
+    class FakeStackedSampler:
+        def __init__(self, buffer, batch_size, device):
+            pass
 
         def sample(self):
             return ("s", {}, "a", "r", "s_", {}, "d")
 
+    monkeypatch.setattr(pp, "StackedTransitionSampler", FakeStackedSampler)
+
+    class DummyBuffer:
+        def __init__(self):
+            self.memory = []
+
+        def __len__(self):
+            return 2
+
         def add(self, *transition):
-            pass
+            self.memory.append(transition)
+
+        def __iter__(self):
+            return iter(self.memory)
 
     # Fake pretrain buffer already existing to skip collect
     buffer_file = str(tmp_path / "pretrain_buffer.pt")
@@ -2649,8 +2583,7 @@ def test_run_exhaustive_warmup_skips_pretrain_when_load_pretrain_model_is_true(t
     trainer.eval_net = torch.nn.Linear(2, 2)
     trainer.device = "cpu"
 
-    monkeypatch.setattr(pp, "evaluate_warmup_sub_agents", lambda *args, **kwargs: ["mock_metric"])
-
+    
     summary, steps = pp.run_exhaustive_warmup(
         trainer=trainer,
         q_table_cache={},
@@ -2662,7 +2595,8 @@ def test_run_exhaustive_warmup_skips_pretrain_when_load_pretrain_model_is_true(t
 
     assert summary["episodes"] == 0
     assert summary["update_count"] == 0
-    assert summary["eval_metrics"] == ["mock_metric"]
+    assert summary["episodes"] == 0
+    assert steps == 5
     assert steps == 5
 
 

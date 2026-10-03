@@ -534,6 +534,22 @@ _Avoid_: 动态经验池轮转、轮次交替抽样
 在轮次体制课程训练中，探索率与蒸馏正则权重在每个体制阶段块内从初始值衰减至最低值，进入新体制阶段时重置回初始值重新衰减，三阶段遍历完成后在剩余轮次恒定维持最低值的参数调度机制。
 _Avoid_: 全局单调衰减、阶段衰减重置率
 
+**SharedInferenceModel (共享推断模型)**:
+常驻宿主机 POSIX 共享内存（`share_memory_()`）、仅供多进程执行只读前向传播的 CPU `ensemble_Qnet` 实例，杜绝子进程私有堆内存复制。
+_Avoid_: 本地副本模型、独立 worker 模型
+
+**PersistentRolloutPool (常驻探索进程池)**:
+生命周期与多样化训练阶段绑定、跨 Epoch 长期驻留且不被反复销毁的子进程池；通过任务队列事件驱动复用内部 `TradingEnv` 状态。
+_Avoid_: 临时子进程、轮次探索池
+
+**In-place Weight Sync (原位权重热同步)**:
+主进程在 GPU 训练完成后，直接利用 `Tensor.copy_()` 将权重覆写到共享内存物理页的操作，耗时小于 5ms 且零 IPC 序列化开销。
+_Avoid_: 状态字典重新分发、广播权重 pickle
+
+**Watchdog Shutdown (看门狗并发停机)**:
+子进程池销毁时使用全局截止时间统一轮询、并行探测并在超时后两阶段发送 SIGTERM/SIGKILL 强制回收的停机机制，杜绝单线程串行 join 累加挂死。
+_Avoid_: 串行等待停机、顺序 join 回收
+
 **宏观波段体制标签 (Segment-level Dynamic Regime Label)**:
 由转折点波段切片算法提取的宏观市场动态波段所对应的 3×3 正交网格编号（`regime_grid_id \in [0, 8]`，由 `volatility_label * 3 + slope_label` 合成），在数据集构建期行级物化至特征数据中，并在交易环境推进时通过 `info` 字典暴露，供经验池分层路由与轮次课程调度使用。
 _Avoid_: 步级因果体制标签、实时行情分类、步级标签

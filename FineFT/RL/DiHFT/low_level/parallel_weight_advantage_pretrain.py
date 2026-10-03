@@ -9,6 +9,8 @@ import argparse
 import logging
 import sys
 from common import ArtifactNames
+import signal
+import time
 import traceback
 from dataclasses import dataclass
 from typing import Any
@@ -460,6 +462,7 @@ parser.add_argument(
 )
 parser.add_argument(    
     "--pretrain_num_workers",
+    "--pretrain_workers",
     dest="pretrain_num_workers",
     type=int,
     default=20,
@@ -474,6 +477,7 @@ parser.add_argument(
 )
 parser.add_argument(    
     "--eval_num_workers",
+    "--pretrain_eval_workers",
     dest="eval_num_workers",
     type=int,
     default=20,
@@ -481,8 +485,9 @@ parser.add_argument(
 )
 parser.add_argument(
     "--load_pretrain_model",
+    "--load_pretrained_model",
     dest="load_pretrain_model",
-    type=bool,
+    action="store_true",
     default=True,
     help="whether to read pre-trained model and skip pretraining",
 )
@@ -618,7 +623,12 @@ def create_worker_context():
     return tmp.get_context("spawn")
 
 
-def shutdown_workers(input_queues: Any, processes: list[Any]) -> None:
+def shutdown_workers(
+    input_queues: Any,
+    processes: list[Any],
+    timeout: float = 10.0,
+    grace_period: float = 2.0,
+) -> None:
     seen = set()
     unique_queues = []
     for queue in input_queues:
@@ -626,11 +636,36 @@ def shutdown_workers(input_queues: Any, processes: list[Any]) -> None:
             seen.add(id(queue))
             unique_queues.append(queue)
     for queue in unique_queues:
+        queue.cancel_join_thread()
         queue.put(ShutdownWorker())
-    for process in processes:
-        process.join(timeout=10)
-        if process.is_alive():
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if all(not process.is_alive() for process in processes):
+            break
+        time.sleep(0.05)
+
+    alive_processes = [process for process in processes if process.is_alive()]
+    if alive_processes:
+        for process in alive_processes:
             process.terminate()
+
+        grace_deadline = time.time() + grace_period
+        while time.time() < grace_deadline:
+            if all(not process.is_alive() for process in alive_processes):
+                break
+            time.sleep(0.05)
+
+        still_alive = [process for process in alive_processes if process.is_alive()]
+        for process in still_alive:
+            if process.pid is not None:
+                try:
+                    os.kill(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    for process in processes:
+        process.join(timeout=0.1)
 
 
 class Weighted_Contexts_DQN:
@@ -792,8 +827,10 @@ class Weighted_Contexts_DQN:
         if self.diverse_num_workers <= 0:
             raise ValueError("diverse_num_workers must be positive")
         self.worker_task_queue = None
+        self.worker_result_queue = None
+        self.worker_processes = []
+        self.worker_input_queues = {}
         self.shm_df_cache_path: str | None = None
-        self.shm_model_path: str | None = None
         self.eval_num_workers = args.eval_num_workers
         self.pretrain_eval_num_workers = self.eval_num_workers
         if self.eval_num_workers <= 0:

@@ -11,7 +11,11 @@ from RL.util.regime_stratified_replay_buffer import RegimeStratifiedReplayBuffer
 def test_start_parallel_workers_forces_cpu_device_and_uses_diverse_num_workers(monkeypatch):
     """Workers must be configured with device=cpu and count matching trainer.diverse_num_workers."""
     class FakeQueue:
-        pass
+        def cancel_join_thread(self):
+            pass
+
+        def put(self, item):
+            pass
 
     class FakeContext:
         def Queue(self):
@@ -290,7 +294,7 @@ def test_weighted_contexts_dqn_validates_diverse_num_workers(monkeypatch):
     mock_args.lr_min = 0.0001
     mock_args.lr_step = 1000
     mock_args.num_sample = 15
-    mock_args.num_epoch = 15
+    mock_args.num_epoch = 18
     mock_args.base_path = "dataset/10min"
     mock_args.pretrain_num_workers = 20
     mock_args.diverse_num_workers = 0
@@ -365,9 +369,12 @@ def test_shutdown_exploration_workers_enqueues_shutdown_message_and_cleans_up():
     proc2 = FakeProcess(102)
     trainer.worker_processes = [proc1, proc2]
     task_queue = queue.Queue()
+    task_queue.cancel_join_thread = MagicMock()
     trainer.worker_task_queue = task_queue
     trainer.worker_input_queues = {0: task_queue}
-    trainer.worker_result_queue = queue.Queue()
+    result_queue = queue.Queue()
+    result_queue.cancel_join_thread = MagicMock()
+    trainer.worker_result_queue = result_queue
 
     pdt.shutdown_exploration_workers(trainer)
 
@@ -577,7 +584,11 @@ def test_shm_cache_optimization_for_worker_pool(tmp_path, monkeypatch):
     from unittest.mock import MagicMock
 
     class FakeQueue:
-        pass
+        def cancel_join_thread(self):
+            pass
+
+        def put(self, item):
+            pass
 
     class FakeContext:
         def Queue(self):
@@ -624,19 +635,16 @@ def test_shm_cache_optimization_for_worker_pool(tmp_path, monkeypatch):
     )
     trainer.eval_net = eval_net
 
-    pdt.start_parallel_workers(trainer, train_df_cache, {})
+    pdt.start_parallel_workers(trainer, train_df_cache, {}, shared_model=eval_net)
 
     assert trainer.shm_df_cache_path is not None
-    assert trainer.shm_model_path is not None
     assert os.path.exists(trainer.shm_df_cache_path)
-    assert os.path.exists(trainer.shm_model_path)
 
     for process in trainer.worker_processes:
         cfg = process.worker_config
         assert "train_df_cache_path" in cfg
-        assert "state_dict_path" in cfg
         assert cfg["train_df_cache_path"] == trainer.shm_df_cache_path
-        assert cfg["state_dict_path"] == trainer.shm_model_path
+        assert cfg["shared_model"] is eval_net
 
         # Verify runner loads correctly from shm cache path
         runner = pdt.DfRolloutWorkerRunner(cfg)
@@ -645,16 +653,15 @@ def test_shm_cache_optimization_for_worker_pool(tmp_path, monkeypatch):
 
     # Verify shutdown removes shm cache files
     task_q = queue.Queue()
+    task_q.cancel_join_thread = MagicMock()
     trainer.worker_task_queue = task_q
+    trainer.worker_result_queue = MagicMock()
     df_path = trainer.shm_df_cache_path
-    model_path = trainer.shm_model_path
 
     pdt.shutdown_exploration_workers(trainer)
 
     assert not os.path.exists(df_path)
-    assert not os.path.exists(model_path)
     assert trainer.shm_df_cache_path is None
-    assert trainer.shm_model_path is None
 
 
 def test_df_rollout_worker_exits_on_foreign_module_shutdown_worker():

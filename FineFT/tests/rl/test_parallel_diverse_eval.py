@@ -50,6 +50,8 @@ def test_run_parallel_diverse_training_selects_min_total_loss_model(tmp_path: Pa
     loss_iter = iter(epoch_losses)
 
     # Monkeypatch exploration and training internals
+    monkeypatch.setattr(pdt, "PersistentRolloutPool", MagicMock())
+    monkeypatch.setattr(pdt, "SharedInferenceManager", MagicMock())
     monkeypatch.setattr(pdt, "apply_epoch_training_params", lambda *args: None)
     monkeypatch.setattr(pdt, "is_buffer_full", lambda *args: False)
     monkeypatch.setattr(
@@ -127,6 +129,8 @@ def test_run_parallel_diverse_training_waits_for_eval_completion(tmp_path: Path,
     trainer.update_times = 1
     trainer.writer = MagicMock()
 
+    monkeypatch.setattr(pdt, "PersistentRolloutPool", MagicMock())
+    monkeypatch.setattr(pdt, "SharedInferenceManager", MagicMock())
     monkeypatch.setattr(pdt, "apply_epoch_training_params", lambda *args: None)
     monkeypatch.setattr(pdt, "is_buffer_full", lambda *args: False)
     monkeypatch.setattr(pdt, "run_epoch_exploration", lambda *args, **kwargs: ([], 5, 1))

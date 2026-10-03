@@ -75,6 +75,7 @@ from RL.util.regime_stratified_replay_buffer import (
 )
 from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import (
     ShutdownWorker,
+    shutdown_workers,
     WorkerErrorMessage,
     build_effective_df_indices,
     configure_logger,
@@ -83,6 +84,8 @@ from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import (
     raise_for_worker_error,
 )
 from RL.DiHFT.low_level.evaluate_sub_agents import evaluates
+from RL.DiHFT.low_level.shared_model_manager import SharedInferenceManager
+from RL.DiHFT.low_level.persistent_pool import PersistentRolloutPool
 
 # 探索子进程池由 trainer.diverse_num_workers 配置（默认 96）
 # 连续多少个 epoch 探索未新增任何经验后，后续 epoch 不再探索（仅训练）
@@ -409,20 +412,6 @@ def apply_epoch_training_params(trainer: Weighted_Contexts_DQN, epoch_index: int
     logger.info("epoch %d: epsilon=%.6f, ada=%.6f, lr=%.6f", epoch_index, params.epsilon, params.ada, params.lr)
 
 
-def make_cpu_state_dict(module: torch.nn.Module):
-    """生成与模型存储完全独立的 CPU numpy state_dict，用于跨进程传输。
-
-    torch tensor 经 torch.multiprocessing 队列传输时会为每个 tensor 分配
-    共享内存 fd（外加 resource_sharer socket），一次性向多个 worker 派发
-    整个 state_dict 会耗尽文件描述符（Errno 24 Too many open files）。
-    numpy 数组按纯字节序列化，不占用任何 fd。
-    """
-    return {
-        name: tensor.detach().cpu().clone().numpy()
-        for name, tensor in module.state_dict().items()
-    }
-
-
 def load_worker_state_dict(model: torch.nn.Module, state_dict: dict[str, Any]):
     """将 numpy state_dict 转回 tensor 并载入 worker 侧模型。"""
     model.load_state_dict(
@@ -656,13 +645,17 @@ class DfRolloutWorkerRunner:
         self.initial_unrealized_pnL = worker_config["initial_unrealized_pnL"]
         self.gamma = float(worker_config["gamma"])
         self.n_step = int(worker_config["n_step"])
-        self.model = create_parallel_worker_model(worker_config).to(self.device)
-        if "state_dict_path" in worker_config and worker_config["state_dict_path"]:
-            with open(worker_config["state_dict_path"], "rb") as f:
-                loaded_state_dict = pickle.load(f)
-            load_worker_state_dict(self.model, loaded_state_dict)
-        elif "state_dict" in worker_config and worker_config["state_dict"]:
-            load_worker_state_dict(self.model, worker_config["state_dict"])
+        if "shared_model" in worker_config and worker_config["shared_model"] is not None:
+            self.model = worker_config["shared_model"]
+        else:
+            self.model = create_parallel_worker_model(worker_config).to(self.device)
+            if "state_dict_path" in worker_config and worker_config["state_dict_path"]:
+                with open(worker_config["state_dict_path"], "rb") as f:
+                    loaded_state_dict = pickle.load(f)
+                load_worker_state_dict(self.model, loaded_state_dict)
+            elif "state_dict" in worker_config and worker_config["state_dict"]:
+                load_worker_state_dict(self.model, worker_config["state_dict"])
+        self.model.eval()
         # df_index -> 该 df 当前探索任务的回合状态
         self.episodes = {}
 
@@ -819,7 +812,8 @@ class DfRolloutWorkerRunner:
         走完或爆仓）才返回，不依赖主进程的多轮重派发机制。
         """
         episode = self.episodes[message.df_index]
-        load_worker_state_dict(self.model, message.state_dict)
+        if message.state_dict:
+            load_worker_state_dict(self.model, message.state_dict)
         self.model.eval()
         transitions = []
         while not episode.done:
@@ -899,6 +893,7 @@ def start_parallel_workers(
     trainer: Weighted_Contexts_DQN,
     train_df_cache: dict[int, pd.DataFrame],
     env_kwargs: dict[str, Any],
+    shared_model: nn.Module | None = None,
 ):
     """启动多样化探索通用子进程池（Diverse Rollout Task Pool）。"""
     logger.info(
@@ -914,7 +909,6 @@ def start_parallel_workers(
 
     effective_df_indices = build_effective_df_indices(trainer.total_df_index_length)
     num_workers = trainer.diverse_num_workers
-    state_dict = make_cpu_state_dict(trainer.eval_net)
     log_file_path = configure_logger(trainer.dataset_name, trainer.experiment_name)
 
     shm_dir = "/dev/shm" if os.path.exists("/dev/shm") else tempfile.gettempdir()
@@ -922,24 +916,16 @@ def start_parallel_workers(
         shm_dir,
         f"fineft_train_df_{os.getpid()}_{trainer.dataset_name}_{trainer.experiment_name}.pkl",
     )
-    shm_model_path = os.path.join(
-        shm_dir,
-        f"fineft_model_state_{os.getpid()}_{trainer.dataset_name}_{trainer.experiment_name}.pkl",
-    )
     with open(shm_df_cache_path, "wb") as f:
         pickle.dump(train_df_cache, f, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(shm_model_path, "wb") as f:
-        pickle.dump(state_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
-
     trainer.shm_df_cache_path = shm_df_cache_path
-    trainer.shm_model_path = shm_model_path
 
     for worker_id in range(num_workers):
         worker_config = {
             "worker_id": worker_id,
             "df_indices": effective_df_indices,
             "train_df_cache_path": shm_df_cache_path,
-            "state_dict_path": shm_model_path,
+            "shared_model": shared_model,
             "env_kwargs": env_kwargs,
             "device": "cpu",
             "runner_factory": DfRolloutWorkerRunner,
@@ -976,14 +962,24 @@ def start_parallel_workers(
 def shutdown_exploration_workers(trainer: Weighted_Contexts_DQN):
     """彻底关闭全部探索子进程，并逐一确认退出后才返回。"""
     logger.info("exploration workers start to shut down")
-    for _ in trainer.worker_processes:
-        trainer.worker_task_queue.put(ShutdownWorker())
+    if trainer.worker_result_queue is not None:
+        trainer.worker_result_queue.cancel_join_thread()
 
-    for process in trainer.worker_processes:
-        process.join(timeout=WORKER_JOIN_TIMEOUT_SECONDS)
-        if process.is_alive():
-            process.terminate()
-            process.join(timeout=WORKER_JOIN_TIMEOUT_SECONDS)
+    other_queues = [
+        q for q in trainer.worker_input_queues.values()
+        if q is not trainer.worker_task_queue
+    ] if trainer.worker_input_queues else []
+
+    if trainer.worker_task_queue is not None:
+        trainer.worker_task_queue.cancel_join_thread()
+        for _ in trainer.worker_processes:
+            trainer.worker_task_queue.put(ShutdownWorker())
+
+    shutdown_workers(
+        other_queues,
+        trainer.worker_processes,
+        timeout=WORKER_JOIN_TIMEOUT_SECONDS,
+    )
 
     alive_pids = [
         process.pid
@@ -1002,13 +998,6 @@ def shutdown_exploration_workers(trainer: Weighted_Contexts_DQN):
         except OSError:
             pass
         trainer.shm_df_cache_path = None
-    if trainer.shm_model_path is not None:
-        try:
-            if os.path.isfile(trainer.shm_model_path):
-                os.remove(trainer.shm_model_path)
-        except OSError:
-            pass
-        trainer.shm_model_path = None
 
     if alive_pids:
         raise RuntimeError(
@@ -1043,7 +1032,7 @@ def send_worker_rounds(
     context_index: int,
     initial_action: int,
     round_counter: int,
-    state_dict: dict[str, Any],
+    state_dict: dict[str, Any] | None = None,
 ):
     """为全部 df 派发一轮探索消息（携带最新模型参数与 epsilon）。
 
@@ -1058,7 +1047,7 @@ def send_worker_rounds(
                 context_index=context_index,
                 initial_action=initial_action,
                 round_counter=round_counter,
-                state_dict=state_dict,
+                state_dict=state_dict or {},
                 epsilon=trainer.epsilon,
             )
         )
@@ -1134,7 +1123,7 @@ def run_parallel_rollout_task(
         context_index=context_index,
         initial_action=initial_action,
         round_counter=round_counter,
-        state_dict=make_cpu_state_dict(trainer.eval_net),
+        state_dict={},
     )
     round_results = collect_worker_rounds(trainer, active_df_indices, round_counter)
     for result in round_results:
@@ -1288,9 +1277,11 @@ def run_epoch_exploration(
     epoch_start_step_counter = step_counter_diverse
     explored_task_count = 0
     effective_df_indices = build_effective_df_indices(trainer.total_df_index_length)
+    should_manage_lifecycle = len(trainer.worker_processes) == 0
 
     try:
-        start_parallel_workers(trainer, train_df_cache, env_kwargs)
+        if should_manage_lifecycle:
+            start_parallel_workers(trainer, train_df_cache, env_kwargs)
         total_tasks = 0
         for context_index in range(trainer.N):
             for initial_action in range(trainer.position_choices):
@@ -1394,7 +1385,8 @@ def run_epoch_exploration(
         logger.exception("epoch exploration failed: %s", e)
         raise
     finally:
-        shutdown_exploration_workers(trainer)
+        if should_manage_lifecycle:
+            shutdown_exploration_workers(trainer)
 
     return epoch_metrics, step_counter_diverse, round_counter
 
@@ -1422,112 +1414,153 @@ def run_parallel_diverse_training(
     """
     if trainer.total_df_index_length <= 0:
         raise ValueError("parallel diverse training requires total_df_index_length > 0")
+
+
+    initial_buffer_full = is_buffer_full(buffer_diverse, trainer)
+    if initial_buffer_full:
+        shared_manager = None
+        pool = None
+        skip_exploration = True
+    else:
+        shared_manager = SharedInferenceManager(
+            model_factory=create_parallel_worker_model,
+            model_kwargs={
+                "worker_config": {
+                    "state_dim": len(trainer.tech_indicator_list),
+                    "action_count": trainer.N_ACTIONS,
+                    "hidden_nodes": trainer.hidden_nodes,
+                    "time_info_dim": trainer.time_info_dim,
+                    "ensemble_number": trainer.N,
+                }
+            },
+            initial_state_dict=trainer.eval_net.state_dict(),
+        )
+        pool = PersistentRolloutPool(
+            trainer=trainer,
+            train_df_cache=train_df_cache,
+            env_kwargs=env_kwargs,
+            shared_manager=shared_manager,
+        )
+
     round_counter = 0
     consecutive_no_new_experience_epochs = 0
-    skip_exploration = False
+    if not initial_buffer_full:
+        skip_exploration = False
     best_loss = float("inf")
     best_model_file = None
     best_epoch_index = -1
-    for epoch_index in range(trainer.num_epoch):
-        phase_entry_epochs = tuple(
-            i * trainer.curriculum_block_epochs
-            for i in range(1, len(DIRECTIONAL_REGIME_PHASES))
-        )
-        is_new_phase_entry = epoch_index in phase_entry_epochs
-        if is_new_phase_entry:
-            consecutive_no_new_experience_epochs = 0
-            if not is_buffer_full(buffer_diverse, trainer):
-                skip_exploration = False
-
-        apply_epoch_training_params(trainer, epoch_index)
-        buffer_full = is_buffer_full(buffer_diverse, trainer)
-        if skip_exploration or buffer_full:
-            skip_exploration = True
-            logger.info(
-                "epoch exploration skipped | epoch_index=%d | buffer_full=%s | "
-                "buffer_size=%d | consecutive_no_new_experience_epochs=%d",
-                epoch_index,
-                buffer_full,
-                len(buffer_diverse),
-                consecutive_no_new_experience_epochs,
+    try:
+        for epoch_index in range(trainer.num_epoch):
+            phase_entry_epochs = tuple(
+                i * trainer.curriculum_block_epochs
+                for i in range(1, len(DIRECTIONAL_REGIME_PHASES))
             )
-            epoch_metrics = []
-        else:
-            # 阶段一：完整探索 —— 本轮探索创建全新子进程（上限 20），结束即彻底关闭
-            added_before = buffer_diverse.total_added_count
-            epoch_metrics, step_counter_diverse, round_counter = run_epoch_exploration(
-                trainer,
-                epoch_index,
-                train_df_cache,
-                env_kwargs,
-                buffer_diverse,
-                step_counter_diverse,
-                round_counter,
-                diverse_rollout_latest_metrics_by_df,
-            )
-            # 阶段二：保存经验池 —— 探索完成且经验已全部写入后，落盘最新快照
-            save_diverse_buffer(buffer_diverse, trainer.model_path)
-            new_experience_count = buffer_diverse.total_added_count - added_before
-            if new_experience_count == 0:
-                consecutive_no_new_experience_epochs += 1
-            else:
+            is_new_phase_entry = epoch_index in phase_entry_epochs
+            if is_new_phase_entry:
                 consecutive_no_new_experience_epochs = 0
-            if is_buffer_full(buffer_diverse, trainer):
+                if not is_buffer_full(buffer_diverse, trainer):
+                    skip_exploration = False
+    
+            apply_epoch_training_params(trainer, epoch_index)
+            buffer_full = is_buffer_full(buffer_diverse, trainer)
+            if skip_exploration or buffer_full:
                 skip_exploration = True
+                if pool is not None and not pool.is_shutdown:
+                    pool.shutdown()
                 logger.info(
-                    "buffer full reached | epoch_index=%d | buffer_size=%d | "
-                    "subsequent epochs will skip exploration",
+                    "epoch exploration skipped | epoch_index=%d | buffer_full=%s | "
+                    "buffer_size=%d | consecutive_no_new_experience_epochs=%d",
                     epoch_index,
+                    buffer_full,
                     len(buffer_diverse),
-                )
-            elif (
-                consecutive_no_new_experience_epochs
-                >= MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS
-            ):
-                skip_exploration = True
-                logger.info(
-                    "exploration exhausted | epoch_index=%d | "
-                    "consecutive_no_new_experience_epochs=%d | "
-                    "subsequent epochs will skip exploration",
-                    epoch_index,
                     consecutive_no_new_experience_epochs,
                 )
-            log_diverse_rollout_latest_metrics(
-                epoch_index + 1,
-                diverse_rollout_latest_metrics_by_df,
-                logger,
+                epoch_metrics = []
+            else:
+                # 阶段一：完整探索 —— 本轮探索创建全新子进程（上限 20），结束即彻底关闭
+                added_before = buffer_diverse.total_added_count
+                epoch_metrics, step_counter_diverse, round_counter = run_epoch_exploration(
+                    trainer,
+                    epoch_index,
+                    train_df_cache,
+                    env_kwargs,
+                    buffer_diverse,
+                    step_counter_diverse,
+                    round_counter,
+                    diverse_rollout_latest_metrics_by_df,
+                )
+                # 阶段二：保存经验池 —— 探索完成且经验已全部写入后，落盘最新快照
+                save_diverse_buffer(buffer_diverse, trainer.model_path)
+                new_experience_count = buffer_diverse.total_added_count - added_before
+                if new_experience_count == 0:
+                    consecutive_no_new_experience_epochs += 1
+                else:
+                    consecutive_no_new_experience_epochs = 0
+                if is_buffer_full(buffer_diverse, trainer):
+                    skip_exploration = True
+                    if not pool.is_shutdown:
+                        pool.shutdown()
+                    logger.info(
+                        "buffer full reached | epoch_index=%d | buffer_size=%d | "
+                        "subsequent epochs will skip exploration",
+                        epoch_index,
+                        len(buffer_diverse),
+                    )
+                elif (
+                    consecutive_no_new_experience_epochs
+                    >= MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS
+                ):
+                    skip_exploration = True
+                    if not pool.is_shutdown:
+                        pool.shutdown()
+                    logger.info(
+                        "exploration exhausted | epoch_index=%d | "
+                        "consecutive_no_new_experience_epochs=%d | "
+                        "subsequent epochs will skip exploration",
+                        epoch_index,
+                        consecutive_no_new_experience_epochs,
+                    )
+                log_diverse_rollout_latest_metrics(
+                    epoch_index + 1,
+                    diverse_rollout_latest_metrics_by_df,
+                    logger,
+                )
+    
+            # 阶段三：完整训练 —— 经验池已冻结
+            last_losses = run_diverse_training_phase(
+                trainer,
+                buffer_diverse,
+                trainer.update_times,
+                epoch_index,
             )
-
-        # 阶段三：完整训练 —— 经验池已冻结，且无任何探索子进程存活
-        last_losses = run_diverse_training_phase(
-            trainer,
-            buffer_diverse,
-            trainer.update_times,
-            epoch_index,
-        )
-        write_epoch_rollout_scalars(trainer, epoch_metrics, epoch_index)
-        save_parallel_epoch_model(trainer, epoch_index)
-
-        epoch_model_file = os.path.join(
-            build_epoch_model_path(trainer.model_path, epoch_index),
-            "trained_model.pkl",
-        )
-        if last_losses is not None:
-            epoch_total_loss = float(last_losses[0])
-            if epoch_total_loss < best_loss:
-                best_loss = epoch_total_loss
+            if pool is not None and not pool.is_shutdown:
+                pool.sync_model_weights(trainer.eval_net)
+            write_epoch_rollout_scalars(trainer, epoch_metrics, epoch_index)
+            save_parallel_epoch_model(trainer, epoch_index)
+    
+            epoch_model_file = os.path.join(
+                build_epoch_model_path(trainer.model_path, epoch_index),
+                "trained_model.pkl",
+            )
+            if last_losses is not None:
+                epoch_total_loss = float(last_losses[0])
+                if epoch_total_loss < best_loss:
+                    best_loss = epoch_total_loss
+                    best_model_file = epoch_model_file
+                    best_epoch_index = epoch_index
+                    logger.info(
+                        "更新最小 total_loss 模型 | epoch=%d | total_loss=%.6f | 模型路径=%s",
+                        epoch_index + 1,
+                        best_loss,
+                        best_model_file,
+                    )
+            elif best_model_file is None:
                 best_model_file = epoch_model_file
                 best_epoch_index = epoch_index
-                logger.info(
-                    "更新最小 total_loss 模型 | epoch=%d | total_loss=%.6f | 模型路径=%s",
-                    epoch_index + 1,
-                    best_loss,
-                    best_model_file,
-                )
-        elif best_model_file is None:
-            best_model_file = epoch_model_file
-            best_epoch_index = epoch_index
-
+    finally:
+        if pool is not None:
+            pool.shutdown()
+    
     if best_model_file is None:
         pretrain_model = os.path.join(trainer.model_path, "pretrain_model.pkl")
         if os.path.exists(pretrain_model):

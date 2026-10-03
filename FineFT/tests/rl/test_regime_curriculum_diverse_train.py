@@ -179,6 +179,9 @@ def test_phase_entry_resets_exploration_exhaustion_in_diverse_train(monkeypatch)
     buffer.total_added_count = 0
     buffer.__len__ = MagicMock(return_value=100)
 
+    # 模拟持久化池与共享内存管理器
+    monkeypatch.setattr(pdt, "PersistentRolloutPool", MagicMock())
+    monkeypatch.setattr(pdt, "SharedInferenceManager", MagicMock())
     # 模拟 buffer 未满
     monkeypatch.setattr(pdt, "is_buffer_full", lambda buf, tr: False)
     # 模拟保存
@@ -268,6 +271,8 @@ def test_run_parallel_diverse_training_executes_training_phase_after_buffer_snap
     trainer.optimizer = MagicMock()
     trainer.optimizer.param_groups = [{"lr": 1e-4}]
 
+    monkeypatch.setattr(pdt, "PersistentRolloutPool", MagicMock())
+    monkeypatch.setattr(pdt, "SharedInferenceManager", MagicMock())
     monkeypatch.setattr(pdt, "run_epoch_exploration", lambda *args, **kwargs: ([], 0, 0))
     monkeypatch.setattr(pdt, "update", lambda *args, **kwargs: (0.5, 0.1, 0.4))
     monkeypatch.setattr(pdt, "write_epoch_rollout_scalars", lambda *args, **kwargs: None)
