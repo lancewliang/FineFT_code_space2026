@@ -165,6 +165,22 @@ def test_pipeline_persists_distribution_audit_metrics_csv(tmp_path, monkeypatch)
 
     monkeypatch.setattr("catboost.CatBoostRegressor", FakeModel)
 
+    from operator_futures.feature_selection.muti_contract.types import StreamFilterProfile
+    toy_profile = StreamFilterProfile(
+        name="toy",
+        max_mean_psi=0.50,
+        max_pair_psi=1.0,
+        min_abs_ic=0.0,
+        min_sign_consistency=0.0,
+        min_rank_ic_ir=0.0,
+        max_correlation=1.0,
+        min_clusters=1,
+        max_clusters=20,
+        psi_weight=0.33,
+        rank_ic_weight=0.33,
+        catboost_weight=0.34,
+        filter_micro_persistence=False,
+    )
     result = run_feature_selection(
         root_path=tmp_path,
         split_path="PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST",
@@ -178,6 +194,9 @@ def test_pipeline_persists_distribution_audit_metrics_csv(tmp_path, monkeypatch)
         composite_drop_ratio=0.0,
         max_mean_psi=0.10,
         max_pair_psi=0.25,
+        vae_slope_profile=toy_profile,
+        vae_volatility_profile=toy_profile,
+        rl_profile=toy_profile,
     )
 
     dist_csv = result.output_dir / "distribution_audit_metrics.csv"

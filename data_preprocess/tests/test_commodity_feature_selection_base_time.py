@@ -8,6 +8,23 @@ from operator_futures.commodity.base_time_feature import BASE_TIME_FEATURE_COLUM
 from operator_futures.feature_selection.muti_contract.pipeline import run_feature_selection
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+from operator_futures.feature_selection.muti_contract.types import StreamFilterProfile
+
+toy_profile = StreamFilterProfile(
+    name="toy",
+    max_mean_psi=1.0,
+    max_pair_psi=2.0,
+    min_abs_ic=0.0,
+    min_sign_consistency=0.0,
+    min_rank_ic_ir=0.0,
+    max_correlation=1.0,
+    min_clusters=1,
+    max_clusters=20,
+    psi_weight=0.33,
+    rank_ic_weight=0.33,
+    catboost_weight=0.34,
+    filter_micro_persistence=False,
+)
 
 
 def test_feature_selection_excludes_base_time_from_metrics_and_appends_to_final(tmp_path):
@@ -56,6 +73,9 @@ def test_feature_selection_excludes_base_time_from_metrics_and_appends_to_final(
         max_correlation=1.0,
         composite_drop_ratio=0.0,
         mandatory_state_features=list(BASE_TIME_FEATURE_COLUMNS),
+        vae_slope_profile=toy_profile,
+        vae_volatility_profile=toy_profile,
+        rl_profile=toy_profile,
     )
 
     assert not (res.output_dir / "state_features.npy").exists()
@@ -117,6 +137,9 @@ def test_feature_selection_allows_blacklist_to_override_mandatory_base_time(tmp_
         stage="train",
         feature_blacklist=["trading_minute_progress"],
         mandatory_state_features=list(BASE_TIME_FEATURE_COLUMNS),
+        vae_slope_profile=toy_profile,
+        vae_volatility_profile=toy_profile,
+        rl_profile=toy_profile,
     )
     manifest = res.manifest
     assert "trading_minute_progress" not in manifest.selected_features

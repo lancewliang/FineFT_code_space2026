@@ -19,7 +19,8 @@ def test_scale_save_passthrough_base_time_features(tmp_path):
     fs_dir.mkdir(parents=True, exist_ok=True)
     all_features = ["normal_feature"] + list(BASE_TIME_FEATURE_COLUMNS)
     np.save(fs_dir / "rl_state_features.npy", np.array(all_features))
-    np.save(fs_dir / "vae_state_features.npy", np.array(all_features))
+    np.save(fs_dir / "vae_slope_state_features.npy", np.array(all_features))
+    np.save(fs_dir / "vae_volatility_state_features.npy", np.array(all_features))
 
     split_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train"
     split_dir.mkdir(parents=True, exist_ok=True)
@@ -181,7 +182,8 @@ def test_log_volatility_transformation_in_scale_save(tmp_path):
     fs_dir.mkdir(parents=True, exist_ok=True)
     features = ["realized_volatility_192", "normal_feature"]
     np.save(fs_dir / "rl_state_features.npy", np.array(features))
-    np.save(fs_dir / "vae_state_features.npy", np.array(features))
+    np.save(fs_dir / "vae_slope_state_features.npy", np.array(features))
+    np.save(fs_dir / "vae_volatility_state_features.npy", np.array(features))
 
     split_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train"
     split_dir.mkdir(parents=True, exist_ok=True)
@@ -324,7 +326,8 @@ def test_volume_activity_log_transformation_in_scale_save(tmp_path):
     fs_dir.mkdir(parents=True, exist_ok=True)
     features = ["vma_24_std_norm_origin", "buy_volume_oe_trend_6"]
     np.save(fs_dir / "rl_state_features.npy", np.array(features))
-    np.save(fs_dir / "vae_state_features.npy", np.array(features))
+    np.save(fs_dir / "vae_slope_state_features.npy", np.array(features))
+    np.save(fs_dir / "vae_volatility_state_features.npy", np.array(features))
 
     split_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train"
     split_dir.mkdir(parents=True, exist_ok=True)
@@ -379,7 +382,8 @@ def test_rolling_zscore_and_tanh_soft_saturation_in_scale_save(tmp_path):
     fs_dir.mkdir(parents=True, exist_ok=True)
     features = ["normal_feature", "outlier_feature"]
     np.save(fs_dir / "rl_state_features.npy", np.array(features))
-    np.save(fs_dir / "vae_state_features.npy", np.array(features))
+    np.save(fs_dir / "vae_slope_state_features.npy", np.array(features))
+    np.save(fs_dir / "vae_volatility_state_features.npy", np.array(features))
 
     split_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train"
     split_dir.mkdir(parents=True, exist_ok=True)

@@ -9,6 +9,8 @@ METRIC_COLUMNS = [
     "CatBoost Importance",
     "IC",
     "RankIC",
+    "VolIC",
+    "VolRankIC",
     "Sharpe",
 ]
 DEFAULT_WINDOWS_LIST = [1, 2, 6, 12, 24, 48]
@@ -163,6 +165,7 @@ def calculate_metric_frame(
         catboost_values = _catboost_importance(
             df, features, future_return, window_length=window_length
         )
+        future_vol = np.abs(future_return)
         metric_df = df.slice(0, future_return.size)
         for feature in features:
             values = metric_df[feature].cast(pl.Float64, strict=False).to_numpy()
@@ -176,6 +179,8 @@ def calculate_metric_frame(
                     "CatBoost Importance": catboost_values.get(feature, 0.0),
                     "IC": calculate_ic(values, future_return),
                     "RankIC": calculate_rank_ic(values, future_return),
+                    "VolIC": calculate_ic(values, future_vol),
+                    "VolRankIC": calculate_rank_ic(values, future_vol),
                     "Sharpe": calculate_sharpe(values, future_return),
                 }
             )
@@ -221,4 +226,26 @@ def aggregate_metric_frames(frames: list[pl.DataFrame]) -> pl.DataFrame:
             )
         )
         agg = agg.join(window_sign_df, on="feature", how="left")
+    if "VolRankIC" in combined.columns and "window" in combined.columns:
+        num_contracts = float(len(frames))
+        vol_window_sign_df = (
+            combined.group_by(["feature", "window"])
+            .agg(
+                [
+                    (pl.col("VolRankIC") > 0.0).sum().alias("vol_pos_cnt"),
+                    (pl.col("VolRankIC") < 0.0).sum().alias("vol_neg_cnt"),
+                ]
+            )
+            .with_columns(
+                (pl.max_horizontal("vol_pos_cnt", "vol_neg_cnt") / num_contracts).alias("VolSignConsistency")
+            )
+            .group_by("feature")
+            .agg(
+                [
+                    pl.col("VolSignConsistency").mean().alias("VolSignConsistency_Mean"),
+                    pl.col("VolSignConsistency").min().alias("VolSignConsistency_Min"),
+                ]
+            )
+        )
+        agg = agg.join(vol_window_sign_df, on="feature", how="left")
     return agg

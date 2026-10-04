@@ -86,7 +86,7 @@ def test_safe_routing_uses_both_rl_and_vae_artifact_names():
     file_path = FINEFT_ROOT / "RL" / "DiHFT" / "ablation" / "safe_routing.py"
     content = file_path.read_text(encoding="utf-8")
     assert "ArtifactNames.RL_STATE_FEATURES_NPY" in content
-    assert "ArtifactNames.VAE_STATE_FEATURES_NPY" in content
+    assert "ArtifactNames.VAE_SLOPE_STATE_FEATURES_NPY" in content
 
 
 def test_earnhft_ddqn_fails_fast_when_rl_features_missing_and_legacy_present(tmp_path):
@@ -206,7 +206,7 @@ def test_safe_routing_fails_fast_on_missing_rl_or_vae_features(tmp_path):
         vae_risk_aware_routing(args)
 
     # 3. Add vae_state_features.npy
-    np.save(ds_dir / ArtifactNames.VAE_STATE_FEATURES_NPY, np.array(["vae_f1"]))
+    np.save(ds_dir / ArtifactNames.VAE_SLOPE_STATE_FEATURES_NPY, np.array(["vae_f1"]))
     
     args.label_number = 1
     # Mock network loading so __init__ completes

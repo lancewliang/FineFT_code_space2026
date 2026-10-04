@@ -95,6 +95,7 @@ def load_vae_models(
     dataset_name: str,
     experiment_name: str,
     input_dim: int,
+    axis: str = "slope",
     device: str = "cpu",
     z_dim: int = 512,
     hidden_dims: list[int] | None = None,
@@ -106,7 +107,8 @@ def load_vae_models(
     root = vae_path / dataset_name / experiment_name
     axes_models: dict[str, list[nn.Module]] = {}
 
-    for axis in ("slope", "volatility"):
+    axes_to_load = [axis] if axis in ("slope", "volatility") else ["slope", "volatility"]
+    for axis in axes_to_load:
         axes_models[axis] = []
         for label_idx in range(3):
             label_name = f"label_{label_idx}"
@@ -174,7 +176,13 @@ def analyze_feature_vae_ood(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    feature_file = base_path / args.dataset_name / ArtifactNames.VAE_STATE_FEATURES_NPY
+    axis = args.axis
+    feature_filename = (
+        ArtifactNames.VAE_SLOPE_STATE_FEATURES_NPY
+        if axis == "slope"
+        else ArtifactNames.VAE_VOLATILITY_STATE_FEATURES_NPY
+    )
+    feature_file = base_path / args.dataset_name / feature_filename
     if not feature_file.is_file():
         raise FileNotFoundError(f"Missing state features file: {feature_file}")
     feature_names: list[str] = list(np.load(feature_file))
@@ -210,6 +218,7 @@ def analyze_feature_vae_ood(args: argparse.Namespace) -> dict[str, Any]:
         dataset_name=args.dataset_name,
         experiment_name=args.experiment_name,
         input_dim=feature_dim,
+        axis=axis,
         device=args.device,
         z_dim=args.z_dim,
         hidden_dims=args.hidden_dims,
@@ -283,9 +292,15 @@ def analyze_feature_vae_ood(args: argparse.Namespace) -> dict[str, Any]:
     ) * 100.0
 
     # Axis-level averages for primary OOD benchmark (test_vs_train)
-    slope_delta_test_vs_train = np.mean(axis_delta_test_vs_train["slope"], axis=0)
-    volatility_delta_test_vs_train = np.mean(
-        axis_delta_test_vs_train["volatility"], axis=0
+    slope_delta_test_vs_train = (
+        np.mean(axis_delta_test_vs_train["slope"], axis=0)
+        if len(axis_delta_test_vs_train["slope"]) > 0
+        else np.zeros(feature_dim)
+    )
+    volatility_delta_test_vs_train = (
+        np.mean(axis_delta_test_vs_train["volatility"], axis=0)
+        if len(axis_delta_test_vs_train["volatility"]) > 0
+        else np.zeros(feature_dim)
     )
 
     # 4. Statistical distribution drift metrics (independently calculated per pair)
@@ -679,6 +694,13 @@ def main():
         type=str,
         default="result/DiHFT/vae_results",
         help="Path to VAE checkpoints directory",
+    )
+    parser.add_argument(
+        "--axis",
+        type=str,
+        default="slope",
+        choices=["slope", "volatility"],
+        help="Target VAE axis to diagnose (slope or volatility, default: slope)",
     )
     parser.add_argument(
         "--output_dir",

@@ -19,19 +19,19 @@ get_commodity_global_hygiene_blacklist() {
     python "${COMMODITY_FEATURE_BLACKLISTS_PY}" --stream global
 }
 
-get_commodity_vae_feature_blacklist() {
+get_commodity_vae_slope_feature_blacklist() {
     local target_freq=${1:-10min}
-    python "${COMMODITY_FEATURE_BLACKLISTS_PY}" --stream vae --freq "${target_freq}"
+    python "${COMMODITY_FEATURE_BLACKLISTS_PY}" --stream vae_slope --freq "${target_freq}"
+}
+
+get_commodity_vae_volatility_feature_blacklist() {
+    local target_freq=${1:-10min}
+    python "${COMMODITY_FEATURE_BLACKLISTS_PY}" --stream vae_volatility --freq "${target_freq}"
 }
 
 get_commodity_rl_feature_blacklist() {
     local target_freq=${1:-10min}
     python "${COMMODITY_FEATURE_BLACKLISTS_PY}" --stream rl --freq "${target_freq}"
-}
-
-get_commodity_feature_blacklist() {
-    local target_freq=${1:-10min}
-    get_commodity_vae_feature_blacklist "${target_freq}"
 }
 
 run_commodity_logged_step() {
@@ -616,41 +616,31 @@ run_commodity_feature_selection() {
     local root_path=$5
     local regime_bins=${6:-${REGIME_BINS:-3}}
 
-    local dual_stream_arg="--dual_stream"
-    local is_dual_stream=1
-    if [ "${DUAL_STREAM:-true}" = "false" ] || [ "${DUAL_STREAM:-1}" = "0" ]; then
-        dual_stream_arg="--no_dual_stream"
-        is_dual_stream=0
+    local vae_slope_feature_blacklist_args=()
+    local vae_slope_blacklist=()
+    while IFS= read -r item; do
+        [ -n "$item" ] && vae_slope_blacklist+=("$item")
+    done < <(get_commodity_vae_slope_feature_blacklist "${target_freq}")
+    if [ "${#vae_slope_blacklist[@]}" -gt 0 ]; then
+        vae_slope_feature_blacklist_args=(--vae_slope_feature_blacklist "${vae_slope_blacklist[@]}")
     fi
 
-    local feature_blacklist_args=()
-    local vae_feature_blacklist_args=()
+    local vae_volatility_feature_blacklist_args=()
+    local vae_volatility_blacklist=()
+    while IFS= read -r item; do
+        [ -n "$item" ] && vae_volatility_blacklist+=("$item")
+    done < <(get_commodity_vae_volatility_feature_blacklist "${target_freq}")
+    if [ "${#vae_volatility_blacklist[@]}" -gt 0 ]; then
+        vae_volatility_feature_blacklist_args=(--vae_volatility_feature_blacklist "${vae_volatility_blacklist[@]}")
+    fi
+
     local rl_feature_blacklist_args=()
-
-    if [ "$is_dual_stream" -eq 1 ]; then
-        local vae_blacklist=()
-        while IFS= read -r item; do
-            [ -n "$item" ] && vae_blacklist+=("$item")
-        done < <(get_commodity_vae_feature_blacklist "${target_freq}")
-        if [ "${#vae_blacklist[@]}" -gt 0 ]; then
-            vae_feature_blacklist_args=(--vae_feature_blacklist "${vae_blacklist[@]}")
-        fi
-
-        local rl_blacklist=()
-        while IFS= read -r item; do
-            [ -n "$item" ] && rl_blacklist+=("$item")
-        done < <(get_commodity_rl_feature_blacklist "${target_freq}")
-        if [ "${#rl_blacklist[@]}" -gt 0 ]; then
-            rl_feature_blacklist_args=(--rl_feature_blacklist "${rl_blacklist[@]}")
-        fi
-    else
-        local legacy_blacklist=()
-        while IFS= read -r item; do
-            [ -n "$item" ] && legacy_blacklist+=("$item")
-        done < <(get_commodity_feature_blacklist "${target_freq}")
-        if [ "${#legacy_blacklist[@]}" -gt 0 ]; then
-            feature_blacklist_args=(--feature_blacklist "${legacy_blacklist[@]}")
-        fi
+    local rl_blacklist=()
+    while IFS= read -r item; do
+        [ -n "$item" ] && rl_blacklist+=("$item")
+    done < <(get_commodity_rl_feature_blacklist "${target_freq}")
+    if [ "${#rl_blacklist[@]}" -gt 0 ]; then
+        rl_feature_blacklist_args=(--rl_feature_blacklist "${rl_blacklist[@]}")
     fi
 
     local target_regime_bins_args=()
@@ -660,21 +650,7 @@ run_commodity_feature_selection() {
 
     local windows_list=(1 2 6 12 24 48 96)
 
-    PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" python -u -m operator_futures.feature_selection.muti_contract \
-        --root_path "${root_path}" \
-        --split_path "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST" \
-        --save_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION" \
-        --symbol "${symbol}" --windows_list "${windows_list[@]}" \
-        --target_freq "${target_freq}" \
-        --stage "${stage}" \
-        --orderbook_depth 5 \
-        --regime_bins "${regime_bins}" \
-        "${target_regime_bins_args[@]}" \
-        "${dual_stream_arg}" \
-        --mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" "${CROSS_MONTH_FEATURE_COLUMNS[@]}" \
-        "${feature_blacklist_args[@]}" \
-        "${vae_feature_blacklist_args[@]}" \
-        "${rl_feature_blacklist_args[@]}"
+    PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" python -u -m operator_futures.feature_selection.muti_contract         --root_path "${root_path}"         --split_path "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST"         --save_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION"         --symbol "${symbol}" --windows_list "${windows_list[@]}"         --target_freq "${target_freq}"         --stage "${stage}"         --orderbook_depth 5         --regime_bins "${regime_bins}"         "${target_regime_bins_args[@]}"         --mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" "${CROSS_MONTH_FEATURE_COLUMNS[@]}"         "${vae_slope_feature_blacklist_args[@]}"         "${vae_volatility_feature_blacklist_args[@]}"         "${rl_feature_blacklist_args[@]}"
 }
 
 run_commodity_maintenance_margin_dict() {

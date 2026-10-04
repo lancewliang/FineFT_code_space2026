@@ -1668,8 +1668,10 @@ def test_commodity_full_process_shell_passes_feature_blacklist():
     text = script.read_text(encoding="utf-8")
     json_text = json_path.read_text(encoding="utf-8")
 
-    assert "--vae_feature_blacklist" in text
+    assert "--vae_slope_feature_blacklist" in text
+    assert "--vae_volatility_feature_blacklist" in text
     assert "--rl_feature_blacklist" in text
+    assert "--vae_feature_blacklist" not in text
     assert "open" in json_text
     assert "high" in json_text
     assert "low" in json_text
@@ -1696,7 +1698,9 @@ def test_commodity_full_process_shell_frequency_aware_feature_blacklist():
     json_text = json_path.read_text(encoding="utf-8")
 
     assert "COMMODITY_FEATURE_BLACKLISTS_PY=" in text
-    assert "get_commodity_feature_blacklist" in text
+    assert "get_commodity_vae_slope_feature_blacklist" in text
+    assert "get_commodity_vae_volatility_feature_blacklist" in text
+    assert "get_commodity_rl_feature_blacklist" in text
     assert json_path.exists()
     assert "\"10min\"" in json_text
     assert "\"5min\"" in json_text
@@ -1732,11 +1736,11 @@ def test_commodity_full_process_shell_frequency_aware_feature_blacklist():
     cmd = f"""bash -c '
     source "{script}"
     echo "===10MIN==="
-    get_commodity_feature_blacklist "10min"
+    get_commodity_vae_slope_feature_blacklist "10min"
     echo "===5MIN==="
-    get_commodity_feature_blacklist "5min"
+    get_commodity_vae_slope_feature_blacklist "5min"
     echo "===1MIN==="
-    get_commodity_feature_blacklist "1min"
+    get_commodity_vae_slope_feature_blacklist "1min"
     '"""
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
     out = result.stdout
@@ -1751,18 +1755,18 @@ def test_commodity_full_process_shell_frequency_aware_feature_blacklist():
         elif current_key and line:
             sections[current_key].add(line)
 
-    # 10min must include both 96 and 192 features
-    assert "realized_volatility_192" in sections["10MIN"]
+    # 10min must include both 96 and 192 macro slope features
+    assert "ema_slope_192" in sections["10MIN"]
     assert "log_price_slope_96" in sections["10MIN"]
     assert "open" in sections["10MIN"]
 
     # 5min must include 192 but NOT 96 features (preserving 1-day signals)
-    assert "realized_volatility_192" in sections["5MIN"]
+    assert "ema_slope_192" in sections["5MIN"]
     assert "log_price_slope_96" not in sections["5MIN"]
     assert "open" in sections["5MIN"]
 
     # 1min must NOT include 192 or 96 (preserving intraday signals)
-    assert "realized_volatility_192" not in sections["1MIN"]
+    assert "ema_slope_192" not in sections["1MIN"]
     assert "log_price_slope_96" not in sections["1MIN"]
     assert "open" in sections["1MIN"]
 
@@ -1910,8 +1914,8 @@ def test_commodity_full_process_shell_excludes_ood_features_and_enforces_clippin
     scale_save_start = text.index("run_commodity_scale_save()")
     scale_save_end = text.index("\n}", scale_save_start)
     scale_save_def = text[scale_save_start:scale_save_end]
-    assert "--clip_min -5.0" in scale_save_def
-    assert "--clip_max 5.0" in scale_save_def
+    assert "--clip_min -20.0" in scale_save_def
+    assert "--clip_max 20.0" in scale_save_def
 
 
 def test_commodity_full_process_shell_decoupled_dual_stream_blacklists():
@@ -1922,23 +1926,27 @@ def test_commodity_full_process_shell_decoupled_dual_stream_blacklists():
     text = script.read_text(encoding="utf-8")
 
     assert "get_commodity_global_hygiene_blacklist" in text
-    assert "get_commodity_vae_feature_blacklist" in text
+    assert "get_commodity_vae_slope_feature_blacklist" in text
+    assert "get_commodity_vae_volatility_feature_blacklist" in text
     assert "get_commodity_rl_feature_blacklist" in text
-    assert '"${vae_feature_blacklist_args[@]}"' in text
+    assert '"${vae_slope_feature_blacklist_args[@]}"' in text
+    assert '"${vae_volatility_feature_blacklist_args[@]}"' in text
     assert '"${rl_feature_blacklist_args[@]}"' in text
 
     cmd = f"""bash -c '
     source "{script}"
     echo "===GLOBAL==="
     get_commodity_global_hygiene_blacklist
-    echo "===VAE_10MIN==="
-    get_commodity_vae_feature_blacklist "10min"
+    echo "===VAE_SLOPE_10MIN==="
+    get_commodity_vae_slope_feature_blacklist "10min"
+    echo "===VAE_VOL_10MIN==="
+    get_commodity_vae_volatility_feature_blacklist "10min"
     echo "===RL_10MIN==="
     get_commodity_rl_feature_blacklist "10min"
-    echo "===VAE_5MIN==="
-    get_commodity_vae_feature_blacklist "5min"
-    echo "===VAE_1MIN==="
-    get_commodity_vae_feature_blacklist "1min"
+    echo "===VAE_SLOPE_5MIN==="
+    get_commodity_vae_slope_feature_blacklist "5min"
+    echo "===VAE_SLOPE_1MIN==="
+    get_commodity_vae_slope_feature_blacklist "1min"
     '"""
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
     out = result.stdout
@@ -1961,10 +1969,17 @@ def test_commodity_full_process_shell_decoupled_dual_stream_blacklists():
     assert "realized_volatility_192" not in sections["GLOBAL"]
     assert "prev_2_week_open_interest_change_quantile_rank" not in sections["GLOBAL"]
 
-    # VAE 10min includes macro drift features
-    assert "log_price_slope_96" in sections["VAE_10MIN"]
-    assert "realized_volatility_192" in sections["VAE_10MIN"]
-    assert "prev_2_week_open_interest_change_quantile_rank" in sections["VAE_10MIN"]
+    # VAE Slope 10min includes macro drift features and filters volatility
+    assert "log_price_slope_96" in sections["VAE_SLOPE_10MIN"]
+    assert "realized_volatility_192" in sections["VAE_SLOPE_10MIN"]
+    assert "prev_2_week_open_interest_change_quantile_rank" in sections["VAE_SLOPE_10MIN"]
+    assert "atr_pct_6" in sections["VAE_SLOPE_10MIN"]
+
+    # VAE Vol 10min includes macro drift features and filters trend slopes
+    assert "log_price_slope_96" in sections["VAE_VOL_10MIN"]
+    assert "realized_volatility_192" in sections["VAE_VOL_10MIN"]
+    assert "prev_2_week_open_interest_change_quantile_rank" in sections["VAE_VOL_10MIN"]
+    assert "wap_1_trend_24" in sections["VAE_VOL_10MIN"]
 
     # RL 10min includes global hygiene but liberates all macro drift features
     assert "open" in sections["RL_10MIN"]
@@ -1973,13 +1988,13 @@ def test_commodity_full_process_shell_decoupled_dual_stream_blacklists():
     assert "realized_volatility_192" not in sections["RL_10MIN"]
     assert "prev_2_week_open_interest_change_quantile_rank" not in sections["RL_10MIN"]
 
-    # VAE 5min includes 192 but NOT 96 (preserving 1-day signals)
-    assert "realized_volatility_192" in sections["VAE_5MIN"]
-    assert "log_price_slope_96" not in sections["VAE_5MIN"]
+    # VAE Slope 5min includes 192 but NOT 96 (preserving 1-day signals)
+    assert "ema_slope_192" in sections["VAE_SLOPE_5MIN"]
+    assert "log_price_slope_96" not in sections["VAE_SLOPE_5MIN"]
 
-    # VAE 1min does NOT include 192 or 96 (preserving intraday signals)
-    assert "realized_volatility_192" not in sections["VAE_1MIN"]
-    assert "log_price_slope_96" not in sections["VAE_1MIN"]
+    # VAE Slope 1min does NOT include 192 or 96 macro trend features (preserving intraday signals)
+    assert "ema_slope_192" not in sections["VAE_SLOPE_1MIN"]
+    assert "log_price_slope_96" not in sections["VAE_SLOPE_1MIN"]
 
 
 def test_commodity_feature_blacklists_single_file_and_python_resolution():
@@ -1988,24 +2003,27 @@ def test_commodity_feature_blacklists_single_file_and_python_resolution():
         load_commodity_feature_blacklists,
         get_commodity_global_hygiene_blacklist,
         get_commodity_stream_blacklists,
-        get_commodity_vae_feature_blacklist,
+        get_commodity_vae_slope_feature_blacklist,
+        get_commodity_vae_volatility_feature_blacklist,
         get_commodity_rl_feature_blacklist,
     )
 
     assert DEFAULT_BLACKLIST_JSON_PATH.exists()
     data = load_commodity_feature_blacklists()
 
-    # Scope checks: global, vae, rl_agent
+    # Scope checks: global, vae_slope, vae_volatility, rl_agent
     assert "scopes" in data
     assert "global" in data["scopes"]
-    assert "vae" in data["scopes"]
+    assert "vae_slope" in data["scopes"]
+    assert "vae_volatility" in data["scopes"]
     assert "rl_agent" in data["scopes"]
 
     # Frequencies: 1min, 5min, 10min, 30min
     assert "frequencies" in data
     for freq in ("1min", "5min", "10min", "30min"):
         assert freq in data["frequencies"]
-        assert "vae" in data["frequencies"][freq]
+        assert "vae_slope" in data["frequencies"][freq]
+        assert "vae_volatility" in data["frequencies"][freq]
         assert "rl_agent" in data["frequencies"][freq]
 
     # Global hygiene list length and content
@@ -2016,12 +2034,15 @@ def test_commodity_feature_blacklists_single_file_and_python_resolution():
     assert "min_96_origin" in global_list
 
     # Stream resolution for 10min
-    vae_10min, rl_10min = get_commodity_stream_blacklists("10min")
-    assert len(vae_10min) == 189
+    vae_slope_10min, vae_vol_10min, rl_10min = get_commodity_stream_blacklists("10min")
+    assert len(vae_slope_10min) == 243
+    assert len(vae_vol_10min) == 317
     assert len(rl_10min) == 88
 
-    # Intersection must be exactly the global hygiene blacklist
-    assert set(vae_10min).intersection(set(rl_10min)) == set(global_list)
+    # Global hygiene must be subset of slope and volatility blacklists, and equal to rl
+    assert set(global_list).issubset(set(vae_slope_10min))
+    assert set(global_list).issubset(set(vae_vol_10min))
+    assert set(global_list) == set(rl_10min)
 
     # RL stream must NOT blacklist macro features
     for macro_feat in (
@@ -2031,9 +2052,10 @@ def test_commodity_feature_blacklists_single_file_and_python_resolution():
         "prev_5_day_trade_imbalance_quantile_rank",
         "cm_current_main_spread_rolling_zscore_192",
     ):
-        assert macro_feat in vae_10min
+        assert macro_feat in vae_slope_10min
         assert macro_feat not in rl_10min
 
     # Direct helper getters
-    assert get_commodity_vae_feature_blacklist("10min") == vae_10min
+    assert get_commodity_vae_slope_feature_blacklist("10min") == vae_slope_10min
+    assert get_commodity_vae_volatility_feature_blacklist("10min") == vae_vol_10min
     assert get_commodity_rl_feature_blacklist("10min") == rl_10min

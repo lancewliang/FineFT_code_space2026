@@ -228,16 +228,18 @@ parser.add_argument(
     default="default",
     help="experiment name used to namespace serial training outputs",
 )
-def discover_test_sources(data_base_path, dataset_name):
+def discover_test_sources(data_base_path, dataset_name, labeling_method: str = "slope"):
     root = vae_data_dir(data_base_path, dataset_name)
-    test_dir = root / "test"
+    test_dir = root / labeling_method / "test"
     if not test_dir.exists():
         raise FileNotFoundError(f"missing VAE test path: {test_dir}")
     sources = []
-    for path in sorted(test_dir.glob("test_*.npy"), key=lambda item: item.name):
+    for path in sorted(test_dir.glob("*.npy"), key=lambda item: item.name):
         contract = path.stem
         if contract.startswith("test_"):
             contract = contract[len("test_") :]
+        elif contract.startswith("df_"):
+            contract = contract[len("df_") :]
         sources.append(TestContractSource(contract=contract, source_file=str(path)))
     if not sources:
         raise FileNotFoundError(f"no test_*.npy files found under {test_dir}")
@@ -338,7 +340,7 @@ class Piplineruner:
             prr,
         )
         self.contract_loader_list = prepare_contract_dataset_loader_list(
-            discover_test_sources(self.args.data_base_path, self.args.dataset_name),
+            discover_test_sources(self.args.data_base_path, self.args.dataset_name, labeling_method=self.args.labeling_method),
             expected_feature_dim=train_manifest.feature_dim,
         )
 

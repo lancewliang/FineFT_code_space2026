@@ -321,55 +321,33 @@ def test_parser_accepts_runtime_feature_blacklist():
 
     assert args.feature_blacklist == ["wap_1", "last_price"]
 
-def test_parser_accepts_dual_stream_flags():
-    args_default = build_parser().parse_args(
-        ["--symbol", "fu", "--target_freq", "5min", "--stage", "train"]
-    )
-    assert args_default.dual_stream is True
-
-    args_enabled = build_parser().parse_args(
-        ["--symbol", "fu", "--target_freq", "5min", "--stage", "train", "--dual_stream"]
-    )
-    assert args_enabled.dual_stream is True
-
-    args_disabled = build_parser().parse_args(
-        ["--symbol", "fu", "--target_freq", "5min", "--stage", "train", "--no_dual_stream"]
-    )
-    assert args_disabled.dual_stream is False
+def test_parser_rejects_legacy_dual_stream_flags():
+    import pytest
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(
+            ["--symbol", "fu", "--target_freq", "5min", "--stage", "train", "--dual_stream"]
+        )
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(
+            ["--symbol", "fu", "--target_freq", "5min", "--stage", "train", "--no_dual_stream"]
+        )
 
 
-def test_main_forwards_dual_stream_to_run_feature_selection(monkeypatch):
-    captured_kwargs = {}
-
-    def mock_run_feature_selection(**kwargs):
-        captured_kwargs.update(kwargs)
-        return None
-
-    monkeypatch.setattr(
-        "operator_futures.feature_selection.muti_contract.pipeline.run_feature_selection",
-        mock_run_feature_selection,
-    )
-    main(["--symbol", "fu", "--target_freq", "5min", "--stage", "train"])
-    assert captured_kwargs.get("dual_stream") is True
-
-    captured_kwargs.clear()
-    main(["--symbol", "fu", "--target_freq", "5min", "--stage", "train", "--no_dual_stream"])
-    assert captured_kwargs.get("dual_stream") is False
-
-
-def test_parser_accepts_stream_specific_blacklists():
+def test_parser_accepts_triple_stream_specific_blacklists():
     args = build_parser().parse_args([
         "--symbol", "fu",
         "--target_freq", "10min",
         "--stage", "train",
-        "--vae_feature_blacklist", "realized_volatility_192", "ema_slope_192",
+        "--vae_slope_feature_blacklist", "realized_volatility_192", "atr_14",
+        "--vae_volatility_feature_blacklist", "log_price_slope_48", "linear_slope_24",
         "--rl_feature_blacklist", "bad_rl_feat",
     ])
-    assert args.vae_feature_blacklist == ["realized_volatility_192", "ema_slope_192"]
+    assert args.vae_slope_feature_blacklist == ["realized_volatility_192", "atr_14"]
+    assert args.vae_volatility_feature_blacklist == ["log_price_slope_48", "linear_slope_24"]
     assert args.rl_feature_blacklist == ["bad_rl_feat"]
 
 
-def test_main_forwards_stream_specific_blacklists_to_run_feature_selection(monkeypatch):
+def test_main_forwards_triple_stream_specific_blacklists_to_run_feature_selection(monkeypatch):
     captured_kwargs = {}
 
     def mock_run_feature_selection(**kwargs):
@@ -384,10 +362,12 @@ def test_main_forwards_stream_specific_blacklists_to_run_feature_selection(monke
         "--symbol", "fu",
         "--target_freq", "10min",
         "--stage", "train",
-        "--vae_feature_blacklist", "realized_volatility_192",
+        "--vae_slope_feature_blacklist", "realized_volatility_192",
+        "--vae_volatility_feature_blacklist", "log_price_slope_48",
         "--rl_feature_blacklist", "bad_rl_feat",
     ])
-    assert captured_kwargs.get("vae_feature_blacklist") == ["realized_volatility_192"]
+    assert captured_kwargs.get("vae_slope_feature_blacklist") == ["realized_volatility_192"]
+    assert captured_kwargs.get("vae_volatility_feature_blacklist") == ["log_price_slope_48"]
     assert captured_kwargs.get("rl_feature_blacklist") == ["bad_rl_feat"]
 
 
@@ -401,11 +381,13 @@ def test_build_config_from_legacy_kwargs_attaches_stream_blacklists():
         symbol="fu",
         target_freq="10min",
         stage="train",
-        vae_feature_blacklist=["common_hygiene", "feat_vae_1", "feat_vae_2"],
-        rl_feature_blacklist=["common_hygiene", "feat_rl_1"],
+        vae_slope_feature_blacklist=["common_hygiene", "vol_feat"],
+        vae_volatility_feature_blacklist=["common_hygiene", "slope_feat"],
+        rl_feature_blacklist=["common_hygiene", "bad_rl"],
     )
-    assert config.vae_profile.feature_blacklist == ("common_hygiene", "feat_vae_1", "feat_vae_2")
-    assert config.rl_profile.feature_blacklist == ("common_hygiene", "feat_rl_1")
+    assert config.vae_slope_profile.feature_blacklist == ("common_hygiene", "vol_feat")
+    assert config.vae_volatility_profile.feature_blacklist == ("common_hygiene", "slope_feat")
+    assert config.rl_profile.feature_blacklist == ("common_hygiene", "bad_rl")
     assert config.hygiene.feature_blacklist == ("common_hygiene",)
 
 
@@ -435,6 +417,7 @@ def test_train_stage_writes_final_features_metrics_filtered_outputs_and_manifest
         orderbook_depth=5,
         min_abs_ic=0.01,
         max_correlation=0.99,
+        min_clusters=1,
     )
 
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
@@ -533,6 +516,7 @@ def test_train_stage_front_loads_feature_blacklist_preventing_metric_evaluation(
         feature_blacklist=["custom_signal", "mark_price", "ask1_price"],
         feature_ablation_patterns=[],
         rank_ic_mode="absolute",
+        min_clusters=1,
     )
 
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
@@ -608,6 +592,7 @@ def test_front_loaded_blacklist_eliminates_borrowed_knife_correlation_dropping(t
         feature_blacklist=["toxic_feature"],
         feature_ablation_patterns=[],
         rank_ic_mode="absolute",
+        min_clusters=1,
     )
 
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
@@ -627,12 +612,14 @@ def test_train_stage_filters_fast_decay_micro_returns_by_persistence(
     row_count = 24
     fast_decay = [1.0 if index % 2 == 0 else -1.0 for index in range(row_count)]
     slow_signal = [float(index) for index in range(row_count)]
+    independent_alpha = [float(i % 7) for i in range(row_count)]
+    independent_beta = [float(i % 5) for i in range(row_count)]
     _write_long_split_contract(
         tmp_path,
         "train",
         "fu2601",
-        slow_signal,
-        [float(row_count - index) for index in range(row_count)],
+        independent_alpha,
+        independent_beta,
         extra_features={
             "wap_1_log_return_2": fast_decay,
             "mandatory_log_return_2": fast_decay,
@@ -643,8 +630,8 @@ def test_train_stage_filters_fast_decay_micro_returns_by_persistence(
         tmp_path,
         "train",
         "fu2605",
-        [value + 1.0 for value in slow_signal],
-        [float(row_count - index + 1) for index in range(row_count)],
+        independent_alpha,
+        independent_beta,
         extra_features={
             "wap_1_log_return_2": fast_decay,
             "mandatory_log_return_2": fast_decay,
@@ -666,6 +653,8 @@ def test_train_stage_filters_fast_decay_micro_returns_by_persistence(
         min_half_life_bars=1.0,
         mandatory_state_features=["mandatory_log_return_2"],
         rank_ic_mode="absolute",
+        filter_micro_persistence=True,
+        min_clusters=1,
     )
 
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
@@ -680,7 +669,7 @@ def test_train_stage_filters_fast_decay_micro_returns_by_persistence(
     assert "wap_1_log_return_2" not in selected_features
     assert "mandatory_log_return_2" in selected_features
     assert "trend_strength_norm" in selected_features
-    assert manifest.manifest.filter_results["Persistence Filter Dropped"] == [
+    assert manifest.manifest.rl_stream.filter_results["Persistence Filter Dropped"] == [
         "wap_1_log_return_2"
     ]
     assert persisted_manifest["persistence_filter"]["min_half_life_bars"] == 1.0
@@ -737,6 +726,7 @@ def test_train_stage_does_not_filter_equivalent_log_return_aliases(
         min_abs_ic=0.0,
         max_correlation=1.0,
         composite_drop_ratio=0.0,
+        min_clusters=1,
     )
 
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
@@ -943,6 +933,7 @@ def test_conditional_anchors_cannot_override_feature_blacklist(tmp_path, fake_ca
         feature_ablation_patterns=[],
         rank_ic_mode="absolute",
         enable_conditional_anchors=True,
+        min_clusters=1,
     )
 
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
@@ -990,50 +981,70 @@ def test_contract_normalized_correlation_avoids_simpsons_paradox():
 def test_stream_filter_profile_immutability_and_defaults():
     from operator_futures.feature_selection.muti_contract.types import (
         StreamFilterProfile,
-        DEFAULT_VAE_PROFILE,
+        DEFAULT_VAE_SLOPE_PROFILE,
+        DEFAULT_VAE_VOLATILITY_PROFILE,
         DEFAULT_RL_PROFILE,
         FeatureSelectionPipelineConfig,
     )
     from pathlib import Path
     import pytest
 
-    # Verify VAE Profile canonical values
-    assert DEFAULT_VAE_PROFILE.name == "vae_regime"
-    assert DEFAULT_VAE_PROFILE.max_mean_psi == 0.10
-    assert DEFAULT_VAE_PROFILE.max_pair_psi == 0.20
-    assert DEFAULT_VAE_PROFILE.min_abs_ic == 0.015
-    assert DEFAULT_VAE_PROFILE.min_sign_consistency == 0.70
-    assert DEFAULT_VAE_PROFILE.min_rank_ic_ir == 0.35
-    assert DEFAULT_VAE_PROFILE.max_correlation == 0.65
-    assert DEFAULT_VAE_PROFILE.min_clusters == 12
-    assert DEFAULT_VAE_PROFILE.max_clusters == 18
-    assert DEFAULT_VAE_PROFILE.psi_weight == 0.50
-    assert DEFAULT_VAE_PROFILE.rank_ic_weight == 0.30
-    assert DEFAULT_VAE_PROFILE.catboost_weight == 0.20
-    assert DEFAULT_VAE_PROFILE.filter_micro_persistence is True
-    assert DEFAULT_VAE_PROFILE.mandatory_feature_pattern == r"^(base_time_|time_|trading_minute_)"
-    assert DEFAULT_VAE_PROFILE.feature_blacklist == ()
+    # Verify Slope VAE Profile canonical values
+    assert DEFAULT_VAE_SLOPE_PROFILE.name == "vae_slope"
+    assert DEFAULT_VAE_SLOPE_PROFILE.max_mean_psi == 0.10
+    assert DEFAULT_VAE_SLOPE_PROFILE.max_pair_psi == 0.20
+    assert DEFAULT_VAE_SLOPE_PROFILE.min_abs_ic == 0.020
+    assert DEFAULT_VAE_SLOPE_PROFILE.min_sign_consistency == 0.75
+    assert DEFAULT_VAE_SLOPE_PROFILE.min_rank_ic_ir == 0.35
+    assert DEFAULT_VAE_SLOPE_PROFILE.max_correlation == 0.65
+    assert DEFAULT_VAE_SLOPE_PROFILE.min_clusters == 12
+    assert DEFAULT_VAE_SLOPE_PROFILE.max_clusters == 16
+    assert DEFAULT_VAE_SLOPE_PROFILE.psi_weight == 0.45
+    assert DEFAULT_VAE_SLOPE_PROFILE.rank_ic_weight == 0.35
+    assert DEFAULT_VAE_SLOPE_PROFILE.catboost_weight == 0.20
+    assert DEFAULT_VAE_SLOPE_PROFILE.filter_micro_persistence is True
+    assert DEFAULT_VAE_SLOPE_PROFILE.mandatory_feature_pattern == r"^(base_time_|time_|trading_minute_)"
+    assert DEFAULT_VAE_SLOPE_PROFILE.feature_blacklist == ()
+    assert DEFAULT_VAE_SLOPE_PROFILE.min_anova_f == 4.0
+    assert DEFAULT_VAE_SLOPE_PROFILE.require_monotonic is True
+    assert DEFAULT_VAE_SLOPE_PROFILE.target_metric == "RankIC"
+    assert DEFAULT_VAE_SLOPE_PROFILE.max_vif == 10.0
+
+    # Verify Volatility VAE Profile canonical values
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.name == "vae_volatility"
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.max_mean_psi == 0.12
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.max_pair_psi == 0.25
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.min_abs_ic == 0.030
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.min_sign_consistency == 0.75
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.min_rank_ic_ir == 0.40
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.max_correlation == 0.60
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.min_clusters == 10
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.max_clusters == 14
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.psi_weight == 0.45
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.rank_ic_weight == 0.35
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.catboost_weight == 0.20
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.filter_micro_persistence is True
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.mandatory_feature_pattern == r"^(trading_minute_progress)"
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.feature_blacklist == ()
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.min_anova_f == 6.0
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.require_monotonic is True
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.target_metric == "VolRankIC"
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.max_vif == 8.0
 
     # Verify RL Profile canonical values
     assert DEFAULT_RL_PROFILE.name == "rl_decision"
-    assert DEFAULT_RL_PROFILE.max_mean_psi == 0.25
-    assert DEFAULT_RL_PROFILE.max_pair_psi == 0.35
-    assert DEFAULT_RL_PROFILE.min_abs_ic == 0.020
-    assert DEFAULT_RL_PROFILE.min_sign_consistency == 0.65
-    assert DEFAULT_RL_PROFILE.min_rank_ic_ir == 0.30
+    assert DEFAULT_RL_PROFILE.max_mean_psi == 0.45
+    assert DEFAULT_RL_PROFILE.max_pair_psi == 1.30
+    assert DEFAULT_RL_PROFILE.min_abs_ic == 0.010
+    assert DEFAULT_RL_PROFILE.min_sign_consistency == 0.55
+    assert DEFAULT_RL_PROFILE.min_rank_ic_ir == 0.18
     assert DEFAULT_RL_PROFILE.max_correlation == 0.80
-    assert DEFAULT_RL_PROFILE.min_clusters == 55
-    assert DEFAULT_RL_PROFILE.max_clusters == 70
-    assert DEFAULT_RL_PROFILE.psi_weight == 0.15
-    assert DEFAULT_RL_PROFILE.rank_ic_weight == 0.50
-    assert DEFAULT_RL_PROFILE.catboost_weight == 0.35
-    assert DEFAULT_RL_PROFILE.filter_micro_persistence is False
-    assert DEFAULT_RL_PROFILE.mandatory_feature_pattern is None
-    assert DEFAULT_RL_PROFILE.feature_blacklist == ()
+    assert DEFAULT_RL_PROFILE.min_clusters == 100
+    assert DEFAULT_RL_PROFILE.max_clusters == 155
 
     # Verify frozen immutability
     with pytest.raises(Exception):
-        DEFAULT_VAE_PROFILE.min_clusters = 5  # type: ignore
+        DEFAULT_VAE_SLOPE_PROFILE.min_clusters = 5  # type: ignore
 
     # Verify pipeline config defaults
     config = FeatureSelectionPipelineConfig(
@@ -1042,24 +1053,32 @@ def test_stream_filter_profile_immutability_and_defaults():
         target_freq="5min",
         stage="train",
     )
-    assert config.dual_stream is True
-    assert config.vae_profile == DEFAULT_VAE_PROFILE
+    assert config.vae_slope_profile == DEFAULT_VAE_SLOPE_PROFILE
+    assert config.vae_volatility_profile == DEFAULT_VAE_VOLATILITY_PROFILE
     assert config.rl_profile == DEFAULT_RL_PROFILE
 
 
-def test_feature_selection_manifest_dual_stream_serialization(tmp_path: Path):
+def test_feature_selection_manifest_triple_stream_serialization(tmp_path: Path):
     from operator_futures.feature_selection.manifests import (
         FeatureSelectionManifest,
         StreamAuditRecord,
     )
 
-    vae_record = StreamAuditRecord(
-        profile_name="vae_regime",
+    slope_record = StreamAuditRecord(
+        profile_name="vae_slope",
         selected_features=["base_time_day_progress", "time_hour_sin"],
         selected_feature_count=2,
         filter_results={"psi_drop": ["feat_unstable"]},
         candidate_count=10,
         dropped_counts={"psi_drop": 1},
+    )
+    vol_record = StreamAuditRecord(
+        profile_name="vae_volatility",
+        selected_features=["trading_minute_progress", "realized_volatility_6"],
+        selected_feature_count=2,
+        filter_results={},
+        candidate_count=10,
+        dropped_counts={},
     )
     rl_record = StreamAuditRecord(
         profile_name="rl_decision",
@@ -1076,10 +1095,14 @@ def test_feature_selection_manifest_dual_stream_serialization(tmp_path: Path):
         split_input_dir=str(tmp_path),
         windows_list=[6],
         aggregate_metrics_path=str(tmp_path / "metrics.csv"),
-        stream_mode="dual",
-        selected_features=["base_time_day_progress", "time_hour_sin", "level5_ofi_weighted_norm"],
-        selected_feature_count=3,
-        vae_stream=vae_record,
+        stream_mode="triple",
+        vae_slope_feature_file=str(tmp_path / "vae_slope_state_features.npy"),
+        vae_volatility_feature_file=str(tmp_path / "vae_volatility_state_features.npy"),
+        rl_feature_file=str(tmp_path / "rl_state_features.npy"),
+        selected_features=["base_time_day_progress", "time_hour_sin", "trading_minute_progress", "realized_volatility_6", "level5_ofi_weighted_norm"],
+        selected_feature_count=5,
+        vae_slope_stream=slope_record,
+        vae_volatility_stream=vol_record,
         rl_stream=rl_record,
     )
 
@@ -1088,32 +1111,24 @@ def test_feature_selection_manifest_dual_stream_serialization(tmp_path: Path):
 
     # Read back and verify deserialization roundtrip
     loaded = FeatureSelectionManifest.read_json(manifest_path)
-    assert loaded.stream_mode == "dual"
-    assert loaded.selected_feature_count == 3
-    assert set(loaded.selected_features or []) == {"base_time_day_progress", "time_hour_sin", "level5_ofi_weighted_norm"}
-    assert loaded.vae_stream is not None
-    assert loaded.vae_stream.profile_name == "vae_regime"
-    assert loaded.vae_stream.selected_feature_count == 2
-    assert loaded.vae_stream.filter_results == {"psi_drop": ["feat_unstable"]}
-    assert loaded.vae_stream.candidate_count == 10
-    assert loaded.vae_stream.dropped_counts == {"psi_drop": 1}
+    assert loaded.stream_mode == "triple"
+    assert loaded.selected_feature_count == 5
+    assert loaded.vae_slope_stream is not None
+    assert loaded.vae_slope_stream.profile_name == "vae_slope"
+    assert loaded.vae_volatility_stream is not None
+    assert loaded.vae_volatility_stream.profile_name == "vae_volatility"
     assert loaded.rl_stream is not None
     assert loaded.rl_stream.profile_name == "rl_decision"
-    assert loaded.rl_stream.selected_feature_count == 2
 
 
-def test_dual_stream_train_stage_writes_dual_artifacts_and_union(tmp_path, fake_catboost):
+def test_triple_stream_train_stage_writes_triple_artifacts_and_union(tmp_path, fake_catboost):
     from operator_futures.feature_selection.muti_contract.types import (
         StreamFilterProfile,
-        DEFAULT_VAE_PROFILE,
-        DEFAULT_RL_PROFILE,
     )
 
     row_count = 30
     rng = np.random.RandomState(42)
 
-    # 15 time topology features + 5 mandatory contract features
-    # 55 candidate features = 70 candidate features total
     time_features = {
         f"base_time_{i}": rng.normal(0, 1, row_count).tolist() for i in range(8)
     }
@@ -1133,10 +1148,8 @@ def test_dual_stream_train_stage_writes_dual_artifacts_and_union(tmp_path, fake_
     }
     all_mandatory = list(time_features.keys()) + list(mandatory_contract_features.keys())
 
-    # Candidate alpha features
     alpha_features = {}
     for i in range(50):
-        # Independent features so they don't collapse during correlation clustering
         alpha_features[f"alpha_feat_{i}"] = (rng.normal(0, 1, row_count) + float(i)*0.01).tolist()
     alpha_features["level5_ofi_weighted_norm"] = rng.normal(0, 1, row_count).tolist()
     alpha_features["log_return_1"] = rng.normal(0, 1, row_count).tolist()
@@ -1165,8 +1178,8 @@ def test_dual_stream_train_stage_writes_dual_artifacts_and_union(tmp_path, fake_
         extra_features=all_extra,
     )
 
-    test_vae_profile = StreamFilterProfile(
-        name="vae_regime",
+    test_vae_slope_profile = StreamFilterProfile(
+        name="vae_slope",
         max_mean_psi=0.10,
         max_pair_psi=0.20,
         min_abs_ic=0.0,
@@ -1174,17 +1187,33 @@ def test_dual_stream_train_stage_writes_dual_artifacts_and_union(tmp_path, fake_
         min_rank_ic_ir=0.0,
         max_correlation=0.65,
         min_clusters=5,
-        max_clusters=18,
-        psi_weight=0.50,
-        rank_ic_weight=0.30,
+        max_clusters=16,
+        psi_weight=0.45,
+        rank_ic_weight=0.35,
         catboost_weight=0.20,
         filter_micro_persistence=True,
         mandatory_feature_pattern=r"^(base_time_|time_|trading_minute_)",
     )
+    test_vae_vol_profile = StreamFilterProfile(
+        name="vae_volatility",
+        max_mean_psi=0.12,
+        max_pair_psi=0.25,
+        min_abs_ic=0.0,
+        min_sign_consistency=0.0,
+        min_rank_ic_ir=0.0,
+        max_correlation=0.60,
+        min_clusters=5,
+        max_clusters=14,
+        psi_weight=0.45,
+        rank_ic_weight=0.35,
+        catboost_weight=0.20,
+        filter_micro_persistence=True,
+        mandatory_feature_pattern=r"^(trading_minute_progress)",
+    )
     test_rl_profile = StreamFilterProfile(
         name="rl_decision",
-        max_mean_psi=0.25,
-        max_pair_psi=0.35,
+        max_mean_psi=0.45,
+        max_pair_psi=1.30,
         min_abs_ic=0.0,
         min_sign_consistency=0.0,
         min_rank_ic_ir=0.0,
@@ -1210,38 +1239,58 @@ def test_dual_stream_train_stage_writes_dual_artifacts_and_union(tmp_path, fake_
         max_correlation=0.99,
         composite_drop_ratio=0.0,
         mandatory_state_features=all_mandatory,
-        dual_stream=True,
-        vae_profile=test_vae_profile,
+        vae_slope_profile=test_vae_slope_profile,
+        vae_volatility_profile=test_vae_vol_profile,
         rl_profile=test_rl_profile,
     )
 
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
-    vae_file = stage_dir / "vae_state_features.npy"
+    slope_file = stage_dir / "vae_slope_state_features.npy"
+    vol_file = stage_dir / "vae_volatility_state_features.npy"
     rl_file = stage_dir / "rl_state_features.npy"
     manifest_file = stage_dir / "feature_selection_manifest.json"
 
-    assert vae_file.exists()
+    assert slope_file.exists()
+    assert vol_file.exists()
     assert rl_file.exists()
+    assert not (stage_dir / "vae_state_features.npy").exists()
     assert not (stage_dir / "state_features.npy").exists()
     assert manifest_file.exists()
 
-    vae_feats = np.load(vae_file, allow_pickle=True).tolist()
+    slope_feats = np.load(slope_file, allow_pickle=True).tolist()
+    vol_feats = np.load(vol_file, allow_pickle=True).tolist()
     rl_feats = np.load(rl_file, allow_pickle=True).tolist()
-    union_feats = list(dict.fromkeys(rl_feats + vae_feats))
+    union_set = set(slope_feats).union(set(vol_feats)).union(set(rl_feats))
+    union_candidates = [
+        f for f in rl_feats if f not in all_mandatory
+    ] + [
+        f
+        for f in slope_feats
+        if f not in all_mandatory and f not in set(rl_feats)
+    ] + [
+        f
+        for f in vol_feats
+        if f not in all_mandatory and f not in set(rl_feats) and f not in set(slope_feats)
+    ]
+    union_mandatory = [f for f in all_mandatory if f in union_set]
+    union_feats = union_candidates + union_mandatory
 
     # Verify set union property
-    assert set(union_feats) == set(vae_feats).union(set(rl_feats))
+    assert set(union_feats) == union_set
 
     # Verify manifest audit payload
     manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
-    assert manifest_data["stream_mode"] == "dual"
+    assert manifest_data["stream_mode"] == "triple"
     assert manifest_data["selected_feature_count"] == len(union_feats)
     assert manifest_data["selected_features"] == union_feats
-    assert "vae_stream" in manifest_data
+    assert "vae_slope_stream" in manifest_data
+    assert "vae_volatility_stream" in manifest_data
     assert "rl_stream" in manifest_data
-    assert manifest_data["vae_stream"]["profile_name"] == "vae_regime"
+    assert manifest_data["vae_slope_stream"]["profile_name"] == "vae_slope"
+    assert manifest_data["vae_volatility_stream"]["profile_name"] == "vae_volatility"
     assert manifest_data["rl_stream"]["profile_name"] == "rl_decision"
-    assert manifest_data["vae_stream"]["selected_feature_count"] == len(vae_feats)
+    assert manifest_data["vae_slope_stream"]["selected_feature_count"] == len(slope_feats)
+    assert manifest_data["vae_volatility_stream"]["selected_feature_count"] == len(vol_feats)
     assert manifest_data["rl_stream"]["selected_feature_count"] == len(rl_feats)
 
     # Verify filtered contract feather outputs contain reward and union features
@@ -1251,18 +1300,15 @@ def test_dual_stream_train_stage_writes_dual_artifacts_and_union(tmp_path, fake_
     assert "symbol" in df_fu2601.columns
 
 
-def test_dual_stream_micro_persistence_and_mandatory_isolation(tmp_path, fake_catboost):
+def test_triple_stream_micro_persistence_and_mandatory_isolation(tmp_path, fake_catboost):
     from operator_futures.feature_selection.muti_contract.types import (
         StreamFilterProfile,
-        DEFAULT_VAE_PROFILE,
-        DEFAULT_RL_PROFILE,
     )
 
     row_count = 24
     fast_decay = [1.0 if index % 2 == 0 else -1.0 for index in range(row_count)]
     slow_signal = [float(index) for index in range(row_count)]
 
-    # Time topology mandatory vs contract-role mandatory
     mandatory_features = [
         "base_time_day_progress",
         "time_hour_sin",
@@ -1288,9 +1334,8 @@ def test_dual_stream_micro_persistence_and_mandatory_isolation(tmp_path, fake_ca
         tmp_path, "train", "fu2605", [v + 1 for v in slow_signal], slow_signal, extra_features=extra_features
     )
 
-    # Use smaller min_clusters for this unit test
-    custom_vae_profile = StreamFilterProfile(
-        name="vae_regime",
+    custom_vae_slope_profile = StreamFilterProfile(
+        name="vae_slope",
         max_mean_psi=0.10,
         max_pair_psi=0.20,
         min_abs_ic=0.0,
@@ -1299,16 +1344,32 @@ def test_dual_stream_micro_persistence_and_mandatory_isolation(tmp_path, fake_ca
         max_correlation=0.65,
         min_clusters=1,
         max_clusters=10,
-        psi_weight=0.50,
-        rank_ic_weight=0.30,
+        psi_weight=0.45,
+        rank_ic_weight=0.35,
         catboost_weight=0.20,
         filter_micro_persistence=True,
         mandatory_feature_pattern=r"^(base_time_|time_|trading_minute_)",
     )
+    custom_vae_vol_profile = StreamFilterProfile(
+        name="vae_volatility",
+        max_mean_psi=0.12,
+        max_pair_psi=0.25,
+        min_abs_ic=0.0,
+        min_sign_consistency=0.0,
+        min_rank_ic_ir=0.0,
+        max_correlation=0.60,
+        min_clusters=1,
+        max_clusters=10,
+        psi_weight=0.45,
+        rank_ic_weight=0.35,
+        catboost_weight=0.20,
+        filter_micro_persistence=True,
+        mandatory_feature_pattern=r"^(trading_minute_progress)",
+    )
     custom_rl_profile = StreamFilterProfile(
         name="rl_decision",
-        max_mean_psi=0.25,
-        max_pair_psi=0.35,
+        max_mean_psi=0.45,
+        max_pair_psi=1.30,
         min_abs_ic=0.0,
         min_sign_consistency=0.0,
         min_rank_ic_ir=0.0,
@@ -1335,42 +1396,39 @@ def test_dual_stream_micro_persistence_and_mandatory_isolation(tmp_path, fake_ca
         composite_drop_ratio=0.0,
         min_half_life_bars=1.0,
         mandatory_state_features=mandatory_features,
-        dual_stream=True,
-        vae_profile=custom_vae_profile,
+        vae_slope_profile=custom_vae_slope_profile,
+        vae_volatility_profile=custom_vae_vol_profile,
         rl_profile=custom_rl_profile,
     )
 
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     assert not (stage_dir / "state_features.npy").exists()
-    vae_feats = np.load(stage_dir / "vae_state_features.npy", allow_pickle=True).tolist()
+    assert not (stage_dir / "vae_state_features.npy").exists()
+    slope_feats = np.load(stage_dir / "vae_slope_state_features.npy", allow_pickle=True).tolist()
+    vol_feats = np.load(stage_dir / "vae_volatility_state_features.npy", allow_pickle=True).tolist()
     rl_feats = np.load(stage_dir / "rl_state_features.npy", allow_pickle=True).tolist()
-    union_feats = list(dict.fromkeys(rl_feats + vae_feats))
+    union_feats = list(dict.fromkeys(rl_feats + slope_feats + vol_feats))
 
-    # VAE stream isolation:
-    # 1. wap_1_log_return_2 is dropped by persistence filter
-    assert "wap_1_log_return_2" not in vae_feats
-    # 2. contract_month_sin, cm_volume_ratio are stripped (only time topology retained)
-    assert "contract_month_sin" not in vae_feats
-    assert "cm_volume_ratio" not in vae_feats
-    assert "base_time_day_progress" in vae_feats
-    assert "time_hour_sin" in vae_feats
+    # Slope VAE stream isolation:
+    assert "wap_1_log_return_2" not in slope_feats
+    assert "contract_month_sin" not in slope_feats
+    assert "cm_volume_ratio" not in slope_feats
+    assert "base_time_day_progress" in slope_feats
+    assert "time_hour_sin" in slope_feats
 
     # RL stream preservation:
-    # 1. wap_1_log_return_2 and level5_ofi_weighted_norm are unblocked and retained
     assert "wap_1_log_return_2" in rl_feats
     assert "level5_ofi_weighted_norm" in rl_feats
-    # 2. All mandatory features preserved
     for mf in mandatory_features:
         assert mf in rl_feats
 
-    # Union features contains everything from both streams
     assert "wap_1_log_return_2" in union_feats
     assert "level5_ofi_weighted_norm" in union_feats
     assert "contract_month_sin" in union_feats
-    assert set(union_feats) == set(vae_feats).union(set(rl_feats))
+    assert set(union_feats) == set(slope_feats).union(set(vol_feats)).union(set(rl_feats))
 
 
-def test_dual_stream_fail_fast_on_insufficient_clusters(tmp_path, fake_catboost):
+def test_triple_stream_fail_fast_on_insufficient_clusters(tmp_path, fake_catboost):
     from operator_futures.feature_selection.muti_contract.types import StreamFilterProfile
 
     slow_signal = [float(i) for i in range(15)]
@@ -1383,7 +1441,6 @@ def test_dual_stream_fail_fast_on_insufficient_clusters(tmp_path, fake_catboost)
         extra_features={"feat_1": slow_signal, "feat_2": slow_signal}
     )
 
-    # Require min_clusters=10 when only 2 features are provided
     strict_profile = StreamFilterProfile(
         name="strict_test",
         max_mean_psi=0.10,
@@ -1409,16 +1466,17 @@ def test_dual_stream_fail_fast_on_insufficient_clusters(tmp_path, fake_catboost)
             target_freq="5min",
             stage="train",
             orderbook_depth=5,
-            dual_stream=True,
-            vae_profile=strict_profile,
+            vae_slope_profile=strict_profile,
+            vae_volatility_profile=strict_profile,
             rl_profile=strict_profile,
         )
 
 
-def test_end_to_end_pipeline_dual_stream_selection_scale_and_vae_data_creation(tmp_path, fake_catboost):
+def test_end_to_end_pipeline_triple_stream_selection_scale_and_vae_data_creation(tmp_path, fake_catboost):
     from operator_futures.feature_selection.muti_contract.types import (
         StreamFilterProfile,
-        DEFAULT_VAE_PROFILE,
+        DEFAULT_VAE_SLOPE_PROFILE,
+        DEFAULT_VAE_VOLATILITY_PROFILE,
         DEFAULT_RL_PROFILE,
     )
     from operator_futures.scale_describe_save.muti_contract_scale_save import (
@@ -1492,8 +1550,8 @@ def test_end_to_end_pipeline_dual_stream_selection_scale_and_vae_data_creation(t
         extra_features=all_extra,
     )
 
-    test_vae_profile = StreamFilterProfile(
-        name="vae_regime",
+    test_vae_slope_profile = StreamFilterProfile(
+        name="vae_slope",
         max_mean_psi=0.10,
         max_pair_psi=0.20,
         min_abs_ic=0.0,
@@ -1501,12 +1559,29 @@ def test_end_to_end_pipeline_dual_stream_selection_scale_and_vae_data_creation(t
         min_rank_ic_ir=0.0,
         max_correlation=0.65,
         min_clusters=12,
-        max_clusters=18,
+        max_clusters=16,
         psi_weight=0.50,
         rank_ic_weight=0.30,
         catboost_weight=0.20,
         filter_micro_persistence=True,
-        mandatory_feature_pattern=r"^(base_time_|time_|trading_minute_)",
+        mandatory_feature_pattern=r"^(trading_minute_)",
+    )
+    test_vae_volatility_profile = StreamFilterProfile(
+        name="vae_volatility",
+        target_metric="VolRankIC",
+        max_mean_psi=0.12,
+        max_pair_psi=0.20,
+        min_abs_ic=0.0,
+        min_sign_consistency=0.0,
+        min_rank_ic_ir=0.0,
+        max_correlation=0.60,
+        min_clusters=10,
+        max_clusters=14,
+        psi_weight=0.50,
+        rank_ic_weight=0.30,
+        catboost_weight=0.20,
+        filter_micro_persistence=True,
+        mandatory_feature_pattern=r"^(trading_minute_)",
     )
     test_rl_profile = StreamFilterProfile(
         name="rl_decision",
@@ -1525,7 +1600,7 @@ def test_end_to_end_pipeline_dual_stream_selection_scale_and_vae_data_creation(t
         mandatory_feature_pattern=None,
     )
 
-    # 2. Stage 1 & 2: Run Dual-Stream Feature Selection
+    # 2. Stage 1 & 2: Run Triple-Stream Feature Selection
     res = run_feature_selection(
         root_path=tmp_path,
         split_path="PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST",
@@ -1538,28 +1613,33 @@ def test_end_to_end_pipeline_dual_stream_selection_scale_and_vae_data_creation(t
         max_correlation=0.99,
         composite_drop_ratio=0.0,
         mandatory_state_features=all_mandatory,
-        dual_stream=True,
-        vae_profile=test_vae_profile,
+        vae_slope_profile=test_vae_slope_profile,
+        vae_volatility_profile=test_vae_volatility_profile,
         rl_profile=test_rl_profile,
     )
 
     stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
-    vae_file = stage_dir / "vae_state_features.npy"
+    vae_slope_file = stage_dir / "vae_slope_state_features.npy"
+    vae_vol_file = stage_dir / "vae_volatility_state_features.npy"
     rl_file = stage_dir / "rl_state_features.npy"
     manifest_file = stage_dir / "feature_selection_manifest.json"
 
-    assert vae_file.exists()
+    assert vae_slope_file.exists()
+    assert vae_vol_file.exists()
     assert rl_file.exists()
+    assert not (stage_dir / "vae_state_features.npy").exists()
     assert not (stage_dir / "state_features.npy").exists()
 
-    vae_feats = np.load(vae_file, allow_pickle=True).tolist()
+    vae_slope_feats = np.load(vae_slope_file, allow_pickle=True).tolist()
+    vae_vol_feats = np.load(vae_vol_file, allow_pickle=True).tolist()
     rl_feats = np.load(rl_file, allow_pickle=True).tolist()
-    union_feats = list(dict.fromkeys(rl_feats + vae_feats))
+    union_feats = list(dict.fromkeys(rl_feats + vae_slope_feats + vae_vol_feats))
 
-    # Manifest audit: VAE has 12-18 features, RL has 50-65 features
-    assert 12 <= len(vae_feats) <= 18
+    # Manifest audit: VAE slope 12-16 features, VAE vol 10-14 features, RL 50-65 features
+    assert 12 <= len(vae_slope_feats) <= 16
+    assert 10 <= len(vae_vol_feats) <= 14
     assert 50 <= len(rl_feats) <= 65
-    assert set(union_feats) == set(vae_feats).union(set(rl_feats))
+    assert set(union_feats) == set(vae_slope_feats).union(set(vae_vol_feats)).union(set(rl_feats))
 
     # 3. Stage 3: Unified Scale-Save on Union State Features
     scale_save_args = scale_save_parser.parse_args([
@@ -1580,8 +1660,10 @@ def test_end_to_end_pipeline_dual_stream_selection_scale_and_vae_data_creation(t
 
     scale_root = tmp_path / "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/5min"
     assert not (scale_root / "state_features.npy").exists()
+    assert not (scale_root / "vae_state_features.npy").exists()
+    assert (scale_root / "vae_slope_state_features.npy").exists()
+    assert (scale_root / "vae_volatility_state_features.npy").exists()
     assert (scale_root / "rl_state_features.npy").exists()
-    assert (scale_root / "vae_state_features.npy").exists()
 
     # 4. Step 2 Dataset Packaging: write_stage_datasets
     dataset_dest = tmp_path / "dataset" / "5min" / "fu"
@@ -1591,8 +1673,10 @@ def test_end_to_end_pipeline_dual_stream_selection_scale_and_vae_data_creation(t
         dataset_split_manifest_path=str(tmp_path / "dataset_split_manifest.json"),
         rl_state_features_source_path=str(scale_root / "rl_state_features.npy"),
         rl_state_features_path=str(dataset_dest / "rl_state_features.npy"),
-        vae_state_features_source_path=str(scale_root / "vae_state_features.npy"),
-        vae_state_features_path=str(dataset_dest / "vae_state_features.npy"),
+        vae_slope_state_features_source_path=str(scale_root / "vae_slope_state_features.npy"),
+        vae_slope_state_features_path=str(dataset_dest / "vae_slope_state_features.npy"),
+        vae_volatility_state_features_source_path=str(scale_root / "vae_volatility_state_features.npy"),
+        vae_volatility_state_features_path=str(dataset_dest / "vae_volatility_state_features.npy"),
         sets={
             "train": DatasetSetManifest(
                 range=None,
@@ -1621,41 +1705,61 @@ def test_end_to_end_pipeline_dual_stream_selection_scale_and_vae_data_creation(t
     write_stage_datasets(dataset_manifest)
 
     assert not (dataset_dest / "state_features.npy").exists()
-    assert (dataset_dest / "vae_state_features.npy").exists()
+    assert not (dataset_dest / "vae_state_features.npy").exists()
+    assert (dataset_dest / "vae_slope_state_features.npy").exists()
+    assert (dataset_dest / "vae_volatility_state_features.npy").exists()
     assert (dataset_dest / "rl_state_features.npy").exists()
 
-    # Create dummy dynamic slice feather under train/slope/fu2601/label_0/df_0.feather
+    # Create dummy dynamic slice feather under train/slope/fu2601/label_0/df_0.feather and train/volatility/fu2601/label_0/df_0.feather
     train_contract_df = pd.read_feather(dataset_dest / "train/fu2601.feather")
-    slice_dir = dataset_dest / "train" / "slope" / "fu2601" / "label_0"
-    slice_dir.mkdir(parents=True, exist_ok=True)
-    train_contract_df.to_feather(slice_dir / "df_0.feather")
+    slice_slope_dir = dataset_dest / "train" / "slope" / "fu2601" / "label_0"
+    slice_slope_dir.mkdir(parents=True, exist_ok=True)
+    train_contract_df.to_feather(slice_slope_dir / "df_0.feather")
 
-    # 5. Downstream VAE Ingestion: make_data
-    vae_args = SimpleNamespace(
+    slice_vol_dir = dataset_dest / "train" / "volatility" / "fu2601" / "label_0"
+    slice_vol_dir.mkdir(parents=True, exist_ok=True)
+    train_contract_df.to_feather(slice_vol_dir / "df_0.feather")
+
+    # 5. Downstream VAE Ingestion: make_data for slope and volatility
+    vae_args_slope = SimpleNamespace(
         base_path=str(tmp_path / "dataset" / "5min"),
         dataset_name="fu",
         save_path=str(tmp_path / "dataset" / "5min"),
         source_split="train",
         labeling_method="slope",
     )
-    vae_make_data(vae_args)
+    vae_make_data(vae_args_slope)
+
+    vae_args_vol = SimpleNamespace(
+        base_path=str(tmp_path / "dataset" / "5min"),
+        dataset_name="fu",
+        save_path=str(tmp_path / "dataset" / "5min"),
+        source_split="train",
+        labeling_method="volatility",
+    )
+    vae_make_data(vae_args_vol)
 
     vae_data_dir = dataset_dest / "VAE_data"
-    label_arr = np.load(vae_data_dir / "slope" / "fu2601" / "label_0.npy")
-    test_arr = np.load(vae_data_dir / "test" / "test_fu2611.npy")
+    label_arr_slope = np.load(vae_data_dir / "slope" / "fu2601" / "label_0.npy")
+    test_arr_slope = np.load(vae_data_dir / "slope" / "test" / "test_fu2611.npy")
 
-    # Both VAE arrays must match exact len(vae_feats) (12~18)
-    assert label_arr.shape == (row_count, len(vae_feats))
-    assert test_arr.shape == (row_count, len(vae_feats))
-    assert not np.isnan(label_arr).any()
-    assert not np.isnan(test_arr).any()
+    assert label_arr_slope.shape == (row_count, len(vae_slope_feats))
+    assert test_arr_slope.shape == (row_count, len(vae_slope_feats))
+    assert not np.isnan(label_arr_slope).any()
+    assert not np.isnan(test_arr_slope).any()
+
+    label_arr_vol = np.load(vae_data_dir / "volatility" / "fu2601" / "label_0.npy")
+    test_arr_vol = np.load(vae_data_dir / "volatility" / "test" / "test_fu2611.npy")
+
+    assert label_arr_vol.shape == (row_count, len(vae_vol_feats))
+    assert test_arr_vol.shape == (row_count, len(vae_vol_feats))
+    assert not np.isnan(label_arr_vol).any()
+    assert not np.isnan(test_arr_vol).any()
 
     # 6. Downstream Low-Level RL State Slicing
     rl_state_obs = train_contract_df[rl_feats].values
     assert rl_state_obs.shape == (row_count, len(rl_feats))
     assert not np.isnan(rl_state_obs).any()
-
-
 
 def test_evaluate_stream_branch_intra_cluster_secondary_recruitment():
     from operator_futures.feature_selection.muti_contract.pipeline import _evaluate_stream_branch
@@ -1790,3 +1894,136 @@ def test_evaluate_stream_branch_filters_stream_blacklist():
     assert "Stream Blacklist Dropped" in drops
     assert "f2" in drops["Stream Blacklist Dropped"]
     assert audit.dropped_counts["Stream Blacklist Dropped"] == 1
+
+
+def test_triple_stream_feature_selection_orthogonality_and_bounds(tmp_path, fake_catboost):
+    from operator_futures.feature_selection.blacklists import get_commodity_stream_blacklists
+    from operator_futures.feature_selection.muti_contract.types import (
+        DEFAULT_VAE_SLOPE_PROFILE,
+        DEFAULT_VAE_VOLATILITY_PROFILE,
+        DEFAULT_RL_PROFILE,
+    )
+    from dataclasses import replace
+
+    row_count = 60
+    rng = np.random.RandomState(42)
+
+    # 15 time features + 5 mandatory contract features
+    time_features = {
+        f"base_time_{i}": rng.normal(0, 1, row_count).tolist() for i in range(8)
+    }
+    time_features.update({
+        f"time_{i}": rng.normal(0, 1, row_count).tolist() for i in range(4)
+    })
+    time_features.update({
+        f"trading_minute_{i}": rng.normal(0, 1, row_count).tolist() for i in range(3)
+    })
+    mandatory_contract_features = {
+        "cm_main_sub_spread": rng.normal(0, 1, row_count).tolist(),
+        "cm_volume_ratio": rng.normal(0, 1, row_count).tolist(),
+        "contract_month_sin": [0.5] * row_count,
+        "contract_month_cos": [0.5] * row_count,
+        "contract_life_remaining_ratio": [0.8] * row_count,
+    }
+    all_mandatory = list(time_features.keys()) + list(mandatory_contract_features.keys())
+
+    # Directional features (for slope & RL)
+    slope_features = {}
+    for i in range(25):
+        # Monotonic with index to pass ANOVA & monotonicity (with noise to avoid anti-causality screen)
+        slope_features[f"directional_trend_{i}"] = [float(j) + rng.normal(0, 5.0) for j in range(row_count)]
+
+    # Volatility features (for volatility & RL)
+    vol_features = {}
+    for i in range(25):
+        # Monotonic dispersion to pass ANOVA & monotonicity (Low < Mid < High, with noise to avoid anti-causality screen)
+        vol_features[f"realized_volatility_{i}"] = [float(row_count - j) + rng.normal(0, 5.0) for j in range(row_count)]
+
+    # General RL alpha features
+    rl_extra_features = {}
+    for i in range(70):
+        rl_extra_features[f"alpha_rl_{i}"] = (rng.normal(0, 1, row_count) + float(i)*0.01).tolist()
+
+    all_features = {}
+    all_features.update(time_features)
+    all_features.update(mandatory_contract_features)
+    all_features.update(slope_features)
+    all_features.update(vol_features)
+    all_features.update(rl_extra_features)
+
+    # Monotonic mark price
+    mark_prices_1 = [10.0 + float(j) for j in range(row_count)]
+    mark_prices_2 = [10.0 + float(j * 1.05) for j in range(row_count)]
+
+    _write_long_split_contract(
+        tmp_path, "train", "fu2601",
+        mark_prices_1, mark_prices_1,
+        extra_features=all_features,
+    )
+    _write_long_split_contract(
+        tmp_path, "train", "fu2605",
+        mark_prices_2, mark_prices_2,
+        extra_features=all_features,
+    )
+
+    vae_slope_bl, vae_vol_bl, rl_bl = get_commodity_stream_blacklists("5min")
+
+    custom_slope = replace(
+        DEFAULT_VAE_SLOPE_PROFILE,
+        min_abs_ic=0.0,
+        min_sign_consistency=0.0,
+        min_rank_ic_ir=0.0,
+        max_correlation=0.99,
+        feature_blacklist=tuple(vae_slope_bl) + tuple(vol_features.keys()),
+    )
+    custom_vol = replace(
+        DEFAULT_VAE_VOLATILITY_PROFILE,
+        min_abs_ic=0.0,
+        min_sign_consistency=0.0,
+        min_rank_ic_ir=0.0,
+        max_correlation=0.99,
+        feature_blacklist=tuple(vae_vol_bl) + tuple(slope_features.keys()),
+    )
+    custom_rl = replace(
+        DEFAULT_RL_PROFILE,
+        min_abs_ic=0.0,
+        min_sign_consistency=0.0,
+        min_rank_ic_ir=0.0,
+        max_correlation=0.99,
+        min_clusters=55,
+        max_clusters=70,
+        feature_blacklist=tuple(rl_bl),
+    )
+
+    res = run_feature_selection(
+        root_path=tmp_path,
+        split_path="PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST",
+        save_path="PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION",
+        symbol="fu",
+        target_freq="5min",
+        stage="train",
+        orderbook_depth=5,
+        mandatory_state_features=all_mandatory,
+        vae_slope_profile=custom_slope,
+        vae_volatility_profile=custom_vol,
+        rl_profile=custom_rl,
+    )
+
+    stage_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
+    slope_feats = np.load(stage_dir / "vae_slope_state_features.npy", allow_pickle=True).tolist()
+    vol_feats = np.load(stage_dir / "vae_volatility_state_features.npy", allow_pickle=True).tolist()
+    rl_feats = np.load(stage_dir / "rl_state_features.npy", allow_pickle=True).tolist()
+
+    # Verify cluster count bounds
+    assert 12 <= len(slope_feats) <= 16, f"Slope features count {len(slope_feats)} out of [12, 16]"
+    assert 10 <= len(vol_feats) <= 14, f"Volatility features count {len(vol_feats)} out of [10, 14]"
+    assert 55 <= len(rl_feats) <= 70, f"RL features count {len(rl_feats)} out of [55, 70]"
+
+    # Verify zero cross-stream leakage:
+    # vae_slope must contain 0 volatility indicators
+    for f in slope_feats:
+        assert not any(vol_pat in f for vol_pat in ["realized_volatility", "atr", "parkinson", "bollinger"]), f"Vol indicator {f} leaked into vae_slope!"
+
+    # vae_volatility must contain 0 directional indicators
+    for f in vol_feats:
+        assert not any(dir_pat in f for dir_pat in ["directional_trend", "log_price_slope", "linear_slope"]), f"Directional indicator {f} leaked into vae_volatility!"

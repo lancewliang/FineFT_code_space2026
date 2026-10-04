@@ -146,7 +146,8 @@ def test_eval_stage_test_loads_contracts_from_test_directory(tmp_path, monkeypat
     routing.single_data_path = str(dataset_root / "test.feather")
     routing.test_path = str(tmp_path / "result" / "final_result")
     routing.tech_indicator_list = []
-    routing.vae_indicator_list = []
+    routing.vae_slope_indicators = []
+    routing.vae_volatility_indicators = []
     routing.max_holding_number = 2
     routing.position_choices = 5
     routing.leverage_choices = [5]
@@ -174,7 +175,7 @@ def test_eval_stage_test_loads_contracts_from_test_directory(tmp_path, monkeypat
         routing,
     )
     routing.get_action = types.MethodType(lambda self, info, s, current_position, current_leverage: 1, routing)
-    routing.get_quantiles = types.MethodType(lambda self, s: None, routing)
+    routing.get_quantiles = types.MethodType(lambda self, *args, **kwargs: None, routing)
 
     return_rate = routing.test()
 
@@ -288,3 +289,87 @@ def test_vae_routing_final_result_macro_action_entrypoint(tmp_path, monkeypatch)
     assert args.selection_manifest == str(manifest_path)
 
 
+
+
+def test_vae_routing_dual_axis_independent_dimensions_and_slicing(tmp_path, monkeypatch):
+    import torch
+    from RL.DiHFT.VAE.vae import MLP_VAE
+
+    dataset_root = tmp_path / "dataset" / "fu"
+    dataset_root.mkdir(parents=True, exist_ok=True)
+
+    slope_features = ["slope_1", "slope_2", "slope_3"]
+    vol_features = ["vol_1", "vol_2"]
+    rl_features = ["rl_1", "rl_2", "rl_3", "rl_4"]
+
+    np.save(dataset_root / "vae_slope_state_features.npy", np.array(slope_features))
+    np.save(dataset_root / "vae_volatility_state_features.npy", np.array(vol_features))
+    np.save(dataset_root / "rl_state_features.npy", np.array(rl_features))
+    np.save(dataset_root / "maintenance_margin_ratio_dict.npy", {})
+
+    routing = vru.vae_risk_aware_routing.__new__(vru.vae_risk_aware_routing)
+    routing.device = torch.device("cpu")
+    routing.base_path = str(tmp_path / "dataset")
+    routing.dataset_name = "fu"
+    routing.experiment_name = "test_exp"
+    routing.num_labels = 2
+    routing.axis_window_lengths = {"slope": 10, "volatility": 10}
+
+    # Load indicators
+    routing.tech_indicator_list = np.load(dataset_root / "rl_state_features.npy")
+    routing.vae_slope_indicators = np.load(dataset_root / "vae_slope_state_features.npy")
+    routing.vae_volatility_indicators = np.load(dataset_root / "vae_volatility_state_features.npy")
+    routing.vae_vol_indicators = routing.vae_volatility_indicators
+
+    # Mock MLP_VAE models with exact input dimensions
+    slope_models = [
+        MLP_VAE(INPUT_DIM=len(slope_features), Z_DIM=2, hidden_dims=[16, 8], loss_func="NLL"),
+        MLP_VAE(INPUT_DIM=len(slope_features), Z_DIM=2, hidden_dims=[16, 8], loss_func="NLL"),
+    ]
+    vol_models = [
+        MLP_VAE(INPUT_DIM=len(vol_features), Z_DIM=2, hidden_dims=[16, 8], loss_func="NLL"),
+        MLP_VAE(INPUT_DIM=len(vol_features), Z_DIM=2, hidden_dims=[16, 8], loss_func="NLL"),
+    ]
+    routing.vae_models = {
+        "slope": slope_models,
+        "volatility": vol_models,
+    }
+    routing.in_ds_logpx = {
+        "slope": [np.array([-10.0, -5.0, 0.0]), np.array([-10.0, -5.0, 0.0])],
+        "volatility": [np.array([-10.0, -5.0, 0.0]), np.array([-10.0, -5.0, 0.0])],
+    }
+    from collections import deque
+    routing.quantiles = {
+        "slope": [deque(maxlen=10), deque(maxlen=10)],
+        "volatility": [deque(maxlen=10), deque(maxlen=10)],
+    }
+
+    # Verify slicing in DataFrame
+    df = pd.DataFrame({
+        "slope_1": [1.0, 2.0],
+        "slope_2": [10.0, 20.0],
+        "slope_3": [100.0, 200.0],
+        "vol_1": [0.1, 0.2],
+        "vol_2": [0.01, 0.02],
+        "rl_1": [1.0, 1.0],
+        "rl_2": [2.0, 2.0],
+        "rl_3": [3.0, 3.0],
+        "rl_4": [4.0, 4.0],
+    })
+    routing.df = df
+    routing.vae_slope_array = routing.df[routing.vae_slope_indicators].values
+    routing.vae_vol_array = routing.df[routing.vae_volatility_indicators].values
+
+    assert routing.vae_slope_array.shape == (2, 3)
+    assert routing.vae_vol_array.shape == (2, 2)
+
+    # Verify get_quantiles with independent dimension routing
+    vae_s_slope = routing.vae_slope_array[0]  # shape (3,)
+    vae_s_vol = routing.vae_vol_array[0]      # shape (2,)
+
+    # Should evaluate with zero dimension mismatch error
+    quantiles = routing.get_quantiles(vae_s_slope, vae_s_vol)
+    assert len(quantiles["slope"][0]) == 1
+    assert len(quantiles["volatility"][0]) == 1
+    assert 0.0 <= quantiles["slope"][0][0] <= 1.0
+    assert 0.0 <= quantiles["volatility"][0][0] <= 1.0

@@ -39,26 +39,33 @@ def default_target_regime_bins(
 
 def extract_slope_and_volatility(df: pl.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     """Extract 48-bar slope and 48-bar return volatility from contract frame."""
-    close = df["close"].to_numpy().astype(float)
+    if "close" in df.columns:
+        close = df["close"].to_numpy().astype(float)
+    elif "mark_price" in df.columns:
+        close = df["mark_price"].to_numpy().astype(float)
+    else:
+        close = np.zeros(df.height, dtype=float)
     row_count = len(close)
 
     if "log_price_slope_48" in df.columns:
         slope = df["log_price_slope_48"].to_numpy().astype(float)
     else:
-        log_prices = np.log(close)
+        log_prices = np.log(np.maximum(close, 1e-8))
         slope = np.zeros(row_count, dtype=float)
-        if row_count >= 48:
-            steps = np.arange(48, dtype=float) - 23.5
+        w = 48 if row_count >= 48 else max(row_count // 2, 2)
+        if row_count >= w and w >= 2:
+            steps = np.arange(w, dtype=float) - (w - 1) / 2.0
             sum_sq = float(np.square(steps).sum())
-            rolling_log_prices = np.lib.stride_tricks.sliding_window_view(log_prices, 48)
+            rolling_log_prices = np.lib.stride_tricks.sliding_window_view(log_prices, w)
             slopes = rolling_log_prices @ steps / sum_sq
-            slope[47:] = slopes
+            slope[w - 1:] = slopes
 
-    log_returns = np.diff(np.log(close))
+    log_returns = np.diff(np.log(np.maximum(close, 1e-8)))
     volatility = np.zeros(row_count, dtype=float)
-    if row_count >= 48:
-        rolling_returns = np.lib.stride_tricks.sliding_window_view(log_returns, 47)
-        volatility[47:] = rolling_returns.std(axis=1, ddof=0)
+    w_vol = 47 if row_count >= 48 else max(len(log_returns) // 2, 2)
+    if len(log_returns) >= w_vol and w_vol >= 2:
+        rolling_returns = np.lib.stride_tricks.sliding_window_view(log_returns, w_vol)
+        volatility[w_vol:] = rolling_returns.std(axis=1, ddof=0)
 
     return slope, volatility
 

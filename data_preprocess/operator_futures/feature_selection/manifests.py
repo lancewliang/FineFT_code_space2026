@@ -122,7 +122,8 @@ class FeatureSelectionManifest:
     aggregate_metrics_path: str
     contracts: list[FeatureSelectionContractRecord] = field(default_factory=list)
     rl_feature_file: str | None = None
-    vae_feature_file: str | None = None
+    vae_slope_feature_file: str | None = None
+    vae_volatility_feature_file: str | None = None
     selected_feature_count: int | None = None
     selected_features: list[str] | None = None
     composite_drop_ratio: float | None = None
@@ -149,7 +150,8 @@ class FeatureSelectionManifest:
     min_sign_consistency: float | None = None
     conditional_anchors_retained: list[dict[str, Any]] | None = None
     stream_mode: str | None = None
-    vae_stream: StreamAuditRecord | None = None
+    vae_slope_stream: StreamAuditRecord | None = None
+    vae_volatility_stream: StreamAuditRecord | None = None
     rl_stream: StreamAuditRecord | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -161,8 +163,10 @@ class FeatureSelectionManifest:
         }
         if self.rl_feature_file is not None:
             payload["rl_feature_file"] = self.rl_feature_file
-        if self.vae_feature_file is not None:
-            payload["vae_feature_file"] = self.vae_feature_file
+        if self.vae_slope_feature_file is not None:
+            payload["vae_slope_feature_file"] = self.vae_slope_feature_file
+        if self.vae_volatility_feature_file is not None:
+            payload["vae_volatility_feature_file"] = self.vae_volatility_feature_file
         if self.selected_feature_count is not None:
             payload["selected_feature_count"] = self.selected_feature_count
         if self.selected_features is not None:
@@ -224,8 +228,10 @@ class FeatureSelectionManifest:
             payload["conditional_anchors_retained"] = self.conditional_anchors_retained
         if self.stream_mode is not None:
             payload["stream_mode"] = self.stream_mode
-        if self.vae_stream is not None:
-            payload["vae_stream"] = self.vae_stream.to_dict()
+        if self.vae_slope_stream is not None:
+            payload["vae_slope_stream"] = self.vae_slope_stream.to_dict()
+        if self.vae_volatility_stream is not None:
+            payload["vae_volatility_stream"] = self.vae_volatility_stream.to_dict()
         if self.rl_stream is not None:
             payload["rl_stream"] = self.rl_stream.to_dict()
         return payload
@@ -254,9 +260,14 @@ class FeatureSelectionManifest:
                 )
                 for f in data["filtered_outputs"]
             ]
-        vae_stream = (
-            StreamAuditRecord.from_dict(data["vae_stream"])
-            if "vae_stream" in data and data["vae_stream"] is not None
+        vae_slope_stream = (
+            StreamAuditRecord.from_dict(data["vae_slope_stream"])
+            if "vae_slope_stream" in data and data["vae_slope_stream"] is not None
+            else None
+        )
+        vae_volatility_stream = (
+            StreamAuditRecord.from_dict(data["vae_volatility_stream"])
+            if "vae_volatility_stream" in data and data["vae_volatility_stream"] is not None
             else None
         )
         rl_stream = (
@@ -273,7 +284,8 @@ class FeatureSelectionManifest:
             aggregate_metrics_path=data["aggregate_metrics_path"],
             contracts=contracts,
             rl_feature_file=data.get("rl_feature_file"),
-            vae_feature_file=data.get("vae_feature_file"),
+            vae_slope_feature_file=data.get("vae_slope_feature_file"),
+            vae_volatility_feature_file=data.get("vae_volatility_feature_file"),
             selected_feature_count=data.get("selected_feature_count"),
             selected_features=data.get("selected_features"),
             composite_drop_ratio=data.get("composite_drop_ratio"),
@@ -300,7 +312,8 @@ class FeatureSelectionManifest:
             min_sign_consistency=data.get("min_sign_consistency"),
             conditional_anchors_retained=data.get("conditional_anchors_retained"),
             stream_mode=data.get("stream_mode"),
-            vae_stream=vae_stream,
+            vae_slope_stream=vae_slope_stream,
+            vae_volatility_stream=vae_volatility_stream,
             rl_stream=rl_stream,
         )
 

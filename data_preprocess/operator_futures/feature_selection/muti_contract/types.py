@@ -106,24 +106,54 @@ class StreamFilterProfile:
     filter_micro_persistence: bool
     mandatory_feature_pattern: str | None = None
     feature_blacklist: tuple[str, ...] = field(default_factory=tuple)
+    min_anova_f: float = 0.0
+    require_monotonic: bool = False
+    target_metric: str = "RankIC"
+    max_vif: float = 10.0
 
 
-DEFAULT_VAE_PROFILE = StreamFilterProfile(
-    name="vae_regime",
+DEFAULT_VAE_SLOPE_PROFILE = StreamFilterProfile(
+    name="vae_slope",
     max_mean_psi=0.10,
     max_pair_psi=0.20,
-    min_abs_ic=0.015,
-    min_sign_consistency=0.70,
+    min_abs_ic=0.020,
+    min_sign_consistency=0.75,
     min_rank_ic_ir=0.35,
     max_correlation=0.65,
     min_clusters=12,
-    max_clusters=18,
-    psi_weight=0.50,
-    rank_ic_weight=0.30,
+    max_clusters=16,
+    psi_weight=0.45,
+    rank_ic_weight=0.35,
     catboost_weight=0.20,
     filter_micro_persistence=True,
     mandatory_feature_pattern=r"^(base_time_|time_|trading_minute_)",
     feature_blacklist=(),
+    min_anova_f=4.0,
+    require_monotonic=True,
+    target_metric="RankIC",
+    max_vif=10.0,
+)
+
+DEFAULT_VAE_VOLATILITY_PROFILE = StreamFilterProfile(
+    name="vae_volatility",
+    max_mean_psi=0.12,
+    max_pair_psi=0.25,
+    min_abs_ic=0.030,
+    min_sign_consistency=0.75,
+    min_rank_ic_ir=0.40,
+    max_correlation=0.60,
+    min_clusters=10,
+    max_clusters=14,
+    psi_weight=0.45,
+    rank_ic_weight=0.35,
+    catboost_weight=0.20,
+    filter_micro_persistence=True,
+    mandatory_feature_pattern=r"^(trading_minute_progress)",
+    feature_blacklist=(),
+    min_anova_f=6.0,
+    require_monotonic=True,
+    target_metric="VolRankIC",
+    max_vif=8.0,
 )
 
 DEFAULT_RL_PROFILE = StreamFilterProfile(
@@ -142,6 +172,10 @@ DEFAULT_RL_PROFILE = StreamFilterProfile(
     filter_micro_persistence=False,
     mandatory_feature_pattern=None,
     feature_blacklist=(),
+    min_anova_f=0.0,
+    require_monotonic=False,
+    target_metric="RankIC",
+    max_vif=10.0,
 )
 
 
@@ -156,8 +190,8 @@ class FeatureSelectionPipelineConfig:
     orderbook_depth: int = 5
     mandatory_state_features: tuple[str, ...] = field(default_factory=tuple)
     persistence_filter_pattern: str = r"_log_return_(1|2)$"
-    dual_stream: bool = True
-    vae_profile: StreamFilterProfile = DEFAULT_VAE_PROFILE
+    vae_slope_profile: StreamFilterProfile = DEFAULT_VAE_SLOPE_PROFILE
+    vae_volatility_profile: StreamFilterProfile = DEFAULT_VAE_VOLATILITY_PROFILE
     rl_profile: StreamFilterProfile = DEFAULT_RL_PROFILE
     hygiene: DataHygieneConfig = field(default_factory=DataHygieneConfig)
     drift: DistributionAuditConfig = field(default_factory=DistributionAuditConfig)

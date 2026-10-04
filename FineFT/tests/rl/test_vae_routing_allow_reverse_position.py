@@ -590,7 +590,8 @@ def test_vae_routing_test_uses_contract_level_valid_features(tmp_path, monkeypat
     routing.single_data_path = str(dataset_root / "valid.feather")
     routing.test_path = str(tmp_path / "result")
     routing.tech_indicator_list = []
-    routing.vae_indicator_list = []
+    routing.vae_slope_indicators = []
+    routing.vae_volatility_indicators = []
     routing.max_holding_number = 8
     routing.position_choices = 9
     routing.leverage_choices = [5]
@@ -632,7 +633,7 @@ def test_vae_routing_test_uses_contract_level_valid_features(tmp_path, monkeypat
         return 1
 
     routing.get_action = types.MethodType(fake_get_action, routing)
-    routing.get_quantiles = types.MethodType(lambda self, s: None, routing)
+    routing.get_quantiles = types.MethodType(lambda self, *args, **kwargs: None, routing)
 
     return_rate = routing.test()
 
@@ -691,7 +692,8 @@ def test_vae_routing_test_passes_order_book_depth_to_base_env(tmp_path, monkeypa
     routing.single_data_path = str(valid_path)
     routing.test_path = str(tmp_path / "result")
     routing.tech_indicator_list = []
-    routing.vae_indicator_list = []
+    routing.vae_slope_indicators = []
+    routing.vae_volatility_indicators = []
     routing.max_holding_number = 8
     routing.position_choices = 9
     routing.leverage_choices = [5]
@@ -713,7 +715,7 @@ def test_vae_routing_test_passes_order_book_depth_to_base_env(tmp_path, monkeypa
         routing,
     )
     routing.get_action = types.MethodType(lambda self, info, s, current_position, current_leverage: 1, routing)
-    routing.get_quantiles = types.MethodType(lambda self, s: None, routing)
+    routing.get_quantiles = types.MethodType(lambda self, *args, **kwargs: None, routing)
 
     routing.test()
 

@@ -16,7 +16,15 @@ def test_artifact_names_literals() -> None:
     assert ArtifactNames.DATASET_SPLIT_MANIFEST_JSON == "dataset_split_manifest.json"
     assert ArtifactNames.SLICE_MANIFEST_JSON == "slice_manifest.json"
     assert ArtifactNames.REGIME_THRESHOLDS_JSON == "regime_thresholds.json"
-    assert ArtifactNames.VAE_STATE_FEATURES_NPY == "vae_state_features.npy"
+    assert (
+        ArtifactNames.VAE_SLOPE_STATE_FEATURES_NPY
+        == "vae_slope_state_features.npy"
+    )
+    assert (
+        ArtifactNames.VAE_VOLATILITY_STATE_FEATURES_NPY
+        == "vae_volatility_state_features.npy"
+    )
+    assert not hasattr(ArtifactNames, "VAE_STATE_FEATURES_NPY")
     assert ArtifactNames.RL_STATE_FEATURES_NPY == "rl_state_features.npy"
     assert (
         ArtifactNames.HIGH_LEVEL_STATE_FEATURES_NPY

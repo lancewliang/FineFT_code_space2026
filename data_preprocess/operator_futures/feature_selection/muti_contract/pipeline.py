@@ -54,7 +54,8 @@ from operator_futures.feature_selection.muti_contract.stationarity_audit import 
 )
 from operator_futures.feature_selection.muti_contract.types import (
     DEFAULT_RL_PROFILE,
-    DEFAULT_VAE_PROFILE,
+    DEFAULT_VAE_SLOPE_PROFILE,
+    DEFAULT_VAE_VOLATILITY_PROFILE,
     DataHygieneConfig,
     DistributionAuditConfig,
     FeatureSelectionPipelineConfig,
@@ -98,28 +99,54 @@ def _build_config_from_legacy_kwargs(**kwargs) -> FeatureSelectionPipelineConfig
         "persistence_filter_pattern", DEFAULT_PERSISTENCE_FILTER_PATTERN
     )
 
-    vae_profile = (
-        replace(
-            kwargs.get("vae_profile", DEFAULT_VAE_PROFILE),
-            feature_blacklist=tuple(kwargs["vae_feature_blacklist"]),
-        )
-        if kwargs.get("vae_feature_blacklist") is not None
-        else kwargs.get("vae_profile", DEFAULT_VAE_PROFILE)
-    )
-    rl_profile = (
-        replace(
-            kwargs.get("rl_profile", DEFAULT_RL_PROFILE),
-            feature_blacklist=tuple(kwargs["rl_feature_blacklist"]),
-        )
-        if kwargs.get("rl_feature_blacklist") is not None
-        else kwargs.get("rl_profile", DEFAULT_RL_PROFILE)
-    )
+    def _create_stream_profile(base_profile: StreamFilterProfile, profile_key: str, blacklist_key: str) -> StreamFilterProfile:
+        if kwargs.get(profile_key) is not None:
+            prof = kwargs[profile_key]
+        else:
+            prof = base_profile
+            overrides = {}
+            if "max_mean_psi" in kwargs:
+                overrides["max_mean_psi"] = float(kwargs["max_mean_psi"])
+            if "max_pair_psi" in kwargs:
+                overrides["max_pair_psi"] = float(kwargs["max_pair_psi"])
+            if "min_abs_ic" in kwargs:
+                overrides["min_abs_ic"] = float(kwargs["min_abs_ic"])
+            if "min_sign_consistency" in kwargs:
+                overrides["min_sign_consistency"] = float(kwargs["min_sign_consistency"])
+            if "min_rank_ic_ir" in kwargs:
+                overrides["min_rank_ic_ir"] = float(kwargs["min_rank_ic_ir"])
+            if "max_correlation" in kwargs:
+                overrides["max_correlation"] = float(kwargs["max_correlation"])
+            if "min_clusters" in kwargs:
+                overrides["min_clusters"] = int(kwargs["min_clusters"])
+            if "max_clusters" in kwargs:
+                overrides["max_clusters"] = int(kwargs["max_clusters"])
+            if "require_monotonic" in kwargs:
+                overrides["require_monotonic"] = bool(kwargs["require_monotonic"])
+            if "min_anova_f" in kwargs:
+                overrides["min_anova_f"] = float(kwargs["min_anova_f"])
+            if "filter_micro_persistence" in kwargs:
+                overrides["filter_micro_persistence"] = bool(kwargs["filter_micro_persistence"])
+            if overrides:
+                prof = replace(prof, **overrides)
+        if kwargs.get(blacklist_key) is not None:
+            prof = replace(prof, feature_blacklist=tuple(kwargs[blacklist_key]))
+        return prof
+
+    vae_slope_profile = _create_stream_profile(DEFAULT_VAE_SLOPE_PROFILE, "vae_slope_profile", "vae_slope_feature_blacklist")
+    vae_volatility_profile = _create_stream_profile(DEFAULT_VAE_VOLATILITY_PROFILE, "vae_volatility_profile", "vae_volatility_feature_blacklist")
+    rl_profile = _create_stream_profile(DEFAULT_RL_PROFILE, "rl_profile", "rl_feature_blacklist")
 
     raw_blacklist = list(kwargs.get("feature_blacklist") or ())
-    vae_bl = (
-        kwargs.get("vae_feature_blacklist")
-        if kwargs.get("vae_feature_blacklist") is not None
-        else (vae_profile.feature_blacklist if vae_profile.feature_blacklist else None)
+    vae_slope_bl = (
+        kwargs.get("vae_slope_feature_blacklist")
+        if kwargs.get("vae_slope_feature_blacklist") is not None
+        else (vae_slope_profile.feature_blacklist if vae_slope_profile.feature_blacklist else None)
+    )
+    vae_vol_bl = (
+        kwargs.get("vae_volatility_feature_blacklist")
+        if kwargs.get("vae_volatility_feature_blacklist") is not None
+        else (vae_volatility_profile.feature_blacklist if vae_volatility_profile.feature_blacklist else None)
     )
     rl_bl = (
         kwargs.get("rl_feature_blacklist")
@@ -127,14 +154,16 @@ def _build_config_from_legacy_kwargs(**kwargs) -> FeatureSelectionPipelineConfig
         else (rl_profile.feature_blacklist if rl_profile.feature_blacklist else None)
     )
 
-    if vae_bl is not None and rl_bl is not None:
+    bl_sets = [set(bl) for bl in (vae_slope_bl, vae_vol_bl, rl_bl) if bl is not None]
+    if len(bl_sets) == 3:
         effective_hygiene_blacklist = tuple(
-            sorted(set(raw_blacklist).union(set(vae_bl).intersection(set(rl_bl))))
+            sorted(set(raw_blacklist).union(bl_sets[0].intersection(bl_sets[1]).intersection(bl_sets[2])))
         )
-    elif vae_bl is not None:
-        effective_hygiene_blacklist = tuple(
-            sorted(set(raw_blacklist).union(set(vae_bl)))
-        )
+    elif len(bl_sets) > 0:
+        common = bl_sets[0]
+        for s in bl_sets[1:]:
+            common = common.intersection(s)
+        effective_hygiene_blacklist = tuple(sorted(set(raw_blacklist).union(common)))
     else:
         effective_hygiene_blacklist = tuple(raw_blacklist)
 
@@ -207,8 +236,8 @@ def _build_config_from_legacy_kwargs(**kwargs) -> FeatureSelectionPipelineConfig
                 else None
             ),
         ),
-        dual_stream=bool(kwargs.get("dual_stream", False)),
-        vae_profile=vae_profile,
+        vae_slope_profile=vae_slope_profile,
+        vae_volatility_profile=vae_volatility_profile,
         rl_profile=rl_profile,
     )
 
@@ -221,13 +250,15 @@ def _evaluate_stream_branch(
     dist_metrics_df: pl.DataFrame,
     frames: dict[str, pl.DataFrame],
     mandatory_features: list[str],
-    persistence_diagnostics: list[PersistenceDiagnostic],
+    persistence_diagnostics: list[PersistenceDiagnostic] | None,
     min_half_life_bars: float,
-    active_persistence_pattern: str,
+    active_persistence_pattern: str | None,
     raw_universe_size: int,
     catboost_mean_importance: dict[str, float],
     sign_consistency_map: dict[str, float],
     retained_anchors: list[str],
+    *,
+    vol_sign_consistency_map: dict[str, float] | None = None,
 ) -> tuple[list[str], dict[str, list[str]], StreamAuditRecord]:
     import re
     from scipy.cluster.hierarchy import fcluster, linkage
@@ -251,14 +282,17 @@ def _evaluate_stream_branch(
     max_pair_psi_map = dict(
         zip(dist_metrics_df["feature"].to_list(), dist_metrics_df["max_pair_psi"].to_list())
     )
-    rank_ic_mean_map = dict(
-        zip(aggregate_metrics_df["feature"].to_list(), aggregate_metrics_df["RankIC_Mean"].to_list())
+
+    is_vol = (profile.target_metric == "VolRankIC")
+    target_ic_col = "VolRankIC_Mean" if is_vol and "VolRankIC_Mean" in aggregate_metrics_df.columns else "RankIC_Mean"
+    target_ic_std_col = "VolRankIC_Std" if is_vol and "VolRankIC_Std" in aggregate_metrics_df.columns else "RankIC_Std"
+    effective_sc_map = vol_sign_consistency_map if is_vol and vol_sign_consistency_map is not None else sign_consistency_map
+
+    target_ic_mean_map = dict(
+        zip(aggregate_metrics_df["feature"].to_list(), aggregate_metrics_df[target_ic_col].to_list())
     )
-    rank_ic_std_map = dict(
-        zip(aggregate_metrics_df["feature"].to_list(), aggregate_metrics_df["RankIC_Std"].to_list())
-    )
-    ic_std_map = dict(
-        zip(aggregate_metrics_df["feature"].to_list(), aggregate_metrics_df["IC_Std"].to_list())
+    target_ic_std_map = dict(
+        zip(aggregate_metrics_df["feature"].to_list(), aggregate_metrics_df[target_ic_std_col].to_list())
     )
 
     pool = list(candidate_features)
@@ -287,7 +321,7 @@ def _evaluate_stream_branch(
         filter_drops["Distribution Drift Dropped"] = psi_dropped
 
     # (b) Persistence Noise Gating
-    if profile.filter_micro_persistence and min_half_life_bars > 0.0:
+    if profile.filter_micro_persistence and min_half_life_bars > 0.0 and persistence_diagnostics is not None and active_persistence_pattern is not None:
         hl_diag_map = {row["feature"]: row for row in persistence_diagnostics}
         active_pat = re.compile(active_persistence_pattern)
         pers_dropped: list[str] = []
@@ -312,7 +346,7 @@ def _evaluate_stream_branch(
     hard_dropped: list[str] = []
     hard_surviving: list[str] = []
     for f in pool:
-        if abs(rank_ic_mean_map.get(f, 0.0)) >= profile.min_abs_ic:
+        if abs(target_ic_mean_map.get(f, 0.0)) >= profile.min_abs_ic:
             hard_surviving.append(f)
         else:
             hard_dropped.append(f)
@@ -323,7 +357,7 @@ def _evaluate_stream_branch(
     sc_dropped: list[str] = []
     sc_surviving: list[str] = []
     for f in pool:
-        if sign_consistency_map.get(f, 1.0) >= profile.min_sign_consistency:
+        if effective_sc_map.get(f, 1.0) >= profile.min_sign_consistency:
             sc_surviving.append(f)
         else:
             sc_dropped.append(f)
@@ -334,8 +368,8 @@ def _evaluate_stream_branch(
     stab_dropped: list[str] = []
     stab_surviving: list[str] = []
     for f in pool:
-        mean_r = abs(rank_ic_mean_map.get(f, 0.0))
-        std_r = rank_ic_std_map.get(f, 0.0)
+        mean_r = abs(target_ic_mean_map.get(f, 0.0))
+        std_r = target_ic_std_map.get(f, 0.0)
         ir = mean_r / (std_r + 1e-6)
         if ir >= profile.min_rank_ic_ir:
             stab_surviving.append(f)
@@ -345,11 +379,83 @@ def _evaluate_stream_branch(
     if stab_dropped:
         filter_drops["Stability Filter Dropped"] = stab_dropped
 
+    # (c.1) Regime Differentiation: Monotonicity & ANOVA F-test
+    if (profile.require_monotonic or profile.min_anova_f > 0.0) and pool:
+        from operator_futures.feature_selection.muti_contract.regime_audit import extract_slope_and_volatility
+        from scipy import stats
+
+        frame_metrics: dict[str, np.ndarray] = {}
+        all_metrics: list[np.ndarray] = []
+        is_vol_regime = (profile.name == "vae_volatility" or profile.target_metric == "VolRankIC")
+        for cname, frame in frames.items():
+            if frame.height < 48:
+                continue
+            slope_arr, vol_arr = extract_slope_and_volatility(frame)
+            arr = vol_arr if is_vol_regime else slope_arr
+            frame_metrics[cname] = arr
+            all_metrics.append(arr[47:])
+
+        if all_metrics:
+            cat_metrics = np.concatenate(all_metrics)
+            if len(cat_metrics) >= 6:
+                q1, q2 = np.quantile(cat_metrics, [1.0 / 3.0, 2.0 / 3.0])
+                if q1 < q2:
+                    mono_dropped: list[str] = []
+                    anova_dropped: list[str] = []
+                    for f in pool:
+                        b0_vals: list[np.ndarray] = []
+                        b1_vals: list[np.ndarray] = []
+                        b2_vals: list[np.ndarray] = []
+                        for cname, frame in frames.items():
+                            if f not in frame.columns:
+                                continue
+                            m_arr = frame_metrics[cname]
+                            f_arr = frame[f].to_numpy().astype(float)
+                            start_idx = 47 if len(m_arr) >= 48 else 0
+                            sub_m = m_arr[start_idx:]
+                            sub_f = f_arr[start_idx:]
+                            valid_m = ~(np.isnan(sub_m) | np.isnan(sub_f))
+                            sub_m = sub_m[valid_m]
+                            sub_f = sub_f[valid_m]
+                            if len(sub_m) == 0:
+                                continue
+                            b0_vals.append(sub_f[sub_m < q1])
+                            b1_vals.append(sub_f[(sub_m >= q1) & (sub_m < q2)])
+                            b2_vals.append(sub_f[sub_m >= q2])
+
+                        v0 = np.concatenate(b0_vals) if b0_vals else np.array([])
+                        v1 = np.concatenate(b1_vals) if b1_vals else np.array([])
+                        v2 = np.concatenate(b2_vals) if b2_vals else np.array([])
+
+                        if len(v0) >= 2 and len(v1) >= 2 and len(v2) >= 2:
+                            m0, m1, m2 = float(np.mean(v0)), float(np.mean(v1)), float(np.mean(v2))
+                            if profile.require_monotonic:
+                                if is_vol_regime:
+                                    is_mono = (m0 < m1 < m2)
+                                else:
+                                    is_mono = (m0 < m1 < m2) or (m0 > m1 > m2)
+                                if not is_mono:
+                                    mono_dropped.append(f)
+                                    continue
+
+                            if profile.min_anova_f > 0.0:
+                                f_stat, p_val = stats.f_oneway(v0, v1, v2)
+                                if np.isnan(f_stat) or f_stat < profile.min_anova_f:
+                                    anova_dropped.append(f)
+                                    continue
+
+                    if mono_dropped:
+                        pool = [f for f in pool if f not in mono_dropped]
+                        filter_drops["Monotonicity Filter Dropped"] = mono_dropped
+                    if anova_dropped:
+                        pool = [f for f in pool if f not in anova_dropped]
+                        filter_drops["ANOVA F Filter Dropped"] = anova_dropped
+
     # (d) Composite Priority Scoring
     if pool:
         height = float(len(pool))
         inv_psi_vals = np.array([1.0 / (float(mean_psi_map.get(f, 0.0)) + 1e-4) for f in pool])
-        rank_ic_vals = np.array([abs(float(rank_ic_mean_map.get(f, 0.0))) for f in pool])
+        rank_ic_vals = np.array([abs(float(target_ic_mean_map.get(f, 0.0))) for f in pool])
         cb_vals = np.array([float(catboost_mean_importance.get(f, 0.0)) for f in pool])
 
         inv_psi_ranks = (np.argsort(np.argsort(inv_psi_vals)) + 1) / height
@@ -372,15 +478,17 @@ def _evaluate_stream_branch(
     if not pool:
         selected_candidates: list[str] = []
         cluster_dropped: list[str] = []
+    elif len(pool) == 1:
+        selected_candidates = list(pool)
+        cluster_dropped = []
     else:
         corre_df = compute_contract_normalized_spearman_correlation_matrix(frames, pool)
-        corr_np = corre_df.select(pool).to_numpy()
+        corr_np = np.array(corre_df.select(pool).to_numpy(), copy=True)
         np.fill_diagonal(corr_np, 1.0)
         n_feat = len(pool)
 
-        if n_feat == 1:
-            selected_candidates = list(pool)
-            cluster_dropped = []
+        if False:
+            pass
         else:
             dist_matrix = np.sqrt(np.clip((1.0 - corr_np) / 2.0, 0.0, 1.0))
             np.fill_diagonal(dist_matrix, 0.0)
@@ -417,7 +525,7 @@ def _evaluate_stream_branch(
             selected_candidates = cluster_selected
 
         selected_candidates, vif_dropped = prune_by_vif(
-            selected_candidates, corre_df, max_vif=10.0
+            selected_candidates, corre_df, max_vif=profile.max_vif
         )
         all_dedup_dropped = [f for f in pool if f not in set(selected_candidates)]
         if all_dedup_dropped:
@@ -434,8 +542,9 @@ def _evaluate_stream_branch(
 
     final_stream_features = selected_candidates + stream_mandatory
 
-    # Fail-Fast Minimum Cluster Count Check (User Story 18)
+    # Fail-Fast Minimum Cluster Count Check
     total_count = len(final_stream_features)
+
     min_required = min(raw_universe_size + len(stream_mandatory), profile.min_clusters)
     if total_count < min_required:
         raise ValueError(
@@ -457,7 +566,7 @@ def _evaluate_stream_branch(
     return final_stream_features, filter_drops, audit_record
 
 
-def _run_dual_stream_train_stage(
+def _run_triple_stream_train_stage(
     io: PipelineIOManager,
     frames: dict[str, pl.DataFrame],
     raw_universe: list[str],
@@ -501,19 +610,21 @@ def _run_dual_stream_train_stage(
         raise ValueError(f"{config.stage} feature universe is empty")
     candidate_universe = hygiene_res.surviving_features
 
-    # 1.2 Shared Distribution Drift Audit (Relaxed envelope across VAE and RL)
+    # 1.2 Shared Distribution Drift Audit (Relaxed envelope across VAE Slope, VAE Vol, and RL)
     outpost_frame = io.load_validation_outpost_frame(candidate_universe)
     shared_drift_config = DistributionAuditConfig(
         num_bins=config.drift.num_bins,
         max_mean_psi=max(
             config.drift.max_mean_psi,
             config.rl_profile.max_mean_psi,
-            config.vae_profile.max_mean_psi,
+            config.vae_slope_profile.max_mean_psi,
+            config.vae_volatility_profile.max_mean_psi,
         ),
         max_pair_psi=max(
             config.drift.max_pair_psi,
             config.rl_profile.max_pair_psi,
-            config.vae_profile.max_pair_psi,
+            config.vae_slope_profile.max_pair_psi,
+            config.vae_volatility_profile.max_pair_psi,
         ),
         min_drift_survivors=config.drift.min_drift_survivors,
         forward_outpost_max_psi=config.drift.forward_outpost_max_psi,
@@ -526,43 +637,35 @@ def _run_dual_stream_train_stage(
     )
     dist_path = io.output_dir / "distribution_audit_metrics.csv"
     dist_res.metrics_df.write_csv(dist_path)
-    candidate_universe = dist_res.surviving_features
 
-    # 1.3 Shared Stationarity Audit (ADF and SAR evaluated; persistence diagnostics gathered)
-    shared_stationarity_config = StationarityAuditConfig(
-        adf_significance_level=config.stationarity.adf_significance_level,
-        min_passing_contract_ratio=config.stationarity.min_passing_contract_ratio,
-        fallback_significance_level=config.stationarity.fallback_significance_level,
-        min_survivors_floor=config.stationarity.min_survivors_floor,
-        min_half_life_bars=0.0,
-        max_sign_alternation_rate=1.0,
-        active_feature_pattern=config.persistence_filter_pattern,
-    )
-    stat_res = execute_stationarity_audit(
-        cleaned_frames, candidate_universe, shared_stationarity_config
-    )
-    if not stat_res.surviving_features and not mandatory_features:
-        raise ValueError(
-            "feature selection produced an empty list after Stationarity Audit"
+    # 1.3 Stationarity Diagnostics (Shared half-life calculation)
+    persistence_diagnostics: list[PersistenceDiagnostic] | None = None
+    if config.stationarity.min_half_life_bars > 0.0:
+        stat_res = execute_stationarity_audit(
+            cleaned_frames,
+            dist_res.surviving_features,
+            config=config.stationarity,
         )
-    candidate_universe = stat_res.surviving_features
-    persistence_diagnostics = stat_res.diagnostics["persistence_diagnostics"]
+        persistence_diagnostics = stat_res.diagnostics["persistence_diagnostics"]
 
     # 1.4 Shared Vectorized Predictive Audit (Relaxed envelope)
     shared_predictive_config = PredictiveAuditConfig(
         min_abs_ic=min(
             config.predictive.min_abs_ic,
-            config.vae_profile.min_abs_ic,
+            config.vae_slope_profile.min_abs_ic,
+            config.vae_volatility_profile.min_abs_ic,
             config.rl_profile.min_abs_ic,
         ),
         min_sign_consistency=min(
             config.predictive.min_sign_consistency,
-            config.vae_profile.min_sign_consistency,
+            config.vae_slope_profile.min_sign_consistency,
+            config.vae_volatility_profile.min_sign_consistency,
             config.rl_profile.min_sign_consistency,
         ),
         min_rank_ic_ir=min(
             config.predictive.min_rank_ic_ir,
-            config.vae_profile.min_rank_ic_ir,
+            config.vae_slope_profile.min_rank_ic_ir,
+            config.vae_volatility_profile.min_rank_ic_ir,
             config.rl_profile.min_rank_ic_ir,
         ),
         target_decision_window=config.predictive.target_decision_window,
@@ -572,19 +675,21 @@ def _run_dual_stream_train_stage(
         rank_ic_mode=config.predictive.rank_ic_mode,
         max_metric_std=config.predictive.max_metric_std,
     )
-    aggregate_df, pred_res = execute_predictive_audit(
-        cleaned_frames, candidate_universe, shared_predictive_config
+    pred_df, pred_res = execute_predictive_audit(
+        cleaned_frames,
+        dist_res.surviving_features,
+        config=shared_predictive_config,
     )
-    if not pred_res.surviving_features and not mandatory_features:
-        raise ValueError("feature selection produced an empty list after Hard Filter")
+    aggregate_path = io.output_dir / "aggregate_metrics.csv"
+    pred_df.write_csv(aggregate_path)
 
+    contract_metric_frames = pred_res.diagnostics["metric_frames"]
     per_contract_dir = io.output_dir / "per_contract"
     per_contract_dir.mkdir(parents=True, exist_ok=True)
-    metric_frames: list[pl.DataFrame] = pred_res.diagnostics["metric_frames"]
     per_contract_records: list[FeatureSelectionContractRecord] = []
-    for (contract, frame), mf in zip(cleaned_frames.items(), metric_frames):
+    for contract, metric_frame in zip(frames.keys(), contract_metric_frames):
         metric_path = per_contract_dir / f"{contract}_metrics.csv"
-        mf.write_csv(metric_path)
+        metric_frame.write_csv(metric_path)
         per_contract_records.append(
             FeatureSelectionContractRecord(
                 contract=contract,
@@ -592,39 +697,41 @@ def _run_dual_stream_train_stage(
                 metric_path=str(metric_path),
             )
         )
-    aggregate_path = io.output_dir / "aggregate_metrics.csv"
-    aggregate_df.write_csv(aggregate_path)
 
-    # Stage 2: Single-pass CatBoost fitting on target decision window w=6
-    scored_features, scored_df, score_res = execute_nonlinear_scoring(
-        cleaned_frames,
-        pred_res.surviving_features,
-        aggregate_df,
-        dist_res.mean_psi_by_feature,
-        config.scoring,
-        metric_frames=metric_frames,
+    # 1.5 Shared Nonlinear Importance Scoring
+    mean_psi_by_feature = dict(
+        zip(dist_res.metrics_df["feature"].to_list(), dist_res.metrics_df["mean_psi"].to_list())
     )
-    for (contract, _), mf in zip(cleaned_frames.items(), metric_frames):
-        metric_path = per_contract_dir / f"{contract}_metrics.csv"
-        mf.write_csv(metric_path)
-    scored_df.write_csv(aggregate_path)
-    catboost_mean_importance = score_res.diagnostics["catboost_mean_importance"]
-    sign_consistency_map = pred_res.diagnostics["sign_consistency_map"]
-
-    # Regime Audit
-    regime_quantiles = compute_regime_quantiles(
-        cleaned_frames, num_bins=config.regime.regime_bins
-    )
-    effective_target_bins = (
-        list(config.regime.target_regime_bins)
-        if config.regime.target_regime_bins is not None
-        else default_target_regime_bins(
-            config.regime.regime_bins, config.regime.regime_bins
+    scoring_candidates = pred_res.surviving_features
+    if scoring_candidates:
+        _, scored_df, scoring_res = execute_nonlinear_scoring(
+            cleaned_frames,
+            scoring_candidates,
+            pred_df,
+            mean_psi_by_feature,
+            config=config.scoring,
         )
-    )
+        catboost_mean_importance = scoring_res.diagnostics["catboost_mean_importance"]
+    else:
+        scored_df = pred_df
+        catboost_mean_importance = {}
+
+    sign_consistency_map = pred_res.diagnostics.get("sign_consistency_map", {})
+    vol_sign_consistency_map = pred_res.diagnostics.get("vol_sign_consistency_map", {})
+
+    # 1.6 Shared Multi-Regime Audit
+    regime_bins = config.regime.regime_bins
+    regime_quantiles = compute_regime_quantiles(cleaned_frames, num_bins=regime_bins)
+    if config.regime.target_regime_bins is not None:
+        effective_target_bins = list(config.regime.target_regime_bins)
+    else:
+        num_s = len(regime_quantiles["slope"]) + 1
+        num_v = len(regime_quantiles["volatility"]) + 1
+        effective_target_bins = default_target_regime_bins(num_s, num_v)
+
     regime_audit_df, retained_anchors, retention_details = audit_regimes(
         cleaned_frames,
-        raw_universe,
+        candidate_universe,
         regime_quantiles,
         list(config.predictive.windows_list),
         target_regime_bins=effective_target_bins,
@@ -643,9 +750,9 @@ def _run_dual_stream_train_stage(
             if a in raw_universe and a not in blacklist_set and a not in rl_blacklist_set
         ]
 
-    # Branch A: VAE Regime Stream Evaluation
-    vae_selected, vae_filter_drops, vae_audit = _evaluate_stream_branch(
-        profile=config.vae_profile,
+    # Branch A: Slope VAE Regime Stream Evaluation
+    vae_slope_selected, vae_slope_filter_drops, vae_slope_audit = _evaluate_stream_branch(
+        profile=config.vae_slope_profile,
         candidate_features=pred_res.surviving_features,
         aggregate_metrics_df=scored_df,
         dist_metrics_df=dist_res.metrics_df,
@@ -658,9 +765,28 @@ def _run_dual_stream_train_stage(
         catboost_mean_importance=catboost_mean_importance,
         sign_consistency_map=sign_consistency_map,
         retained_anchors=[],
+        vol_sign_consistency_map=vol_sign_consistency_map,
     )
 
-    # Branch B: RL Decision Stream Evaluation
+    # Branch B: Volatility VAE Regime Stream Evaluation
+    vae_vol_selected, vae_vol_filter_drops, vae_vol_audit = _evaluate_stream_branch(
+        profile=config.vae_volatility_profile,
+        candidate_features=pred_res.surviving_features,
+        aggregate_metrics_df=scored_df,
+        dist_metrics_df=dist_res.metrics_df,
+        frames=cleaned_frames,
+        mandatory_features=mandatory_features,
+        persistence_diagnostics=persistence_diagnostics,
+        min_half_life_bars=float(config.stationarity.min_half_life_bars),
+        active_persistence_pattern=config.persistence_filter_pattern,
+        raw_universe_size=len(raw_universe),
+        catboost_mean_importance=catboost_mean_importance,
+        sign_consistency_map=sign_consistency_map,
+        retained_anchors=[],
+        vol_sign_consistency_map=vol_sign_consistency_map,
+    )
+
+    # Branch C: RL Decision Stream Evaluation
     rl_selected, rl_filter_drops, rl_audit = _evaluate_stream_branch(
         profile=config.rl_profile,
         candidate_features=pred_res.surviving_features,
@@ -675,24 +801,30 @@ def _run_dual_stream_train_stage(
         catboost_mean_importance=catboost_mean_importance,
         sign_consistency_map=sign_consistency_map,
         retained_anchors=rl_anchors,
+        vol_sign_consistency_map=vol_sign_consistency_map,
     )
 
-    # Mathematical Union: S_union = S_vae U S_rl
-    union_set = set(vae_selected).union(rl_selected)
+    # Mathematical Union: S_union = S_vae_slope U S_vae_vol U S_rl
+    union_set = set(vae_slope_selected).union(vae_vol_selected).union(rl_selected)
     union_candidates = [
         f for f in rl_selected if f not in mandatory_features
     ] + [
         f
-        for f in vae_selected
+        for f in vae_slope_selected
         if f not in mandatory_features and f not in set(rl_selected)
+    ] + [
+        f
+        for f in vae_vol_selected
+        if f not in mandatory_features and f not in set(rl_selected) and f not in set(vae_slope_selected)
     ]
     union_mandatory = [f for f in mandatory_features if f in union_set]
     final_selected = union_candidates + union_mandatory
     assert set(final_selected) == union_set
 
-    # Persist dual-stream artifacts and filtered contract datasets
-    vae_file, rl_file = io.save_dual_stream_features(
-        vae_features=vae_selected,
+    # Persist triple-stream artifacts and filtered contract datasets
+    vae_slope_file, vae_vol_file, rl_file = io.save_triple_stream_features(
+        vae_slope_features=vae_slope_selected,
+        vae_volatility_features=vae_vol_selected,
         rl_features=rl_selected,
     )
     filtered_outputs = io.write_filtered_outputs(frames, final_selected)
@@ -718,11 +850,13 @@ def _run_dual_stream_train_stage(
         stage=config.stage,
         split_input_dir=str(io.input_dir),
         rl_feature_file=str(rl_file),
-        vae_feature_file=str(vae_file),
+        vae_slope_feature_file=str(vae_slope_file),
+        vae_volatility_feature_file=str(vae_vol_file),
         selected_feature_count=len(final_selected),
         selected_features=final_selected,
-        stream_mode="dual",
-        vae_stream=vae_audit,
+        stream_mode="triple",
+        vae_slope_stream=vae_slope_audit,
+        vae_volatility_stream=vae_vol_audit,
         rl_stream=rl_audit,
         windows_list=list(config.predictive.windows_list),
         composite_drop_ratio=config.scoring.composite_drop_ratio,
@@ -779,258 +913,7 @@ def run_feature_selection(
     if config.stage == "valid":
         return _run_validation_stage(io, frames, raw_universe, config)
 
-    if config.dual_stream:
-        return _run_dual_stream_train_stage(io, frames, raw_universe, config)
-    return _run_single_stream_train_stage(io, frames, raw_universe, config)
-
-
-def _run_single_stream_train_stage(
-    io: PipelineIOManager,
-    frames: dict[str, pl.DataFrame],
-    raw_universe: list[str],
-    config: FeatureSelectionPipelineConfig,
-) -> FeatureSelectionResult:
-    # 2. Stage 1: Fast Vectorized Statistical Gates
-
-    mandatory_features = list(config.mandatory_state_features)
-    blacklist_set = set(config.hygiene.feature_blacklist)
-    blacklisted_mandatory: list[str] = []
-    if blacklist_set and mandatory_features:
-        blacklisted_mandatory = sorted(blacklist_set.intersection(mandatory_features))
-        if blacklisted_mandatory:
-            mandatory_features = [
-                f for f in mandatory_features if f not in blacklist_set
-            ]
-
-    # Validate input frames and check missing columns
-    for contract, frame in frames.items():
-        missing = [feature for feature in raw_universe if feature not in frame.columns]
-        if missing:
-            raise ValueError(
-                f"contract {contract} is missing required feature columns: {missing}"
-            )
-        io.validate_contract_frame(
-            frame, contract=contract, feature_universe=raw_universe
-        )
-
-    candidate_universe = [f for f in raw_universe if f not in mandatory_features]
-
-    # 1.1 Data Hygiene (NZV, Mode Frequency, Front-loaded Blacklist & Ablation, Winsorization)
-    cleaned_frames, hygiene_res = execute_data_hygiene(
-        frames, candidate_universe, config.hygiene
-    )
-    if (
-        config.hygiene.feature_blacklist
-        and not hygiene_res.surviving_features
-        and not mandatory_features
-    ):
-        raise ValueError(
-            "feature selection produced an empty list after Feature Blacklist"
-        )
-    if not hygiene_res.surviving_features and not mandatory_features:
-        raise ValueError(f"{config.stage} feature universe is empty")
-    candidate_universe = hygiene_res.surviving_features
-
-    # 1.2 Distribution Drift Audit (Multi-contract PSI & Forward Boundary Outpost)
-    outpost_frame = io.load_validation_outpost_frame(candidate_universe)
-    dist_res = audit_distribution_drift(
-        cleaned_frames,
-        candidate_universe,
-        config=config.drift,
-        forward_outpost_frame=outpost_frame,
-    )
-    dist_path = io.output_dir / "distribution_audit_metrics.csv"
-    dist_res.metrics_df.write_csv(dist_path)
-    candidate_universe = dist_res.surviving_features
-
-    # 1.3 Stationarity Audit (Within-contract ADF, Fallback Safeguard, Half-Life, SAR)
-    stat_res = execute_stationarity_audit(
-        cleaned_frames, candidate_universe, config.stationarity
-    )
-    if not stat_res.surviving_features and not mandatory_features:
-        raise ValueError(
-            "feature selection produced an empty list after Stationarity Audit"
-        )
-    candidate_universe = stat_res.surviving_features
-
-    # 1.4 Vectorized Predictive Audit (Multi-window IC/RankIC, Sign Consistency, Stability IR, FDR)
-    aggregate_df, pred_res = execute_predictive_audit(
-        cleaned_frames, candidate_universe, config.predictive
-    )
-    if not pred_res.surviving_features and not mandatory_features:
-        raise ValueError("feature selection produced an empty list after Hard Filter")
-
-    # Persist initial per-contract metric frames and aggregate metrics
-    per_contract_dir = io.output_dir / "per_contract"
-    per_contract_dir.mkdir(parents=True, exist_ok=True)
-    metric_frames: list[pl.DataFrame] = pred_res.diagnostics["metric_frames"]
-    per_contract_records: list[FeatureSelectionContractRecord] = []
-    for (contract, frame), mf in zip(cleaned_frames.items(), metric_frames):
-        metric_path = per_contract_dir / f"{contract}_metrics.csv"
-        mf.write_csv(metric_path)
-        per_contract_records.append(
-            FeatureSelectionContractRecord(
-                contract=contract,
-                input_path=str(io.input_dir / f"{contract}.feather"),
-                metric_path=str(metric_path),
-            )
-        )
-    aggregate_path = io.output_dir / "aggregate_metrics.csv"
-    aggregate_df.write_csv(aggregate_path)
-
-    # 3. Stage 2: Target-Horizon Nonlinear Scoring (Purged CatBoost on w_dec, Priority Score)
-    scored_features, scored_df, score_res = execute_nonlinear_scoring(
-        cleaned_frames,
-        pred_res.surviving_features,
-        aggregate_df,
-        dist_res.mean_psi_by_feature,
-        config.scoring,
-        metric_frames=metric_frames,
-    )
-    # Update per-contract metrics with target-horizon CatBoost importance
-    for (contract, _), mf in zip(cleaned_frames.items(), metric_frames):
-        metric_path = per_contract_dir / f"{contract}_metrics.csv"
-        mf.write_csv(metric_path)
-    scored_df.write_csv(aggregate_path)
-    candidate_universe = scored_features
-
-    # 4. Stage 3: Orthogonal Representation & Regime Audit
-    ortho_res = execute_orthogonal_deduplication(
-        cleaned_frames, candidate_universe, scored_features, config.dedup
-    )
-    candidate_universe = ortho_res.surviving_features
-
-    # Regime Audit
-    regime_quantiles = compute_regime_quantiles(
-        cleaned_frames, num_bins=config.regime.regime_bins
-    )
-    effective_target_bins = (
-        list(config.regime.target_regime_bins)
-        if config.regime.target_regime_bins is not None
-        else default_target_regime_bins(
-            config.regime.regime_bins, config.regime.regime_bins
-        )
-    )
-    regime_audit_df, retained_anchors, retention_details = audit_regimes(
-        cleaned_frames,
-        raw_universe,
-        regime_quantiles,
-        list(config.predictive.windows_list),
-        target_regime_bins=effective_target_bins,
-        min_abs_ic=config.predictive.min_abs_ic,
-        enable_conditional_anchors=config.regime.enable_conditional_anchors,
-    )
-    regime_audit_path = io.output_dir / "regime_audit_metrics.csv"
-    regime_audit_df.write_csv(regime_audit_path)
-
-    normal_selected = [f for f in candidate_universe if f not in mandatory_features]
-    newly_retained: list[str] = []
-    if config.regime.enable_conditional_anchors and retained_anchors:
-        newly_retained = [
-            a
-            for a in retained_anchors
-            if a in raw_universe
-            and a not in normal_selected
-            and a not in blacklist_set
-        ]
-        if newly_retained:
-            normal_selected.extend(newly_retained)
-
-    final_selected = normal_selected + mandatory_features
-
-    # 5. Persist Output Datasets and Manifest
-    selected_file = io.save_selected_features(final_selected)
-    filtered_outputs = io.write_filtered_outputs(frames, final_selected)
-
-    filter_results: dict[str, list[str]] = {}
-    all_blacklisted = sorted(
-        set(hygiene_res.diagnostics["blacklist_dropped"]).union(blacklisted_mandatory)
-    )
-    if all_blacklisted:
-        filter_results["Feature Blacklist Dropped"] = all_blacklisted
-    if hygiene_res.diagnostics["ablation_dropped"]:
-        filter_results["Feature Ablation Dropped"] = hygiene_res.diagnostics[
-            "ablation_dropped"
-        ]
-    if dist_res.dropped_features:
-        filter_results["Distribution Drift Dropped"] = dist_res.dropped_features
-
-    filter_results["Hard Filter"] = pred_res.surviving_features
-    if pred_res.diagnostics["sign_consistency_dropped"]:
-        filter_results["Sign Consistency Filter Dropped"] = pred_res.diagnostics[
-            "sign_consistency_dropped"
-        ]
-    if config.stationarity.min_half_life_bars > 0.0:
-        filter_results["Persistence Filter"] = stat_res.surviving_features
-        if stat_res.diagnostics["persistence_dropped"]:
-            filter_results["Persistence Filter Dropped"] = stat_res.diagnostics[
-                "persistence_dropped"
-            ]
-    filter_results["Stability Filter"] = [
-        f
-        for f in pred_res.surviving_features
-        if f not in pred_res.diagnostics["stability_dropped"]
-    ]
-    filter_results["Composite Score"] = scored_features
-    if score_res.dropped_features:
-        filter_results["Composite Score Dropped"] = score_res.dropped_features
-    filter_results["Correlation Filter"] = ortho_res.surviving_features
-    if newly_retained:
-        filter_results["Conditional Anchor Retention"] = newly_retained
-
-    persistence_diagnostics = (
-        stat_res.diagnostics["persistence_diagnostics"]
-        if config.stationarity.min_half_life_bars > 0.0
-        else None
-    )
-    persistence_filter = (
-        {
-            "min_half_life_bars": float(config.stationarity.min_half_life_bars),
-            "active_feature_pattern": config.persistence_filter_pattern,
-        }
-        if config.stationarity.min_half_life_bars > 0.0
-        else None
-    )
-
-    manifest = FeatureSelectionManifest(
-        symbol=config.symbol,
-        target_freq=config.target_freq,
-        stage=config.stage,
-        split_input_dir=str(io.input_dir),
-        rl_feature_file=str(selected_file),
-        selected_feature_count=len(final_selected),
-        selected_features=final_selected,
-        windows_list=list(config.predictive.windows_list),
-        composite_drop_ratio=config.scoring.composite_drop_ratio,
-        feature_blacklist=(
-            list(config.hygiene.feature_blacklist)
-            if config.hygiene.feature_blacklist
-            else None
-        ),
-        feature_ablation_patterns=list(config.hygiene.feature_ablation_patterns),
-        rank_ic_mode=config.predictive.rank_ic_mode,
-        mandatory_state_features=(
-            mandatory_features if mandatory_features else None
-        ),
-        persistence_filter=persistence_filter,
-        persistence_diagnostics=persistence_diagnostics,
-        aggregate_metrics_path=str(aggregate_path),
-        filter_results=filter_results,
-        contracts=per_contract_records,
-        filtered_outputs=filtered_outputs,
-        regime_bins=config.regime.regime_bins,
-        target_regime_bins=effective_target_bins,
-        regime_quantiles=regime_quantiles,
-        regime_audit_path=str(regime_audit_path),
-        distribution_audit_path=str(dist_path),
-        max_mean_psi=config.drift.max_mean_psi,
-        max_pair_psi=config.drift.max_pair_psi,
-        min_drift_survivors=config.drift.min_drift_survivors,
-        min_sign_consistency=config.predictive.min_sign_consistency,
-        conditional_anchors_retained=retention_details if retention_details else None,
-    )
-    io.save_manifest(manifest)
-    return FeatureSelectionResult(output_dir=io.output_dir, manifest=manifest)
+    return _run_triple_stream_train_stage(io, frames, raw_universe, config)
 
 
 def _run_validation_stage(
@@ -1287,18 +1170,7 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="*",
         default=None,
     )
-    parser.add_argument(
-        "--dual_stream",
-        action="store_true",
-        default=True,
-        help="Enable dual-stream feature selection (default: True).",
-    )
-    parser.add_argument(
-        "--no_dual_stream",
-        action="store_false",
-        dest="dual_stream",
-        help="Disable dual-stream feature selection and run single-stream mode.",
-    )
+
     parser.add_argument(
         "--max_mean_psi",
         type=float,
@@ -1335,10 +1207,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.05,
     )
     parser.add_argument(
-        "--vae_feature_blacklist",
+        "--vae_slope_feature_blacklist",
         nargs="*",
         default=None,
-        help="Stream-specific feature blacklist for VAE regime stream.",
+        help="Stream-specific feature blacklist for Slope VAE regime stream.",
+    )
+    parser.add_argument(
+        "--vae_volatility_feature_blacklist",
+        nargs="*",
+        default=None,
+        help="Stream-specific feature blacklist for Volatility VAE regime stream.",
     )
     parser.add_argument(
         "--rl_feature_blacklist",
@@ -1376,7 +1254,6 @@ def main(argv=None):
         enable_conditional_anchors=args.enable_conditional_anchors,
         regime_bins=args.regime_bins,
         target_regime_bins=_parse_target_regime_bins(args.target_regime_bins),
-        dual_stream=args.dual_stream,
         max_mean_psi=args.max_mean_psi,
         max_pair_psi=args.max_pair_psi,
         min_drift_survivors=args.min_drift_survivors,
@@ -1384,6 +1261,7 @@ def main(argv=None):
         dedup_method=args.dedup_method,
         max_vif=args.max_vif,
         fdr_threshold=args.fdr_threshold,
-        vae_feature_blacklist=args.vae_feature_blacklist,
+        vae_slope_feature_blacklist=args.vae_slope_feature_blacklist,
+        vae_volatility_feature_blacklist=args.vae_volatility_feature_blacklist,
         rl_feature_blacklist=args.rl_feature_blacklist,
     )

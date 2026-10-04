@@ -103,10 +103,16 @@ def _dataset_manifest_from_dict(manifest):
     if not rl_dest:
         dest_p = Path(manifest.get("state_features_path", "dataset/fu/rl_state_features.npy")).parent
         rl_dest = str(dest_p / ArtifactNames.RL_STATE_FEATURES_NPY)
-    vae_src = manifest.get("vae_state_features_source_path", "")
-    vae_dest = manifest.get("vae_state_features_path", "")
-    if not vae_dest and vae_src:
-        vae_dest = str(Path(rl_dest).parent / ArtifactNames.VAE_STATE_FEATURES_NPY)
+    vae_slope_src = manifest.get("vae_slope_state_features_source_path", "")
+    vae_slope_dest = manifest.get("vae_slope_state_features_path", "")
+    if not vae_slope_dest and vae_slope_src:
+        vae_slope_dest = str(Path(rl_dest).parent / ArtifactNames.VAE_SLOPE_STATE_FEATURES_NPY)
+
+    vae_vol_src = manifest.get("vae_volatility_state_features_source_path", "")
+    vae_vol_dest = manifest.get("vae_volatility_state_features_path", "")
+    if not vae_vol_dest and vae_vol_src:
+        vae_vol_dest = str(Path(rl_dest).parent / ArtifactNames.VAE_VOLATILITY_STATE_FEATURES_NPY)
+
     payload = {
         "symbol": manifest.get("symbol", "fu"),
         "target_freq": manifest.get("target_freq", "10min"),
@@ -116,8 +122,10 @@ def _dataset_manifest_from_dict(manifest):
         ),
         "rl_state_features_source_path": rl_src,
         "rl_state_features_path": rl_dest,
-        "vae_state_features_source_path": vae_src,
-        "vae_state_features_path": vae_dest,
+        "vae_slope_state_features_source_path": vae_slope_src,
+        "vae_slope_state_features_path": vae_slope_dest,
+        "vae_volatility_state_features_source_path": vae_vol_src,
+        "vae_volatility_state_features_path": vae_vol_dest,
         "sets": manifest.get("sets", {}),
     }
     return DatasetManifest.from_dict(payload)
@@ -212,13 +220,15 @@ def test_build_dataset_manifest_uses_split_manifest_and_stage_scale_save_paths(t
         chunk_length=2,
         early_stop=1,
         rl_state_features_path=tmp_path / "FEATURE_SELECTION" / "rl_state_features.npy",
-        vae_state_features_path=tmp_path / "FEATURE_SELECTION" / "vae_state_features.npy",
+        vae_slope_state_features_path=tmp_path / "FEATURE_SELECTION" / "vae_slope_state_features.npy",
+        vae_volatility_state_features_path=tmp_path / "FEATURE_SELECTION" / "vae_volatility_state_features.npy",
     )
 
     assert isinstance(manifest, DatasetManifest)
     assert manifest.dataset_split_manifest_path.endswith("dataset_split_manifest.json")
     assert manifest.rl_state_features_path.endswith("dataset/10min/fu/rl_state_features.npy")
-    assert manifest.vae_state_features_path.endswith("dataset/10min/fu/vae_state_features.npy")
+    assert manifest.vae_slope_state_features_path.endswith("dataset/10min/fu/vae_slope_state_features.npy")
+    assert manifest.vae_volatility_state_features_path.endswith("dataset/10min/fu/vae_volatility_state_features.npy")
     train_contracts = {
         item.contract: item for item in manifest.sets["train"].contracts
     }
@@ -757,15 +767,17 @@ def test_commodity_contract_dataset_cli_help():
     assert "--dataset_split_manifest_path" in result.stdout
 
 
-def test_write_stage_datasets_propagates_dual_stream_state_features(tmp_path):
+def test_write_stage_datasets_propagates_triple_stream_state_features(tmp_path):
     train_file = _write_scale_save_file(tmp_path, "train", "fu2508", rows=2)
     fs_dir = tmp_path / "FEATURE_SELECTION" / "10min" / "fu" / "train"
     fs_dir.mkdir(parents=True)
-    vae_features = fs_dir / "vae_state_features.npy"
+    vae_slope_features = fs_dir / "vae_slope_state_features.npy"
+    vae_vol_features = fs_dir / "vae_volatility_state_features.npy"
     rl_features = fs_dir / "rl_state_features.npy"
 
-    np.save(vae_features, np.array(["feat_a"]))
-    np.save(rl_features, np.array(["feat_b"]))
+    np.save(vae_slope_features, np.array(["feat_slope"]))
+    np.save(vae_vol_features, np.array(["feat_vol"]))
+    np.save(rl_features, np.array(["feat_rl"]))
 
     dataset_root = tmp_path / "dataset" / "10min" / "fu"
     manifest = _dataset_manifest_from_dict({
@@ -773,8 +785,10 @@ def test_write_stage_datasets_propagates_dual_stream_state_features(tmp_path):
         "target_freq": "10min",
         "rl_state_features_source_path": str(rl_features),
         "rl_state_features_path": str(dataset_root / ArtifactNames.RL_STATE_FEATURES_NPY),
-        "vae_state_features_source_path": str(vae_features),
-        "vae_state_features_path": str(dataset_root / ArtifactNames.VAE_STATE_FEATURES_NPY),
+        "vae_slope_state_features_source_path": str(vae_slope_features),
+        "vae_slope_state_features_path": str(dataset_root / ArtifactNames.VAE_SLOPE_STATE_FEATURES_NPY),
+        "vae_volatility_state_features_source_path": str(vae_vol_features),
+        "vae_volatility_state_features_path": str(dataset_root / ArtifactNames.VAE_VOLATILITY_STATE_FEATURES_NPY),
         "sets": {
             "train": {
                 "contracts": [
@@ -792,7 +806,10 @@ def test_write_stage_datasets_propagates_dual_stream_state_features(tmp_path):
     write_stage_datasets(manifest)
 
     assert not (dataset_root / "state_features.npy").exists()
-    assert (dataset_root / "vae_state_features.npy").exists()
+    assert not (dataset_root / "vae_state_features.npy").exists()
+    assert (dataset_root / "vae_slope_state_features.npy").exists()
+    assert (dataset_root / "vae_volatility_state_features.npy").exists()
     assert (dataset_root / "rl_state_features.npy").exists()
-    np.testing.assert_array_equal(np.load(dataset_root / "vae_state_features.npy"), np.array(["feat_a"]))
-    np.testing.assert_array_equal(np.load(dataset_root / "rl_state_features.npy"), np.array(["feat_b"]))
+    np.testing.assert_array_equal(np.load(dataset_root / "vae_slope_state_features.npy"), np.array(["feat_slope"]))
+    np.testing.assert_array_equal(np.load(dataset_root / "vae_volatility_state_features.npy"), np.array(["feat_vol"]))
+    np.testing.assert_array_equal(np.load(dataset_root / "rl_state_features.npy"), np.array(["feat_rl"]))

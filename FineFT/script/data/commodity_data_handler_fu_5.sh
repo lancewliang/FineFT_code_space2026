@@ -15,7 +15,8 @@ python FineFT/datahandler/commodity_contract_dataset.py \
   --dataset_split_manifest_path "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/${TARGET_FREQ}/${SYMBOL}/dataset_split_manifest.json" \
   --input_root "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE" \
   --rl_state_features_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/${TARGET_FREQ}/${SYMBOL}/train/rl_state_features.npy" \
-  --vae_state_features_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/${TARGET_FREQ}/${SYMBOL}/train/vae_state_features.npy" \
+  --vae_slope_state_features_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/${TARGET_FREQ}/${SYMBOL}/train/vae_slope_state_features.npy" \
+  --vae_volatility_state_features_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/${TARGET_FREQ}/${SYMBOL}/train/vae_volatility_state_features.npy" \
   --output_root "dataset/${TARGET_FREQ}" \
   --symbol "${SYMBOL}" \
   --target_freq "${TARGET_FREQ}" \
@@ -65,3 +66,7 @@ python FineFT/datahandler/vae_data_creation.py \
   --labeling_method "volatility"
 
 cp "dataset/${SYMBOL}/maintenance_margin_ratio_dict.npy" "dataset/${TARGET_FREQ}/${SYMBOL}"
+
+test -f "dataset/${TARGET_FREQ}/${SYMBOL}/rl_state_features.npy"
+test -f "dataset/${TARGET_FREQ}/${SYMBOL}/vae_slope_state_features.npy"
+test -f "dataset/${TARGET_FREQ}/${SYMBOL}/vae_volatility_state_features.npy"

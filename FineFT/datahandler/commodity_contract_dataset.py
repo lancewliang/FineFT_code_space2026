@@ -107,12 +107,18 @@ def build_dataset_manifest(
     chunk_length: int,
     early_stop: int,
     rl_state_features_path: Path | str,
-    vae_state_features_path: Path | str | None = None,
+    vae_slope_state_features_path: Path | str | None = None,
+    vae_volatility_state_features_path: Path | str | None = None,
 ) -> DatasetManifest:
     dest_rl = str(Path(output_root) / symbol / ArtifactNames.RL_STATE_FEATURES_NPY)
-    dest_vae = (
-        str(Path(output_root) / symbol / ArtifactNames.VAE_STATE_FEATURES_NPY)
-        if vae_state_features_path is not None
+    dest_vae_slope = (
+        str(Path(output_root) / symbol / ArtifactNames.VAE_SLOPE_STATE_FEATURES_NPY)
+        if vae_slope_state_features_path is not None
+        else ""
+    )
+    dest_vae_vol = (
+        str(Path(output_root) / symbol / ArtifactNames.VAE_VOLATILITY_STATE_FEATURES_NPY)
+        if vae_volatility_state_features_path is not None
         else ""
     )
     manifest = DatasetManifest(
@@ -121,8 +127,10 @@ def build_dataset_manifest(
         dataset_split_manifest_path=str(dataset_split_manifest_path),
         rl_state_features_source_path=str(rl_state_features_path),
         rl_state_features_path=dest_rl,
-        vae_state_features_source_path=str(vae_state_features_path) if vae_state_features_path is not None else "",
-        vae_state_features_path=dest_vae,
+        vae_slope_state_features_source_path=str(vae_slope_state_features_path) if vae_slope_state_features_path is not None else "",
+        vae_slope_state_features_path=dest_vae_slope,
+        vae_volatility_state_features_source_path=str(vae_volatility_state_features_path) if vae_volatility_state_features_path is not None else "",
+        vae_volatility_state_features_path=dest_vae_vol,
         sets={},
     )
 
@@ -178,16 +186,27 @@ def write_stage_datasets(manifest: DatasetManifest) -> None:
     dest_dir.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(rl_src, dest_dir / ArtifactNames.RL_STATE_FEATURES_NPY)
 
-    if manifest.vae_state_features_source_path:
-        vae_src = Path(manifest.vae_state_features_source_path)
-        if not vae_src.exists():
+    if manifest.vae_slope_state_features_source_path:
+        vae_slope_src = Path(manifest.vae_slope_state_features_source_path)
+        if not vae_slope_src.exists():
             raise FileNotFoundError(
-                f"Missing required VAE state features: {vae_src}"
+                f"Missing required VAE slope state features: {vae_slope_src}"
             )
-        vae_features = np.load(vae_src, allow_pickle=True).tolist()
-        if not vae_features:
-            raise ValueError(f"VAE state feature list is empty: {vae_src}")
-        shutil.copyfile(vae_src, dest_dir / ArtifactNames.VAE_STATE_FEATURES_NPY)
+        vae_slope_features = np.load(vae_slope_src, allow_pickle=True).tolist()
+        if not vae_slope_features:
+            raise ValueError(f"VAE slope state feature list is empty: {vae_slope_src}")
+        shutil.copyfile(vae_slope_src, dest_dir / ArtifactNames.VAE_SLOPE_STATE_FEATURES_NPY)
+
+    if manifest.vae_volatility_state_features_source_path:
+        vae_vol_src = Path(manifest.vae_volatility_state_features_source_path)
+        if not vae_vol_src.exists():
+            raise FileNotFoundError(
+                f"Missing required VAE volatility state features: {vae_vol_src}"
+            )
+        vae_vol_features = np.load(vae_vol_src, allow_pickle=True).tolist()
+        if not vae_vol_features:
+            raise ValueError(f"VAE volatility state feature list is empty: {vae_vol_src}")
+        shutil.copyfile(vae_vol_src, dest_dir / ArtifactNames.VAE_VOLATILITY_STATE_FEATURES_NPY)
 
     for stage, set_info in manifest.sets.items():
         contracts_total_count = 0
@@ -359,7 +378,8 @@ def run_dataset_generation(
     symbol: str,
     target_freq: str,
     rl_state_features_path: Path | str,
-    vae_state_features_path: Path | str | None = None,
+    vae_slope_state_features_path: Path | str | None = None,
+    vae_volatility_state_features_path: Path | str | None = None,
     chunk_length: int = 3200,
     early_stop: int = 320,
 ) -> DatasetManifest:
@@ -379,7 +399,8 @@ def run_dataset_generation(
         chunk_length=chunk_length,
         early_stop=early_stop,
         rl_state_features_path=rl_state_features_path,
-        vae_state_features_path=vae_state_features_path,
+        vae_slope_state_features_path=vae_slope_state_features_path,
+        vae_volatility_state_features_path=vae_volatility_state_features_path,
     )
     dataset_root.mkdir(parents=True, exist_ok=True)
     write_stage_datasets(manifest)
@@ -398,7 +419,8 @@ def build_parser():
     parser.add_argument("--dataset_split_manifest_path", type=Path, required=True)
     parser.add_argument("--input_root", type=Path, required=True)
     parser.add_argument("--rl_state_features_path", type=Path, required=True)
-    parser.add_argument("--vae_state_features_path", type=Path, default=None)
+    parser.add_argument("--vae_slope_state_features_path", type=Path, default=None)
+    parser.add_argument("--vae_volatility_state_features_path", type=Path, default=None)
     parser.add_argument("--output_root", type=Path, required=True)
     parser.add_argument("--symbol", type=str, required=True)
     parser.add_argument("--target_freq", type=str, required=True)
@@ -416,7 +438,8 @@ def main(args=None):
         symbol=parsed.symbol,
         target_freq=parsed.target_freq,
         rl_state_features_path=parsed.rl_state_features_path,
-        vae_state_features_path=parsed.vae_state_features_path,
+        vae_slope_state_features_path=parsed.vae_slope_state_features_path,
+        vae_volatility_state_features_path=parsed.vae_volatility_state_features_path,
         chunk_length=parsed.chunk_length,
         early_stop=parsed.early_stop,
     )

@@ -50,7 +50,7 @@ def test_materialize_label_training_data_merges_contract_arrays_and_writes_manif
     _save(vae_dir / "slope" / "fu2505" / "label_0.npy", [[1.0, 2.0], [3.0, 4.0]])
     _save(vae_dir / "slope" / "fu2509" / "label_0.npy", [[5.0, 6.0]])
     (vae_dir / "slope" / "fu2510").mkdir(parents=True)
-    (vae_dir / "test").mkdir()
+    (vae_dir / "slope" / "test").mkdir(parents=True, exist_ok=True)
 
     result = merge_vae_train.materialize_label_training_data(
         data_base_path=str(_dataset_root(tmp_path)),
@@ -143,8 +143,8 @@ def test_discover_label_sources_reads_contract_label_arrays_as_objects(tmp_path)
 
 def test_discover_test_sources_reads_contract_test_arrays(tmp_path):
     vae_dir = _vae_dir(tmp_path)
-    _save(vae_dir / "test" / "test_fu2508.npy", [[1.0, 2.0]])
-    _save(vae_dir / "test" / "test_fu2509.npy", [[3.0, 4.0]])
+    _save(vae_dir / "slope" / "test" / "test_fu2508.npy", [[1.0, 2.0]])
+    _save(vae_dir / "slope" / "test" / "test_fu2509.npy", [[3.0, 4.0]])
 
     sources = vae_main.discover_test_sources(
         data_base_path=str(_dataset_root(tmp_path)),
@@ -157,7 +157,7 @@ def test_discover_test_sources_reads_contract_test_arrays(tmp_path):
 
 
 def test_discover_test_sources_fails_when_no_test_arrays(tmp_path):
-    (_vae_dir(tmp_path) / "test").mkdir(parents=True)
+    (_vae_dir(tmp_path) / "slope" / "test").mkdir(parents=True)
 
     with pytest.raises(FileNotFoundError, match="no test_.*\\.npy"):
         vae_main.discover_test_sources(
@@ -168,7 +168,7 @@ def test_discover_test_sources_fails_when_no_test_arrays(tmp_path):
 
 def test_prepare_contract_dataset_loader_list_wraps_sources_as_objects(tmp_path):
     vae_dir = _vae_dir(tmp_path)
-    source_file = vae_dir / "test" / "test_fu2508.npy"
+    source_file = vae_dir / "slope" / "test" / "test_fu2508.npy"
     _save(source_file, [[1.0, 2.0], [3.0, 4.0]])
     sources = [TestContractSource(contract="fu2508", source_file=str(source_file))]
 
@@ -186,7 +186,7 @@ def test_prepare_contract_dataset_loader_list_wraps_sources_as_objects(tmp_path)
 
 def test_prepare_contract_dataset_loader_list_rejects_feature_dim_mismatch(tmp_path):
     vae_dir = _vae_dir(tmp_path)
-    source_file = vae_dir / "test" / "test_fu2508.npy"
+    source_file = vae_dir / "slope" / "test" / "test_fu2508.npy"
     _save(source_file, [[1.0, 2.0, 3.0]])
     sources = [TestContractSource(contract="fu2508", source_file=str(source_file))]
 
@@ -458,8 +458,8 @@ def test_write_routing_summary_compares_labels_by_contract(tmp_path):
 
 def test_main_writes_routing_summary_after_analysis_when_all_labels_ready(tmp_path):
     vae_dir = _vae_dir(tmp_path)
-    _save(vae_dir / "test" / "test_fu2508.npy", [[1.0, 2.0]])
-    _save(vae_dir / "test" / "test_fu2509.npy", [[3.0, 4.0]])
+    _save(vae_dir / "slope" / "test" / "test_fu2508.npy", [[1.0, 2.0]])
+    _save(vae_dir / "slope" / "test" / "test_fu2509.npy", [[3.0, 4.0]])
     result_root = tmp_path / "result" / "DiHFT" / "vae_results" / "fu" / "10min"
     for label, values in {
         "label_0": {
@@ -742,8 +742,8 @@ def test_piplineruner_logs_training_file_and_contracts(tmp_path, caplog):
     vae_dir = _vae_dir(tmp_path)
     _save(vae_dir / "slope" / "fu2505" / "label_0.npy", [[1.0, 2.0], [3.0, 4.0]])
     _save(vae_dir / "slope" / "fu2509" / "label_0.npy", [[5.0, 6.0]])
-    (vae_dir / "test").mkdir(parents=True, exist_ok=True)
-    _save(vae_dir / "test" / "test_fu2509.npy", [[7.0, 8.0]])
+    (vae_dir / "slope" / "test").mkdir(parents=True, exist_ok=True)
+    _save(vae_dir / "slope" / "test" / "test_fu2509.npy", [[7.0, 8.0]])
 
     args = vae_main.parser.parse_args([
         "--train",

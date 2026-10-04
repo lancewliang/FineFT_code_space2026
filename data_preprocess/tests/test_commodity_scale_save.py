@@ -9,6 +9,7 @@ from operator_futures.scale_describe_save.muti_contract_scale_save import (
     main,
     parser,
     load_state_features,
+    load_triple_stream_state_features,
 )
 
 
@@ -28,21 +29,23 @@ def _create_mock_contract_df(contract: str, n_rows: int = 50) -> pl.DataFrame:
         "funding_rate": [0.0] * n_rows,
         "index_price": [100.0] * n_rows,
         "mark_price": [100.0] * n_rows,
-        # VAE stream specific features
+        # VAE slope specific features
+        "wap_1_return_trend": [0.02 * (i - n_rows // 2) for i in range(n_rows)],
         "base_time_day_progress": [i / float(n_rows) for i in range(n_rows)],
+        # VAE volatility specific features
         "realized_volatility_6": [0.01 + 0.001 * (i % 5) for i in range(n_rows)],
+        "garman_klass_volatility_6": [0.02 + 0.001 * (i % 3) for i in range(n_rows)],
         # RL stream specific features
         "level5_ofi_weighted_norm": [np.sin(i / 3.0) for i in range(n_rows)],
         "log_return_1": [0.0005 * ((i % 4) - 2) for i in range(n_rows)],
         "log_return_6": [0.001 * ((i % 6) - 3) for i in range(n_rows)],
         "depth_depletion": [0.1 * (i % 10) for i in range(n_rows)],
-        # Shared features
-        "wap_1_return_trend": [0.02 * (i - n_rows // 2) for i in range(n_rows)],
     })
 
 
-def test_scale_save_union_features_and_dual_stream_slicing(tmp_path):
-    vae_features = ["base_time_day_progress", "realized_volatility_6", "wap_1_return_trend"]
+def test_scale_save_union_features_and_triple_stream_slicing(tmp_path):
+    vae_slope_features = ["wap_1_return_trend", "base_time_day_progress"]
+    vae_vol_features = ["realized_volatility_6", "garman_klass_volatility_6"]
     rl_features = [
         "level5_ofi_weighted_norm",
         "log_return_1",
@@ -50,11 +53,12 @@ def test_scale_save_union_features_and_dual_stream_slicing(tmp_path):
         "depth_depletion",
         "wap_1_return_trend",
     ]
-    union_features = sorted(list(set(vae_features) | set(rl_features)))
+    union_features = sorted(list(set(vae_slope_features) | set(vae_vol_features) | set(rl_features)))
 
     fs_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     fs_dir.mkdir(parents=True, exist_ok=True)
-    np.save(fs_dir / "vae_state_features.npy", np.array(vae_features))
+    np.save(fs_dir / "vae_slope_state_features.npy", np.array(vae_slope_features))
+    np.save(fs_dir / "vae_volatility_state_features.npy", np.array(vae_vol_features))
     np.save(fs_dir / "rl_state_features.npy", np.array(rl_features))
 
     split_base = tmp_path / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu"
@@ -86,21 +90,30 @@ def test_scale_save_union_features_and_dual_stream_slicing(tmp_path):
     assert (output_root / "scaler_manifest.json").exists()
     assert (output_root / "scale_diagnostics.csv").exists()
     assert not (output_root / "state_features.npy").exists()
+    assert not (output_root / "vae_state_features.npy").exists()
     assert (output_root / "rl_state_features.npy").exists()
-    assert (output_root / "vae_state_features.npy").exists()
+    assert (output_root / "vae_slope_state_features.npy").exists()
+    assert (output_root / "vae_volatility_state_features.npy").exists()
+
     np.testing.assert_array_equal(
         np.load(output_root / "rl_state_features.npy"),
         np.array(rl_features),
     )
     np.testing.assert_array_equal(
-        np.load(output_root / "vae_state_features.npy"),
-        np.array(vae_features),
+        np.load(output_root / "vae_slope_state_features.npy"),
+        np.array(vae_slope_features),
+    )
+    np.testing.assert_array_equal(
+        np.load(output_root / "vae_volatility_state_features.npy"),
+        np.array(vae_vol_features),
     )
 
     manifest_data = json.loads((output_root / "scaler_manifest.json").read_text(encoding="utf-8"))
     assert manifest_data["clip"]["mode"] == "tanh"
     assert manifest_data["clip"]["soft_clip_m"] == 4.0
     assert manifest_data["passthrough_state_features"] == ["base_time_day_progress"]
+    assert "vae_slope_feature_list_path" in manifest_data
+    assert "vae_volatility_feature_list_path" in manifest_data
 
     for stage, contract in [("train", "fu2601"), ("valid", "fu2602"), ("test", "fu2603")]:
         scaled_feather = output_root / stage / f"{contract}.feather"
@@ -117,11 +130,17 @@ def test_scale_save_union_features_and_dual_stream_slicing(tmp_path):
         assert not np.isnan(rl_state_slice).any()
         assert not np.isinf(rl_state_slice).any()
 
-        # Downstream zero-copy view slicing for VAE regime features
-        vae_state_slice = scaled_df.select(vae_features).to_numpy()
-        assert vae_state_slice.shape == (50, len(vae_features))
-        assert not np.isnan(vae_state_slice).any()
-        assert not np.isinf(vae_state_slice).any()
+        # Downstream zero-copy view slicing for VAE slope features
+        vae_slope_slice = scaled_df.select(vae_slope_features).to_numpy()
+        assert vae_slope_slice.shape == (50, len(vae_slope_features))
+        assert not np.isnan(vae_slope_slice).any()
+        assert not np.isinf(vae_slope_slice).any()
+
+        # Downstream zero-copy view slicing for VAE volatility features
+        vae_vol_slice = scaled_df.select(vae_vol_features).to_numpy()
+        assert vae_vol_slice.shape == (50, len(vae_vol_features))
+        assert not np.isnan(vae_vol_slice).any()
+        assert not np.isinf(vae_vol_slice).any()
 
         # Pandas interface compatibility (used by RL environments)
         pdf = pd.read_feather(scaled_feather)
@@ -132,11 +151,15 @@ def test_scale_save_union_features_and_dual_stream_slicing(tmp_path):
 
 
 def test_scale_save_preflight_validation_catches_missing_columns(tmp_path):
-    union_features = ["feature_1", "feature_2", "missing_feature"]
+    slope_features = ["feature_1"]
+    vol_features = ["feature_2"]
+    rl_features = ["missing_feature"]
+
     fs_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/5min/fu/train"
     fs_dir.mkdir(parents=True, exist_ok=True)
-    np.save(fs_dir / "rl_state_features.npy", np.array(union_features))
-    np.save(fs_dir / "vae_state_features.npy", np.array(union_features))
+    np.save(fs_dir / "rl_state_features.npy", np.array(rl_features))
+    np.save(fs_dir / "vae_slope_state_features.npy", np.array(slope_features))
+    np.save(fs_dir / "vae_volatility_state_features.npy", np.array(vol_features))
 
     split_dir = tmp_path / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/5min/fu/train"
     split_dir.mkdir(parents=True, exist_ok=True)
@@ -158,3 +181,27 @@ def test_scale_save_preflight_validation_catches_missing_columns(tmp_path):
     with pytest.raises(ValueError) as exc_info:
         main(args)
     assert "missing_feature" in str(exc_info.value)
+
+
+def test_load_triple_stream_state_features_fails_fast_on_missing_files(tmp_path):
+    rl_file = tmp_path / "rl.npy"
+    slope_file = tmp_path / "slope.npy"
+    vol_file = tmp_path / "vol.npy"
+
+    np.save(rl_file, np.array(["feat_rl"]))
+    np.save(slope_file, np.array(["feat_slope"]))
+
+    # vol missing
+    with pytest.raises(FileNotFoundError):
+        load_triple_stream_state_features(rl_file, slope_file, vol_file)
+
+    # slope missing
+    np.save(vol_file, np.array(["feat_vol"]))
+    slope_missing = tmp_path / "nonexistent_slope.npy"
+    with pytest.raises(FileNotFoundError):
+        load_triple_stream_state_features(rl_file, slope_missing, vol_file)
+
+    # rl missing
+    rl_missing = tmp_path / "nonexistent_rl.npy"
+    with pytest.raises(FileNotFoundError):
+        load_triple_stream_state_features(rl_missing, slope_file, vol_file)

@@ -274,11 +274,15 @@ def write_routing_summary(
 
 def maybe_write_routing_summary_after_analysis(args):
     labels = [label_name_from_index(index) for index in range(args.total_label_number)]
-    test_dir = vae_data_dir(args.data_base_path, args.dataset_name) / "test"
-    contracts = [
-        path.stem[len("test_") :]
-        for path in sorted(test_dir.glob("test_*.npy"), key=lambda item: item.name)
-    ]
+    test_dir = vae_data_dir(args.data_base_path, args.dataset_name) / args.labeling_method / "test"
+    contracts = []
+    for path in sorted(test_dir.glob("*.npy"), key=lambda item: item.name):
+        contract = path.stem
+        if contract.startswith("test_"):
+            contract = contract[len("test_") :]
+        elif contract.startswith("df_"):
+            contract = contract[len("df_") :]
+        contracts.append(contract)
     result_root = os.path.join(args.base_model_path, "vae_results", args.dataset_name, args.experiment_name)
     for label in labels:
         for contract in contracts:

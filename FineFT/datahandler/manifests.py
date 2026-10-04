@@ -295,8 +295,10 @@ class DatasetManifest:
     rl_state_features_source_path: str
     rl_state_features_path: str
     sets: dict[str, DatasetSetManifest]
-    vae_state_features_source_path: str = ""
-    vae_state_features_path: str = ""
+    vae_slope_state_features_source_path: str = ""
+    vae_slope_state_features_path: str = ""
+    vae_volatility_state_features_source_path: str = ""
+    vae_volatility_state_features_path: str = ""
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "DatasetManifest":
@@ -310,8 +312,10 @@ class DatasetManifest:
                 stage: DatasetSetManifest.from_dict(stage_payload)
                 for stage, stage_payload in payload["sets"].items()
             },
-            vae_state_features_source_path=payload["vae_state_features_source_path"] if "vae_state_features_source_path" in payload else "",
-            vae_state_features_path=payload["vae_state_features_path"] if "vae_state_features_path" in payload else "",
+            vae_slope_state_features_source_path=payload["vae_slope_state_features_source_path"],
+            vae_slope_state_features_path=payload["vae_slope_state_features_path"],
+            vae_volatility_state_features_source_path=payload["vae_volatility_state_features_source_path"],
+            vae_volatility_state_features_path=payload["vae_volatility_state_features_path"],
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -321,8 +325,10 @@ class DatasetManifest:
             "dataset_split_manifest_path": self.dataset_split_manifest_path,
             "rl_state_features_source_path": self.rl_state_features_source_path,
             "rl_state_features_path": self.rl_state_features_path,
-            "vae_state_features_source_path": self.vae_state_features_source_path,
-            "vae_state_features_path": self.vae_state_features_path,
+            "vae_slope_state_features_source_path": self.vae_slope_state_features_source_path,
+            "vae_slope_state_features_path": self.vae_slope_state_features_path,
+            "vae_volatility_state_features_source_path": self.vae_volatility_state_features_source_path,
+            "vae_volatility_state_features_path": self.vae_volatility_state_features_path,
             "sets": {
                 stage: set_info.to_dict() for stage, set_info in self.sets.items()
             },

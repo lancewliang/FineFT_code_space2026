@@ -264,7 +264,7 @@ class vae_risk_aware_routing:
             os.path.join(self.base_path, self.dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY)
         )
         self.vae_indicator_list = np.load(
-            os.path.join(self.base_path, self.dataset_name, ArtifactNames.VAE_STATE_FEATURES_NPY)
+            os.path.join(self.base_path, self.dataset_name, ArtifactNames.VAE_SLOPE_STATE_FEATURES_NPY)
         )
         self.maintenance_margin_ratio_dict = np.load(
             os.path.join(

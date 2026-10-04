@@ -597,7 +597,8 @@ def test_multi_contract_scale_save_cli_scans_all_split_stage_contracts(tmp_path)
     )
     fs_dir.mkdir(parents=True, exist_ok=True)
     np.save(fs_dir / "rl_state_features.npy", np.array(["feature_a"]))
-    np.save(fs_dir / "vae_state_features.npy", np.array(["feature_a"]))
+    np.save(fs_dir / "vae_slope_state_features.npy", np.array(["feature_a"]))
+    np.save(fs_dir / "vae_volatility_state_features.npy", np.array(["feature_a"]))
 
     result = _run_multi_contract_scale_save_cli(tmp_path)
 
@@ -631,7 +632,8 @@ def test_multi_contract_scale_save_cli_uses_train_only_robust_scaler(tmp_path):
     )
     fs_dir.mkdir(parents=True, exist_ok=True)
     np.save(fs_dir / "rl_state_features.npy", np.array(["wap_1", "awap", "spike_feature"]))
-    np.save(fs_dir / "vae_state_features.npy", np.array(["wap_1", "awap", "spike_feature"]))
+    np.save(fs_dir / "vae_slope_state_features.npy", np.array(["wap_1", "awap", "spike_feature"]))
+    np.save(fs_dir / "vae_volatility_state_features.npy", np.array(["wap_1", "awap", "spike_feature"]))
 
     _write_multi_scale_fixture(
         tmp_path
@@ -650,7 +652,7 @@ def test_multi_contract_scale_save_cli_uses_train_only_robust_scaler(tmp_path):
 
     _run_multi_contract_scale_save_cli(
         tmp_path,
-        extra_args=["--scale_method", "robust", "--clip_mode", "hard"],
+        extra_args=["--scale_method", "robust", "--clip_mode", "hard", "--clip_min", "-5.0", "--clip_max", "5.0"],
     )
 
     output_root = tmp_path / "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/fu/5min"
@@ -688,7 +690,8 @@ def test_multi_contract_scale_save_cli_rejects_missing_split_stage_inputs(tmp_pa
     )
     fs_dir.mkdir(parents=True, exist_ok=True)
     np.save(fs_dir / "rl_state_features.npy", np.array(["feature_a"]))
-    np.save(fs_dir / "vae_state_features.npy", np.array(["feature_a"]))
+    np.save(fs_dir / "vae_slope_state_features.npy", np.array(["feature_a"]))
+    np.save(fs_dir / "vae_volatility_state_features.npy", np.array(["feature_a"]))
 
     result = _run_multi_contract_scale_save_cli(tmp_path, check=False)
 
@@ -710,7 +713,8 @@ def test_multi_contract_scale_save_cli_rejects_missing_selected_feature(tmp_path
     )
     fs_dir.mkdir(parents=True, exist_ok=True)
     np.save(fs_dir / "rl_state_features.npy", np.array(["missing_feature"]))
-    np.save(fs_dir / "vae_state_features.npy", np.array(["missing_feature"]))
+    np.save(fs_dir / "vae_slope_state_features.npy", np.array(["missing_feature"]))
+    np.save(fs_dir / "vae_volatility_state_features.npy", np.array(["missing_feature"]))
 
     result = _run_multi_contract_scale_save_cli(tmp_path, check=False)
 
@@ -731,7 +735,8 @@ def test_multi_contract_scale_save_cli_rejects_missing_train_split_inputs(tmp_pa
     )
     fs_dir.mkdir(parents=True, exist_ok=True)
     np.save(fs_dir / "rl_state_features.npy", np.array(["feature_a"]))
-    np.save(fs_dir / "vae_state_features.npy", np.array(["feature_a"]))
+    np.save(fs_dir / "vae_slope_state_features.npy", np.array(["feature_a"]))
+    np.save(fs_dir / "vae_volatility_state_features.npy", np.array(["feature_a"]))
 
     result = _run_multi_contract_scale_save_cli(tmp_path, check=False)
 
@@ -751,7 +756,8 @@ def test_multi_contract_scale_save_cli_rejects_invalid_clip_bounds(tmp_path):
     )
     fs_dir.mkdir(parents=True, exist_ok=True)
     np.save(fs_dir / "rl_state_features.npy", np.array(["feature_a"]))
-    np.save(fs_dir / "vae_state_features.npy", np.array(["feature_a"]))
+    np.save(fs_dir / "vae_slope_state_features.npy", np.array(["feature_a"]))
+    np.save(fs_dir / "vae_volatility_state_features.npy", np.array(["feature_a"]))
 
     result = _run_multi_contract_scale_save_cli(
         tmp_path,
@@ -815,7 +821,8 @@ def test_multi_contract_scale_save_cli_rejects_empty_train_feature_list(tmp_path
     )
     fs_dir.mkdir(parents=True, exist_ok=True)
     np.save(fs_dir / "rl_state_features.npy", np.array([]))
-    np.save(fs_dir / "vae_state_features.npy", np.array([]))
+    np.save(fs_dir / "vae_slope_state_features.npy", np.array([]))
+    np.save(fs_dir / "vae_volatility_state_features.npy", np.array([]))
 
     result = _run_multi_contract_scale_save_cli(tmp_path, check=False)
 

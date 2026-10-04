@@ -35,9 +35,9 @@ def test_immutable_types_and_defaults():
     )
     assert config.symbol == "fu"
     assert config.hygiene.min_variance == 1e-6
-    assert config.drift.max_mean_psi == 0.10
+    assert config.drift.max_mean_psi == 0.45
     assert config.stationarity.adf_significance_level == 0.05
-    assert config.predictive.min_sign_consistency == 0.75
+    assert config.predictive.min_sign_consistency == 0.55
     assert config.scoring.decision_window == 6
     assert config.dedup.cluster_distance_threshold == 0.50
     assert config.regime.regime_bins == 4

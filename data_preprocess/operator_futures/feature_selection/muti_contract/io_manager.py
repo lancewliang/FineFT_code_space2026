@@ -111,10 +111,11 @@ class PipelineIOManager:
                 / "train"
             )
             rl_file = train_dir / "rl_state_features.npy"
-            vae_file = train_dir / "vae_state_features.npy"
+            vae_slope_file = train_dir / "vae_slope_state_features.npy"
+            vae_vol_file = train_dir / "vae_volatility_state_features.npy"
             raw_universe: list[str] = []
             seen: set[str] = set()
-            for path in (rl_file, vae_file):
+            for path in (rl_file, vae_slope_file, vae_vol_file):
                 if path.exists():
                     for feat in load_feature_list(path):
                         if feat not in seen:
@@ -122,7 +123,7 @@ class PipelineIOManager:
                             raw_universe.append(feat)
             if not raw_universe:
                 raise FileNotFoundError(
-                    f"Missing train feature files in {train_dir}: neither rl_state_features.npy nor vae_state_features.npy found"
+                    f"Missing train feature files in {train_dir}: neither rl_state_features.npy, vae_slope_state_features.npy, nor vae_volatility_state_features.npy found"
                 )
         return raw_universe
 
@@ -207,16 +208,19 @@ class PipelineIOManager:
         np.save(selected_file, np.array(selected_features))
         return selected_file
 
-    def save_dual_stream_features(
+    def save_triple_stream_features(
         self,
-        vae_features: list[str],
+        vae_slope_features: list[str],
+        vae_volatility_features: list[str],
         rl_features: list[str],
-    ) -> tuple[Path, Path]:
-        vae_file = self.output_dir / "vae_state_features.npy"
+    ) -> tuple[Path, Path, Path]:
+        vae_slope_file = self.output_dir / "vae_slope_state_features.npy"
+        vae_vol_file = self.output_dir / "vae_volatility_state_features.npy"
         rl_file = self.output_dir / "rl_state_features.npy"
-        np.save(vae_file, np.array(vae_features))
+        np.save(vae_slope_file, np.array(vae_slope_features))
+        np.save(vae_vol_file, np.array(vae_volatility_features))
         np.save(rl_file, np.array(rl_features))
-        return vae_file, rl_file
+        return vae_slope_file, vae_vol_file, rl_file
 
     def save_manifest(self, manifest: FeatureSelectionManifest) -> Path:
         manifest_path = self.output_dir / "feature_selection_manifest.json"

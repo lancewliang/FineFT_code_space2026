@@ -67,21 +67,25 @@ Scale Save 前后对 State Feature 进行的 NaN 检查，发现 NaN 时立即�
 _Avoid_: NaN 检查、空值校验
 
 ### Feature Engineering
-**双流特征解耦 (Dual-Stream Feature Decoupling)**:
-在多合约特征选择中，将针对无监督高斯密度估计模型（高层 VAE）的“平稳性优先”特征空间，与针对博弈强化学习策略网络（低层 ensemble_Qnet）的“超额收益（Alpha）优先”特征空间进行物理隔离与双流分发的架构设计；彻底消除无监督密度模型因排斥厚尾极值而误杀微观 Alpha 信号所导致的智能体盈利能力丧失。
-_Avoid_: 单体状态空间、单流特征选择、全量特征直通
+**三流特征解耦 (Triple-Stream Feature Decoupling)**:
+在多合约特征选择中，将针对方向波段识别的“斜率 VAE 特征空间”（一阶矩有向动量优先）、针对市场离散度识别的“波动率 VAE 特征空间”（二阶矩无向波动优先）以及针对低层博弈强化学习策略网络的“RL 决策特征空间”（微观 Alpha 与盘口价差优先）进行物理隔离与三流独立筛选分发的纯净解耦架构；不包含任何向后兼容包袱，彻底消除传统单体或双流架构中因目标统计矩冲突导致的特征误杀、信号信噪比稀释与虚假 OOD 崩溃。
+_Avoid_: 双流特征解耦、单份 VAE 特征、单体状态空间、vae_state_features.npy
 
-**VAE 机制特征流 (VAE Regime Feature Stream)**:
-经严格高斯平稳性、强分布无漂移（$	ext{PSI} \le 0.10$）、低维度（12~20 维）以及强去相关（$r \le 0.70$）约束筛选出的宏观特征集合，输出为 `vae_state_features.npy`；专供高层双轴 VAE 识别市场趋势与波动率体制，杜绝由于单边脉冲与厚尾导致的 OOD 似然崩溃与误拒识关闸。
-_Avoid_: 宏观特征集、高层状态特征、全量状态特征
+**斜率 VAE 机制特征流 (Slope VAE Regime Feature Stream)**:
+经严格高斯平稳性（$\text{PSI} \le 0.10$）、有向收益预测力（$|\text{RankIC}| \ge 0.020, \text{SignConsistency} \ge 0.75$）、Down/Flat/Up 体制单调性与低维度（12~16 维，Spearman $|r| \le 0.65$）约束筛选出的奇对称特征集合，输出为 `vae_slope_state_features.npy`；专供高层斜率 VAE 精准判别价格波段方向，严格排除无向纯波动率特征以保障方向信噪比。
+_Avoid_: VAE 机制特征流、vae_state_features.npy、斜率特征宽表
+
+**波动率 VAE 机制特征流 (Volatility VAE Regime Feature Stream)**:
+针对金融波动聚集与无向离散度特性，经自适应分布平稳性（$\text{PSI} \le 0.12$）、前向绝对收益预测力（$\text{Vol-RankIC} \ge 0.030, \text{SignConsistency} \ge 0.75$）、Low/Mid/High Vol 体制单调递增性与精炼正交维度（10~14 维，Spearman $|r| \le 0.60, \text{VIF} \le 8.0$）筛选出的偶对称特征集合，输出为 `vae_volatility_state_features.npy`；专供高层波动率 VAE 识别市场离散度体制，严禁混入带符号有向指标以消除双峰重构误差与虚假 OOD 熔断。
+_Avoid_: 波动特征宽表、通用 VAE 特征
 
 **RL 决策特征流 (RL Decision Feature Stream)**:
-以跨合约多尺度预测力（RankIC）与非线性拟合重要性（CatBoost）为主导，适度放宽分布漂移（$	ext{PSI} \le 0.25$）与共线性约束（$r \le 0.80$），并解禁 5 档盘口订单流不平衡（OFI）、挂单深度消耗与短周期动量的微观特征集合，输出为 `rl_state_features.npy`（50~65 维）；专供低层强化学习智能体（ensemble_Qnet）作为高容量马尔可夫决策观测状态，赋予其敏锐捕捉盘口不对称微观价差与非线性盈利契机的能力。
+以跨合约多尺度有向预测力（RankIC）与非线性拟合重要性（CatBoost）为主导，适度放宽分布漂移（$\text{PSI} \le 0.25$）与共线性约束（$|r| \le 0.80$），并全面释放 5 档盘口订单流不平衡（OFI）、挂单深度消耗与短周期微观动量的 Alpha 特征集合，输出为 `rl_state_features.npy`（55~70 维）；专供低层强化学习智能体（ensemble_Qnet）作为高容量马尔可夫决策观测状态。
 _Avoid_: 强化学习特征集、低层状态特征、微观信号池
 
-**双流特征全集 (Dual-Stream Union State Features)**:
-在特征选择阶段由 VAE 机制特征流与 RL 决策特征流取并集构成的全量状态特征集合，持久化为 `state_features.npy`；用于驱动多合约特征标准化模块（`muti_contract_scale_save.py`）单次完成对所有模型可能消费列的自适应日内滚动标准化与软饱和截断，供下游模型按需执行无缝视图投影。
-_Avoid_: 并集特征表、总特征宽表
+**三流特征全集 (Triple-Stream Union State Features)**:
+在特征选择阶段由斜率 VAE 机制特征流、波动率 VAE 机制特征流与 RL 决策特征流三者取数学并集构成的全量状态特征集合（$S_{\text{union}} = S_{\text{vae\_slope}} \cup S_{\text{vae\_vol}} \cup S_{\text{rl}}$）；用于驱动多合约特征标准化模块（`muti_contract_scale_save.py`）单次完成对所有模型可能消费列的自适应日内滚动标准化与软饱和截断，供下游模型在内存中按需执行零拷贝列投影。
+_Avoid_: 双流特征全集、state_features.npy 持久化依赖、并集特征宽表
 
 **特征流配置预设集 (Stream Filter Profile)**:
 在多合约特征选择流水线内部定义的对称结构化配置契约（`StreamFilterProfile`），分别封装 VAE 机制流（`DEFAULT_VAE_PROFILE`）与 RL 决策流（`DEFAULT_RL_PROFILE`）在 PSI 漂移容限、符号一致性、相关性聚类上限、复合打分权重以及目标维度范围上的领域超参数。

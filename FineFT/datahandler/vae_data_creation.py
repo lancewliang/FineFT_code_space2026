@@ -113,8 +113,15 @@ def make_data(args):
         source_path = split_root
     else:
         source_path = method_path
+    if labeling_method == "slope":
+        feature_filename = ArtifactNames.VAE_SLOPE_STATE_FEATURES_NPY
+    elif labeling_method == "volatility":
+        feature_filename = ArtifactNames.VAE_VOLATILITY_STATE_FEATURES_NPY
+    else:
+        raise ValueError(f"Unsupported labeling_method: {labeling_method}")
+
     state_name_path = os.path.join(
-        args.base_path, args.dataset_name, ArtifactNames.VAE_STATE_FEATURES_NPY
+        args.base_path, args.dataset_name, feature_filename
     )
     if not os.path.exists(state_name_path):
         raise FileNotFoundError(
@@ -145,6 +152,18 @@ def make_data(args):
                 os.path.join(contract_save_path, get_vae_label_filename(label)),
             ):
                 print(f"skip empty label: {contract}/{label}")
+    legacy_test_path = os.path.join(vae_data_root, "test")
+    if os.path.isdir(legacy_test_path):
+        shutil.rmtree(legacy_test_path)
+
+    test_save_path = os.path.join(method_save_path, "test")
+    if os.path.isdir(test_save_path):
+        for item in os.listdir(test_save_path):
+            item_path = os.path.join(test_save_path, item)
+            if os.path.isfile(item_path):
+                os.remove(item_path)
+    os.makedirs(test_save_path, exist_ok=True)
+
     test_path = os.path.join(args.base_path, args.dataset_name, ArtifactNames.TEST_FEATHER)
     if os.path.exists(test_path):
         test_frames = [pd.read_feather(test_path)]
@@ -152,7 +171,7 @@ def make_data(args):
             [df[state_features].values for df in test_frames],
             axis=0,
         )
-        np.save(os.path.join(vae_data_root, ArtifactNames.TEST_NPY), test_data)
+        np.save(os.path.join(test_save_path, ArtifactNames.TEST_NPY), test_data)
     else:
         test_dir = os.path.join(args.base_path, args.dataset_name, "test")
         test_files = [
@@ -164,8 +183,6 @@ def make_data(args):
             raise FileNotFoundError(
                 f"missing test.feather and no test/df_<contract>.feather files under {test_dir}"
             )
-        test_save_path = os.path.join(vae_data_root, "test")
-        os.makedirs(test_save_path, exist_ok=True)
         for file_name in test_files:
             df = pd.read_feather(os.path.join(test_dir, file_name))
             contract = os.path.splitext(file_name)[0]

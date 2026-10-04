@@ -58,7 +58,8 @@ class ScaleManifest:
     clip_mode: str = "hard"
     soft_clip_m: float = 4.0
     rl_feature_list_path: str = ""
-    vae_feature_list_path: str = ""
+    vae_slope_feature_list_path: str = ""
+    vae_volatility_feature_list_path: str = ""
 
     def to_dict(self) -> dict:
         payload = asdict(self)
@@ -177,7 +178,7 @@ parser.add_argument(
     "--feature_selection_dir",
     type=str,
     default=None,
-    help="Directory containing rl_state_features.npy and vae_state_features.npy",
+    help="Directory containing rl_state_features.npy, vae_slope_state_features.npy, and vae_volatility_state_features.npy",
 )
 parser.add_argument(
     "--rl_feature_list_path",
@@ -186,10 +187,16 @@ parser.add_argument(
     help="Explicit path to rl_state_features.npy",
 )
 parser.add_argument(
-    "--vae_feature_list_path",
+    "--vae_slope_feature_list_path",
     type=str,
     default=None,
-    help="Explicit path to vae_state_features.npy",
+    help="Explicit path to vae_slope_state_features.npy",
+)
+parser.add_argument(
+    "--vae_volatility_feature_list_path",
+    type=str,
+    default=None,
+    help="Explicit path to vae_volatility_state_features.npy",
 )
 parser.add_argument(
     "--passthrough_features",
@@ -209,7 +216,7 @@ def resolve_path(root_path: Path, path: str | None) -> Path | None:
     return root_path / resolved
 
 
-def resolve_feature_paths(root_path: Path, args) -> tuple[Path, Path]:
+def resolve_feature_paths(root_path: Path, args) -> tuple[Path, Path, Path]:
     if args.feature_selection_dir is not None:
         fs_dir = resolve_path(root_path, args.feature_selection_dir)
     else:
@@ -225,12 +232,17 @@ def resolve_feature_paths(root_path: Path, args) -> tuple[Path, Path]:
         if args.rl_feature_list_path is not None
         else fs_dir / "rl_state_features.npy"
     )
-    vae_path = (
-        resolve_path(root_path, args.vae_feature_list_path)
-        if args.vae_feature_list_path is not None
-        else fs_dir / "vae_state_features.npy"
+    vae_slope_path = (
+        resolve_path(root_path, args.vae_slope_feature_list_path)
+        if args.vae_slope_feature_list_path is not None
+        else fs_dir / "vae_slope_state_features.npy"
     )
-    return rl_path, vae_path
+    vae_vol_path = (
+        resolve_path(root_path, args.vae_volatility_feature_list_path)
+        if args.vae_volatility_feature_list_path is not None
+        else fs_dir / "vae_volatility_state_features.npy"
+    )
+    return rl_path, vae_slope_path, vae_vol_path
 
 
 def load_state_features(feature_list_path: Path) -> list[str]:
@@ -240,17 +252,20 @@ def load_state_features(feature_list_path: Path) -> list[str]:
     return state_features
 
 
-def load_dual_stream_state_features(
-    rl_path: Path, vae_path: Path
-) -> tuple[list[str], list[str], list[str]]:
+def load_triple_stream_state_features(
+    rl_path: Path, vae_slope_path: Path, vae_vol_path: Path
+) -> tuple[list[str], list[str], list[str], list[str]]:
     if not rl_path.exists():
         raise FileNotFoundError(f"Missing required RL state feature file: {rl_path}")
-    if not vae_path.exists():
-        raise FileNotFoundError(f"Missing required VAE state feature file: {vae_path}")
+    if not vae_slope_path.exists():
+        raise FileNotFoundError(f"Missing required VAE slope state feature file: {vae_slope_path}")
+    if not vae_vol_path.exists():
+        raise FileNotFoundError(f"Missing required VAE volatility state feature file: {vae_vol_path}")
     rl_features = load_state_features(rl_path)
-    vae_features = load_state_features(vae_path)
-    union_features = list(dict.fromkeys(rl_features + vae_features))
-    return rl_features, vae_features, union_features
+    vae_slope_features = load_state_features(vae_slope_path)
+    vae_vol_features = load_state_features(vae_vol_path)
+    union_features = list(dict.fromkeys(rl_features + vae_slope_features + vae_vol_features))
+    return rl_features, vae_slope_features, vae_vol_features, union_features
 
 
 def split_stage_inputs(data_root: Path, symbol: str, target_freq: str) -> list[tuple[str, str, Path]]:
@@ -377,7 +392,8 @@ def fit_robust_scaler(
     train_inputs: list[tuple[str, str, Path]],
     state_features: list[str],
     rl_feature_path: Path,
-    vae_feature_path: Path,
+    vae_slope_feature_path: Path,
+    vae_volatility_feature_path: Path,
     args,
 ) -> ScaleManifest:
     passthrough_targets = set(args.passthrough_features or [])
@@ -429,7 +445,8 @@ def fit_robust_scaler(
         fit_scope="train_all_contracts",
         feature_list_path=str(rl_feature_path.parent),
         rl_feature_list_path=str(rl_feature_path),
-        vae_feature_list_path=str(vae_feature_path),
+        vae_slope_feature_list_path=str(vae_slope_feature_path),
+        vae_volatility_feature_list_path=str(vae_volatility_feature_path),
         train_input_files=train_input_files,
         row_count=train_row_count,
         clip_enabled=not args.disable_clip,
@@ -683,10 +700,12 @@ def main(args) -> None:
     root_path = Path(args.root_path)
     data_root = resolve_path(root_path, args.data_path)
     save_root = resolve_path(root_path, args.save_path)
-    rl_feature_path, vae_feature_path = resolve_feature_paths(root_path, args)
+    rl_feature_path, vae_slope_feature_path, vae_vol_feature_path = resolve_feature_paths(root_path, args)
     validate_clip_args(args)
-    rl_features, vae_features, state_features = load_dual_stream_state_features(
-        rl_feature_path, vae_feature_path
+    rl_features, vae_slope_features, vae_vol_features, state_features = (
+        load_triple_stream_state_features(
+            rl_feature_path, vae_slope_feature_path, vae_vol_feature_path
+        )
     )
 
     inputs = split_stage_inputs(data_root, args.symbols, args.target_freq)
@@ -702,20 +721,22 @@ def main(args) -> None:
         train_inputs=train_inputs,
         state_features=state_features,
         rl_feature_path=rl_feature_path,
-        vae_feature_path=vae_feature_path,
+        vae_slope_feature_path=vae_slope_feature_path,
+        vae_volatility_feature_path=vae_vol_feature_path,
         args=args,
     )
     manifest_path = write_manifest(manifest, output_root)
 
     logger.info(
-        "Starting multi-contract scale-save: symbol=%s target_freq=%s inputs=%d data_root=%s save_root=%s rl_feature_path=%s vae_feature_path=%s manifest_path=%s",
+        "Starting multi-contract scale-save: symbol=%s target_freq=%s inputs=%d data_root=%s save_root=%s rl_feature_path=%s vae_slope_feature_path=%s vae_vol_feature_path=%s manifest_path=%s",
         args.symbols,
         args.target_freq,
         len(inputs),
         data_root,
         save_root,
         rl_feature_path,
-        vae_feature_path,
+        vae_slope_feature_path,
+        vae_vol_feature_path,
         manifest_path,
     )
     diagnostics_rows = []
@@ -732,7 +753,8 @@ def main(args) -> None:
         ))
     diagnostics_path = write_diagnostics(diagnostics_rows, output_root)
     shutil.copyfile(rl_feature_path, output_root / "rl_state_features.npy")
-    shutil.copyfile(vae_feature_path, output_root / "vae_state_features.npy")
+    shutil.copyfile(vae_slope_feature_path, output_root / "vae_slope_state_features.npy")
+    shutil.copyfile(vae_vol_feature_path, output_root / "vae_volatility_state_features.npy")
     logger.info(
         "Finished multi-contract scale-save: inputs=%d diagnostics_path=%s elapsed_seconds=%.2f",
         len(inputs),

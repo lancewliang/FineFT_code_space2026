@@ -240,7 +240,8 @@ def test_market_state_anchors_pass_nan_validation_and_scale_save(tmp_path):
     fs_dir = tmp_path / "fs"
     fs_dir.mkdir(parents=True, exist_ok=True)
     np.save(fs_dir / "rl_state_features.npy", np.array(MARKET_STATE_ANCHOR_COLUMNS))
-    np.save(fs_dir / "vae_state_features.npy", np.array(MARKET_STATE_ANCHOR_COLUMNS))
+    np.save(fs_dir / "vae_slope_state_features.npy", np.array(MARKET_STATE_ANCHOR_COLUMNS))
+    np.save(fs_dir / "vae_volatility_state_features.npy", np.array(MARKET_STATE_ANCHOR_COLUMNS))
     input_dir = (
         tmp_path
         / "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST"

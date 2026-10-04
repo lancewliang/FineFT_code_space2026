@@ -5,7 +5,8 @@ from operator_futures.feature_selection.blacklists import (
     get_commodity_global_hygiene_blacklist,
     get_commodity_rl_feature_blacklist,
     get_commodity_stream_blacklists,
-    get_commodity_vae_feature_blacklist,
+    get_commodity_vae_slope_feature_blacklist,
+    get_commodity_vae_volatility_feature_blacklist,
     load_commodity_feature_blacklists,
     main,
 )

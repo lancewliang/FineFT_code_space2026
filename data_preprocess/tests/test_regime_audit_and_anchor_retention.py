@@ -1,3 +1,20 @@
+from operator_futures.feature_selection.muti_contract.types import StreamFilterProfile
+
+toy_profile = StreamFilterProfile(
+    name="toy",
+    max_mean_psi=1.0,
+    max_pair_psi=2.0,
+    min_abs_ic=0.0,
+    min_sign_consistency=0.0,
+    min_rank_ic_ir=0.0,
+    max_correlation=1.0,
+    min_clusters=1,
+    max_clusters=20,
+    psi_weight=0.33,
+    rank_ic_weight=0.33,
+    catboost_weight=0.34,
+    filter_micro_persistence=False,
+)
 import json
 from pathlib import Path
 import numpy as np
@@ -75,6 +92,9 @@ def test_regime_audit_16_bins_conservation_and_valid_reuse(tmp_path):
         target_freq="30min",
         stage="train",
         enable_conditional_anchors=True,
+        vae_slope_profile=toy_profile,
+        vae_volatility_profile=toy_profile,
+        rl_profile=toy_profile,
     )
 
     train_manifest = res_train.manifest
@@ -111,6 +131,9 @@ def test_regime_audit_16_bins_conservation_and_valid_reuse(tmp_path):
         target_freq="30min",
         stage="valid",
         enable_conditional_anchors=True,
+        vae_slope_profile=toy_profile,
+        vae_volatility_profile=toy_profile,
+        rl_profile=toy_profile,
     )
     valid_manifest = res_valid.manifest
     assert valid_manifest.regime_quantiles == train_manifest.regime_quantiles
@@ -126,6 +149,9 @@ def test_conditional_anchor_retention_and_regular_candidate_exclusion(tmp_path):
         stage="train",
         min_abs_ic=0.0001,  # low threshold for testing
         enable_conditional_anchors=True,
+        vae_slope_profile=toy_profile,
+        vae_volatility_profile=toy_profile,
+        rl_profile=toy_profile,
     )
 
     manifest = res_train.manifest
@@ -192,6 +218,9 @@ def test_regime_audit_3x3_bins_configurable(tmp_path: Path):
         stage="train",
         regime_bins=3,
         enable_conditional_anchors=True,
+        vae_slope_profile=toy_profile,
+        vae_volatility_profile=toy_profile,
+        rl_profile=toy_profile,
     )
 
     train_manifest = res_train.manifest
@@ -226,6 +255,9 @@ def test_regime_audit_3x3_bins_configurable(tmp_path: Path):
         target_freq="30min",
         stage="valid",
         enable_conditional_anchors=True,
+        vae_slope_profile=toy_profile,
+        vae_volatility_profile=toy_profile,
+        rl_profile=toy_profile,
     )
     valid_manifest = res_valid.manifest
     assert valid_manifest.regime_bins == 3

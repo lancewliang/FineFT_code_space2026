@@ -587,9 +587,13 @@ class vae_risk_aware_routing:
         self.tech_indicator_list = np.load(
             os.path.join(self.base_path, self.dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY)
         )
-        self.vae_indicator_list = np.load(
-            os.path.join(self.base_path, self.dataset_name, ArtifactNames.VAE_STATE_FEATURES_NPY)
+        self.vae_slope_indicators = np.load(
+            os.path.join(self.base_path, self.dataset_name, ArtifactNames.VAE_SLOPE_STATE_FEATURES_NPY)
         )
+        self.vae_volatility_indicators = np.load(
+            os.path.join(self.base_path, self.dataset_name, ArtifactNames.VAE_VOLATILITY_STATE_FEATURES_NPY)
+        )
+        self.vae_vol_indicators = self.vae_volatility_indicators
         self.enable_non_main_contract_defense = args.enable_non_main_contract_defense
         role_tier_indices = np.where(
             self.tech_indicator_list == "prev_day_contract_role_tier"
@@ -671,7 +675,13 @@ class vae_risk_aware_routing:
 
         # label vae
         # VAE network path
-        def load_vae_axis(root):
+        axis_indicators = {
+            "slope": self.vae_slope_indicators,
+            "volatility": self.vae_volatility_indicators,
+        }
+
+        def load_vae_axis(axis, root):
+            indicators = axis_indicators[axis]
             label_list = [f"label_{i}" for i in range(self.num_labels)]
             model_list = []
             logpx_list = []
@@ -679,7 +689,7 @@ class vae_risk_aware_routing:
                 path = os.path.join(root, label, ArtifactNames.MODEL_LATEST_PTH)
                 id_path = os.path.join(root, label, ArtifactNames.ID_LOGPX_NPY)
                 vae_model = MLP_VAE(
-                    INPUT_DIM=len(self.vae_indicator_list),
+                    INPUT_DIM=len(indicators),
                     Z_DIM=args.z_dim,
                     hidden_dims=args.vae_hidden_dims,
                     loss_func=args.loss_type,
@@ -704,7 +714,7 @@ class vae_risk_aware_routing:
         self.in_ds_logpx = {}
         self.quantiles = {}
         for axis, root in vae_roots.items():
-            self.vae_models[axis], logpx_list = load_vae_axis(root)
+            self.vae_models[axis], logpx_list = load_vae_axis(axis, root)
             # pre-sort once here so find_quantile only needs searchsorted per step
             self.in_ds_logpx[axis] = [np.sort(logpx) for logpx in logpx_list]
             self.quantiles[axis] = [
@@ -816,10 +826,15 @@ class vae_risk_aware_routing:
             )
         return quantile
 
-    def get_quantiles(self, s):
+    def get_quantiles(self, vae_s_slope, vae_s_vol):
+        axis_inputs = {
+            "slope": vae_s_slope,
+            "volatility": vae_s_vol,
+        }
         for axis in ("slope", "volatility"):
+            s_axis = axis_inputs[axis]
             loss_list = [
-                analyze_single_sample(vae_model, s, self.device)[1]
+                analyze_single_sample(vae_model, s_axis, self.device)[1]
                 for vae_model in self.vae_models[axis]
             ]
             for quantile_deque, loss, base_array in zip(
@@ -935,7 +950,8 @@ class vae_risk_aware_routing:
 
     def run_single_valid_df(self, df, save_path):
         self.df = df
-        self.vae_state_array = self.df[self.vae_indicator_list].values
+        self.vae_slope_array = self.df[self.vae_slope_indicators].values
+        self.vae_vol_array = self.df[self.vae_volatility_indicators].values
         env = initiate_base_env(
             df=self.df,
             feature_list=self.tech_indicator_list,
@@ -972,9 +988,10 @@ class vae_risk_aware_routing:
             action = self.get_action(info, s, env.position, env.leverage)
             s_, r, done, info = env.step(action)
             self.step_idx += 1
-            vae_idx = min(self.step_idx, len(self.vae_state_array) - 1)
-            vae_s = self.vae_state_array[vae_idx]
-            self.get_quantiles(vae_s)
+            vae_idx = min(self.step_idx, len(self.vae_slope_array) - 1)
+            vae_s_slope = self.vae_slope_array[vae_idx]
+            vae_s_vol = self.vae_vol_array[vae_idx]
+            self.get_quantiles(vae_s_slope, vae_s_vol)
             episode_reward_sum += r
             if done:
                 break
@@ -1175,9 +1192,10 @@ class vae_risk_aware_routing:
             )
             s, r, done, info = env.step(action)
             self.step_idx += 1
-            vae_idx = min(self.step_idx, len(self.vae_state_array) - 1)
-            vae_s = self.vae_state_array[vae_idx]
-            self.get_quantiles(vae_s)
+            vae_idx = min(self.step_idx, len(self.vae_slope_array) - 1)
+            vae_s_slope = self.vae_slope_array[vae_idx]
+            vae_s_vol = self.vae_vol_array[vae_idx]
+            self.get_quantiles(vae_s_slope, vae_s_vol)
             if done:
                 break
         return env, s, r, done, info

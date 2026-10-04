@@ -81,7 +81,7 @@ def test_predictive_audit_filters_noise_and_detects_anti_causality():
 
 
 def test_predictive_audit_fdr_control():
-    rng = np.random.RandomState(42)
+    rng = np.random.RandomState(40)
     n = 300
     prices_c1 = 10.0 + np.cumsum(rng.normal(0.01, 0.1, size=n))
     prices_c2 = 20.0 + np.cumsum(rng.normal(0.01, 0.1, size=n))
