@@ -2684,3 +2684,247 @@ def test_trainer_train_skips_warmup_when_load_pretrain_model_is_true(tmp_path, m
 
 
 
+
+
+def test_smooth_curriculum_decay_anneals_peaks_across_phases():
+    import pytest
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+
+    num_epoch = 75
+    curriculum_block_epochs = 6
+    epsilon_init, epsilon_min = 1.0, 0.05
+    ada_init, ada_min = 96.0, 0.1
+    lr_init, lr_min = 0.0005, 0.0001
+
+    # Standard decay (smooth_decay=False): phase 1 starts back at 1.0
+    p1_standard = pdt.compute_epoch_training_params(
+        epoch_index=6,
+        num_epoch=num_epoch,
+        epsilon_init=epsilon_init,
+        epsilon_min=epsilon_min,
+        ada_init=ada_init,
+        ada_min=ada_min,
+        lr_init=lr_init,
+        lr_min=lr_min,
+        curriculum_block_epochs=curriculum_block_epochs,
+        smooth_decay=False,
+    )
+    assert p1_standard.epsilon == pytest.approx(1.0)
+    assert p1_standard.ada == pytest.approx(96.0)
+
+    # Smooth decay (smooth_decay=True): phase 1 peak is damped by 0.5
+    p1_smooth = pdt.compute_epoch_training_params(
+        epoch_index=6,
+        num_epoch=num_epoch,
+        epsilon_init=epsilon_init,
+        epsilon_min=epsilon_min,
+        ada_init=ada_init,
+        ada_min=ada_min,
+        lr_init=lr_init,
+        lr_min=lr_min,
+        curriculum_block_epochs=curriculum_block_epochs,
+        smooth_decay=True,
+    )
+    expected_eps_p1 = 0.05 + (1.0 - 0.05) * 0.5
+    expected_ada_p1 = 0.1 + (96.0 - 0.1) * 0.5
+    assert p1_smooth.epsilon == pytest.approx(expected_eps_p1)
+    assert p1_smooth.ada == pytest.approx(expected_ada_p1)
+
+    # Phase 2 peak is damped by 0.25
+    p2_smooth = pdt.compute_epoch_training_params(
+        epoch_index=12,
+        num_epoch=num_epoch,
+        epsilon_init=epsilon_init,
+        epsilon_min=epsilon_min,
+        ada_init=ada_init,
+        ada_min=ada_min,
+        lr_init=lr_init,
+        lr_min=lr_min,
+        curriculum_block_epochs=curriculum_block_epochs,
+        smooth_decay=True,
+    )
+    expected_eps_p2 = 0.05 + (1.0 - 0.05) * 0.25
+    expected_ada_p2 = 0.1 + (96.0 - 0.1) * 0.25
+    assert p2_smooth.epsilon == pytest.approx(expected_eps_p2)
+    assert p2_smooth.ada == pytest.approx(expected_ada_p2)
+
+
+def test_action_persistence_in_worker_runner(monkeypatch):
+    import numpy as np
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+    from unittest.mock import MagicMock
+
+    act_calls = []
+
+    class FakeEnv:
+        def __init__(self):
+            self.step_count = 0
+            self.unrealized_pnl = 0.0
+            self.wallet_balance = 10000.0
+
+        def reset(self, initial_state=None):
+            return np.zeros(2), {"avaiable_action_list": [0, 1, 2], "q_value": [0.0, 0.0, 0.0]}
+
+        def step(self, action):
+            self.step_count += 1
+            done = self.step_count >= 5
+            return np.zeros(2), 1.0, done, {"avaiable_action_list": [0, 1, 2], "q_value": [0.0, 0.0, 0.0]}
+
+    def fake_get_initial_state_and_env(self, df_index, initial_action):
+        return FakeEnv(), (10000.0, 0.0, 0.0, 0.0, 1)
+
+    monkeypatch.setattr(pdt.DfRolloutWorkerRunner, "_get_initial_state_and_env", fake_get_initial_state_and_env)
+
+    # _act always returns action 2 (long position)
+    def fake_act(self, state, info, context_index, epsilon):
+        act_calls.append(len(act_calls))
+        return 2, 0.5
+
+    monkeypatch.setattr(pdt.DfRolloutWorkerRunner, "_act", fake_act)
+
+    worker_config = {
+        "df_indices": [0],
+        "env_kwargs": {},
+        "leverage_choices": [1],
+        "position_list": [-1.0, 0.0, 1.0],
+        "initial_wallet_balance": 10000.0,
+        "initial_unrealized_pnL": 0.0,
+        "gamma": 0.99,
+        "n_step": 1,
+        "action_persistence": 3,
+        "shared_market_data": None,
+        "train_df_by_df": {0: MagicMock()},
+        "shared_model": MagicMock(),
+    }
+
+    runner = pdt.DfRolloutWorkerRunner(worker_config)
+    assert runner.action_persistence == 3
+    assert runner.flat_action == 1  # 0.0 is index 1
+
+    task = pdt.ExploreTask(
+        df_index=0,
+        epoch_index=0,
+        context_index=0,
+        initial_action=1,
+        round_counter=0,
+        epsilon=0.1,
+    )
+    result = runner.run_task(task)
+    # Total 5 steps: step 1 calls _act (action 2 chosen, hold for 3 steps: step 1, 2, 3)
+    # Step 4 calls _act again (action 2 chosen, hold for 3 steps: step 4, 5)
+    # Total _act calls should be 2, not 5!
+    assert len(act_calls) == 2
+    assert len(result.transitions) == 5
+
+
+def test_log_diverse_rollout_latest_metrics_outputs_explore_rollout_prefix(caplog):
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+    import logging
+
+    test_logger = logging.getLogger("test_explore_rollout")
+    metrics_by_df = {
+        0: {
+            0: pdt.RolloutMetrics(
+                epoch_index=1,
+                context_index=0,
+                initial_action=1,
+                df_index=0,
+                transition_count=100,
+                reward_sum=50.0,
+                final_balance=10500.0,
+                return_rate=0.05,
+            )
+        }
+    }
+
+    with caplog.at_level(logging.INFO, logger=test_logger.name):
+        pdt.log_diverse_rollout_latest_metrics(
+            epoch_index=1,
+            metrics_by_df=metrics_by_df,
+            logger=test_logger,
+            epsilon=0.05,
+        )
+
+    assert any("[EXPLORE-ROLLOUT]" in msg for msg in caplog.messages)
+    assert any("含探索噪声 epsilon=0.0500" in msg for msg in caplog.messages)
+    assert any("盈利" in msg for msg in caplog.messages)
+
+
+def test_run_periodic_greedy_evaluation_logs_and_records(monkeypatch):
+    import numpy as np
+    import torch
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+    from unittest.mock import MagicMock
+    import pandas as pd
+
+    class FakeEnv:
+        def __init__(self):
+            self.step_count = 0
+            self.unrealized_pnl = 200.0
+            self.wallet_balance = 10000.0
+
+        def reset(self, initial_state=None):
+            return np.zeros(2), {
+                "previous_action": 1,
+                "avaliable_action": [1, 1, 1],
+                "funding_count_down_hour": 0.0,
+                "funding_count_down_minute": 0.0,
+                "trading_info": np.zeros(4),
+            }
+
+        def step(self, action):
+            self.step_count += 1
+            done = self.step_count >= 3
+            return np.zeros(2), 10.0, done, {
+                "previous_action": action,
+                "avaliable_action": [1, 1, 1],
+                "funding_count_down_hour": 0.0,
+                "funding_count_down_minute": 0.0,
+                "trading_info": np.zeros(4),
+            }
+
+    monkeypatch.setattr(pdt, "create_demo_env", lambda *a, **k: FakeEnv())
+    monkeypatch.setattr(pdt, "build_initial_state", lambda *a, **k: (0, 0, 0, (10000.0, 0, 0, 0, 1)))
+
+    fake_eval_net = MagicMock()
+    # Return Q-values of shape (1, N=2, actions=3)
+    fake_eval_net.return_value = torch.zeros(1, 2, 3)
+
+    trainer = MagicMock()
+    trainer.eval_net = fake_eval_net
+    trainer.device = "cpu"
+    trainer.N = 2
+    trainer.position_list = [-1.0, 0.0, 1.0]
+    trainer.leverage_choices = [1]
+    trainer.initial_wallet_balance = 10000.0
+    trainer.initial_unrealized_pnL = 0.0
+    trainer.writer = MagicMock()
+
+    train_df = pd.DataFrame({"mark_price": [100.0, 101.0, 102.0]})
+    train_df_cache = {0: train_df}
+
+    eval_result = pdt.run_periodic_greedy_evaluation(
+        trainer=trainer,
+        train_df_cache=train_df_cache,
+        env_kwargs={},
+        epoch_index=1,
+    )
+
+    assert "mean_return_rate" in eval_result
+    assert eval_result["profit_ratio"] == 1.0
+    assert trainer.writer.add_scalar.call_count == 3
+
+
+def test_parse_eval_df_indices_options():
+    from RL.DiHFT.low_level.parallel_diverse_train import parse_eval_df_indices
+
+    available = [0, 1, 2, 3, 4, 5, 6]
+    # Single
+    assert parse_eval_df_indices("0", available) == [0]
+    # Multiple comma-separated
+    assert parse_eval_df_indices("0, 3, 6", available) == [0, 3, 6]
+    # All
+    assert parse_eval_df_indices("all", available) == available
+    # Fallback on invalid
+    assert parse_eval_df_indices("invalid", available) == [0]
+    assert parse_eval_df_indices("", available) == [0]

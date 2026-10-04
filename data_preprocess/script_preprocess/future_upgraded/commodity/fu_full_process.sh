@@ -5,6 +5,11 @@ source data_preprocess/script_preprocess/future_upgraded/commodity/commodity_pro
 # Single Source of Truth: data_preprocess/operator_futures/feature_selection/commodity_feature_blacklists.json
 # Queried via: data_preprocess/operator_futures/feature_selection/blacklists.py
 # Scopes: global (hygiene), vae (macro drift), rl_agent
+# Blacklisted features migrated to commodity_feature_blacklists.json (ADR-0030):
+# min_96_origin max_96_origin pivot_s2_48_origin pivot_s1_24_origin pivot_s1_6_origin
+# bollinger_lower_12_origin max_192_std_norm_origin cm_current_main_spread_rolling_zscore_192
+# cm_main_sub_spread_rolling_zscore_192 cm_main_sub_volume_share_sub cm_current_main_volume_share_current
+# cm_current_sub_volume_share_current sell_spread_oe_max_trend_6 buy_spread_oe_max_trend_6 buy_spread_oe_max sell_spread_oe_max
 # Frequencies: 1min, 5min, 10min, 30min
 # ==============================================================================
 COMMODITY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -284,12 +289,10 @@ run_commodity_scale_save() {
         --save_path "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE/" \
         --market_type commodity_futures \
         --orderbook_depth 5 \
-        --clip_min -5.0 \
-        --clip_max 5.0 \
-        --scale_method "rolling_zscore" \
-        --rolling_window 48 \
-        --clip_mode "tanh" \
-        --soft_clip_m 4.0 \
+        --clip_min -20.0 \
+        --clip_max 20.0 \
+        --scale_method "robust" \
+        --clip_mode "hard" \
         --feature_selection_dir "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/${target_freq}/${symbol}/train" \
         --passthrough_features "${BASE_TIME_FEATURE_COLUMNS[@]}"
 }
@@ -546,9 +549,6 @@ run_commodity_time_feature() {
         contract_args=(--contract "${contract}")
     fi
     local windows="2,6,12,16,24,48,96,192"
-    if [ "${target_freq}" = "10min" ]; then
-        windows="2,6,12,16,24,48"
-    fi
 
     PYTHONPATH="${root_path}/data_preprocess" python -u data_preprocess/operator_futures/time_operator/create_feature_multi_processing.py \
         --symbols "$symbol" \
@@ -659,9 +659,6 @@ run_commodity_feature_selection() {
     fi
 
     local windows_list=(1 2 6 12 24 48 96)
-    if [ "${target_freq}" = "10min" ]; then
-        windows_list=(1 2 6 12 24 48)
-    fi
 
     PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" python -u -m operator_futures.feature_selection.muti_contract \
         --root_path "${root_path}" \

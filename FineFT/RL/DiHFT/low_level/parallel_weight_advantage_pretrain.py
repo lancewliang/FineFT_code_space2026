@@ -509,6 +509,30 @@ parser.add_argument(
     action="store_false",
     help="do not read pre-trained model and run pretraining",
 )
+parser.add_argument(
+    "--action_persistence",
+    type=int,
+    default=3,
+    help="number of consecutive steps to hold a non-flat action during exploration",
+)
+parser.add_argument(
+    "--smooth_curriculum_decay",
+    type=_str2bool,
+    default=True,
+    help="whether to damp exploration peaks across curriculum phases",
+)
+parser.add_argument(
+    "--eval_interval",
+    type=int,
+    default=2,
+    help="number of epochs between periodic greedy evaluation probes",
+)
+parser.add_argument(
+    "--eval_dfs",
+    type=str,
+    default="0",
+    help="comma-separated df indices to evaluate periodically (e.g. 0,6,12 or 0 or all)",
+)
 
 
 
@@ -861,6 +885,14 @@ class Weighted_Contexts_DQN:
         self.limit_stay_bonus = args.limit_stay_bonus
         self.limit_reverse_penalty = args.limit_reverse_penalty
         self.near_limit_threshold = args.near_limit_threshold
+        self.action_persistence = int(args.action_persistence)
+        if self.action_persistence <= 0:
+            raise ValueError("action_persistence must be positive")
+        self.smooth_curriculum_decay = bool(args.smooth_curriculum_decay)
+        self.eval_interval = int(args.eval_interval)
+        if self.eval_interval <= 0:
+            raise ValueError("eval_interval must be positive")
+        self.eval_dfs = str(args.eval_dfs)
         self._log_internal_parameters("init_end")
 
     def _format_internal_parameter_value(self, value):

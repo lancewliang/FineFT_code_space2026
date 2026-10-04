@@ -287,16 +287,21 @@ def record_diverse_rollout_latest_metric(
     )
 
 
-def log_diverse_rollout_latest_metrics(epoch_index, metrics_by_df, logger):
+def log_diverse_rollout_latest_metrics(epoch_index, metrics_by_df, logger, epsilon=None):
     for df_index in sorted(metrics_by_df):
         for rollout_index in sorted(metrics_by_df[df_index]):
             metrics = metrics_by_df[df_index][rollout_index]
             profit_label = "盈利" if metrics.return_rate > 0 else "亏损"
+            if epsilon is not None:
+                eps_str = f" (含探索噪声 epsilon={epsilon:.4f})"
+            else:
+                eps_str = ""
             logger.info(
-                "第 %d 轮 epoch 训练完成 | 多样化训练最新明细 | "
+                "[EXPLORE-ROLLOUT] 第 %d 轮 epoch 探索采样明细%s | "
                 "df_index=%d | rollout_index=%d | 累计奖励=%.4f | "
                 "最终余额=%.4f | 收益率=%.6f | %s",
                 epoch_index,
+                eps_str,
                 df_index,
                 rollout_index,
                 metrics.reward_sum,
@@ -340,6 +345,192 @@ def iter_parallel_rollout_tasks(num_epoch, context_count, position_choices):
                 )
 
 
+def parse_eval_df_indices(eval_dfs_str: str, available_df_indices: list[int]) -> list[int]:
+    """解析待评测的 df 索引列表，支持 '0', '0,6,12', 'all' 等格式。"""
+    if not available_df_indices:
+        return []
+    raw_str = str(eval_dfs_str).strip().lower()
+    if raw_str == "all":
+        return sorted(list(available_df_indices))
+    selected = []
+    for part in str(eval_dfs_str).split(","):
+        part = part.strip()
+        if part.isdigit():
+            idx = int(part)
+            if idx in available_df_indices:
+                selected.append(idx)
+    if not selected:
+        selected = [min(available_df_indices)]
+    return sorted(list(set(selected)))
+
+
+def run_periodic_greedy_evaluation(
+    trainer: Weighted_Contexts_DQN,
+    train_df_cache: dict[int, pd.DataFrame] | None,
+    env_kwargs: dict[str, Any],
+    epoch_index: int,
+    shared_market_data: Any | None = None,
+) -> dict[str, float]:
+    """周期性执行模型贪心评测探针 (epsilon=0.0)，验证策略真实拟合与收益能力。"""
+    available_indices = []
+    if shared_market_data is not None and shared_market_data.packs:
+        available_indices = list(shared_market_data.packs.keys())
+    elif train_df_cache is not None and train_df_cache:
+        available_indices = list(train_df_cache.keys())
+    else:
+        return {}
+
+    eval_df_indices = parse_eval_df_indices(trainer.eval_dfs, available_indices)
+    if not eval_df_indices:
+        return {}
+
+    trainer.eval_net.eval()
+
+    if trainer.N <= 5:
+        contexts_to_eval = list(range(trainer.N))
+    else:
+        contexts_to_eval = sorted(
+            list(
+                {
+                    0,
+                    trainer.N // 4,
+                    trainer.N // 2,
+                    3 * trainer.N // 4,
+                    trainer.N - 1,
+                }
+            )
+        )
+
+    flat_action = (
+        trainer.position_list.index(0)
+        if 0 in trainer.position_list
+        else (len(trainer.position_list) - 1) // 2
+    )
+
+    returns = []
+    rewards = []
+    trades = []
+
+    for df_index in eval_df_indices:
+        for context_index in contexts_to_eval:
+            if shared_market_data is not None:
+                pack = shared_market_data[df_index]
+                current_markprice = float(pack.markprice_tensor[0].item())
+                initial_position, initial_leverage = map_action_to_position_leverage(
+                    flat_action, trainer.leverage_choices, trainer.position_list
+                )
+                initial_margin = abs(
+                    float(initial_position * current_markprice / initial_leverage)
+                )
+                initial_state = (
+                    trainer.initial_wallet_balance,
+                    initial_margin,
+                    trainer.initial_unrealized_pnL,
+                    initial_position,
+                    initial_leverage,
+                )
+                eval_env = create_demo_env_from_pack(
+                    pack, env_kwargs, initial_state=initial_state
+                )
+            else:
+                if train_df_cache is None or df_index not in train_df_cache:
+                    continue
+                train_df = train_df_cache[df_index]
+                _, _, _, initial_state = build_initial_state(
+                    train_df,
+                    flat_action,
+                    trainer.leverage_choices,
+                    trainer.position_list,
+                    trainer.initial_wallet_balance,
+                    trainer.initial_unrealized_pnL,
+                )
+                eval_env = create_demo_env(train_df, env_kwargs, initial_state)
+
+            state, info = eval_env.reset()
+            done = False
+            reward_sum = 0.0
+            trades_count = 0
+            prev_action = flat_action
+
+            while not done:
+                with torch.no_grad():
+                    state_tensor = torch.as_tensor(state).float().reshape(1, -1).to(trainer.device)
+                    previous_action = torch.as_tensor([info["previous_action"]]).float().reshape(1, 1).to(trainer.device)
+                    avaliable_action = torch.as_tensor(info["avaliable_action"]).float().reshape(1, -1).to(trainer.device)
+                    hour_count_down = torch.as_tensor([info["funding_count_down_hour"]]).float().reshape(1, 1).to(trainer.device)
+                    minute_count_down = torch.as_tensor([info["funding_count_down_minute"]]).float().reshape(1, 1).to(trainer.device)
+                    time_input = torch.cat([hour_count_down, minute_count_down], dim=1)
+                    trading_info = torch.as_tensor(info["trading_info"]).float().reshape(1, -1).to(trainer.device)
+                    q_values = trainer.eval_net(
+                        state=state_tensor,
+                        time=time_input,
+                        previous_action=previous_action,
+                        avaliable_action=avaliable_action,
+                        trading_info=trading_info,
+                    )
+                    context_q = q_values[:, context_index, :]
+                    action = int(torch.max(context_q, 1)[1].item())
+
+                if action != prev_action:
+                    trades_count += 1
+                prev_action = action
+
+                next_state, reward, done, next_info = eval_env.step(action)
+                reward_sum += float(reward)
+                state, info = next_state, next_info
+
+            final_balance = float(eval_env.unrealized_pnl + eval_env.wallet_balance)
+            return_rate = float(final_balance / (trainer.initial_wallet_balance + 1e-12) - 1)
+            profit_label = "盈利" if return_rate > 0 else "亏损"
+            returns.append(return_rate)
+            rewards.append(reward_sum)
+            trades.append(trades_count)
+
+            logger.info(
+                "[EPOCH-EVAL-GREEDY] 第 %d 轮模型贪心评测 | df_index=%d | context_index=%d | "
+                "累计奖励=%.4f | 最终余额=%.4f | 收益率=%.6f | 交易次数=%d | %s",
+                epoch_index + 1,
+                df_index,
+                context_index,
+                reward_sum,
+                final_balance,
+                return_rate,
+                trades_count,
+                profit_label,
+            )
+
+    if not returns:
+        return {}
+
+    mean_return = float(np.mean(returns))
+    profit_ratio = float(np.mean([1.0 if r > 0 else 0.0 for r in returns]))
+    mean_trades = float(np.mean(trades))
+
+    logger.info(
+        "[EPOCH-EVAL-GREEDY-SUMMARY] 第 %d 轮模型贪心评测汇总 | 评测切片数=%d | 评测子策略数=%d | "
+        "总评测样本数=%d | 平均收益率=%.6f | 胜率=%.2f%% | 平均交易次数=%.1f",
+        epoch_index + 1,
+        len(eval_df_indices),
+        len(contexts_to_eval),
+        len(returns),
+        mean_return,
+        profit_ratio * 100.0,
+        mean_trades,
+    )
+
+    if trainer.writer is not None:
+        trainer.writer.add_scalar("eval_greedy/mean_return_rate", mean_return, epoch_index + 1)
+        trainer.writer.add_scalar("eval_greedy/profit_ratio", profit_ratio, epoch_index + 1)
+        trainer.writer.add_scalar("eval_greedy/mean_trades", mean_trades, epoch_index + 1)
+
+    return {
+        "mean_return_rate": mean_return,
+        "profit_ratio": profit_ratio,
+        "mean_trades": mean_trades,
+    }
+
+
+
 def _linear_value(start, end, index, total_count):
     if total_count <= 1:
         return float(start)
@@ -368,6 +559,7 @@ def compute_epoch_training_params(
     lr_init: float,
     lr_min: float,
     curriculum_block_epochs: int,
+    smooth_decay: bool = False,
 ) -> EpochTrainingParams:
     if curriculum_block_epochs <= 0:
         raise ValueError(
@@ -380,13 +572,25 @@ def compute_epoch_training_params(
         ada = float(ada_min)
         lr = float(lr_min)
     else:
+        phase_index = epoch_index // curriculum_block_epochs
         phase_epoch = epoch_index % curriculum_block_epochs
-        epsilon = _linear_value(
-            epsilon_init, epsilon_min, phase_epoch, curriculum_block_epochs
-        )
-        ada = _linear_value(
-            ada_init, ada_min, phase_epoch, curriculum_block_epochs
-        )
+        if smooth_decay and phase_index > 0:
+            phase_scale = 0.5 ** phase_index
+            phase_eps_init = epsilon_min + (epsilon_init - epsilon_min) * phase_scale
+            phase_ada_init = ada_min + (ada_init - ada_min) * phase_scale
+            epsilon = _linear_value(
+                phase_eps_init, epsilon_min, phase_epoch, curriculum_block_epochs
+            )
+            ada = _linear_value(
+                phase_ada_init, ada_min, phase_epoch, curriculum_block_epochs
+            )
+        else:
+            epsilon = _linear_value(
+                epsilon_init, epsilon_min, phase_epoch, curriculum_block_epochs
+            )
+            ada = _linear_value(
+                ada_init, ada_min, phase_epoch, curriculum_block_epochs
+            )
 
         lr = _linear_value(lr_init, lr_min, epoch_index, num_epoch)
 
@@ -409,6 +613,7 @@ def apply_epoch_training_params(trainer: Weighted_Contexts_DQN, epoch_index: int
         lr_init=trainer.lr_init,
         lr_min=trainer.lr_min,
         curriculum_block_epochs=trainer.curriculum_block_epochs,
+        smooth_decay=trainer.smooth_curriculum_decay,
     )
     trainer.epsilon = params.epsilon
     trainer.ada = params.ada
@@ -659,6 +864,16 @@ class DfRolloutWorkerRunner:
         self.initial_unrealized_pnL = worker_config["initial_unrealized_pnL"]
         self.gamma = float(worker_config["gamma"])
         self.n_step = int(worker_config["n_step"])
+        self.action_persistence = (
+            int(worker_config["action_persistence"])
+            if "action_persistence" in worker_config
+            else 3
+        )
+        self.flat_action = (
+            self.position_list.index(0)
+            if 0 in self.position_list
+            else (len(self.position_list) - 1) // 2
+        )
         if "shared_model" in worker_config and worker_config["shared_model"] is not None:
             self.model = worker_config["shared_model"]
         else:
@@ -722,13 +937,28 @@ class DfRolloutWorkerRunner:
 
         self.model.eval()
         transitions = []
+        remaining_persist = 0
+        current_action = self.flat_action
+        current_q = 0.0
         while not episode.done:
-            action, chosen_q = self._act(
-                episode.state,
-                episode.info,
-                task.context_index,
-                task.epsilon,
-            )
+            if remaining_persist > 0 and current_action in episode.info["avaiable_action_list"]:
+                action = current_action
+                chosen_q = current_q
+                remaining_persist -= 1
+            else:
+                action, chosen_q = self._act(
+                    episode.state,
+                    episode.info,
+                    task.context_index,
+                    task.epsilon,
+                )
+                current_action = action
+                current_q = chosen_q
+                if self.action_persistence > 1 and action != self.flat_action:
+                    remaining_persist = self.action_persistence - 1
+                else:
+                    remaining_persist = 0
+
             next_state, reward, done, next_info = episode.env.step(action)
             if "q_value" in episode.info and len(episode.info["q_value"]) > action:
                 teacher_q = float(episode.info["q_value"][action])
@@ -856,13 +1086,28 @@ class DfRolloutWorkerRunner:
             load_worker_state_dict(self.model, message.state_dict)
         self.model.eval()
         transitions = []
+        remaining_persist = 0
+        current_action = self.flat_action
+        current_q = 0.0
         while not episode.done:
-            action, chosen_q = self._act(
-                episode.state,
-                episode.info,
-                message.context_index,
-                message.epsilon,
-            )
+            if remaining_persist > 0 and current_action in episode.info["avaiable_action_list"]:
+                action = current_action
+                chosen_q = current_q
+                remaining_persist -= 1
+            else:
+                action, chosen_q = self._act(
+                    episode.state,
+                    episode.info,
+                    message.context_index,
+                    message.epsilon,
+                )
+                current_action = action
+                current_q = chosen_q
+                if self.action_persistence > 1 and action != self.flat_action:
+                    remaining_persist = self.action_persistence - 1
+                else:
+                    remaining_persist = 0
+
             next_state, reward, done, next_info = episode.env.step(action)
             if "q_value" in episode.info and len(episode.info["q_value"]) > action:
                 teacher_q = float(episode.info["q_value"][action])
@@ -981,6 +1226,7 @@ def start_parallel_workers(
             "ensemble_number": trainer.N,
             "gamma": trainer.gamma,
             "n_step": trainer.n_step,
+            "action_persistence": trainer.action_persistence,
             "log_file_path": log_file_path,
         }
         process = worker_context.Process(
@@ -1458,6 +1704,7 @@ def run_parallel_diverse_training(
         raise ValueError("parallel diverse training requires total_df_index_length > 0")
 
 
+    shared_market_data = None
     initial_buffer_full = is_buffer_full(buffer_diverse, trainer)
     if initial_buffer_full:
         shared_manager = None
@@ -1570,6 +1817,7 @@ def run_parallel_diverse_training(
                     epoch_index + 1,
                     diverse_rollout_latest_metrics_by_df,
                     logger,
+                    trainer.epsilon,
                 )
     
             # 阶段三：完整训练 —— 经验池已冻结
@@ -1583,6 +1831,15 @@ def run_parallel_diverse_training(
                 pool.sync_model_weights(trainer.eval_net)
             write_epoch_rollout_scalars(trainer, epoch_metrics, epoch_index)
             save_parallel_epoch_model(trainer, epoch_index)
+
+            if (epoch_index + 1) % trainer.eval_interval == 0 or epoch_index == trainer.num_epoch - 1:
+                run_periodic_greedy_evaluation(
+                    trainer=trainer,
+                    train_df_cache=train_df_cache,
+                    env_kwargs=env_kwargs,
+                    epoch_index=epoch_index,
+                    shared_market_data=shared_market_data,
+                )
     
             epoch_model_file = os.path.join(
                 build_epoch_model_path(trainer.model_path, epoch_index),

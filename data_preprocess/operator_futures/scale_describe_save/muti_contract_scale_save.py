@@ -52,10 +52,10 @@ class ScaleManifest:
     clip_max: float | None
     features: list[ScalerFeatureStats]
     passthrough_state_features: list[str] = field(default_factory=list)
-    scale_method: str = "rolling_zscore"
+    scale_method: str = "robust"
     rolling_window: int = 48
     rolling_min_periods: int = 1
-    clip_mode: str = "tanh"
+    clip_mode: str = "hard"
     soft_clip_m: float = 4.0
     rl_feature_list_path: str = ""
     vae_feature_list_path: str = ""
@@ -102,13 +102,13 @@ parser.add_argument("--base", type=float, default=10, help="scaling log base")
 parser.add_argument(
     "--clip_min",
     type=float,
-    default=-5.0,
+    default=-20.0,
     help="minimum clipped robust-scaled value",
 )
 parser.add_argument(
     "--clip_max",
     type=float,
-    default=5.0,
+    default=20.0,
     help="maximum clipped robust-scaled value",
 )
 parser.add_argument(
@@ -119,7 +119,7 @@ parser.add_argument(
 parser.add_argument(
     "--scale_method",
     type=str,
-    default="rolling_zscore",
+    default="robust",
     choices=["rolling_zscore", "robust"],
     help="feature scaling method: rolling_zscore (adaptive) or robust (static train-wide)",
 )
@@ -138,7 +138,7 @@ parser.add_argument(
 parser.add_argument(
     "--clip_mode",
     type=str,
-    default="tanh",
+    default="hard",
     choices=["tanh", "hard"],
     help="clipping mode: tanh (continuous soft saturation) or hard (np.clip)",
 )
