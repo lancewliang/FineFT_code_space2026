@@ -64,7 +64,7 @@ for method in "${LABELING_METHODS[@]}"; do
             --total_label_number "${LABEL_COUNT}" \
             --experiment_name "${method_exp_name}" \
             --labeling_method "${method}" \
-            --epochs 1000 \
+            --epochs 500 \
             --log_dir "${log_dir}" \
             --train \
             >"${log_file}" 2>&1 &
