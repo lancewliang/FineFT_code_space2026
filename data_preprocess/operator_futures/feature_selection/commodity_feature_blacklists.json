@@ -472,6 +472,7 @@
         "log_return_vol_quantile_192"
       ],
       "vae_volatility": [
+        "historical_volatility_2",
         "realized_volatility_192",
         "ema_slope_192",
         "log_price_slope_96",

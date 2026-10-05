@@ -47,6 +47,7 @@ def test_commodity_stream_blacklists_decoupling() -> None:
     assert "log_price_slope_96" in vol_bl
     assert "ema_slope_192" in vol_bl
     assert "beta_16_std_norm_origin" in vol_bl
+    assert "historical_volatility_2" in vol_bl
 
     # RL blacklist must NOT filter macro trend slopes or volatility
     assert "log_price_slope_96" not in rl_bl
