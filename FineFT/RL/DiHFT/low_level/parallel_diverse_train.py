@@ -1997,6 +1997,8 @@ def run_parallel_diverse_training(
         best_model_file,
     )
 
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     eval_metrics = evaluate_parallel_diverse_model(trainer, best_model_file)
     trainer.best_model_path = best_model_file
     trainer.best_loss = best_loss
@@ -2034,6 +2036,9 @@ def evaluate_parallel_diverse_model(
 
     logg_file_path = os.path.join(trainer.model_path, "diverse_evaluation.log")
 
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     logger.info(
         "开始执行多样化训练评估 | 模型=%s | 数据文件数=%d | 评估日志=%s",
         model_path,
@@ -2064,6 +2069,7 @@ def evaluate_parallel_diverse_model(
         limit_reverse_penalty=trainer.limit_reverse_penalty,
         near_limit_threshold=trainer.near_limit_threshold,
         allow_reverse_position=trainer.allow_reverse_position,
+        device="cpu",
     )
     logger.info(
         "多样化训练评估完成 | 评估样本数=%d | 模型=%s",

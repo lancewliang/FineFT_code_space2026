@@ -89,3 +89,43 @@ def test_evaluates_multiprocess_multiple_files(tmp_path: Path):
 
     assert "Starting multi-process evaluation on 2 data files" in log_content
     assert "All 2 evaluation subprocesses finished." in log_content
+
+
+def test_weighted_trader_and_evaluates_support_device(tmp_path: Path):
+    from RL.DiHFT.low_level.evaluate_sub_agents import weighted_trader
+
+    data_file = str(tmp_path / "df.feather")
+    tech_file = str(tmp_path / "tech.npy")
+    margin_file = str(tmp_path / "margin.npy")
+    model_file = str(tmp_path / "model.pth")
+
+    _make_sample_df(100.0).to_feather(data_file)
+    np.save(tech_file, np.array(["feature1"]))
+    np.save(margin_file, {"1000000000000": [0.1, 0.0]})
+
+    net = ensemble_Qnet(
+        N_STATES=1,
+        N_ACTIONS=3,
+        hidden_nodes=16,
+        TIME_INFO_DIM=2,
+        ensemble_number=1,
+    )
+    torch.save(net.state_dict(), model_file)
+
+    trader_cpu = weighted_trader(
+        logg_file_path="",
+        data_file_path=data_file,
+        model_path=model_file,
+        tech_indicator_list_path=tech_file,
+        maintenance_margin_ratio_dict_path=margin_file,
+        transcation_cost=0.0001,
+        max_holding_number=2,
+        position_choices=3,
+        N=1,
+        time_info_dim=2,
+        hidden_nodes=16,
+        leverage_choices=[1.0],
+        order_book_depth=1,
+        device="cpu",
+    )
+    assert trader_cpu.device == "cpu"

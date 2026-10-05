@@ -259,3 +259,55 @@ def test_evaluate_parallel_diverse_model_fails_fast_on_missing_attribute(tmp_pat
 
     with pytest.raises(AttributeError):
         pdt.evaluate_parallel_diverse_model(IncompleteTrainer(), model_file)
+
+
+def test_evaluate_parallel_diverse_model_passes_cpu_device_and_clears_cuda_cache(tmp_path: Path, monkeypatch):
+    """Verify evaluate_parallel_diverse_model clears CUDA cache and passes device="cpu" to evaluates."""
+    model_file = str(tmp_path / "epoch_1" / "trained_model.pkl")
+    os.makedirs(os.path.dirname(model_file), exist_ok=True)
+    torch.save({"w": 1}, model_file)
+
+    train_data_dir = str(tmp_path / "data")
+    os.makedirs(train_data_dir, exist_ok=True)
+    df_file = os.path.join(train_data_dir, "df_0.feather")
+    with open(df_file, "w") as f:
+        f.write("dummy")
+
+    trainer = MagicMock()
+    trainer.model_path = str(tmp_path)
+    trainer.train_data_path = train_data_dir
+    trainer.tech_indicator_list_path = "tech.npy"
+    trainer.maintenance_margin_ratio_dict_path = "margin.npy"
+    trainer.transcation_cost = 0.0003
+    trainer.max_holding_number = 10
+    trainer.position_choices = 5
+    trainer.N = 3
+    trainer.time_info_dim = 2
+    trainer.hidden_nodes = 64
+    trainer.leverage_choices = [1, 2]
+    trainer.initial_leverage = 1
+    trainer.initial_position = 0
+    trainer.initial_wallet_balance = 20000
+    trainer.order_book_depth = 10
+    trainer.early_stop = 100
+    trainer.enable_limit_reward = True
+    trainer.limit_hold_bonus = 2.0
+    trainer.limit_stay_bonus = 1.0
+    trainer.limit_reverse_penalty = 2.0
+    trainer.near_limit_threshold = 0.01
+    trainer.allow_reverse_position = True
+
+    called_kwargs = {}
+    cache_cleared = []
+
+    def mock_evaluates(**kwargs):
+        called_kwargs.update(kwargs)
+        return [{"result": "success"}]
+
+    monkeypatch.setattr(pdt, "evaluates", mock_evaluates)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: cache_cleared.append(True))
+
+    pdt.evaluate_parallel_diverse_model(trainer, model_file)
+    assert len(cache_cleared) == 1
+    assert called_kwargs["device"] == "cpu"

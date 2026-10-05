@@ -956,3 +956,67 @@ def test_manifest_is_structured_object_and_roundtrips(tmp_path: Path) -> None:
     assert loaded_manifest.schema_version == 1
     assert loaded_manifest.slot_count == 1
     assert len(loaded_manifest.slots) == 1
+
+
+def test_select_raises_descriptive_error_when_detail_rows_missing(tmp_path: Path) -> None:
+    candidate_root = tmp_path / "candidate"
+    valid_root = tmp_path / "valid"
+    epoch_path = candidate_root / "epoch_1"
+    (epoch_path / "trained_model.pkl").parent.mkdir(parents=True)
+    (epoch_path / "trained_model.pkl").write_bytes(b"checkpoint")
+
+    analysis_rows = [
+        {
+            "标签": "label_0",
+            "初始动作": 0,
+            "分箱索引": 0,
+            "合约": json.dumps(["fu0001"]),
+            "数据文件": json.dumps(["fu0001/label_0/df_0.feather"]),
+            "奖励总和": json.dumps([2.5]),
+            "数据长度": json.dumps([2]),
+            "换手率": json.dumps([0.0]),
+        },
+        {
+            "标签": "label_0",
+            "初始动作": 1,
+            "分箱索引": 0,
+            "合约": json.dumps(["fu0001"]),
+            "数据文件": json.dumps(["fu0001/label_0/df_0.feather"]),
+            "奖励总和": json.dumps([1.0]),
+            "数据长度": json.dumps([2]),
+            "换手率": json.dumps([0.0]),
+        },
+    ]
+    # Detail CSV only contains initial_action 0, missing initial_action 1
+    detail_rows = [
+        {
+            "标签": "label_0",
+            "数据文件": "fu0001/label_0/df_0.feather",
+            "初始动作": 0,
+            "分箱索引": 0,
+            "时间戳": "2026-01-01 09:00:00",
+            "单步奖励": 2.5,
+        },
+    ]
+    for label_type in ("volatility", "slope"):
+        result_path = epoch_path / label_type
+        result_path.mkdir(parents=True)
+        pl.DataFrame(analysis_rows).write_csv(result_path / "analysis_result.csv")
+        pl.DataFrame(detail_rows).write_csv(
+            result_path / "trading_action_detail_epoch_1.csv"
+        )
+
+        label_path = valid_root / label_type / "fu0001" / "label_0"
+        label_path.mkdir(parents=True)
+        pl.DataFrame(
+            {"timestamp": ["2026-01-01 09:00:00", "2026-01-01 09:30:00"]}
+        ).write_ipc(label_path / "df_0.feather")
+
+    with pytest.raises(ValueError, match="trading action detail CSVs are missing"):
+        TwoDimensionalAgentSelector(
+            SelectionConfig(
+                num_labels=1,
+                min_marginal_contracts=1,
+                min_joint_contracts=1,
+            )
+        ).select(candidate_root, valid_root)

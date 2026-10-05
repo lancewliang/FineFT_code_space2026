@@ -91,8 +91,8 @@ class weighted_trader:
         limit_reverse_penalty: float =1.5,
         near_limit_threshold: float =0.05,
         allow_reverse_position: bool = True,
-        
-                 ):
+        device: str = "cpu",
+    ):
 
         # logger
         self.logg_file_path = logg_file_path
@@ -101,8 +101,8 @@ class weighted_trader:
         self.log = logger
 
         # device
-        if torch.cuda.is_available():
-            self.device = "cuda"
+        self.device = device
+        if self.device == "cuda" and torch.cuda.is_available():
             torch.set_float32_matmul_precision("high")
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
@@ -321,7 +321,7 @@ def _evaluate_single_file_worker(conn, trader_kwargs: dict):
     except Exception as e:
         logger.error(
             "Error evaluating data file %s: %s",
-            trader_kwargs.get("data_file_path"),
+            trader_kwargs["data_file_path"],
             traceback.format_exc(),
         )
         if conn is not None:
@@ -358,6 +358,7 @@ def evaluates(
         limit_reverse_penalty: float =1.5,
         near_limit_threshold: float =0.05,
         allow_reverse_position: bool = True,
+        device: str = "cpu",
         **kwargs):
     """Evaluate the sub-agent across multiple data files using one subprocess per file."""
     if logg_file_path:
@@ -395,6 +396,7 @@ def evaluates(
         "limit_reverse_penalty": limit_reverse_penalty,
         "near_limit_threshold": near_limit_threshold,
         "allow_reverse_position": allow_reverse_position,
+        "device": device,
         **kwargs,
     }
 
