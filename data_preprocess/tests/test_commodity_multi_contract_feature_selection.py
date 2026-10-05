@@ -391,6 +391,52 @@ def test_build_config_from_legacy_kwargs_attaches_stream_blacklists():
     assert config.hygiene.feature_blacklist == ("common_hygiene",)
 
 
+def test_build_config_from_legacy_kwargs_preserves_rl_and_vae_stream_profile_parameters():
+    from operator_futures.feature_selection.muti_contract.pipeline import (
+        _build_config_from_legacy_kwargs,
+    )
+    from operator_futures.feature_selection.muti_contract.types import (
+        DEFAULT_RL_PROFILE,
+        DEFAULT_VAE_SLOPE_PROFILE,
+        DEFAULT_VAE_VOLATILITY_PROFILE,
+    )
+
+    # Simulate CLI default kwargs passed from main()
+    config = _build_config_from_legacy_kwargs(
+        root_path=Path("/tmp"),
+        symbol="fu",
+        target_freq="10min",
+        stage="train",
+        max_mean_psi=0.10,
+        max_pair_psi=0.20,
+        min_abs_ic=0.02,
+        min_sign_consistency=0.75,
+        min_rank_ic_ir=0.40,
+        max_correlation=0.70,
+    )
+
+    # RL decision stream parameters must remain unpolluted by CLI defaults
+    assert config.rl_profile.max_mean_psi == DEFAULT_RL_PROFILE.max_mean_psi == 0.45
+    assert config.rl_profile.max_pair_psi == DEFAULT_RL_PROFILE.max_pair_psi == 1.30
+    assert config.rl_profile.min_abs_ic == DEFAULT_RL_PROFILE.min_abs_ic == 0.010
+    assert config.rl_profile.min_sign_consistency == DEFAULT_RL_PROFILE.min_sign_consistency == 0.55
+    assert config.rl_profile.min_rank_ic_ir == DEFAULT_RL_PROFILE.min_rank_ic_ir == 0.18
+    assert config.rl_profile.max_correlation == DEFAULT_RL_PROFILE.max_correlation == 0.80
+    assert config.rl_profile.min_clusters == DEFAULT_RL_PROFILE.min_clusters == 100
+    assert config.rl_profile.max_clusters == DEFAULT_RL_PROFILE.max_clusters == 155
+
+    # VAE streams must preserve their specialized profiles
+    assert config.vae_slope_profile.max_mean_psi == DEFAULT_VAE_SLOPE_PROFILE.max_mean_psi == 0.10
+    assert config.vae_slope_profile.max_correlation == DEFAULT_VAE_SLOPE_PROFILE.max_correlation == 0.65
+    assert config.vae_volatility_profile.max_mean_psi == DEFAULT_VAE_VOLATILITY_PROFILE.max_mean_psi == 0.12
+    assert config.vae_volatility_profile.max_correlation == DEFAULT_VAE_VOLATILITY_PROFILE.max_correlation == 0.60
+
+    # Pipeline-level configs correctly receive the CLI kwargs
+    assert config.drift.max_mean_psi == 0.10
+    assert config.predictive.min_abs_ic == 0.02
+    assert config.dedup.max_correlation == 0.70
+
+
 def test_train_stage_writes_final_features_metrics_filtered_outputs_and_manifest(tmp_path, fake_catboost):
     _write_long_split_contract(
         tmp_path,

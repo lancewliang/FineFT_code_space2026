@@ -99,33 +99,19 @@ def _build_config_from_legacy_kwargs(**kwargs) -> FeatureSelectionPipelineConfig
         "persistence_filter_pattern", DEFAULT_PERSISTENCE_FILTER_PATTERN
     )
 
-    def _create_stream_profile(base_profile: StreamFilterProfile, profile_key: str, blacklist_key: str) -> StreamFilterProfile:
+    def _create_stream_profile(
+        base_profile: StreamFilterProfile, profile_key: str, blacklist_key: str
+    ) -> StreamFilterProfile:
         if kwargs.get(profile_key) is not None:
             prof = kwargs[profile_key]
         else:
             prof = base_profile
             overrides = {}
-            if "max_mean_psi" in kwargs:
-                overrides["max_mean_psi"] = float(kwargs["max_mean_psi"])
-            if "max_pair_psi" in kwargs:
-                overrides["max_pair_psi"] = float(kwargs["max_pair_psi"])
-            if "min_abs_ic" in kwargs:
-                overrides["min_abs_ic"] = float(kwargs["min_abs_ic"])
-            if "min_sign_consistency" in kwargs:
-                overrides["min_sign_consistency"] = float(kwargs["min_sign_consistency"])
-            if "min_rank_ic_ir" in kwargs:
-                overrides["min_rank_ic_ir"] = float(kwargs["min_rank_ic_ir"])
-            if "max_correlation" in kwargs:
-                overrides["max_correlation"] = float(kwargs["max_correlation"])
-            if "min_clusters" in kwargs:
+            if kwargs.get("min_clusters") is not None:
                 overrides["min_clusters"] = int(kwargs["min_clusters"])
-            if "max_clusters" in kwargs:
+            if kwargs.get("max_clusters") is not None:
                 overrides["max_clusters"] = int(kwargs["max_clusters"])
-            if "require_monotonic" in kwargs:
-                overrides["require_monotonic"] = bool(kwargs["require_monotonic"])
-            if "min_anova_f" in kwargs:
-                overrides["min_anova_f"] = float(kwargs["min_anova_f"])
-            if "filter_micro_persistence" in kwargs:
+            if kwargs.get("filter_micro_persistence") is not None:
                 overrides["filter_micro_persistence"] = bool(kwargs["filter_micro_persistence"])
             if overrides:
                 prof = replace(prof, **overrides)
