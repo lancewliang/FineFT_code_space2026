@@ -39,7 +39,7 @@ function run_test_agent_index {
                 --allow_reverse_position False \
                 --label_type "${label_type}" \
                 --device "${device}" \
-                --action_persistence 4 \
+                --action_persistence 5 \
                 --save_trading_detail_csv \
                 >"${log_dir}/epoch_${epoch}.log" 2>&1 &
             pids+=($!) # 将每个后台进程的PID添加到数组中
