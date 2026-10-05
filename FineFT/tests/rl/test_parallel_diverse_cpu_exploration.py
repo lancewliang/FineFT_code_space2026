@@ -218,11 +218,27 @@ def test_run_epoch_exploration_task_pool_dispatch_and_collection(monkeypatch):
                         step_index=0,
                         transition=(
                             np.array([float(i), 0.0]),
-                            {"previous_action": 0, "regime_grid_id": 0, "trading_info": np.zeros(4)},
+                            {
+                                "previous_action": 0,
+                                "regime_grid_id": 0,
+                                "trading_info": np.zeros(4, dtype=np.float32),
+                                "avaliable_action": np.array([1, 1, 1], dtype=np.int64),
+                                "funding_count_down_hour": 0.0,
+                                "funding_count_down_minute": 0.0,
+                                "q_value": np.array([1.0, 0.0, 0.0], dtype=np.float32),
+                            },
                             0,
                             1.0,
                             np.array([float(i) + 0.5, 0.0]),
-                            {"previous_action": 0, "regime_grid_id": 0, "trading_info": np.zeros(4)},
+                            {
+                                "previous_action": 0,
+                                "regime_grid_id": 0,
+                                "trading_info": np.zeros(4, dtype=np.float32),
+                                "avaliable_action": np.array([1, 1, 1], dtype=np.int64),
+                                "funding_count_down_hour": 0.0,
+                                "funding_count_down_minute": 0.0,
+                                "q_value": np.array([1.0, 0.0, 0.0], dtype=np.float32),
+                            },
                             True,
                         ),
                     )
@@ -265,7 +281,7 @@ def test_parallel_parser_diverse_num_workers_flag():
     from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
 
     args_default = pwap.parser.parse_args([])
-    assert args_default.diverse_num_workers == 96
+    assert args_default.diverse_num_workers == 40
 
     args_custom = pwap.parser.parse_args(["--diverse_num_workers", "64"])
     assert args_custom.diverse_num_workers == 64

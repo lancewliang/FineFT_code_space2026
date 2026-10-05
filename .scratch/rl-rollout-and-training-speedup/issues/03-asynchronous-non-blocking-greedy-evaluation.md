@@ -4,10 +4,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] `AsyncGreedyEvaluator` manages background evaluation lifecycle, accepting an epoch index, model weights snapshot, and market data handle via a non-blocking queue.
-- [ ] Main training loop in `run_parallel_diverse_training` dispatches evaluation requests and immediately proceeds to the next rollout epoch without sleeping or waiting.
-- [ ] Evaluation worker computes greedy probes across evaluation datasets and context indices, writing metrics (`mean_return_rate`, `profit_ratio`, `mean_trades`) to loggers and `SummaryWriter`.
-- [ ] Thread-safe early stopping flag mechanism allows background evaluator to signal main training loop if early stopping criteria are met.
-- [ ] Unit tests verify asynchronous evaluation completes cleanly and records expected metrics while the main execution thread advances.
+- [x] `AsyncGreedyEvaluator` manages background evaluation lifecycle, accepting an epoch index, model weights snapshot, and market data handle via a non-blocking queue.
+- [x] Main training loop in `run_parallel_diverse_training` dispatches evaluation requests and immediately proceeds to the next rollout epoch without sleeping or waiting.
+- [x] Evaluation worker computes greedy probes across evaluation datasets and context indices, writing metrics (`mean_return_rate`, `profit_ratio`, `mean_trades`) to loggers and `SummaryWriter`.
+- [x] Thread-safe early stopping flag mechanism allows background evaluator to signal main training loop if early stopping criteria are met.
+- [x] Unit tests verify asynchronous evaluation completes cleanly and records expected metrics while the main execution thread advances.

@@ -4,10 +4,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] `RegimeStratifiedReplayBuffer` pre-allocates contiguous PyTorch tensors for `states`, `actions`, `rewards`, `next_states`, `dones`, `trading_info`, `time_info`, and `q_values` across all regime grids.
-- [ ] Transition insertion and regime routing write directly into tensor slots with in-place circular write pointers, achieving O(1) insertion without dynamic Python list appending.
-- [ ] Dynamic epoch re-stacking (`extract_stacked_tensor_dict`) is eliminated, saving 15-20 seconds of CPU chunking and `np.stack` allocations every epoch.
-- [ ] Active regime sampler slices directly from pre-allocated tensors with balanced grid quotas and replacement handling.
-- [ ] Unit tests verify circular FIFO eviction, regime quota balancing, and sampled batch tensor dimensions matching model update signatures.
+- [x] `RegimeStratifiedReplayBuffer` pre-allocates contiguous PyTorch tensors for `states`, `actions`, `rewards`, `next_states`, `dones`, `trading_info`, `time_info`, and `q_values` across all regime grids.
+- [x] Transition insertion and regime routing write directly into tensor slots with in-place circular write pointers, achieving O(1) insertion without dynamic Python list appending.
+- [x] Dynamic epoch re-stacking (`extract_stacked_tensor_dict`) is eliminated, saving 15-20 seconds of CPU chunking and `np.stack` allocations every epoch.
+- [x] Active regime sampler slices directly from pre-allocated tensors with balanced grid quotas and replacement handling.
+- [x] Unit tests verify circular FIFO eviction, regime quota balancing, and sampled batch tensor dimensions matching model update signatures.

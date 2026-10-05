@@ -131,6 +131,7 @@ def configure_worker_logger(log_file_path: str, worker_id: int) -> None:
 from RL.util.replay_buffer_DQN import Multi_step_ReplayBuffer_multi_info
 from RL.util.regime_stratified_replay_buffer import (
     DIRECTIONAL_REGIME_PHASES,
+    GPURegimeStratifiedReplayBuffer,
     RegimeStratifiedReplayBuffer,
 )
 from RL.util.update import disable_gradients
@@ -472,7 +473,7 @@ parser.add_argument(
     "--diverse_num_workers",
     dest="diverse_num_workers",
     type=int,
-    default=96,
+    default=40,
     help="number of parallel worker processes for diverse exploration task pool",
 )
 parser.add_argument(    
@@ -951,7 +952,7 @@ class Weighted_Contexts_DQN:
             gamma=self.gamma,
             n_step=self.n_step,
         )
-        buffer_diverse = RegimeStratifiedReplayBuffer(
+        buffer_diverse = GPURegimeStratifiedReplayBuffer(
             total_buffer_size=self.buffer_size,
             batch_size=self.batch_size,
             device=self.device,
@@ -1095,6 +1096,7 @@ class Weighted_Contexts_DQN:
                 buffer_diverse=buffer_diverse,
                 step_counter_diverse=step_counter_diverse,
                 diverse_rollout_latest_metrics_by_df=diverse_rollout_latest_metrics_by_df,
+                q_table_cache=q_table_cache,
             )
             logger.info("多样化训练及评估完成，准备退出主进程")
         else:

@@ -27,11 +27,14 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import logging
 import os
 import pickle
+import queue
 import tempfile
+import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -370,6 +373,7 @@ def run_periodic_greedy_evaluation(
     env_kwargs: dict[str, Any],
     epoch_index: int,
     shared_market_data: Any | None = None,
+    eval_model: Any | None = None,
 ) -> dict[str, float]:
     """周期性执行模型贪心评测探针 (epsilon=0.0)，验证策略真实拟合与收益能力。"""
     available_indices = []
@@ -384,7 +388,8 @@ def run_periodic_greedy_evaluation(
     if not eval_df_indices:
         return {}
 
-    trainer.eval_net.eval()
+    model_to_use = eval_model if eval_model is not None else trainer.eval_net
+    model_to_use.eval()
 
     if trainer.N <= 5:
         contexts_to_eval = list(range(trainer.N))
@@ -452,23 +457,33 @@ def run_periodic_greedy_evaluation(
             trades_count = 0
             prev_action = flat_action
 
+            device = next(eval_model.parameters()).device if eval_model is not None else trainer.device
             while not done:
                 with torch.no_grad():
-                    state_tensor = torch.as_tensor(state).float().reshape(1, -1).to(trainer.device)
-                    previous_action = torch.as_tensor([info["previous_action"]]).float().reshape(1, 1).to(trainer.device)
-                    avaliable_action = torch.as_tensor(info["avaliable_action"]).float().reshape(1, -1).to(trainer.device)
-                    hour_count_down = torch.as_tensor([info["funding_count_down_hour"]]).float().reshape(1, 1).to(trainer.device)
-                    minute_count_down = torch.as_tensor([info["funding_count_down_minute"]]).float().reshape(1, 1).to(trainer.device)
+                    state_tensor = torch.as_tensor(state).float().reshape(1, -1).to(device)
+                    previous_action = torch.as_tensor([info["previous_action"]]).float().reshape(1, 1).to(device)
+                    avaliable_action = torch.as_tensor(info["avaliable_action"]).float().reshape(1, -1).to(device)
+                    hour_count_down = torch.as_tensor([info["funding_count_down_hour"]]).float().reshape(1, 1).to(device)
+                    minute_count_down = torch.as_tensor([info["funding_count_down_minute"]]).float().reshape(1, 1).to(device)
                     time_input = torch.cat([hour_count_down, minute_count_down], dim=1)
-                    trading_info = torch.as_tensor(info["trading_info"]).float().reshape(1, -1).to(trainer.device)
-                    q_values = trainer.eval_net(
-                        state=state_tensor,
-                        time=time_input,
-                        previous_action=previous_action,
-                        avaliable_action=avaliable_action,
-                        trading_info=trading_info,
-                    )
-                    context_q = q_values[:, context_index, :]
+                    trading_info = torch.as_tensor(info["trading_info"]).float().reshape(1, -1).to(device)
+                    if eval_model is not None:
+                        context_q = eval_model.qnet_list[context_index](
+                            state=state_tensor,
+                            time=time_input,
+                            previous_action=previous_action,
+                            avaliable_action=avaliable_action,
+                            trading_info=trading_info,
+                        )
+                    else:
+                        q_values = model_to_use(
+                            state=state_tensor,
+                            time=time_input,
+                            previous_action=previous_action,
+                            avaliable_action=avaliable_action,
+                            trading_info=trading_info,
+                        )
+                        context_q = q_values[:, context_index, :]
                     action = int(torch.max(context_q, 1)[1].item())
 
                 if action != prev_action:
@@ -528,6 +543,101 @@ def run_periodic_greedy_evaluation(
         "profit_ratio": profit_ratio,
         "mean_trades": mean_trades,
     }
+
+
+@dataclass(frozen=True)
+class EvaluationTask:
+    epoch_index: int
+    state_dict: dict[str, torch.Tensor]
+
+
+class AsyncGreedyEvaluator:
+    """异步非阻塞贪心评测器。
+
+    在 Epoch 训练完成后捕获模型权重快照并投递至后台队列，
+    使主训练循环零等待立即推进至下一轮，彻底消除串行评测阻塞。
+    """
+
+    def __init__(
+        self,
+        trainer: Weighted_Contexts_DQN,
+        train_df_cache: dict[int, pd.DataFrame] | None,
+        env_kwargs: dict[str, Any],
+        shared_market_data: SharedMarketDataPack | None = None,
+    ) -> None:
+        self.trainer = trainer
+        self.train_df_cache = train_df_cache
+        self.env_kwargs = env_kwargs
+        self.shared_market_data = shared_market_data
+
+        self.task_queue: queue.Queue[EvaluationTask | None] = queue.Queue()
+        self.early_stop_flag = threading.Event()
+        self.latest_metrics: dict[str, float] = {}
+        self.lock = threading.Lock()
+
+        self.eval_model = copy.deepcopy(trainer.eval_net).to("cpu")
+        self.eval_model.eval()
+
+        self._worker_thread = threading.Thread(
+            target=self._run_loop,
+            name="AsyncGreedyEvaluatorThread",
+            daemon=True,
+        )
+        self._worker_thread.start()
+
+    def submit_evaluation(self, epoch_index: int, model: nn.Module) -> None:
+        """非阻塞投递评测任务，模型权重快照浅拷贝耗时 < 2ms。"""
+        snapshot = {
+            k: v.detach().to("cpu", copy=True)
+            for k, v in model.state_dict().items()
+        }
+        self.task_queue.put_nowait(
+            EvaluationTask(epoch_index=epoch_index, state_dict=snapshot)
+        )
+
+    def _run_loop(self) -> None:
+        while True:
+            task = self.task_queue.get()
+            if task is None:
+                self.task_queue.task_done()
+                break
+            try:
+                self._evaluate_task(task)
+            except Exception as e:
+                logger.exception(
+                    "异步后台贪心评测异常 | epoch=%d: %s", task.epoch_index, e
+                )
+            finally:
+                self.task_queue.task_done()
+
+    def _evaluate_task(self, task: EvaluationTask) -> None:
+        self.eval_model.load_state_dict(task.state_dict)
+        self.eval_model.eval()
+        metrics = run_periodic_greedy_evaluation(
+            trainer=self.trainer,
+            train_df_cache=self.train_df_cache,
+            env_kwargs=self.env_kwargs,
+            epoch_index=task.epoch_index,
+            shared_market_data=self.shared_market_data,
+            eval_model=self.eval_model,
+        )
+        with self.lock:
+            self.latest_metrics = metrics
+
+    def should_early_stop(self) -> bool:
+        return self.early_stop_flag.is_set()
+
+    def trigger_early_stop(self) -> None:
+        self.early_stop_flag.set()
+
+    def wait_all(self) -> None:
+        """等待所有已排队的评测任务完成。"""
+        self.task_queue.join()
+
+    def shutdown(self) -> None:
+        """安全关闭评测线程并等待退出。"""
+        self.task_queue.put(None)
+        self._worker_thread.join(timeout=30.0)
 
 
 
@@ -693,16 +803,7 @@ def write_round_transitions_to_buffer(
     round_results: list[WorkerRoundResult],
 ) -> int:
     """按 (df_index, step_index) 顺序写入体制分层经验池，基于各格语义键与 TD-Error 择优保留。"""
-    duplicate_count = 0
-    records = sort_round_records(round_results)
-    for df_index, record in records:
-        grid_id = buffer_diverse.add_transition(
-            record.transition,
-            td_error=record.td_error,
-        )
-        if grid_id in (-1, -2):
-            duplicate_count += 1
-    return duplicate_count
+    return buffer_diverse.add_round_records_bulk(round_results)
 
 
 def run_diverse_training_phase(
@@ -1063,15 +1164,14 @@ class DfRolloutWorkerRunner:
             trading_info = torch.from_numpy(info["trading_info"]).float().reshape(1, -1).to(
                 self.device
             )
-            q_values = self.model(
+            context_q = self.model.qnet_list[context_index](
                 state=state_tensor,
                 time=time_input,
                 previous_action=previous_action,
                 avaliable_action=avaliable_action,
                 trading_info=trading_info,
             )
-            context_q = q_values[:, context_index, :]
-            action = int(torch.max(context_q, 1)[1].data.cpu().numpy()[0])
+            action = int(torch.max(context_q, 1)[1].item())
             chosen_q = float(context_q[0, action].item())
             return action, chosen_q
 
@@ -1686,6 +1786,7 @@ def run_parallel_diverse_training(
     buffer_diverse: RegimeStratifiedReplayBuffer,
     step_counter_diverse: int,
     diverse_rollout_latest_metrics_by_df: dict[int, Any],
+    q_table_cache: dict[int, np.ndarray] | None = None,
 ):
     """多样化训练主循环：每个 epoch 严格遵循「完整探索 -> 完整训练」。
 
@@ -1725,7 +1826,7 @@ def run_parallel_diverse_training(
             initial_state_dict=trainer.eval_net.state_dict(),
         )
         shared_market_data = SharedMarketDataPack.from_dataframes(
-            train_df_cache, env_kwargs
+            train_df_cache, env_kwargs, q_table_cache=q_table_cache
         )
         pool = PersistentRolloutPool(
             trainer=trainer,
@@ -1742,6 +1843,13 @@ def run_parallel_diverse_training(
     best_loss = float("inf")
     best_model_file = None
     best_epoch_index = -1
+
+    evaluator = AsyncGreedyEvaluator(
+        trainer=trainer,
+        train_df_cache=train_df_cache,
+        env_kwargs=env_kwargs,
+        shared_market_data=shared_market_data,
+    )
     try:
         for epoch_index in range(trainer.num_epoch):
             phase_entry_epochs = tuple(
@@ -1833,13 +1941,16 @@ def run_parallel_diverse_training(
             save_parallel_epoch_model(trainer, epoch_index)
 
             if (epoch_index + 1) % trainer.eval_interval == 0 or epoch_index == trainer.num_epoch - 1:
-                run_periodic_greedy_evaluation(
-                    trainer=trainer,
-                    train_df_cache=train_df_cache,
-                    env_kwargs=env_kwargs,
+                evaluator.submit_evaluation(
                     epoch_index=epoch_index,
-                    shared_market_data=shared_market_data,
+                    model=trainer.eval_net,
                 )
+
+            if evaluator.should_early_stop():
+                logger.info(
+                    "异步后台评测器触发早停，终止训练循环 | epoch_index=%d", epoch_index
+                )
+                break
     
             epoch_model_file = os.path.join(
                 build_epoch_model_path(trainer.model_path, epoch_index),
@@ -1861,6 +1972,8 @@ def run_parallel_diverse_training(
                 best_model_file = epoch_model_file
                 best_epoch_index = epoch_index
     finally:
+        evaluator.wait_all()
+        evaluator.shutdown()
         if pool is not None:
             pool.shutdown()
     

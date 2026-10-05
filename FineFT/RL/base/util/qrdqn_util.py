@@ -14,12 +14,9 @@ def update_params(optim, loss, network, retain_graph=False, grad_cliping=None):
 
 
 def soft_copy_params(online_net, target_net, tau):
-    for target_param, online_param in zip(
-        target_net.parameters(), online_net.parameters()
-    ):
-        target_param.data.copy_(
-            tau * online_param.data + (1.0 - tau) * target_param.data
-        )
+    target_params = [p.data for p in target_net.parameters()]
+    online_params = [p.data for p in online_net.parameters()]
+    torch._foreach_lerp_(target_params, online_params, tau)
 
 
 def disable_gradients(network):

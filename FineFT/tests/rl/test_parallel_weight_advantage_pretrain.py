@@ -475,24 +475,23 @@ def test_buffer_writes_use_sorted_transition_payloads():
         seed=42,
         num_grids=9,
     )
-    transition_a = (
-        np.array([1.0, 2.0]),
-        {"previous_action": 0, "regime_grid_id": 0, "trading_info": np.zeros(4)},
-        1,
-        1.0,
-        np.array([1.5, 2.5]),
-        {"previous_action": 1, "regime_grid_id": 0, "trading_info": np.zeros(4)},
-        False,
-    )
-    transition_b = (
-        np.array([3.0, 4.0]),
-        {"previous_action": 1, "regime_grid_id": 1, "trading_info": np.zeros(4)},
-        2,
-        2.0,
-        np.array([3.5, 4.5]),
-        {"previous_action": 2, "regime_grid_id": 1, "trading_info": np.zeros(4)},
-        True,
-    )
+    info_base_a = {
+        "previous_action": 0, "regime_grid_id": 0, "trading_info": np.zeros(4),
+        "avaliable_action": np.array([1, 1, 1]), "funding_count_down_hour": 0.0,
+        "funding_count_down_minute": 0.0, "q_value": np.array([1.0, 0.0, 0.0]),
+    }
+    info_next_a = dict(info_base_a)
+    info_next_a["previous_action"] = 1
+    transition_a = (np.array([1.0, 2.0]), info_base_a, 1, 1.0, np.array([1.5, 2.5]), info_next_a, False)
+
+    info_base_b = {
+        "previous_action": 1, "regime_grid_id": 1, "trading_info": np.zeros(4),
+        "avaliable_action": np.array([1, 1, 1]), "funding_count_down_hour": 0.0,
+        "funding_count_down_minute": 0.0, "q_value": np.array([1.0, 0.0, 0.0]),
+    }
+    info_next_b = dict(info_base_b)
+    info_next_b["previous_action"] = 2
+    transition_b = (np.array([3.0, 4.0]), info_base_b, 2, 2.0, np.array([3.5, 4.5]), info_next_b, True)
 
     duplicates = pdt.write_round_transitions_to_buffer(
         buffer,
@@ -549,15 +548,14 @@ def test_buffer_writes_skip_duplicate_experiences():
         seed=42,
         num_grids=9,
     )
-    transition = (
-        np.array([1.0, 2.0]),
-        {"previous_action": 0, "regime_grid_id": 0, "trading_info": np.zeros(4)},
-        1,
-        0.5,
-        np.array([1.0, 2.5]),
-        {"previous_action": 1, "regime_grid_id": 0, "trading_info": np.zeros(4)},
-        False,
-    )
+    info_base = {
+        "previous_action": 0, "regime_grid_id": 0, "trading_info": np.zeros(4),
+        "avaliable_action": np.array([1, 1, 1]), "funding_count_down_hour": 0.0,
+        "funding_count_down_minute": 0.0, "q_value": np.array([1.0, 0.0, 0.0]),
+    }
+    info_next = dict(info_base)
+    info_next["previous_action"] = 1
+    transition = (np.array([1.0, 2.0]), info_base, 1, 0.5, np.array([1.0, 2.5]), info_next, False)
 
     duplicates = pdt.write_round_transitions_to_buffer(
         buffer,
@@ -759,13 +757,20 @@ def test_run_parallel_rollout_task_completes_in_single_round_without_updates(
                 events.append(("reset", self.df_index))
                 return
             self.explore_count += 1
+            info_base = {
+                "previous_action": 0, "regime_grid_id": 0, "trading_info": np.zeros(4),
+                "avaliable_action": np.array([1, 1, 1]), "funding_count_down_hour": 0.0,
+                "funding_count_down_minute": 0.0, "q_value": np.array([1.0, 0.0, 0.0]),
+            }
+            info_next = dict(info_base)
+            info_next["previous_action"] = 1
             transition = (
                 np.array([float(self.df_index), float(message.round_counter)]),
-                {"previous_action": 0, "regime_grid_id": 0, "trading_info": np.zeros(4)},
+                info_base,
                 1,
                 1.0,
                 np.array([float(self.df_index), float(message.round_counter) + 0.5]),
-                {"previous_action": 1, "regime_grid_id": 0, "trading_info": np.zeros(4)},
+                info_next,
                 self.done,
             )
             events.append(("explore_sent", self.df_index, message.round_counter))
@@ -1170,15 +1175,22 @@ def test_is_buffer_full_detects_capacity_from_buffer_or_trainer():
     )
     assert pdt.is_buffer_full(buffer, trainer) is False
 
+    info_base = {
+        "previous_action": 0, "regime_grid_id": 8, "trading_info": np.zeros(4),
+        "avaliable_action": np.array([1, 1, 1]), "funding_count_down_hour": 0.0,
+        "funding_count_down_minute": 0.0, "q_value": np.array([1.0, 0.0, 0.0]),
+    }
+    info_next = dict(info_base)
+    info_next["previous_action"] = 1
     for i in range(2):
         buffer.add_transition(
             (
                 np.array([float(i), 0.0]),
-                {"previous_action": 0, "regime_grid_id": 8, "trading_info": np.zeros(4)},
+                info_base,
                 1,
                 1.0,
                 np.zeros(2),
-                {"previous_action": 1, "regime_grid_id": 8, "trading_info": np.zeros(4)},
+                info_next,
                 False,
             )
         )
@@ -1296,6 +1308,10 @@ def test_run_epoch_exploration_stops_early_when_buffer_becomes_full(monkeypatch)
                     "previous_action": message.initial_action,
                     "regime_grid_id": 0,
                     "trading_info": np.zeros(4),
+                    "avaliable_action": np.array([1, 1, 1]),
+                    "funding_count_down_hour": 0.0,
+                    "funding_count_down_minute": 0.0,
+                    "q_value": np.array([1.0, 0.0, 0.0]),
                 },
                 1,
                 1.0,
@@ -1310,6 +1326,10 @@ def test_run_epoch_exploration_stops_early_when_buffer_becomes_full(monkeypatch)
                     "previous_action": 1,
                     "regime_grid_id": 0,
                     "trading_info": np.zeros(4),
+                    "avaliable_action": np.array([1, 1, 1]),
+                    "funding_count_down_hour": 0.0,
+                    "funding_count_down_minute": 0.0,
+                    "q_value": np.array([1.0, 0.0, 0.0]),
                 },
                 True,
             )

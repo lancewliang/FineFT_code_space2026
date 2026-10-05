@@ -99,6 +99,9 @@ def test_write_round_transitions_semantic_dedup_and_td_error_replacement():
             "regime_grid_id": 0,
             "q_value": np.array([q_val, 0.0, 0.0]),
             "trading_info": np.array([1.0, pnl_float, 0.0, 0.05]),
+            "avaliable_action": np.array([1.0, 1.0, 1.0]),
+            "funding_count_down_hour": 0.0,
+            "funding_count_down_minute": 0.0,
             "tag": tag,
         }
         return (np.array([1.0, 2.0]), info, 2, 0.5, np.array([1.5, 2.5]), dict(info), False)
@@ -195,7 +198,7 @@ def test_explore_round_computes_td_error_on_transitions(monkeypatch):
             self.unrealized_pnl = 0.0
             self.wallet_balance = 100.0
 
-        def reset(self):
+        def reset(self, initial_state=None):
             return (
                 np.zeros(2),
                 {
@@ -227,10 +230,14 @@ def test_explore_round_computes_td_error_on_transitions(monkeypatch):
                 },
             )
 
+    class FakeSubnet(torch.nn.Module):
+        def forward(self, **kwargs):
+            return torch.tensor([[2.0, 1.0, 0.0]], dtype=torch.float32)
+
     class FakeModel(torch.nn.Module):
-        def __call__(self, **kwargs):
-            # 返回 Q 值: batch_size=1, N=1, N_ACTIONS=3: Q=[2.0, 1.0, 0.0]
-            return torch.tensor([[[2.0, 1.0, 0.0]]], dtype=torch.float32)
+        def __init__(self):
+            super().__init__()
+            self.qnet_list = torch.nn.ModuleList([FakeSubnet()])
 
     monkeypatch.setattr(pdt, "build_initial_state", lambda *args, **kwargs: (None, None, None, "init"))
     monkeypatch.setattr(pdt, "create_demo_env", lambda *args, **kwargs: FakeEnv())

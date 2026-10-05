@@ -59,6 +59,7 @@ class Demo_Env(Base_Env):
         limit_reverse_penalty=1.5,
         near_limit_threshold=0.003,
         regime_grid_ids_array=None,
+        q_table=None,
     ):
 
         super(Demo_Env, self).__init__(
@@ -99,38 +100,39 @@ class Demo_Env(Base_Env):
             near_limit_threshold=near_limit_threshold,
             regime_grid_ids_array=regime_grid_ids_array,
         )
-        self.q_table = create_optimal_q_table(
-            ask_prices_array,
-            bid_prices_array,
-            ask_qtys_array,
-            bid_qtys_array,
-            markprice_array,
-            timestamp_array,
-            funding_rate_array,
-            funding_timestamp_array,
-            max_holding_number=max_holding_number,
-            position_choices=position_choices,  # (must be an odd number, the minum of trading equals to (max_holder_number)/((action_dim-1)/2)s))
-            leverage_choice=leverage_choice,  # recommend only use one leverage choice, because the leverage does not influence the return directly, the position
-            # itself is enough to show the risk preference
-            long_estimated_rate=long_estimated_rate,
-            short_estimated_rate=short_estimated_rate,
-            commission_rate=commission_rate,
-            # the default is for btcusdt perpetual contract
-            max_punishment=max_punishment,
-            gamma=gamma,
-            allow_reverse_position=allow_reverse_position,
-            is_limit_up_array=is_limit_up_array,
-            is_limit_down_array=is_limit_down_array,
-            limit_up_ask_depth_ratio_5_array=limit_up_ask_depth_ratio_5_array,
-            limit_down_bid_depth_ratio_5_array=limit_down_bid_depth_ratio_5_array,
-            upper_limit_prices_array=upper_limit_prices_array,
-            lower_limit_prices_array=lower_limit_prices_array,
-            enable_limit_reward=enable_limit_reward,
-            limit_hold_bonus=limit_hold_bonus,
-            limit_stay_bonus=limit_stay_bonus,
-            limit_reverse_penalty=limit_reverse_penalty,
-            near_limit_threshold=near_limit_threshold,
-        )
+        if q_table is not None:
+            self.q_table = q_table
+        else:
+            self.q_table = create_optimal_q_table(
+                ask_prices_array,
+                bid_prices_array,
+                ask_qtys_array,
+                bid_qtys_array,
+                markprice_array,
+                timestamp_array,
+                funding_rate_array,
+                funding_timestamp_array,
+                max_holding_number=max_holding_number,
+                position_choices=position_choices,
+                leverage_choice=leverage_choice,
+                long_estimated_rate=long_estimated_rate,
+                short_estimated_rate=short_estimated_rate,
+                commission_rate=commission_rate,
+                max_punishment=max_punishment,
+                gamma=gamma,
+                allow_reverse_position=allow_reverse_position,
+                is_limit_up_array=is_limit_up_array,
+                is_limit_down_array=is_limit_down_array,
+                limit_up_ask_depth_ratio_5_array=limit_up_ask_depth_ratio_5_array,
+                limit_down_bid_depth_ratio_5_array=limit_down_bid_depth_ratio_5_array,
+                upper_limit_prices_array=upper_limit_prices_array,
+                lower_limit_prices_array=lower_limit_prices_array,
+                enable_limit_reward=enable_limit_reward,
+                limit_hold_bonus=limit_hold_bonus,
+                limit_stay_bonus=limit_stay_bonus,
+                limit_reverse_penalty=limit_reverse_penalty,
+                near_limit_threshold=near_limit_threshold,
+            )
 
     def reset(self, initial_state: tuple[float, float, float, float, float] | None = None):
         state, info = super(Demo_Env, self).reset(initial_state=initial_state)

@@ -177,30 +177,38 @@ def test_stratified_stacked_sampler_replacement_fallback():
 
 
 def test_directional_regime_curriculum_rotation():
-    assert get_active_grid_ids_for_epoch(0, block_epochs=3) == [0, 3, 6]
-    assert get_active_grid_ids_for_epoch(1, block_epochs=3) == [0, 3, 6]
-    assert get_active_grid_ids_for_epoch(2, block_epochs=3) == [0, 3, 6]
+    # Phase 0: [8]
+    assert get_active_grid_ids_for_epoch(0, block_epochs=3) == [8]
+    assert get_active_grid_ids_for_epoch(1, block_epochs=3) == [8]
+    assert get_active_grid_ids_for_epoch(2, block_epochs=3) == [8]
 
-    assert get_active_grid_ids_for_epoch(3, block_epochs=3) == [1, 4, 7]
-    assert get_active_grid_ids_for_epoch(4, block_epochs=3) == [1, 4, 7]
-    assert get_active_grid_ids_for_epoch(5, block_epochs=3) == [1, 4, 7]
+    # Phase 1: [2, 5, 8]
+    assert get_active_grid_ids_for_epoch(3, block_epochs=3) == [2, 5, 8]
+    assert get_active_grid_ids_for_epoch(4, block_epochs=3) == [2, 5, 8]
+    assert get_active_grid_ids_for_epoch(5, block_epochs=3) == [2, 5, 8]
 
-    assert get_active_grid_ids_for_epoch(6, block_epochs=3) == [2, 5, 8]
-    assert get_active_grid_ids_for_epoch(7, block_epochs=3) == [2, 5, 8]
-    assert get_active_grid_ids_for_epoch(8, block_epochs=3) == [2, 5, 8]
+    # Phase 2: [1, 4, 7]
+    assert get_active_grid_ids_for_epoch(6, block_epochs=3) == [1, 4, 7]
+    assert get_active_grid_ids_for_epoch(7, block_epochs=3) == [1, 4, 7]
+    assert get_active_grid_ids_for_epoch(8, block_epochs=3) == [1, 4, 7]
 
-    # Phase 3: 对角匹配体制 (s0v0, s1v1, s2v2 -> [0, 4, 8])
-    assert get_active_grid_ids_for_epoch(9, block_epochs=3) == [0, 4, 8]
-    assert get_active_grid_ids_for_epoch(10, block_epochs=3) == [0, 4, 8]
-    assert get_active_grid_ids_for_epoch(11, block_epochs=3) == [0, 4, 8]
+    # Phase 3: [0, 3, 6]
+    assert get_active_grid_ids_for_epoch(9, block_epochs=3) == [0, 3, 6]
+    assert get_active_grid_ids_for_epoch(10, block_epochs=3) == [0, 3, 6]
+    assert get_active_grid_ids_for_epoch(11, block_epochs=3) == [0, 3, 6]
 
-    # Phase 4: 全量经验抽取（覆盖全部 9 格）
-    assert get_active_grid_ids_for_epoch(12, block_epochs=3) == [0, 1, 2, 3, 4, 5, 6, 7, 8]
-    assert get_active_grid_ids_for_epoch(13, block_epochs=3) == [0, 1, 2, 3, 4, 5, 6, 7, 8]
-    assert get_active_grid_ids_for_epoch(14, block_epochs=3) == [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    # Phase 4: 对角匹配体制 (s0v0, s1v1, s2v2 -> [0, 4, 8])
+    assert get_active_grid_ids_for_epoch(12, block_epochs=3) == [0, 4, 8]
+    assert get_active_grid_ids_for_epoch(13, block_epochs=3) == [0, 4, 8]
+    assert get_active_grid_ids_for_epoch(14, block_epochs=3) == [0, 4, 8]
 
-    # 第 5 阶段之后周期轮转回到 Phase 0
-    assert get_active_grid_ids_for_epoch(15, block_epochs=3) == [0, 3, 6]
+    # Phase 5: 全量经验抽取（覆盖全部 9 格）
+    assert get_active_grid_ids_for_epoch(15, block_epochs=3) == [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    assert get_active_grid_ids_for_epoch(16, block_epochs=3) == [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    assert get_active_grid_ids_for_epoch(17, block_epochs=3) == [0, 1, 2, 3, 4, 5, 6, 7, 8]
+
+    # 周期轮转回到 Phase 0
+    assert get_active_grid_ids_for_epoch(18, block_epochs=3) == [8]
 
 
 def test_regime_stratified_buffer_create_sampler():
@@ -216,16 +224,76 @@ def test_regime_stratified_buffer_create_sampler():
             buffer.add_transition(_make_dummy_transition(i, grid_id=g, reward=float(g)))
 
     sampler_p0 = buffer.create_sampler(epoch_index=0, block_epochs=3)
-    assert sampler_p0.active_grid_ids == [0, 3, 6]
+    assert sampler_p0.active_grid_ids == [8]
 
     sampler_p1 = buffer.create_sampler(epoch_index=4, block_epochs=3)
-    assert sampler_p1.active_grid_ids == [1, 4, 7]
+    assert sampler_p1.active_grid_ids == [2, 5, 8]
 
     sampler_p2 = buffer.create_sampler(epoch_index=8, block_epochs=3)
-    assert sampler_p2.active_grid_ids == [2, 5, 8]
+    assert sampler_p2.active_grid_ids == [1, 4, 7]
 
-    sampler_p3 = buffer.create_sampler(epoch_index=9, block_epochs=3)
-    assert sampler_p3.active_grid_ids == [0, 4, 8]
+    sampler_p3 = buffer.create_sampler(epoch_index=10, block_epochs=3)
+    assert sampler_p3.active_grid_ids == [0, 3, 6]
 
-    sampler_p4 = buffer.create_sampler(epoch_index=12, block_epochs=3)
-    assert sampler_p4.active_grid_ids == [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    sampler_p4 = buffer.create_sampler(epoch_index=13, block_epochs=3)
+    assert sampler_p4.active_grid_ids == [0, 4, 8]
+
+    sampler_p5 = buffer.create_sampler(epoch_index=16, block_epochs=3)
+    assert sampler_p5.active_grid_ids == [0, 1, 2, 3, 4, 5, 6, 7, 8]
+
+
+def test_regime_stratified_buffer_fifo_eviction_and_tensor_shapes():
+    """验证显存直存池在超出网格容量时的 O(1) 循环 FIFO 淘汰及张量签名契约。"""
+    buffer = RegimeStratifiedReplayBuffer(
+        total_buffer_size=45,  # 9 grids * 5 capacity
+        batch_size=9,
+        device="cpu",
+        seed=42,
+        num_grids=9,
+    )
+    assert buffer.grid_capacity == 5
+
+    # 填满 grid 0 (5 条)
+    for i in range(5):
+        buffer.add_transition(_make_dummy_transition(i, grid_id=0, reward=float(i)))
+    assert buffer.get_grid_lengths()[0] == 5
+    assert buffer.write_ptrs[0] == 0
+
+    # 插入第 6 条与第 7 条，触发 FIFO 覆盖槽位 0 和 1
+    buffer.add_transition(_make_dummy_transition(5, grid_id=0, reward=50.0))
+    assert buffer.get_grid_lengths()[0] == 5
+    assert buffer.write_ptrs[0] == 1
+    assert buffer.rewards[0][0, 0].item() == 50.0
+
+    buffer.add_transition(_make_dummy_transition(6, grid_id=0, reward=60.0))
+    assert buffer.get_grid_lengths()[0] == 5
+    assert buffer.write_ptrs[0] == 2
+    assert buffer.rewards[0][1, 0].item() == 60.0
+
+    # 验证采样张量维度完全匹配训练更新契约
+    for g in range(1, 9):
+        buffer.add_transition(_make_dummy_transition(0, grid_id=g, reward=float(g)))
+
+    sampler = buffer.create_sampler(epoch_index=12, block_epochs=3)  # 全量 9 格
+    states, infos, actions, rewards, next_states, next_infos, dones = sampler.sample()
+
+    assert states.shape == (9, 2)
+    assert actions.shape == (9, 1)
+    assert actions.dtype == torch.int64
+    assert rewards.shape == (9, 1)
+    assert rewards.dtype == torch.float32
+    assert next_states.shape == (9, 2)
+    assert dones.shape == (9, 1)
+
+    assert infos["previous_action"].shape == (9,)
+    assert infos["avaliable_action"].shape == (9, 3)
+    assert infos["funding_count_down_hour"].shape == (9,)
+    assert infos["funding_count_down_minute"].shape == (9,)
+    assert infos["trading_info"].shape == (9, 4)
+    assert infos["q_value"].shape == (9, 3)
+
+    assert next_infos["previous_action"].shape == (9,)
+    assert next_infos["avaliable_action"].shape == (9, 3)
+    assert next_infos["funding_count_down_hour"].shape == (9,)
+    assert next_infos["funding_count_down_minute"].shape == (9,)
+    assert next_infos["trading_info"].shape == (9, 4)

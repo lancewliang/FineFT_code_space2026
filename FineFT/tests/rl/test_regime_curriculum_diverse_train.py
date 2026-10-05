@@ -58,13 +58,14 @@ def test_end_to_end_curriculum_phase_rotation_and_balanced_updates(monkeypatch):
 
     monkeypatch.setattr(pdt, "update", fake_update)
 
-    # 运行 15 个 epoch，block_epochs=3，共 5 个阶段
-    # Epoch 0..2: Phase 0 [0, 3, 6] (Downtrend)
-    # Epoch 3..5: Phase 1 [1, 4, 7] (Range/Flat)
-    # Epoch 6..8: Phase 2 [2, 5, 8] (Uptrend)
-    # Epoch 9..11: Phase 3 [0, 4, 8] (Diagonal Matched: s0v0, s1v1, s2v2)
-    # Epoch 12..14: Phase 4 [0, 1, 2, 3, 4, 5, 6, 7, 8] (Full Experience / All Regimes)
-    for epoch in range(15):
+    # 运行 18 个 epoch，block_epochs=3，共 6 个阶段
+    # Epoch 0..2: Phase 0 [8]
+    # Epoch 3..5: Phase 1 [2, 5, 8]
+    # Epoch 6..8: Phase 2 [1, 4, 7]
+    # Epoch 9..11: Phase 3 [0, 3, 6]
+    # Epoch 12..14: Phase 4 [0, 4, 8] (Diagonal Matched: s0v0, s1v1, s2v2)
+    # Epoch 15..17: Phase 5 [0, 1, 2, 3, 4, 5, 6, 7, 8] (Full Experience / All Regimes)
+    for epoch in range(18):
         pdt.run_diverse_training_phase(
             trainer=trainer,
             buffer_diverse=buffer,
@@ -72,34 +73,38 @@ def test_end_to_end_curriculum_phase_rotation_and_balanced_updates(monkeypatch):
             epoch_index=epoch,
         )
 
-    assert len(observed_active_grids) == 15
+    assert len(observed_active_grids) == 18
     for epoch in range(3):
-        assert observed_active_grids[epoch] == [0, 3, 6]
+        assert observed_active_grids[epoch] == [8]
 
     for epoch in range(3, 6):
-        assert observed_active_grids[epoch] == [1, 4, 7]
-
-    for epoch in range(6, 9):
         assert observed_active_grids[epoch] == [2, 5, 8]
 
+    for epoch in range(6, 9):
+        assert observed_active_grids[epoch] == [1, 4, 7]
+
     for epoch in range(9, 12):
-        assert observed_active_grids[epoch] == [0, 4, 8]
+        assert observed_active_grids[epoch] == [0, 3, 6]
 
     for epoch in range(12, 15):
+        assert observed_active_grids[epoch] == [0, 4, 8]
+
+    for epoch in range(15, 18):
         assert observed_active_grids[epoch] == [0, 1, 2, 3, 4, 5, 6, 7, 8]
 
 
 def test_phase_cyclic_parameter_decay_schedule_across_18_epochs():
-    """验证 5 个阶段（3个纯方向阶段+1个对角匹配阶段+1个全量经验抽取阶段）的完整调度行为：
+    """验证 6 个阶段的完整调度行为：
     epoch 0-2 从 max 衰减到最低 (Phase 0)
     epoch 3-5 从 max 衰减到最低 (Phase 1)
     epoch 6-8 从 max 衰减到最低 (Phase 2)
-    epoch 9-11 从 max 衰减到最低 (Phase 3: 对角匹配体制)
-    epoch 12-14 从 max 衰减到最低 (Phase 4: 全量经验抽取)
-    epoch 15-17 恒等于最低
+    epoch 9-11 从 max 衰减到最低 (Phase 3)
+    epoch 12-14 从 max 衰减到最低 (Phase 4: 对角匹配体制)
+    epoch 15-17 从 max 衰减到最低 (Phase 5: 全量经验抽取)
+    epoch 18-20 恒等于最低
     学习率 lr 维持全局半程保持后线性衰减。
     """
-    num_epoch = 18
+    num_epoch = 21
     block_epochs = 3
     eps_init, eps_min = 1.0, 0.1
     ada_init, ada_min = 256.0, 0.0
@@ -118,28 +123,28 @@ def test_phase_cyclic_parameter_decay_schedule_across_18_epochs():
             curriculum_block_epochs=block_epochs,
         )
 
-        # 验证 5 个阶段的周期性重置与衰减
-        if ep in (0, 3, 6, 9, 12):
+        # 验证 6 个阶段的周期性重置与衰减
+        if ep in (0, 3, 6, 9, 12, 15):
             # 阶段起点：恢复至 max
             assert params.epsilon == pytest.approx(eps_init)
             assert params.ada == pytest.approx(ada_init)
-        elif ep in (1, 4, 7, 10, 13):
+        elif ep in (1, 4, 7, 10, 13, 16):
             # 阶段中点：线性中间值
             assert params.epsilon == pytest.approx((eps_init + eps_min) / 2.0)
             assert params.ada == pytest.approx((ada_init + ada_min) / 2.0)
-        elif ep in (2, 5, 8, 11, 14):
+        elif ep in (2, 5, 8, 11, 14, 17):
             # 阶段末点：严格达到 min
             assert params.epsilon == pytest.approx(eps_min)
             assert params.ada == pytest.approx(ada_min)
         else:
-            # ep >= 15: 剩余轮次恒等于最低值
+            # ep >= 18: 剩余轮次恒等于最低值
             assert params.epsilon == pytest.approx(eps_min)
             assert params.ada == pytest.approx(ada_min)
 
-        # 验证学习率调度：epoch < decay_boundary (15) 线性衰减，>= 15 恒等于最低值 lr_min
+        # 验证学习率调度：epoch < decay_boundary (18) 线性衰减，>= 18 恒等于最低值 lr_min
         if ep == 0:
             assert params.lr == pytest.approx(lr_init)
-        elif ep >= 15:
+        elif ep >= 18:
             assert params.lr == pytest.approx(lr_min)
 
 
@@ -302,8 +307,8 @@ def test_fourth_and_fifth_phase_curriculum_sampling():
         for i in range(35):
             buffer.add_transition(_make_dummy_transition(i, grid_id=g))
 
-    # Phase 3: epoch 9 (block_epochs=3) 激活对角匹配 [0, 4, 8]
-    sampler_p3 = buffer.create_sampler(epoch_index=9, block_epochs=3)
+    # Phase 4: epoch 12 (block_epochs=3) 激活对角匹配 [0, 4, 8]
+    sampler_p3 = buffer.create_sampler(epoch_index=12, block_epochs=3)
     assert sampler_p3 is not None
     assert sorted(sampler_p3.active_grid_ids) == [0, 4, 8]
     s3, _, _, r3, _, _, _ = sampler_p3.sample()
@@ -313,8 +318,8 @@ def test_fourth_and_fifth_phase_curriculum_sampling():
     assert rew3.count(4.0) == 30
     assert rew3.count(8.0) == 30
 
-    # Phase 4: epoch 12 (block_epochs=3) 激活全部 9 格
-    sampler_p4 = buffer.create_sampler(epoch_index=12, block_epochs=3)
+    # Phase 5: epoch 15 (block_epochs=3) 激活全部 9 格
+    sampler_p4 = buffer.create_sampler(epoch_index=15, block_epochs=3)
     assert sampler_p4 is not None
     assert sorted(sampler_p4.active_grid_ids) == list(range(9))
 

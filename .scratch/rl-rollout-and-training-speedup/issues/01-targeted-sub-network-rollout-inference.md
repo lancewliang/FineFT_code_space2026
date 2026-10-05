@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] `DfRolloutWorkerRunner._act` calls `self.model.qnet_list[context_index]` directly, outputting masked Q-values of shape `(1, N_ACTIONS)` without iterating through irrelevant subnets.
-- [ ] Action selection (`argmax`) and chosen Q-value remain mathematically identical to the baseline ensemble output for any given `context_index`.
-- [ ] Action persistence logic (`action_persistence`) continues to correctly preserve non-flat actions across consecutive timesteps.
-- [ ] Unit tests verify forward inference output equivalence between targeted sub-network invocation and full ensemble invocation across randomized state and trading context inputs.
+- [x] `DfRolloutWorkerRunner._act` calls `self.model.qnet_list[context_index]` directly, outputting masked Q-values of shape `(1, N_ACTIONS)` without iterating through irrelevant subnets.
+- [x] Action selection (`argmax`) and chosen Q-value remain mathematically identical to the baseline ensemble output for any given `context_index`.
+- [x] Action persistence logic (`action_persistence`) continues to correctly preserve non-flat actions across consecutive timesteps.
+- [x] Unit tests verify forward inference output equivalence between targeted sub-network invocation and full ensemble invocation across randomized state and trading context inputs.

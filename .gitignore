@@ -9,6 +9,7 @@ log_futures/
 PREPROCESS_DATASE*/
 dataset/
 result/
+result_2/
 log
 analysis_result
 dataset_v1

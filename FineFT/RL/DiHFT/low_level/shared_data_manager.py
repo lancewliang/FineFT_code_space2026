@@ -39,6 +39,7 @@ class EnvTensorPack:
     upper_limit_prices_tensor: torch.Tensor | None = None
     lower_limit_prices_tensor: torch.Tensor | None = None
     regime_grid_ids_tensor: torch.Tensor | None = None
+    q_table_tensor: torch.Tensor | None = None
 
     @property
     def state_array(self) -> np.ndarray:
@@ -122,6 +123,12 @@ class EnvTensorPack:
             return None
         return self.regime_grid_ids_tensor.numpy()
 
+    @property
+    def q_table_array(self) -> np.ndarray | None:
+        if self.q_table_tensor is None:
+            return None
+        return self.q_table_tensor.numpy()
+
     def to_env_kwargs(self) -> dict[str, Any]:
         """导出交易环境初始化所需的全量零拷贝 NumPy 数组字典。"""
         return {
@@ -141,6 +148,7 @@ class EnvTensorPack:
             "upper_limit_prices_array": self.upper_limit_prices_array,
             "lower_limit_prices_array": self.lower_limit_prices_array,
             "regime_grid_ids_array": self.regime_grid_ids_array,
+            "q_table_array": self.q_table_array,
         }
 
 
@@ -177,6 +185,7 @@ class SharedMarketDataPack:
         cls,
         train_df_cache: dict[int, pd.DataFrame],
         env_kwargs: dict[str, Any],
+        q_table_cache: dict[int, np.ndarray] | None = None,
     ) -> SharedMarketDataPack:
         """从 DataFrame 字典统一构建并提纯共享行情张量注册表。"""
         if not train_df_cache:
@@ -315,6 +324,60 @@ class SharedMarketDataPack:
                     )
                 ).share_memory_()
 
+            q_table_arr = None
+            if q_table_cache is not None and df_index in q_table_cache:
+                q_table_arr = q_table_cache[df_index]
+            if q_table_arr is None and "max_holding_number" in env_kwargs and "position_choices" in env_kwargs:
+                from env.env_class.futures_util import create_optimal_q_table
+                lev_choices = env_kwargs.get("leverage_choices", env_kwargs.get("leverage_choice", [5]))
+                q_table_arr = create_optimal_q_table(
+                    df[ask_prices_names].values,
+                    df[bid_prices_names].values,
+                    df[ask_sizes_names].values,
+                    df[bid_sizes_names].values,
+                    df["mark_price"].values,
+                    ts_raw,
+                    df["funding_rate"].values,
+                    fts_raw,
+                    max_holding_number=env_kwargs["max_holding_number"],
+                    position_choices=env_kwargs["position_choices"],
+                    leverage_choice=lev_choices,
+                    long_estimated_rate=env_kwargs["long_estimated_rate"],
+                    short_estimated_rate=env_kwargs["short_estimated_rate"],
+                    commission_rate=env_kwargs["commission_rate"],
+                    max_punishment=1e10,
+                    gamma=env_kwargs["gamma"],
+                    allow_reverse_position=env_kwargs.get("allow_reverse_position", False),
+                    is_limit_up_array=(df["limit_up_single_sided_ratio"].values > 0)
+                    if "limit_up_single_sided_ratio" in df.columns
+                    else None,
+                    is_limit_down_array=(df["limit_down_single_sided_ratio"].values > 0)
+                    if "limit_down_single_sided_ratio" in df.columns
+                    else None,
+                    limit_up_ask_depth_ratio_5_array=df["limit_up_ask_depth_ratio_5"].values
+                    if "limit_up_ask_depth_ratio_5" in df.columns
+                    else None,
+                    limit_down_bid_depth_ratio_5_array=df["limit_down_bid_depth_ratio_5"].values
+                    if "limit_down_bid_depth_ratio_5" in df.columns
+                    else None,
+                    upper_limit_prices_array=df["UpperLimitPrice"].values
+                    if "UpperLimitPrice" in df.columns
+                    else None,
+                    lower_limit_prices_array=df["LowerLimitPrice"].values
+                    if "LowerLimitPrice" in df.columns
+                    else None,
+                    enable_limit_reward=enable_limit_reward,
+                    limit_hold_bonus=env_kwargs.get("limit_hold_bonus", 1.0),
+                    limit_stay_bonus=env_kwargs.get("limit_stay_bonus", 0.5),
+                    limit_reverse_penalty=env_kwargs.get("limit_reverse_penalty", 1.5),
+                    near_limit_threshold=env_kwargs.get("near_limit_threshold", 0.003),
+                )
+            q_table_tensor = None
+            if q_table_arr is not None:
+                q_table_tensor = torch.from_numpy(
+                    np.ascontiguousarray(q_table_arr, dtype=np.float32)
+                ).share_memory_()
+
             pack = EnvTensorPack(
                 state_tensor=state_tensor,
                 ask_prices_tensor=ask_prices_tensor,
@@ -334,6 +397,7 @@ class SharedMarketDataPack:
                 upper_limit_prices_tensor=upper_limit_prices_tensor,
                 lower_limit_prices_tensor=lower_limit_prices_tensor,
                 regime_grid_ids_tensor=regime_grid_ids_tensor,
+                q_table_tensor=q_table_tensor,
             )
             packs[df_index] = pack
 
@@ -398,4 +462,5 @@ def create_demo_env_from_pack(
         limit_reverse_penalty=env_kwargs.get("limit_reverse_penalty", 1.5),
         near_limit_threshold=env_kwargs.get("near_limit_threshold", 0.003),
         regime_grid_ids_array=arrays["regime_grid_ids_array"],
+        q_table=arrays["q_table_array"],
     )
