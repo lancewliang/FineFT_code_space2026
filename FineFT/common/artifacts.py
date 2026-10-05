@@ -51,6 +51,18 @@ class HistoryArtifactNames:
     MICRO_ACTION_HISTORY_NPY: str = "micro_action_history.npy"
     MACRO_ACTION_HISTORY_NPY: str = "macro_action_history.npy"
     MACRO_ACTION_NPY: str = "macro_action.npy"
+    ACTION_DECISION_REASON_HISTORY_NPY: str = "action_decision_reason_history.npy"
+
+
+from enum import IntEnum
+
+
+class ActionDecisionReasons(IntEnum):
+    POLICY_INFERENCE = 0
+    ACTION_PERSISTENCE = 1
+    DEFENSIVE_PREEMPTION = 2
+    DEFENSIVE_RULE_CLOSE = 3
+    ACTION_UNAVAILABLE_BREAK = 4
 
 
 def get_df_chunk_filename(index: int) -> str:

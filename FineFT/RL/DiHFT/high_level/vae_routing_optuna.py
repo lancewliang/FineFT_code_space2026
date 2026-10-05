@@ -116,6 +116,12 @@ parser_all.add_argument(
     "on CPU with a single thread and shares the study via sqlite storage",
 )
 parser_all.add_argument(
+    "--action_persistence",
+    type=int,
+    default=3,
+    help="number of consecutive steps a non-flat action persists before re-evaluating policy",
+)
+parser_all.add_argument(
     "--gating_strategy",
     type=str,
     default="absolute",
@@ -178,6 +184,7 @@ def prepare_base_args(args_1, args_2):
         or base_args.enable_non_main_contract_defense
     )
     base_args.gating_strategy = args_2.gating_strategy
+    base_args.action_persistence = args_2.action_persistence
     base_args.ood_threshold = 0.005
     base_args.slope_margin_threshold = 0.12
     base_args.volatility_margin_threshold = 0.12

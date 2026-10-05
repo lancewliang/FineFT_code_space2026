@@ -104,6 +104,16 @@ def test_history_artifact_names_literals_and_typo_compatibility() -> None:
     assert HistoryArtifactNames.MICRO_ACTION_HISTORY_NPY == "micro_action_history.npy"
     assert HistoryArtifactNames.MACRO_ACTION_HISTORY_NPY == "macro_action_history.npy"
     assert HistoryArtifactNames.MACRO_ACTION_NPY == "macro_action.npy"
+    assert (
+        HistoryArtifactNames.ACTION_DECISION_REASON_HISTORY_NPY
+        == "action_decision_reason_history.npy"
+    )
+    from common.artifacts import ActionDecisionReasons
+    assert ActionDecisionReasons.POLICY_INFERENCE == 0
+    assert ActionDecisionReasons.ACTION_PERSISTENCE == 1
+    assert ActionDecisionReasons.DEFENSIVE_PREEMPTION == 2
+    assert ActionDecisionReasons.DEFENSIVE_RULE_CLOSE == 3
+    assert ActionDecisionReasons.ACTION_UNAVAILABLE_BREAK == 4
 
 
 def test_dynamic_filename_builders() -> None:

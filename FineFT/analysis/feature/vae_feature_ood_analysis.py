@@ -1,5 +1,4 @@
 from __future__ import annotations
-from common import ArtifactNames
 
 import argparse
 import logging
@@ -20,6 +19,7 @@ FINEFT_ROOT = REPO_ROOT / "FineFT"
 if str(FINEFT_ROOT) not in sys.path:
     sys.path.insert(0, str(FINEFT_ROOT))
 
+from common import ArtifactNames
 from RL.DiHFT.VAE.vae import MLP_VAE, softclip, gaussian_nll
 
 logging.basicConfig(
@@ -750,7 +750,7 @@ def main():
 
     if not args.output_dir:
         args.output_dir = (
-            f"analysis_result/DiHFT/feature_ood/{args.dataset_name}/{args.experiment_name}"
+            f"analysis_result/DiHFT/feature_ood/{args.dataset_name}/{args.experiment_name}/{args.axis}"
         )
 
     analyze_feature_vae_ood(args)

@@ -155,6 +155,7 @@ def test_two_dimensional_routing_maps_axis_labels_to_slot():
     )
     routing.action = 4
     routing.macro_action_history = []
+    routing.action_decision_reason_history = []
     routing.calculate_axis_window_result = lambda axis: {
         "volatility": [0.1, 0.8, 0.2],
         "slope": [0.1, 0.2, 0.9],
@@ -194,6 +195,7 @@ def test_two_dimensional_empty_slot_uses_defensive_action(monkeypatch):
     routing.position_list = [-1, 0, 1]
     routing.action = 6
     routing.macro_action_history = []
+    routing.action_decision_reason_history = []
     routing.calculate_axis_window_result = lambda axis: [0.9, 0.1, 0.1]
     routing.gating_strategy = vru.create_gating_strategy("absolute", slope_threshold=0.2, volatility_threshold=0.2)
     monkeypatch.setattr(vru, "rule_based_close", lambda *args: 4)
@@ -230,6 +232,7 @@ def test_two_dimensional_routing_applies_axis_specific_thresholds(monkeypatch):
     routing.position_list = [-1, 0, 1]
     routing.action = 6
     routing.macro_action_history = []
+    routing.action_decision_reason_history = []
     routing.calculate_axis_window_result = lambda axis: {
         "volatility": [0.7, 0.1, 0.1],
         "slope": [0.1, 0.9, 0.1],
@@ -339,6 +342,7 @@ def test_prepare_base_args_loads_two_dimensional_model_from_manifest(tmp_path):
         enable_non_main_contract_defense=False,
         selection_manifest=str(manifest_path),
         gating_strategy="absolute",
+        action_persistence=3,
     )
 
     prepared = vro.prepare_base_args(args_1, args_2)
@@ -377,6 +381,7 @@ def test_prepare_base_args_does_not_mutate_original_args(tmp_path):
         enable_non_main_contract_defense=False,
         selection_manifest=str(manifest_path),
         gating_strategy="absolute",
+        action_persistence=3,
     )
 
     prepared = vro.prepare_base_args(args_1, args_2)
@@ -417,6 +422,7 @@ def test_prepare_base_args_rejects_missing_model_assembly(tmp_path):
         enable_non_main_contract_defense=False,
         selection_manifest=str(manifest_path),
         gating_strategy="absolute",
+        action_persistence=3,
     )
     with pytest.raises(
         ValueError, match="two-dimensional manifest has no model_assembly artifact"
@@ -445,6 +451,7 @@ def test_prepare_base_args_validates_manifest_contract(tmp_path):
         enable_non_main_contract_defense=False,
         selection_manifest=str(manifest_path),
         gating_strategy="absolute",
+        action_persistence=3,
     )
     with pytest.raises(
         ValueError, match="manifest slot_count does not match the two-dimensional axes"

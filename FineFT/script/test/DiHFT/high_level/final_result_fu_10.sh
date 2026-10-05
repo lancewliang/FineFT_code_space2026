@@ -12,6 +12,7 @@ MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-1}
 POSITION_CHOICES=${POSITION_CHOICES:-3}
 ORDER_BOOK_DEPTH=${ORDER_BOOK_DEPTH:-5}
 TRANSACTION_COST=${TRANSACTION_COST:-0.0005}
+ACTION_PERSISTENCE=${ACTION_PERSISTENCE:-3}
 
 PARA_FILE="result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/high_level_agent_para.txt"
 OPTUNA_CSV="result/DiHFT/high_level/${DATASET_NAME}/${EXPERIMENT_NAME}/vae_risk_aware_routing_optuna/optuna_results.csv"
@@ -40,4 +41,5 @@ python -u FineFT/RL/DiHFT/high_level/vae_routing_final_result_macro_action.py \
     --short_estimated_rate 0 \
     --long_estimated_rate 0 \
     --enable_non_main_contract_defense \
+    --action_persistence "${ACTION_PERSISTENCE}" \
     >"${LOG_DIR}/final_result.log" 2>&1

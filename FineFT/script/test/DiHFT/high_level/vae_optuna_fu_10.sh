@@ -10,6 +10,7 @@ BASE_PATH=${BASE_PATH:-dataset/10min}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-10min_parallel}
 MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-1}
 ENABLE_NON_MAIN_DEFENSE=${ENABLE_NON_MAIN_DEFENSE:-1}
+ACTION_PERSISTENCE=${ACTION_PERSISTENCE:-3}
 
 mkdir -p "log/DiHFT/fu/high_level/optuna/${EXPERIMENT_NAME}"
 
@@ -40,5 +41,6 @@ python -u FineFT/RL/DiHFT/high_level/vae_routing_optuna.py \
     --n_trials 80 \
     --rule_base_threshold_min 0.1 \
     --rule_base_threshold_max 0.3 \
+    --action_persistence "${ACTION_PERSISTENCE}" \
     "${DEFENSE_ARGS[@]}" \
     >"log/DiHFT/fu/high_level/optuna/${EXPERIMENT_NAME}/optuna.log" 2>&1

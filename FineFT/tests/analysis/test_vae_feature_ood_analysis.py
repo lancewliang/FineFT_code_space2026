@@ -1,6 +1,8 @@
 from common.artifacts import ArtifactNames
 import argparse
+import os
 from pathlib import Path
+import subprocess
 import numpy as np
 import pandas as pd
 import pytest
@@ -291,3 +293,147 @@ def test_analyze_feature_vae_ood_per_contract(tmp_path: Path):
     assert (output_dir / "contracts" / "c2_ood.csv").is_file()
     assert "delta_nll_vs_train" in per_contract["c1"].columns
     assert "delta_nll_vs_valid" in per_contract["c1"].columns
+
+
+def _setup_mock_environment(
+    tmp_path: Path,
+    dataset_name: str = "fu",
+    experiment_name: str = "10min_parallel",
+) -> tuple[Path, Path, list[str], list[str]]:
+    slope_features = ["slope_f1", "slope_f2"]
+    vol_features = ["vol_f1", "vol_f2", "vol_f3"]
+    num_samples = 30
+
+    data_dir = tmp_path / "dataset" / "10min" / dataset_name
+    all_features = sorted(set(slope_features + vol_features))
+    np.random.seed(42)
+
+    for split in ("train", "valid", "test"):
+        split_dir = data_dir / split
+        split_dir.mkdir(parents=True, exist_ok=True)
+        split_df = pd.DataFrame(
+            np.random.randn(num_samples, len(all_features)),
+            columns=all_features,
+        )
+        split_df.to_feather(split_dir / "c1.feather")
+
+    np.save(
+        data_dir / ArtifactNames.VAE_SLOPE_STATE_FEATURES_NPY,
+        np.array(slope_features),
+    )
+    np.save(
+        data_dir / ArtifactNames.VAE_VOLATILITY_STATE_FEATURES_NPY,
+        np.array(vol_features),
+    )
+
+    vae_dir = tmp_path / "result" / "DiHFT" / "vae_results" / dataset_name / experiment_name
+    for axis, feats in (("slope", slope_features), ("volatility", vol_features)):
+        for label_idx in range(3):
+            label_dir = vae_dir / axis / f"label_{label_idx}"
+            label_dir.mkdir(parents=True, exist_ok=True)
+            model = MLP_VAE(
+                INPUT_DIM=len(feats),
+                Z_DIM=2,
+                hidden_dims=[8, 4],
+                loss_func="NLL",
+            )
+            torch.save(model.state_dict(), label_dir / "model_latest.pth")
+
+    return data_dir, vae_dir, slope_features, vol_features
+
+
+def test_analyze_feature_vae_ood_volatility_axis(tmp_path: Path):
+    _setup_mock_environment(tmp_path)
+    output_dir = tmp_path / "analysis_result" / "vol_ood"
+    args = argparse.Namespace(
+        base_path=str(tmp_path / "dataset" / "10min"),
+        dataset_name="fu",
+        experiment_name="10min_parallel",
+        vae_path=str(tmp_path / "result" / "DiHFT" / "vae_results"),
+        output_dir=str(output_dir),
+        sample_size=30,
+        top_k=5,
+        device="cpu",
+        per_contract=False,
+        axis="volatility",
+        z_dim=2,
+        hidden_dims=[8, 4],
+    )
+
+    results = analyze_feature_vae_ood(args)
+    assert len(results["summary_df"]) == 3
+    assert (output_dir / "feature_ood_summary.csv").is_file()
+    assert (output_dir / "feature_ood_test_vs_train.csv").is_file()
+
+
+def test_vae_feature_ood_fu_10_script_dual_axis(tmp_path: Path):
+    _setup_mock_environment(tmp_path)
+    repo_root = Path(__file__).resolve().parents[3]
+    script_path = repo_root / "FineFT" / "script" / "analysis" / "feature" / "vae_feature_ood_fu_10.sh"
+    output_dir = tmp_path / "analysis_result" / "feature_ood" / "fu" / "10min_parallel"
+    log_dir = tmp_path / "log" / "analysis" / "feature" / "DiHFT" / "fu" / "10min_parallel"
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "BASE_PATH": str(tmp_path / "dataset" / "10min"),
+            "DATASET_NAME": "fu",
+            "EXPERIMENT_NAME": "10min_parallel",
+            "VAE_PATH": str(tmp_path / "result" / "DiHFT" / "vae_results"),
+            "OUTPUT_DIR": str(output_dir),
+            "LOG_DIR": str(log_dir),
+            "SAMPLE_SIZE": "30",
+            "DEVICE": "cpu",
+            "Z_DIM": "2",
+            "HIDDEN_DIMS": "8 4",
+        }
+    )
+
+    res = subprocess.run(
+        ["bash", str(script_path)],
+        cwd=repo_root,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0, f"Script failed with stderr:\n{res.stderr}\nstdout:\n{res.stdout}"
+    assert (output_dir / "slope" / "feature_ood_summary.csv").is_file()
+    assert (output_dir / "volatility" / "feature_ood_summary.csv").is_file()
+    assert (log_dir / "slope" / "feature_ood.log").is_file()
+    assert (log_dir / "volatility" / "feature_ood.log").is_file()
+
+
+def test_vae_feature_ood_fu_10_script_single_axis_override(tmp_path: Path):
+    _setup_mock_environment(tmp_path)
+    repo_root = Path(__file__).resolve().parents[3]
+    script_path = repo_root / "FineFT" / "script" / "analysis" / "feature" / "vae_feature_ood_fu_10.sh"
+    output_dir = tmp_path / "analysis_result" / "feature_ood" / "fu" / "10min_parallel"
+    log_dir = tmp_path / "log" / "analysis" / "feature" / "DiHFT" / "fu" / "10min_parallel"
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "BASE_PATH": str(tmp_path / "dataset" / "10min"),
+            "DATASET_NAME": "fu",
+            "EXPERIMENT_NAME": "10min_parallel",
+            "VAE_PATH": str(tmp_path / "result" / "DiHFT" / "vae_results"),
+            "OUTPUT_DIR": str(output_dir),
+            "LOG_DIR": str(log_dir),
+            "SAMPLE_SIZE": "30",
+            "DEVICE": "cpu",
+            "AXIS": "volatility",
+            "Z_DIM": "2",
+            "HIDDEN_DIMS": "8 4",
+        }
+    )
+
+    res = subprocess.run(
+        ["bash", str(script_path)],
+        cwd=repo_root,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0, f"Script failed with stderr:\n{res.stderr}\nstdout:\n{res.stdout}"
+    assert (output_dir / "volatility" / "feature_ood_summary.csv").is_file()
+    assert not (output_dir / "slope").exists()

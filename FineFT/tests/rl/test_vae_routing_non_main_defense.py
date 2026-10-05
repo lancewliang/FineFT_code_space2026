@@ -84,6 +84,7 @@ def _create_mock_router(
     routing.position_list = [-1.0, 0.0, 1.0]
     routing.action = 4
     routing.macro_action_history = []
+    routing.action_decision_reason_history = []
     routing.calculate_axis_window_result = lambda axis: {
         "volatility": [0.1, 0.8, 0.2],
         "slope": [0.1, 0.2, 0.9],
@@ -107,6 +108,7 @@ def test_prepare_base_args_forwards_enable_non_main_contract_defense(tmp_path):
         selection_manifest=str(manifest_path),
         enable_non_main_contract_defense=False,
         gating_strategy="absolute",
+        action_persistence=3,
     )
     args_2 = types.SimpleNamespace(
         dataset_name="fu",
@@ -117,6 +119,7 @@ def test_prepare_base_args_forwards_enable_non_main_contract_defense(tmp_path):
         selection_manifest=str(manifest_path),
         enable_non_main_contract_defense=True,
         gating_strategy="absolute",
+        action_persistence=3,
     )
 
     base_args = vro.prepare_base_args(args_1, args_2)
@@ -197,6 +200,7 @@ def test_reconfigure_routing_preserves_defense_flag(monkeypatch):
         ood_threshold=0.005,
         slope_margin_threshold=0.12,
         volatility_margin_threshold=0.12,
+        action_persistence=3,
     )
     monkeypatch.setattr(routing, "_resolve_test_path", lambda a: "/tmp/test_trial_1")
     monkeypatch.setattr(routing, "reset_routing_state", lambda: None)

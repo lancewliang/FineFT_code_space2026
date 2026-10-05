@@ -35,6 +35,7 @@ from analysis.pick_agent.FineFT_two_dimensional_agent_selector import (
     TwoDimensionalSelectionManifest,
 )
 from common import (
+    ActionDecisionReasons,
     ArtifactNames,
     HistoryArtifactNames,
     MetricColumns,
@@ -156,6 +157,12 @@ parser.add_argument(
     "--allow_reverse_position",
     action="store_true",
     help="allow reverse position in single step",
+)
+parser.add_argument(
+    "--action_persistence",
+    type=int,
+    default=3,
+    help="number of consecutive steps a non-flat action persists before re-evaluating policy",
 )
 # low level network setting
 parser.add_argument(
@@ -527,6 +534,11 @@ def load_two_dimensional_selection_manifest(
 
 
 class vae_risk_aware_routing:
+    action_persistence: int = 3
+    remaining_persist: int = 0
+    current_action: int = 0
+    flat_action: int = 0
+    action_decision_reason_history: list[int]
     enable_non_main_contract_defense: bool = False
     role_tier_index: int | None = None
 
@@ -649,6 +661,13 @@ class vae_risk_aware_routing:
         self.zero_position_action = len(self.leverage_choices) * (
             len(self.position_list) // 2
         )
+        self.flat_action = self.zero_position_action
+        self.action_persistence = int(args.action_persistence)
+        if self.action_persistence <= 0:
+            raise ValueError("action_persistence must be positive")
+        self.remaining_persist = 0
+        self.current_action = self.flat_action
+        self.action_decision_reason_history = []
 
         # low-level network
         self.time_info_dim = args.time_info_dim
@@ -734,6 +753,10 @@ class vae_risk_aware_routing:
         }
         self.action = self.zero_position_action
         self.macro_action_history = []
+        self.flat_action = self.zero_position_action
+        self.remaining_persist = 0
+        self.current_action = self.flat_action
+        self.action_decision_reason_history = []
 
     def _resolve_test_path(self, args):
         if self.eval_stage == "test" or args.result_path.endswith("final_result"):
@@ -769,6 +792,9 @@ class vae_risk_aware_routing:
         trials; only windows/gammas/thresholds, the output path and the
         routing deques change from trial to trial.
         """
+        self.action_persistence = int(args.action_persistence)
+        if self.action_persistence <= 0:
+            raise ValueError("action_persistence must be positive")
         self.gamma = args.gamma
         self.rule_base_threshold = args.rule_base_threshold
         self.window_length = args.window_length
@@ -880,35 +906,77 @@ class vae_risk_aware_routing:
             current_leverage,
         )
 
+    def _apply_defensive_action(
+        self, info, current_position, current_leverage
+    ) -> int:
+        reason = (
+            ActionDecisionReasons.DEFENSIVE_PREEMPTION
+            if self.remaining_persist > 0
+            else ActionDecisionReasons.DEFENSIVE_RULE_CLOSE
+        )
+        self.remaining_persist = 0
+        action = self._defensive_action(info, current_position, current_leverage)
+        self.current_action = action
+        self.macro_action_history.append(self.slot_count)
+        self.action_decision_reason_history.append(reason)
+        self.action = action
+        return action
+
+    def _arm_persistence(self, action: int) -> None:
+        if self.action_persistence > 1 and action != self.flat_action:
+            self.remaining_persist = self.action_persistence - 1
+        else:
+            self.remaining_persist = 0
+
     def get_action(self, info, s, current_position, current_leverage):
         if (
             self.enable_non_main_contract_defense
             and self.role_tier_index is not None
             and float(s[self.role_tier_index]) < 0.5
         ):
-            action = self._defensive_action(info, current_position, current_leverage)
-            self.macro_action_history.append(self.slot_count)
-            self.action = action
-            return action
+            return self._apply_defensive_action(
+                info, current_position, current_leverage
+            )
 
         volatility_weights = self.calculate_axis_window_result("volatility")
         slope_weights = self.calculate_axis_window_result("slope")
         decision = self.gating_strategy.decide(volatility_weights, slope_weights)
         if decision.is_defensive:
-            action = self._defensive_action(info, current_position, current_leverage)
-            self.macro_action_history.append(self.slot_count)
+            return self._apply_defensive_action(
+                info, current_position, current_leverage
+            )
+
+        volatility_index = decision.volatility_index
+        slope_index = decision.slope_index
+        slot_id = volatility_index * self.num_labels + slope_index
+        slot = self.selection_manifest.slots[slot_id]
+        if slot["kind"] == "empty_model":
+            return self._apply_defensive_action(
+                info, current_position, current_leverage
+            )
+
+        self.selected_agent_index = slot_id
+        self.macro_action_history.append(slot_id)
+
+        if self.remaining_persist > 0 and not bool(
+            info["avaliable_action"][self.current_action]
+        ):
+            self.remaining_persist = 0
+            action = self.agent_act(s, info)
+            self.current_action = action
+            self._arm_persistence(action)
+            reason = ActionDecisionReasons.ACTION_UNAVAILABLE_BREAK
+        elif self.remaining_persist > 0:
+            action = self.current_action
+            self.remaining_persist -= 1
+            reason = ActionDecisionReasons.ACTION_PERSISTENCE
         else:
-            volatility_index = decision.volatility_index
-            slope_index = decision.slope_index
-            slot_id = volatility_index * self.num_labels + slope_index
-            slot = self.selection_manifest.slots[slot_id]
-            if slot["kind"] == "empty_model":
-                action = self._defensive_action(info, current_position, current_leverage)
-                self.macro_action_history.append(self.slot_count)
-            else:
-                self.selected_agent_index = slot_id
-                action = self.agent_act(s, info)
-                self.macro_action_history.append(slot_id)
+            action = self.agent_act(s, info)
+            self.current_action = action
+            self._arm_persistence(action)
+            reason = ActionDecisionReasons.POLICY_INFERENCE
+
+        self.action_decision_reason_history.append(reason)
         self.action = action
         return action
 
@@ -999,9 +1067,39 @@ class vae_risk_aware_routing:
         total_asset_history = env.margine_balance_history
         reward_history = calculate_differences(total_asset_history)
         micro_action_history = env.micro_action_history
+        reasons = np.array(self.action_decision_reason_history, dtype=np.int32)
+        total_steps = len(reasons)
+        persistence_held_steps = int(np.sum(reasons == ActionDecisionReasons.ACTION_PERSISTENCE))
+        policy_inference_steps = int(
+            np.sum(
+                (reasons == ActionDecisionReasons.POLICY_INFERENCE)
+                | (reasons == ActionDecisionReasons.ACTION_UNAVAILABLE_BREAK)
+            )
+        )
+        defensive_preemptions = int(np.sum(reasons == ActionDecisionReasons.DEFENSIVE_PREEMPTION))
+        action_unavailable_breaks = int(np.sum(reasons == ActionDecisionReasons.ACTION_UNAVAILABLE_BREAK))
+        skip_inference_ratio = (
+            float(persistence_held_steps / total_steps) if total_steps > 0 else 0.0
+        )
         trading_info = {
-            "return rate": total_asset_history[-1] / self.initial_wallet_balance
+            "return rate": total_asset_history[-1] / self.initial_wallet_balance,
+            "total_steps": total_steps,
+            "inference_steps": policy_inference_steps,
+            "persistence_held_steps": persistence_held_steps,
+            "skip_inference_ratio": skip_inference_ratio,
+            "defensive_preemptions": defensive_preemptions,
+            "action_unavailable_breaks": action_unavailable_breaks,
         }
+        logger.info(
+            "[Trading Diagnostics] steps=%d, inference=%d, persisted=%d, "
+            "skip_ratio=%.2f%%, def_preemptions=%d, unavail_breaks=%d",
+            total_steps,
+            policy_inference_steps,
+            persistence_held_steps,
+            skip_inference_ratio * 100.0,
+            defensive_preemptions,
+            action_unavailable_breaks,
+        )
 
         if not os.path.exists(save_path):
             os.makedirs(save_path, exist_ok=True)
@@ -1012,6 +1110,10 @@ class vae_risk_aware_routing:
         np.save(
             os.path.join(save_path, HistoryArtifactNames.MICRO_ACTION_HISTORY_NPY),
             micro_action_history,
+        )
+        np.save(
+            os.path.join(save_path, HistoryArtifactNames.ACTION_DECISION_REASON_HISTORY_NPY),
+            reasons,
         )
         np.save(os.path.join(save_path, ArtifactNames.TRADING_INFO_NPY), trading_info)
         np.save(
@@ -1189,6 +1291,9 @@ class vae_risk_aware_routing:
                 self.position_list,
                 env.position,
                 env.leverage,
+            )
+            self.action_decision_reason_history.append(
+                ActionDecisionReasons.DEFENSIVE_RULE_CLOSE
             )
             s, r, done, info = env.step(action)
             self.step_idx += 1

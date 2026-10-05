@@ -826,6 +826,15 @@ _Avoid_: 单合约遴选、test 集合遴选
 
 ### Trading Actions
 
+**动作持续性 (Action Persistence)**:
+非空仓动作（多头或空头）开仓或持仓后锁定的最小连续执行时间步长，在锁定周期内跳过低层策略神经网络推断以抑制换手磨损并加速回测，遇动作不可用或高层风险防御时提前解除锁定。
+_Avoid_: 动作滞回、动作粘性、action hold
+
+**防御抢占 (Defensive Preemption)**:
+高层风险门控（如 OOD 漂移或非主力合约防御）优先于低层动作持续性的风险控制机制；触发时立即打断持仓持续锁定并强制执行规则平仓。
+_Avoid_: 强平、硬打断、defensive interrupt
+
+
 **仓位档位 (Position Level)**:
 由 max_holding_number 和 position_choices 启动参数按交易环境公式生成的完整有序 signed position 集合，负值为空头、0 为空仓、正值为多头。
 _Avoid_: 固定五档、观测到的仓位集合、仓位数量（不明确是档位还是持仓量时）

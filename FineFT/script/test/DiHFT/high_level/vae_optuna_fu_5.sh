@@ -20,9 +20,9 @@ export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
 export CUDA_VISIBLE_DEVICES=""
 
 DEFENSE_ARGS=()
-if [[ "${ENABLE_NON_MAIN_DEFENSE}" == "1" || "${ENABLE_NON_MAIN_DEFENSE}" == "true" ]]; then
-    DEFENSE_ARGS+=(--enable_non_main_contract_defense)
-fi
+# if [[ "${ENABLE_NON_MAIN_DEFENSE}" == "1" || "${ENABLE_NON_MAIN_DEFENSE}" == "true" ]]; then
+#     DEFENSE_ARGS+=(--enable_non_main_contract_defense)
+# fi
 
 python -u FineFT/RL/DiHFT/high_level/vae_routing_optuna.py \
     --base_path "${BASE_PATH}" \
