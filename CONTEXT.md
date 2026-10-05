@@ -570,6 +570,22 @@ _Avoid_: 临时子进程、轮次探索池
 主进程在 GPU 训练完成后，直接利用 `Tensor.copy_()` 将权重覆写到共享内存物理页的操作，耗时小于 5ms 且零 IPC 序列化开销。
 _Avoid_: 状态字典重新分发、广播权重 pickle
 
+**全 GPU 显存直存经验池 (GPU-Resident Regime Stratified Buffer)**:
+将 9 格体制分层经验池直接以连续纯数值张量形式预分配并常驻在 GPU 显存（约 1.01 GB）中的存储架构。彻底消除 600 次梯度更新中 CPU 切片拼接与 48GB PCIe 同步搬运瓶颈，实现纯显存内纳秒级并行采样。
+_Avoid_: CPU 散装字典经验池、动态堆叠经验池 (Dynamic Stacked Buffer)
+
+**精准子网络推断 (Targeted Sub-Network Rollout Inference)**:
+在探索推演步中，探索 Worker 仅调用任务所绑定的单个目标子网络 `model.qnet_list[context_index]` 进行动作决策，严格禁止遍历推断全部 13 个子网络的剪枝优化机制。
+_Avoid_: 全量子网推断、冗余子网堆叠
+
+**异步非阻塞贪心评测 (Asynchronous Non-blocking Greedy Evaluation)**:
+在阶段二参数更新完成后，主进程通过权重参数浅拷贝快照将评测任务投递至后台独立执行，主训练循环零等待立即推进至下一轮探索与训练的解耦评测机制。
+_Avoid_: 串行阻塞评测 (Serial Blocking Evaluation)
+
+**理性缩编探索进程池 (Right-Sized Rollout Worker Pool)**:
+根据宿主机物理内存容量与任务规模，将探索进程数从硬件核心数（96）调优至与内存安全裕度匹配的规模（36~40 个 Worker），彻底杜绝物理内存超载与 Linux 磁盘 Swap 颠簸的进程治理规范。
+_Avoid_: 盲目全核并发、超限进程池
+
 **Watchdog Shutdown (看门狗并发停机)**:
 子进程池销毁时使用全局截止时间统一轮询、并行探测并在超时后两阶段发送 SIGTERM/SIGKILL 强制回收的停机机制，杜绝单线程串行 join 累加挂死。
 _Avoid_: 串行等待停机、顺序 join 回收
