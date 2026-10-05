@@ -26,7 +26,7 @@ def prepare_dataset_loader_list(ood_test_dataset_path_list):
     for path in ood_test_dataset_path_list:
         ood_test_data = One_Dim_Dataset(path)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpus")
-        kwargs = {"num_workers": 1, "pin_memory": True} if device == "cuda" else {}
+        kwargs = {"num_workers": 0, "pin_memory": True} if device == "cuda" else {}
         ood_test_loader = torch.utils.data.DataLoader(
             ood_test_data, batch_size=1, shuffle=False, **kwargs
         )
@@ -60,7 +60,7 @@ def prepare_model(
 
     # pin memory provides improved transfer
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    kwargs = {"num_workers": 1, "pin_memory": True} if device.type == "cuda" else {}
+    kwargs = {"num_workers": 0, "pin_memory": True} if device.type == "cuda" else {}
 
     train_loader = torch.utils.data.DataLoader(
         train_data, batch_size=batch_size, shuffle=True, **kwargs
@@ -86,7 +86,7 @@ def prepare_model(
 def prepare_contract_dataset_loader_list(test_sources, expected_feature_dim):
     dataloader_list = []
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    kwargs = {"num_workers": 1, "pin_memory": True} if device.type == "cuda" else {}
+    kwargs = {"num_workers": 0, "pin_memory": True} if device.type == "cuda" else {}
     for source in test_sources:
         data = np.load(source.source_file)
         if data.ndim != 2:

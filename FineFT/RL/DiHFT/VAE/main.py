@@ -371,7 +371,7 @@ class Piplineruner:
         self.model.load_state_dict(torch.load(model_path))
         train_dataset = One_Dim_Dataset(self.train_manifest.merged_path)
         kwargs = (
-            {"num_workers": 1, "pin_memory": True}
+            {"num_workers": 0, "pin_memory": True}
             if self.device.type == "cuda"
             else {}
         )
