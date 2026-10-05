@@ -26,6 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--end_date", required=True)
     parser.add_argument("--symbol", default="fu")
     parser.add_argument("--output_dir", required=True)
+    parser.add_argument("--max_workers", type=int, default=None)
     return parser.parse_args()
 
 
@@ -50,6 +51,7 @@ def main() -> None:
         start_date=args.start_date,
         end_date=args.end_date,
         symbol=args.symbol,
+        max_workers=args.max_workers,
     )
     logger.info(
         "Wrote commodity main-contract summary: output=%s elapsed_seconds=%.2f",

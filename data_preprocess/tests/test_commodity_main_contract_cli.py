@@ -449,24 +449,16 @@ def test_downscale_continuous_cli_reads_summary_and_writes_contract_outputs(tmp_
         check=True,
     )
 
-    assert (
+    base_feather = (
         output_root
         / "BASE_FEATURE"
         / "fu"
         / "fu2602"
         / "5min"
         / "2026-01-05.feather"
-    ).exists()
-    base_csv = (
-        output_root
-        / "BASE_FEATURE"
-        / "fu"
-        / "fu2602"
-        / "5min"
-        / "2026-01-05.csv"
     )
-    assert base_csv.exists()
-    assert "timestamp" in pd.read_csv(base_csv).columns
+    assert base_feather.exists()
+    assert "timestamp" in pl.read_ipc(base_feather).columns
     assert (
         output_root
         / "DOWNSCALE_ORDERBOOK_25"
@@ -475,7 +467,15 @@ def test_downscale_continuous_cli_reads_summary_and_writes_contract_outputs(tmp_
         / "5min"
         / "2026-01-05.feather"
     ).exists()
-    assert (
+    assert not (
+        output_root
+        / "BASE_FEATURE"
+        / "fu"
+        / "fu2602"
+        / "5min"
+        / "2026-01-05.csv"
+    ).exists()
+    assert not (
         output_root
         / "DOWNSCALE_ORDERBOOK_25"
         / "fu"
@@ -2059,3 +2059,96 @@ def test_commodity_feature_blacklists_single_file_and_python_resolution():
     assert get_commodity_vae_slope_feature_blacklist("10min") == vae_slope_10min
     assert get_commodity_vae_volatility_feature_blacklist("10min") == vae_vol_10min
     assert get_commodity_rl_feature_blacklist("10min") == rl_10min
+
+
+def test_stitch_main_contract_cli_accepts_max_workers(tmp_path):
+    raw_root = tmp_path / "data" / "原始下载"
+    for day in range(5, 16):
+        trading_day = f"202601{day:02d}"
+        _write_contract(
+            raw_root / "燃料油" / "2026" / "01" / trading_day / "fu2602.csv",
+            "fu2602",
+            trading_day,
+            trading_day,
+            [0, 30],
+        )
+
+    output_dir = tmp_path / "continuous" / "fu"
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "operator_futures.commodity.stitch_main_contract",
+            "--raw_root",
+            str(raw_root),
+            "--commodity_name",
+            "燃料油",
+            "--start_date",
+            "2026-01-05",
+            "--end_date",
+            "2026-01-16",
+            "--symbol",
+            "fu",
+            "--output_dir",
+            str(output_dir),
+            "--max_workers",
+            "2",
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "data_preprocess")},
+        check=True,
+    )
+    summary_path = output_dir / "main_contract_summary.json"
+    assert summary_path.exists()
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert len(summary["contracts"]) == 1
+    assert summary["contracts"][0]["contract"] == "fu2602"
+
+
+def test_downscale_continuous_cli_accepts_max_workers(tmp_path):
+    raw_file = tmp_path / "raw" / "fu2602.csv"
+    _write_continuous_day(raw_file, "fu2602", "20260105", "20260105")
+    summary = tmp_path / "continuous" / "fu" / "main_contract_summary.json"
+    _write_summary(summary, raw_file)
+    output_root = tmp_path / "PREPROCESS_DATASET" / "commodity-futures"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "operator_futures.commodity.downscale_continuous_by_trading_day",
+            "--summary",
+            str(summary),
+            "--output_root",
+            str(output_root),
+            "--target_freq",
+            "5min",
+            "--symbol",
+            "fu",
+            "--depth",
+            "5",
+            "--max_workers",
+            "2",
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "data_preprocess")},
+        check=True,
+    )
+
+    base_feather = (
+        output_root
+        / "BASE_FEATURE"
+        / "fu"
+        / "fu2602"
+        / "5min"
+        / "2026-01-05.feather"
+    )
+    assert base_feather.exists()
+    assert not (
+        output_root
+        / "BASE_FEATURE"
+        / "fu"
+        / "fu2602"
+        / "5min"
+        / "2026-01-05.csv"
+    ).exists()

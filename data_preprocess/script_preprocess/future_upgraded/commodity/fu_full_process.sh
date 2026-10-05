@@ -107,16 +107,18 @@ run_commodity_stitch_main_contract() {
     local start_date=$3
     local end_date=$4
     local symbol=${5:-fu}
+    local max_workers=${6:-${MAX_PREPROCESS_WORKERS:-${MAX_STITCH_WORKERS:-32}}}
     local output_dir="${root_path}/PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/${symbol}"
 
     mkdir -p "${output_dir}"
-    PYTHONPATH="${root_path}/data_preprocess" python -m operator_futures.commodity.stitch_main_contract \
+    POLARS_MAX_THREADS=1 PYTHONPATH="${root_path}/data_preprocess" python -m operator_futures.commodity.stitch_main_contract \
         --raw_root "${root_path}/data/原始下载" \
         --commodity_name "${commodity_name}" \
         --start_date "${start_date}" \
         --end_date "${end_date}" \
         --symbol "${symbol}" \
-        --output_dir "${output_dir}"
+        --output_dir "${output_dir}" \
+        --max_workers "${max_workers}"
 }
 
 run_commodity_downscale_continuous_by_trading_day() {
@@ -125,18 +127,19 @@ run_commodity_downscale_continuous_by_trading_day() {
     local target_freq=$3
     local symbol=${4:-fu}
     local contract=${5:-}
+    local max_workers=${6:-${MAX_PREPROCESS_WORKERS:-${MAX_DOWNSCALE_WORKERS:-32}}}
     local output_root="${root_path}/PREPROCESS_DATASET/commodity-futures"
     local contract_args=()
     if [ -n "${contract}" ]; then
         contract_args=(--contract "${contract}")
     fi
 
-    PYTHONPATH="${root_path}/data_preprocess" python -m operator_futures.commodity.downscale_continuous_by_trading_day \
+    POLARS_MAX_THREADS=1 PYTHONPATH="${root_path}/data_preprocess" python -m operator_futures.commodity.downscale_continuous_by_trading_day \
         --summary "${summary_path}" \
         --output_root "${output_root}" \
         --target_freq "${target_freq}" \
         --symbol "${symbol}" \
-        --depth 5 --max_workers 7 \
+        --depth 5 --max_workers "${max_workers}" \
         "${contract_args[@]}"
 }
 
@@ -674,16 +677,19 @@ run_commodity_full_process() {
     local regime_bins=${8:-${REGIME_BINS:-3}}
 
     local log_dir="${LOG_DIR:-${root_path}/log_futures/ticker_result/commodity}"
+    local preprocess_workers=${MAX_PREPROCESS_WORKERS:-${max_processes:-32}}
+
+    export POLARS_MAX_THREADS=1
 
     run_commodity_logged_step \
         "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
         "stitch_main_contract" \
-        run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$start_date" "$end_date" "$symbol"
+        run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$start_date" "$end_date" "$symbol" "$preprocess_workers"
     local summary_path="${root_path}/PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/${symbol}/main_contract_summary.json"
     run_commodity_logged_step \
         "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
         "downscale_continuous_by_trading_day" \
-        run_commodity_downscale_continuous_by_trading_day "$root_path" "$summary_path" "$target_freq" "$symbol"
+        run_commodity_downscale_continuous_by_trading_day "$root_path" "$summary_path" "$target_freq" "$symbol" "" "$preprocess_workers"
 
     local max_contract_workers=${MAX_CONTRACT_PROCESSES:-${max_processes:-3}}
     local -a contract_pids=()

@@ -1,5 +1,7 @@
 import logging
 import json
+import os
+import multiprocessing as mp
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -16,6 +18,96 @@ logger = logging.getLogger(__name__)
 MAIN_CONTRACT_SELECTION_RULE = (
     "monthly_top_2_or_10_days_above_configured_daily_volume_threshold"
 )
+
+@dataclass(frozen=True)
+class ContractDayMetricsTask:
+    trading_day: str
+    contract: str
+    source_file: str
+
+
+@dataclass(frozen=True)
+class ContractDayMetricsResult:
+    trading_day: str
+    contract: str
+    source_file: str
+    volume: float
+    open_interest: float
+
+
+def configure_metrics_worker() -> None:
+    os.environ["POLARS_MAX_THREADS"] = "1"
+
+
+def _extract_contract_day_metrics(
+    task: ContractDayMetricsTask,
+) -> ContractDayMetricsResult:
+    file_path = Path(task.source_file)
+    header = pl.read_csv(file_path, n_rows=0).columns
+    missing = {"Volume"}.difference(header)
+    if missing:
+        raise ValueError(
+            f"{file_path} missing required columns: {sorted(missing)}"
+        )
+    read_columns = ["Volume"]
+    if "OpenInterest" in header:
+        read_columns.append("OpenInterest")
+    frame = pl.read_csv(file_path, columns=read_columns)
+    return ContractDayMetricsResult(
+        trading_day=task.trading_day,
+        contract=task.contract,
+        source_file=task.source_file,
+        volume=calculate_contract_volume(frame),
+        open_interest=calculate_contract_open_interest(frame),
+    )
+
+
+def _run_contract_metrics_tasks(
+    tasks: List[ContractDayMetricsTask],
+    max_workers: int | None = None,
+) -> List[ContractDayMetricsResult]:
+    if max_workers is not None and max_workers < 1:
+        raise ValueError("max_workers must be at least 1")
+    if not tasks:
+        return []
+
+    resolved_workers = (
+        max_workers
+        if max_workers is not None
+        else min(os.cpu_count() or 1, 32)
+    )
+    pool = mp.get_context("spawn").Pool(
+        processes=resolved_workers,
+        initializer=configure_metrics_worker,
+    )
+    results: List[ContractDayMetricsResult] = []
+    try:
+        for result in pool.imap_unordered(
+            _extract_contract_day_metrics, tasks, chunksize=16
+        ):
+            results.append(result)
+    except BaseException:
+        logger.exception("Contract metrics worker failed; terminating process pool")
+        pool.terminate()
+        raise
+    else:
+        pool.close()
+        return results
+    finally:
+        pool.join()
+
+
+def _is_eligible_contract(contract: str, symbol: str) -> bool:
+    config = get_commodity_config(symbol)
+    normalized = contract.lower()
+    if not normalized.startswith(config.symbol):
+        return False
+
+    month_text = normalized[-2:]
+    if not month_text.isdigit():
+        return False
+
+    return int(month_text) in config.main_contract_months
 
 
 @dataclass(frozen=True)
@@ -352,25 +444,6 @@ def iter_contract_files(
     return iter(sorted(files))
 
 
-def _eligible_contracts(
-    frames: Dict[str, pl.DataFrame], symbol: str
-) -> Dict[str, pl.DataFrame]:
-    config = get_commodity_config(symbol)
-    eligible: Dict[str, pl.DataFrame] = {}
-    for contract, frame in frames.items():
-        normalized = contract.lower()
-        if not normalized.startswith(config.symbol):
-            continue
-
-        month_text = normalized[-2:]
-        if not month_text.isdigit():
-            continue
-
-        if int(month_text) in config.main_contract_months:
-            eligible[contract] = frame
-    return eligible
-
-
 def load_contract_files_by_trading_day_for_years(
     raw_root: Path, commodity_name: str, years: Sequence[str]
 ) -> List[TradingDayContractSources]:
@@ -487,15 +560,17 @@ def build_main_contract_summary_model_for_date_range(
     start_date: str,
     end_date: str,
     symbol: str,
+    max_workers: int | None = None,
 ) -> MainContractSummary:
     years = infer_years_for_date_range(start_date, end_date)
     logger.info(
-        "Building commodity main-contract summary: symbol=%s commodity=%s start_date=%s end_date=%s years=%s",
+        "Building commodity main-contract summary: symbol=%s commodity=%s start_date=%s end_date=%s years=%s max_workers=%s",
         symbol,
         commodity_name,
         start_date,
         end_date,
         ",".join(years),
+        max_workers,
     )
     trading_day_sources = load_contract_files_by_trading_day_for_years(
         raw_root, commodity_name, years
@@ -511,39 +586,44 @@ def build_main_contract_summary_model_for_date_range(
         for source in day_sources.contract_files:
             all_contract_raw_days.setdefault(source.contract, set()).add(day_sources.trading_day)
 
+    tasks: List[ContractDayMetricsTask] = []
+    days_in_range: List[str] = []
     for day_sources in trading_day_sources:
         if not _trading_day_in_range(day_sources.trading_day, start_date, end_date):
             continue
-
-        frames = {}
-        source_files: Dict[str, Path] = {}
+        days_in_range.append(day_sources.trading_day)
         for source in day_sources.contract_files:
-            frame = pl.read_csv(source.source_file)
-            missing = {"Volume"}.difference(frame.columns)
-            if missing:
-                raise ValueError(
-                    f"{source.source_file} missing required columns: {sorted(missing)}"
+            if _is_eligible_contract(source.contract, symbol):
+                tasks.append(
+                    ContractDayMetricsTask(
+                        trading_day=day_sources.trading_day,
+                        contract=source.contract,
+                        source_file=str(source.source_file),
+                    )
                 )
-            frames[source.contract] = frame
-            source_files[source.contract] = source.source_file
 
-        eligible = _eligible_contracts(frames, symbol)
-        month = _format_trading_day_file_date(day_sources.trading_day)[:7]
-        daily_volumes = {
-            contract: calculate_contract_volume(frame)
-            for contract, frame in eligible.items()
-        }
+    metrics_results = _run_contract_metrics_tasks(tasks, max_workers=max_workers)
+    day_metrics: Dict[str, Dict[str, ContractDayMetricsResult]] = {
+        day: {} for day in days_in_range
+    }
+    for res in metrics_results:
+        day_metrics[res.trading_day][res.contract] = res
+
+    for trading_day in days_in_range:
+        contracts_map = day_metrics[trading_day]
+        month = _format_trading_day_file_date(trading_day)[:7]
+        daily_volumes = {c: res.volume for c, res in contracts_map.items()}
         daily_open_interests = {
-            contract: calculate_contract_open_interest(frame)
-            for contract, frame in eligible.items()
+            c: res.open_interest for c, res in contracts_map.items()
         }
+
         build_state.record_main_sub_roles(
-            day_sources.trading_day,
+            trading_day,
             daily_volumes,
             daily_open_interests,
         )
-        for contract, frame in eligible.items():
-            daily_volume = daily_volumes[contract]
+        for contract, res in contracts_map.items():
+            daily_volume = res.volume
             build_state.add_monthly_volume(month, contract, daily_volume)
             if (
                 high_volume_threshold is not None
@@ -552,8 +632,8 @@ def build_main_contract_summary_model_for_date_range(
                 build_state.add_high_volume_day(month, contract)
             build_state.record_contract_day(
                 contract=contract,
-                trading_day=day_sources.trading_day,
-                source_file=source_files[contract],
+                trading_day=trading_day,
+                source_file=Path(res.source_file),
                 daily_volume=daily_volume,
             )
 
@@ -596,6 +676,7 @@ def build_main_contract_summary_for_date_range(
     start_date: str,
     end_date: str,
     symbol: str,
+    max_workers: int | None = None,
 ) -> MainContractSummary:
     return build_main_contract_summary_model_for_date_range(
         raw_root=raw_root,
@@ -603,6 +684,7 @@ def build_main_contract_summary_for_date_range(
         start_date=start_date,
         end_date=end_date,
         symbol=symbol,
+        max_workers=max_workers,
     )
 
 
@@ -613,6 +695,7 @@ def write_main_contract_summary_for_date_range(
     start_date: str,
     end_date: str,
     symbol: str,
+    max_workers: int | None = None,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     for legacy_path in sorted(output_dir.glob("????-??-??.csv")):
@@ -631,6 +714,7 @@ def write_main_contract_summary_for_date_range(
         start_date=start_date,
         end_date=end_date,
         symbol=symbol,
+        max_workers=max_workers,
     )
     path = output_dir / "main_contract_summary.json"
     if path.exists():

@@ -1,4 +1,5 @@
 import argparse
+import os
 from datetime import datetime
 from dataclasses import dataclass, field
 import logging
@@ -46,6 +47,7 @@ SECOND_LEVEL_DOWNSCALE_REQUIRED_COLUMNS = (
 
 
 def configure_logging() -> None:
+    os.environ["POLARS_MAX_THREADS"] = "1"
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
@@ -170,7 +172,6 @@ def _write_downscaled_day(
         path = output_root / folder / symbol / contract / target_freq
         path.mkdir(parents=True, exist_ok=True)
         frame.write_ipc(path / f"{output_name}.feather")
-        frame.write_csv(path / f"{output_name}.csv")
     return trading_day
 
 
@@ -209,8 +210,13 @@ def _run_downscale_tasks(
 
     # Polars uses native thread pools internally. Spawning clean child processes
     # avoids inheriting an initialized parent-side thread state via fork.
+    resolved_workers = (
+        max_workers
+        if max_workers is not None
+        else min(os.cpu_count() or 1, 32)
+    )
     pool = mp.get_context("spawn").Pool(
-        processes=max_workers,
+        processes=resolved_workers,
         initializer=configure_logging,
     )
     processed: list[tuple[str, str]] = []
