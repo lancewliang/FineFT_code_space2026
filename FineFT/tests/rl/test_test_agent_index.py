@@ -175,6 +175,8 @@ def _make_test_trader(tai, tmp_path, save_trading_detail_csv=False, label_type="
     trader.epoch_path = str(tmp_path)
     trader.epoch_num = 1
     trader.save_trading_detail_csv = save_trading_detail_csv
+    trader.action_persistence = 1
+    trader.flat_action = 1
     trader.act_test = lambda state, info, bin_index: 0
     return trader
 
@@ -778,3 +780,171 @@ def test_weighted_trader_streams_detail_rows_and_releases_memory(monkeypatch, tm
     assert len(detail_df) == 4
     assert len(flush_calls) >= 2
     assert len(release_calls) >= 2
+
+
+class MultiStepPersistenceEnv:
+    initial_margin_history = []
+    wallet_balance_history = []
+    unrealized_pnl_history = []
+    maintain_marigine_history = []
+    new_position_required_money_history = []
+
+    def __init__(self, max_steps=5, available_actions_by_step=None):
+        self.step_idx = 0
+        self.max_steps = max_steps
+        self.position = 0
+        self.leverage = 1
+        self.wallet_balance = 1000.0
+        self.unrealized_pnl = 0.0
+        self.available_actions_by_step = available_actions_by_step or {}
+
+    def _execution_metric_info(self):
+        return {
+            "commission_fee_step": 0.0,
+            "realized_pnl_step": 0.0,
+            "slippage_step": 0.0,
+            "cumulative_commission_fee": 0.0,
+            "cumulative_realized_pnl": 0.0,
+            "cumulative_slippage": 0.0,
+        }
+
+    def reset(self):
+        self.step_idx = 0
+        mask = self.available_actions_by_step.get(0, [1, 1, 1])
+        return [0.0], {
+            "previous_action": 1,
+            "avaliable_action": mask,
+            "funding_count_down_hour": 0,
+            "funding_count_down_minute": 0,
+        }
+
+    def step(self, action):
+        self.step_idx += 1
+        done = self.step_idx >= self.max_steps
+        mask = self.available_actions_by_step.get(self.step_idx, [1, 1, 1])
+        return [0.0], 1.0, done, {
+            "previous_action": action,
+            "avaliable_action": mask,
+            "funding_count_down_hour": 0,
+            "funding_count_down_minute": 0,
+        }
+
+
+def test_action_persistence_args_default_and_validation():
+    from RL.DiHFT.low_level import test_agent_index as tai
+    import pytest
+
+    args = tai.parser.parse_args([
+        "--base_path", "dataset/10min",
+        "--dataset_name", "fu",
+        "--label_type", "slope",
+    ])
+    assert args.action_persistence == 3
+
+    args_custom = tai.parser.parse_args([
+        "--base_path", "dataset/10min",
+        "--dataset_name", "fu",
+        "--label_type", "slope",
+        "--action_persistence", "5",
+    ])
+    assert args_custom.action_persistence == 5
+
+    # Check non-positive validation
+    args_invalid = tai.parser.parse_args([
+        "--base_path", "dataset/10min",
+        "--dataset_name", "fu",
+        "--label_type", "slope",
+        "--action_persistence", "0",
+    ])
+    with pytest.raises(ValueError, match="action_persistence must be positive"):
+        tai.weighted_trader(args_invalid)
+
+
+def test_action_persistence_holds_non_flat_action_in_test_loop(monkeypatch, tmp_path):
+    from RL.DiHFT.low_level import test_agent_index as tai
+
+    _write_valid_slice(
+        tmp_path, "fu2507", "label_0", filename="df_0.feather", mark_prices=[100.0] * 6, label_type="slope"
+    )
+
+    env = MultiStepPersistenceEnv(max_steps=5)
+    monkeypatch.setattr(tai, "initiate_base_env", lambda **kwargs: env)
+    monkeypatch.setattr(tai, "map_action_to_position_leverage", lambda *args: (1, 1))
+
+    trader = _make_test_trader(tai, tmp_path)
+    trader.action_persistence = 3
+    trader.flat_action = 1
+
+    act_calls = []
+
+    def mock_act_test(state, info, bin_index):
+        act_calls.append(len(act_calls))
+        return 2  # non-flat long action
+
+    trader.act_test = mock_act_test
+    trader.test()
+
+    # In 5 steps: step 0 acts (persist=2), step 1 holds (persist=1), step 2 holds (persist=0),
+    # step 3 acts (persist=2), step 4 holds (persist=1). Total act calls must be 2.
+    assert len(act_calls) == 2
+
+
+def test_action_persistence_does_not_persist_flat_action(monkeypatch, tmp_path):
+    from RL.DiHFT.low_level import test_agent_index as tai
+
+    _write_valid_slice(
+        tmp_path, "fu2507", "label_0", filename="df_0.feather", mark_prices=[100.0] * 6, label_type="slope"
+    )
+
+    env = MultiStepPersistenceEnv(max_steps=5)
+    monkeypatch.setattr(tai, "initiate_base_env", lambda **kwargs: env)
+    monkeypatch.setattr(tai, "map_action_to_position_leverage", lambda *args: (0, 1))
+
+    trader = _make_test_trader(tai, tmp_path)
+    trader.action_persistence = 3
+    trader.flat_action = 1
+
+    act_calls = []
+
+    def mock_act_test(state, info, bin_index):
+        act_calls.append(len(act_calls))
+        return 1  # flat action
+
+    trader.act_test = mock_act_test
+    trader.test()
+
+    # Flat action should NOT be persisted; act_test must be called every step
+    assert len(act_calls) == 5
+
+
+def test_action_persistence_re_evaluates_when_action_unavailable(monkeypatch, tmp_path):
+    from RL.DiHFT.low_level import test_agent_index as tai
+
+    _write_valid_slice(
+        tmp_path, "fu2507", "label_0", filename="df_0.feather", mark_prices=[100.0] * 6, label_type="slope"
+    )
+
+    # At step 1, action 2 becomes unavailable ([1, 1, 0])
+    unavailable_at_step_1 = {1: [1, 1, 0]}
+    env = MultiStepPersistenceEnv(max_steps=3, available_actions_by_step=unavailable_at_step_1)
+    monkeypatch.setattr(tai, "initiate_base_env", lambda **kwargs: env)
+    monkeypatch.setattr(tai, "map_action_to_position_leverage", lambda *args: (0, 1))
+
+    trader = _make_test_trader(tai, tmp_path)
+    trader.action_persistence = 3
+    trader.flat_action = 1
+
+    act_calls = []
+
+    def mock_act_test(state, info, bin_index):
+        call_num = len(act_calls)
+        act_calls.append(call_num)
+        if call_num == 0:
+            return 2  # non-flat action
+        return 0
+
+    trader.act_test = mock_act_test
+    trader.test()
+
+    # Step 0: returns action 2. Step 1: action 2 is unavailable -> must call act_test again!
+    assert len(act_calls) >= 2

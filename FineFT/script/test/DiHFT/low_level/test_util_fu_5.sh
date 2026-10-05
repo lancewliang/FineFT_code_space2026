@@ -39,6 +39,7 @@ function run_test_agent_index {
                 --allow_reverse_position False \
                 --label_type "${label_type}" \
                 --device "${device}" \
+                --action_persistence 4 \
                 --save_trading_detail_csv \
                 >"${log_dir}/epoch_${epoch}.log" 2>&1 &
             pids+=($!) # 将每个后台进程的PID添加到数组中
@@ -123,7 +124,7 @@ function run_ddqn_average {
 DATASET_NAME=${DATASET_NAME:-fu}
 MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-1}
 EPOCH_START=${EPOCH_START:-1}
-EPOCH_END=${EPOCH_END:-75}
+EPOCH_END=${EPOCH_END:-62}
 BASE_PATH=${BASE_PATH:-dataset/5min}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-5min_parallel}
 DEVICE=${DEVICE:-cpu}

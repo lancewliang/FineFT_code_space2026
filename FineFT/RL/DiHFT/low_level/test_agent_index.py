@@ -266,6 +266,12 @@ parser.add_argument(
     default=None,
     help="computation device for test evaluation (e.g. cpu, gpu, cuda, cuda:0)",
 )
+parser.add_argument(
+    "--action_persistence",
+    type=int,
+    default=3,
+    help="number of consecutive steps a non-flat action persists before re-evaluating policy",
+)
 
 
 def resolve_device(device: str | None) -> str:
@@ -710,6 +716,11 @@ class weighted_trader:
             ensemble_number=self.N,
         ).to(self.device)
 
+        self.action_persistence = int(args.action_persistence)
+        if self.action_persistence <= 0:
+            raise ValueError("action_persistence must be positive")
+        self.flat_action = len(self.leverage_choices) * (len(self.position_list) // 2)
+
         self.epoch_num = args.epoch_num
         self.save_trading_detail_csv = args.save_trading_detail_csv
         self.epoch_path = os.path.join(
@@ -874,11 +885,25 @@ class weighted_trader:
                         previous_action = initial_action
                         cumulative_action_change_count = 0
                         cumulative_trade_count = 0
+                        remaining_persist = 0
+                        current_action = initial_action
                         while not done:
                             timestep = len(action_list)
                             position_before = test_env.position
                             leverage_before = test_env.leverage
-                            a = self.act_test(s, info, bin_index)
+                            if (
+                                remaining_persist > 0
+                                and bool(info["avaliable_action"][current_action])
+                            ):
+                                a = current_action
+                                remaining_persist -= 1
+                            else:
+                                a = self.act_test(s, info, bin_index)
+                                current_action = a
+                                if self.action_persistence > 1 and a != self.flat_action:
+                                    remaining_persist = self.action_persistence - 1
+                                else:
+                                    remaining_persist = 0
                             target_position, target_leverage = (
                                 map_action_to_position_leverage(
                                     a,

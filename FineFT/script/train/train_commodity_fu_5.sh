@@ -17,10 +17,10 @@ python -u FineFT/RL/DiHFT/low_level/parallel_weight_advantage_pretrain.py \
     --base_path dataset/5min \
     --dataset_name fu --experiment_name "${EXPERIMENT_NAME}" \
     --result_path result/DiHFT/low_level \
-    --initial_wallet_balance 10000 --batch_size 80190 --update_times=800 --diverse_num_workers 96 \
+    --initial_wallet_balance 10000 --batch_size 120000 --update_times=500 --diverse_num_workers 40 \
     --max_holding_number 1 --short_estimated_rate 0 --long_estimated_rate 0 \
-    --position_choices 3 --transcation_cost 0.008 --n_step 18 --gamma 0.992 \
-    --order_book_depth 5 --early_stop 2  --N 13 --buffer_size 1000000 \
-    --pretrain_epoch 5 --curriculum_block_epochs 6 --num_epoch 75 --lr_init 0.0005 --lr_min 0.0001 --ada_init 96.0 --epsilon_min 0.05 \
-    --ada_min 0.1 --neighbor_size 2 --load_pretrain_model False \
+    --position_choices 3 --transcation_cost 0.002 --n_step 18 --gamma 0.992 \
+    --order_book_depth 5 --early_stop 2  --N 11 --buffer_size 1300000 \
+    --pretrain_epoch 2 --curriculum_block_epochs 5 --num_epoch 62 --lr_init 0.0005 --lr_min 0.0001 --ada_init 96.0 --epsilon_min 0.05 \
+    --ada_min 0.1 --neighbor_size 2 --load_pretrain_model False --action_persistence 4 --eval_dfs "0,6,12" \
     >"log/DiHFT/fu/low_level/train/5min/${EXPERIMENT_NAME}/advantage-5min-parallel.log"
