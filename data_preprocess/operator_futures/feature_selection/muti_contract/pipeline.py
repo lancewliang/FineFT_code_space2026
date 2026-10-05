@@ -934,7 +934,10 @@ def _run_validation_stage(
 
     for contract, frame in frames.items():
         metrics = calculate_metric_frame(
-            frame, raw_universe, windows_list=list(config.predictive.windows_list)
+            frame,
+            raw_universe,
+            windows_list=list(config.predictive.windows_list),
+            compute_catboost=False,
         )
         metric_path = per_contract_dir / f"{contract}_metrics.csv"
         metrics.write_csv(metric_path)

@@ -4,8 +4,9 @@ from typing import Any, Sequence
 import numpy as np
 import polars as pl
 from scipy.stats import t as student_t
+import torch
 
-from operator_futures.feature_selection.muti_contract.metrics import calculate_future_return, calculate_ic, calculate_rank_ic
+from operator_futures.feature_selection.muti_contract.metrics import calculate_future_return
 
 MARKET_STATE_ANCHOR_COLUMNS = [
     "log_price_slope_48",
@@ -167,15 +168,12 @@ def audit_regimes(
         total_mature_steps += mature_count
 
         masks: dict[tuple[int, int], np.ndarray] = {}
+        sb_arr = np.digitize(slope[47:], slope_th, right=False)
+        vb_arr = np.digitize(vol[47:], vol_th, right=False)
         for s_bin in range(num_slope_bins):
             for v_bin in range(num_vol_bins):
-                # Mature row condition
                 mask = np.zeros(frame.height, dtype=bool)
-                for i in range(47, frame.height):
-                    sb = assign_regime_bin(slope[i], slope_th)
-                    vb = assign_regime_bin(vol[i], vol_th)
-                    if sb == s_bin and vb == v_bin:
-                        mask[i] = True
+                mask[47:] = (sb_arr == s_bin) & (vb_arr == v_bin)
                 masks[(s_bin, v_bin)] = mask
 
         contract_bin_masks[contract] = masks
@@ -189,6 +187,99 @@ def audit_regimes(
         for contract, frame in frames.items()
         for window in windows_list
     }
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    d_feat = len(feature_universe)
+    contract_results: dict[
+        tuple[int, int, int],
+        list[tuple[str, int, np.ndarray, np.ndarray, np.ndarray]],
+    ] = {}
+
+    for contract, frame in frames.items():
+        if frame.height < 48 or d_feat == 0 or contract not in contract_bin_masks:
+            continue
+        c_masks = contract_bin_masks[contract]
+        if not c_masks:
+            continue
+
+        x_raw = np.ascontiguousarray(
+            frame.select(feature_universe).cast(pl.Float64, strict=False).to_numpy()
+        )
+        x_mat = torch.tensor(x_raw, dtype=torch.float32, device=device)
+        x_mat = torch.nan_to_num(x_mat, nan=0.0, posinf=0.0, neginf=0.0)
+
+        for window in windows_list:
+            future_ret = future_returns[(contract, window)]
+            min_len = min(len(future_ret), frame.height)
+            if min_len < 2:
+                continue
+
+            x_win = x_mat[:min_len]
+            y_win = torch.tensor(future_ret[:min_len], dtype=torch.float32, device=device)
+
+            for s_bin in range(num_slope_bins):
+                for v_bin in range(num_vol_bins):
+                    bin_key = (s_bin, v_bin)
+                    mask = c_masks.get(bin_key)
+                    if mask is None:
+                        continue
+                    sub_mask = mask[:min_len]
+                    step_count = int(np.count_nonzero(sub_mask))
+                    if step_count < 2:
+                        continue
+
+                    idx = torch.tensor(
+                        np.nonzero(sub_mask)[0], dtype=torch.long, device=device
+                    )
+                    x_sub = x_win[idx]
+                    y_sub = y_win[idx]
+
+                    y_std = y_sub.std(unbiased=False)
+                    if y_std <= 1e-8 or torch.isnan(y_std):
+                        continue
+
+                    x_std = x_sub.std(dim=0, unbiased=False, keepdim=True)
+                    valid_x = (x_std > 1e-8).squeeze(0)
+                    if not valid_x.any():
+                        continue
+
+                    x_mean = x_sub.mean(dim=0, keepdim=True)
+                    x_norm = torch.where(
+                        x_std > 1e-8,
+                        (x_sub - x_mean) / x_std,
+                        torch.zeros_like(x_sub),
+                    )
+                    y_norm = (y_sub - y_sub.mean()) / y_std
+
+                    ic_vec = torch.mv(x_norm.T, y_norm) / step_count
+
+                    rx = torch.argsort(torch.argsort(x_sub, dim=0), dim=0).to(torch.float32)
+                    rx_mean = rx.mean(dim=0, keepdim=True)
+                    rx_std = rx.std(dim=0, unbiased=False, keepdim=True)
+                    rx_norm = torch.where(
+                        rx_std > 1e-8,
+                        (rx - rx_mean) / rx_std,
+                        torch.zeros_like(rx),
+                    )
+
+                    ry = torch.argsort(torch.argsort(y_sub)).to(torch.float32)
+                    ry_std = ry.std(unbiased=False)
+                    if ry_std <= 1e-8 or torch.isnan(ry_std):
+                        continue
+                    ry_norm = (ry - ry.mean()) / ry_std
+
+                    rank_ic_vec = torch.mv(rx_norm.T, ry_norm) / step_count
+
+                    ic_np = ic_vec.cpu().numpy().astype(np.float64)
+                    rank_ic_np = rank_ic_vec.cpu().numpy().astype(np.float64)
+                    valid_np = valid_x.cpu().numpy()
+
+                    res_key = (s_bin, v_bin, window)
+                    if res_key not in contract_results:
+                        contract_results[res_key] = []
+                    contract_results[res_key].append(
+                        (contract, step_count, ic_np, rank_ic_np, valid_np)
+                    )
 
     for s_bin in range(num_slope_bins):
         for v_bin in range(num_vol_bins):
@@ -214,47 +305,26 @@ def audit_regimes(
             )
 
             for window in windows_list:
-                for feature in feature_universe:
-                    # Check warm-up window requirement for 96/192 anchors
-                    if feature in ("log_price_slope_96", "trend_to_noise_96") and window < 1:
-                        pass
+                c_data = contract_results.get((s_bin, v_bin, window), [])
 
+                for f_idx, feature in enumerate(feature_universe):
                     contract_ics: list[float] = []
                     contract_rank_ics: list[float] = []
 
-                    for contract, frame in frames.items():
-                        mask = contract_bin_masks[contract].get(bin_key)
-                        if mask is None or not mask.any():
-                            continue
-
-                        future_ret = future_returns[(contract, window)]
-                        min_len = min(len(future_ret), len(mask))
-                        if min_len == 0:
-                            continue
-
-                        sub_mask = mask[:min_len]
-                        if not sub_mask.any():
-                            continue
-
-                        feat_vals = frame[feature].slice(0, min_len).to_numpy()[sub_mask]
-                        ret_vals = future_ret[sub_mask]
-
-                        valid_pair = ~(np.isnan(feat_vals) | np.isnan(ret_vals))
-                        if np.count_nonzero(valid_pair) < 2:
-                            continue
-
-                        ic_val = calculate_ic(feat_vals[valid_pair], ret_vals[valid_pair])
-                        rank_ic_val = calculate_rank_ic(feat_vals[valid_pair], ret_vals[valid_pair])
-
-                        if np.isfinite(ic_val):
-                            contract_ics.append(ic_val)
-                        if np.isfinite(rank_ic_val):
-                            contract_rank_ics.append(rank_ic_val)
-                            valid_step_cnt = int(np.count_nonzero(valid_pair))
-                            key = (feature, window, s_bin, v_bin)
-                            if key not in bin_contract_rank_ics:
-                                bin_contract_rank_ics[key] = []
-                            bin_contract_rank_ics[key].append((contract, valid_step_cnt, rank_ic_val))
+                    for contract, step_cnt, ic_np, rank_ic_np, valid_np in c_data:
+                        if valid_np[f_idx]:
+                            ic_val = float(ic_np[f_idx])
+                            rank_ic_val = float(rank_ic_np[f_idx])
+                            if np.isfinite(ic_val):
+                                contract_ics.append(ic_val)
+                            if np.isfinite(rank_ic_val):
+                                contract_rank_ics.append(rank_ic_val)
+                                key = (feature, window, s_bin, v_bin)
+                                if key not in bin_contract_rank_ics:
+                                    bin_contract_rank_ics[key] = []
+                                bin_contract_rank_ics[key].append(
+                                    (contract, step_cnt, rank_ic_val)
+                                )
 
                     ic_mean = float(np.mean(contract_ics)) if contract_ics else None
                     ic_std = float(np.std(contract_ics, ddof=1)) if len(contract_ics) > 1 else (0.0 if contract_ics else None)

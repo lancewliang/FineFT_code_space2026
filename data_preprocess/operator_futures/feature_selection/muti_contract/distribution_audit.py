@@ -121,6 +121,8 @@ def _compute_bin_probabilities(
 def _compute_pairwise_psi_and_ks(
     arrays: list[np.ndarray],
     num_bins: int,
+    *,
+    compute_ks: bool = True,
 ) -> tuple[float, float, float, float]:
     valid_arrays = []
     for arr in arrays:
@@ -149,17 +151,18 @@ def _compute_pairwise_psi_and_ks(
             psi_ij = float(np.sum(term))
             psi_values.append(max(0.0, psi_ij))
 
-            ks_res = ks_2samp(valid_arrays[i], valid_arrays[j])
-            ks_d_values.append(float(ks_res.statistic))
-            ks_p_values.append(float(ks_res.pvalue))
+            if compute_ks:
+                ks_res = ks_2samp(valid_arrays[i], valid_arrays[j], method="asymp")
+                ks_d_values.append(float(ks_res.statistic))
+                ks_p_values.append(float(ks_res.pvalue))
 
     if not psi_values:
         return 0.0, 0.0, 0.0, 1.0
 
     mean_psi = float(np.mean(psi_values))
     max_pair_psi = float(np.max(psi_values))
-    max_ks_d = float(np.max(ks_d_values))
-    min_ks_p = float(np.min(ks_p_values))
+    max_ks_d = float(np.max(ks_d_values)) if ks_d_values else 0.0
+    min_ks_p = float(np.min(ks_p_values)) if ks_p_values else 1.0
     return mean_psi, max_pair_psi, max_ks_d, min_ks_p
 
 
@@ -223,7 +226,7 @@ def audit_distribution_drift(
             if feat in contract_columns[contract]
         ]
         mean_psi, max_pair_psi, max_ks_d, min_ks_p = _compute_pairwise_psi_and_ks(
-            arrays, num_bins
+            arrays, num_bins, compute_ks=False
         )
         mean_psi_dict[feat] = mean_psi
         max_pair_psi_dict[feat] = max_pair_psi

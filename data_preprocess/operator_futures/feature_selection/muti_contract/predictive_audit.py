@@ -8,12 +8,8 @@ import polars as pl
 from scipy import stats
 
 from operator_futures.feature_selection.muti_contract.metrics import (
-    _permutation_importance,
     aggregate_metric_frames,
-    calculate_future_return,
-    calculate_ic,
-    calculate_rank_ic,
-    calculate_sharpe,
+    calculate_metric_frame,
 )
 from operator_futures.feature_selection.muti_contract.types import (
     PipelineStepResult,
@@ -63,32 +59,17 @@ def execute_predictive_audit(
     # 1. Vectorized multi-window metrics calculation across contracts
     contract_metric_frames: list[pl.DataFrame] = []
     for contract, frame in frames.items():
-        rows = []
-        for window_length in config.windows_list:
-            future_return = calculate_future_return(frame, window_length)
-            if future_return.size == 0:
-                continue
-            future_vol = np.abs(future_return)
-            metric_df = frame.slice(0, future_return.size)
-            for feature in features:
-                values = metric_df[feature].cast(pl.Float64, strict=False).to_numpy()
-                rows.append(
-                    {
-                        "feature": feature,
-                        "window": window_length,
-                        "Permutation Importance": _permutation_importance(
-                            values, future_return
-                        ),
-                        "CatBoost Importance": 0.0,
-                        "IC": calculate_ic(values, future_return),
-                        "RankIC": calculate_rank_ic(values, future_return),
-                        "VolIC": calculate_ic(values, future_vol),
-                        "VolRankIC": calculate_rank_ic(values, future_vol),
-                        "Sharpe": calculate_sharpe(values, future_return),
-                    }
-                )
-        if rows:
-            contract_metric_frames.append(pl.DataFrame(rows))
+        try:
+            metric_df = calculate_metric_frame(
+                frame,
+                features,
+                windows_list=list(config.windows_list),
+                compute_catboost=False,
+            )
+            if metric_df.height > 0:
+                contract_metric_frames.append(metric_df)
+        except ValueError:
+            continue
 
     if not contract_metric_frames:
         raise ValueError("future return is empty; cannot calculate feature metrics")

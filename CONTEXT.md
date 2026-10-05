@@ -66,6 +66,18 @@ _Avoid_: 快速失败、报错中断
 Scale Save 前后对 State Feature 进行的 NaN 检查，发现 NaN 时立即报错并输出含 NaN 的特征名和行号，防止下游训练静默失败。
 _Avoid_: NaN 检查、空值校验
 
+**下采样产物 Feather 纯化 (Downscale Feather Purification)**:
+在下采样阶段（`downscale_continuous_by_trading_day`）仅写出二进制 IPC Feather 格式特征文件，彻底移除冗余的 CSV 磁盘写出，消除双倍磁盘 I/O 与字符串格式化 CPU 开销。
+_Avoid_: 双写 CSV、下采样 CSV 产物、downscale CSV
+
+**Polars 线程防争用规范 (Polars Thread Anti-Contention Guard)**:
+在多进程并行（`mp.Pool`）计算环境中，对每个 worker 进程显式设定 `POLARS_MAX_THREADS=1`，防止各子进程内部的 Rayon 线程池自动抢占宿主机全量逻辑 CPU 核心，彻底消除进程间激烈的线程争用与缓存失效。
+_Avoid_: Polars 满线程池、默认 Rayon 线程数、多进程内多线程
+
+**主力合约两阶段并发提取 (Two-Stage Main Contract Parallel Extraction)**:
+在 `stitch_main_contract` 中，阶段一轻量扫描全量原始 CSV 文件首行（`n_rows=1`）快速构建合约存在性与真实 `TradingDay` 字典；阶段二仅针对落入目标时间窗口且属于候选主力月份的合约文件，通过多进程池（`mp.Pool`）并发执行列投影（仅读 `Volume` 与 `OpenInterest`）与成交量/持仓量指标提取，最后由主进程进行毫秒级内存规约。
+_Avoid_: 单核全表扫描、粗暴文件名日期解析、全列加载
+
 ### Feature Engineering
 **三流特征解耦 (Triple-Stream Feature Decoupling)**:
 在多合约特征选择中，将针对方向波段识别的“斜率 VAE 特征空间”（一阶矩有向动量优先）、针对市场离散度识别的“波动率 VAE 特征空间”（二阶矩无向波动优先）以及针对低层博弈强化学习策略网络的“RL 决策特征空间”（微观 Alpha 与盘口价差优先）进行物理隔离与三流独立筛选分发的纯净解耦架构；不包含任何向后兼容包袱，彻底消除传统单体或双流架构中因目标统计矩冲突导致的特征误杀、信号信噪比稀释与虚假 OOD 崩溃。
@@ -131,6 +143,14 @@ _Avoid_: 硬截断价差速度、断点价差差分
 **盘口物理深度保底 (Physical Orderbook Depth Bounding)**:
 在 `base_feature_util.py` 中对 5 档盘口价差指标（`buy_spread_oe_max`、`sell_spread_oe_max`）施加不低于 $\text{min\_depth\_spread} = \text{depth} - 1$ 个 Tick 的物理有效距离保底（ADR-0030），防止在开收盘集合竞价、极端涨跌停或空深度时计算出 0.0 异常值导致缩放后严重下溢（$-2.845$）并破坏 VAE 状态重构。
 _Avoid_: 零深度直通、盘口无保底价差
+
+**GPU 原生矩阵化特征选择 (GPU-Native Matrix Feature Selection)**:
+在多合约特征选择流水线中，全面废弃逐列 Python 标量解释器循环，将整张合约特征矩阵 $X \in \mathbb{R}^{N \times D}$ 载入 GPU 显存，利用 PyTorch CUDA 双重 argsort 并行列排序与批处理矩阵乘法（GEMM）在单步内直接输出全部候选特征跨所有前瞻预测窗口的 RankIC、VolRankIC 与多体制掩码相关性矩阵的高性能架构；以毫秒级矩阵运算替代分钟级标量循环，且无冗余向后兼容回退包袱。
+_Avoid_: 逐列相关性循环、CPU 标量统计、双分支回退引擎
+
+**极速分布漂移门控 (Fast Distribution Drift Gate)**:
+在特征选择分布漂移审计（`distribution_audit.py`）中，彻底切除未参与任何下游特征门控过滤的低效双样本 Kolmogorov-Smirnov 精确分布检验（`scipy.stats.ks_2samp(method='auto')`），将两两合约间 $C_K^2$ 比较聚焦于纯分箱总体稳定性指标（PSI）与前向边界稳定性（Forward PSI）计算，并将报表中的 `max_ks_d` / `min_ks_p` 设为静态占位符以保全 CSV 结构的极速审计机制；将分布审计从 17 分钟压缩至 2 秒级。
+_Avoid_: 全量精确 KS 检验、双样本经验分布扫描、逐对双边检验
 
 **环境执行与奖励特征 (Reward & Execution Features)**:
 存在于最终 Feather 数据集中供 RL 环境、回测模拟器及状态转移约束使用的物理变量（如价格上下限、涨跌停挂单比率 `limit_up/down_single_sided_ratio` 等）；即使被特征黑名单排除在 VAE 及 Policy 的观测输入向量之外，也必须由 Scale Save 完整保留。

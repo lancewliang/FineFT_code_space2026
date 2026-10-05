@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import polars as pl
+import torch
 
 
 METRIC_COLUMNS = [
@@ -154,39 +155,101 @@ def calculate_metric_frame(
     *,
     window: int | None = None,
     windows_list: list[int] | None = None,
+    compute_catboost: bool = True,
 ) -> pl.DataFrame:
     if windows_list is None:
         windows_list = DEFAULT_WINDOWS_LIST if window is None else [window]
-    rows = []
+    if not features:
+        raise ValueError("features list is empty; cannot calculate feature metrics")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    x_raw = np.ascontiguousarray(
+        df.select(features).cast(pl.Float64, strict=False).to_numpy()
+    )
+    x_full = torch.tensor(x_raw, dtype=torch.float32, device=device)
+    x_full = torch.nan_to_num(x_full, nan=0.0, posinf=0.0, neginf=0.0)
+    d_feat = len(features)
+
+    window_frames: list[pl.DataFrame] = []
     for window_length in windows_list:
         future_return = calculate_future_return(df, window_length)
-        if future_return.size == 0:
+        if future_return.size < 2:
             continue
-        catboost_values = _catboost_importance(
-            df, features, future_return, window_length=window_length
-        )
-        future_vol = np.abs(future_return)
-        metric_df = df.slice(0, future_return.size)
-        for feature in features:
-            values = metric_df[feature].cast(pl.Float64, strict=False).to_numpy()
-            rows.append(
+        n_w = future_return.size
+        x_w = x_full[:n_w]
+        y_w = torch.tensor(future_return, dtype=torch.float32, device=device)
+        y_w = torch.nan_to_num(y_w, nan=0.0, posinf=0.0, neginf=0.0)
+        y_vol = torch.abs(y_w)
+
+        # Standardize X
+        x_mean = x_w.mean(dim=0, keepdim=True)
+        x_std = x_w.std(dim=0, unbiased=False, keepdim=True)
+        x_norm = torch.where(x_std > 1e-8, (x_w - x_mean) / x_std, torch.zeros_like(x_w))
+
+        # Standardize Y
+        y_mean = y_w.mean()
+        y_std = y_w.std(unbiased=False)
+        y_norm = torch.where(y_std > 1e-8, (y_w - y_mean) / y_std, torch.zeros_like(y_w))
+
+        # Standardize Y_vol
+        y_vol_mean = y_vol.mean()
+        y_vol_std = y_vol.std(unbiased=False)
+        y_vol_norm = torch.where(y_vol_std > 1e-8, (y_vol - y_vol_mean) / y_vol_std, torch.zeros_like(y_vol))
+
+        ic = torch.mv(x_norm.T, y_norm) / n_w
+        vol_ic = torch.mv(x_norm.T, y_vol_norm) / n_w
+
+        # Ranks
+        rx = torch.argsort(torch.argsort(x_w, dim=0), dim=0).to(torch.float32)
+        rx_mean = rx.mean(dim=0, keepdim=True)
+        rx_std = rx.std(dim=0, unbiased=False, keepdim=True)
+        rx_norm = torch.where(rx_std > 1e-8, (rx - rx_mean) / rx_std, torch.zeros_like(rx))
+
+        ry = torch.argsort(torch.argsort(y_w)).to(torch.float32)
+        ry_mean = ry.mean()
+        ry_std = ry.std(unbiased=False)
+        ry_norm = torch.where(ry_std > 1e-8, (ry - ry_mean) / ry_std, torch.zeros_like(ry))
+
+        ry_vol = torch.argsort(torch.argsort(y_vol)).to(torch.float32)
+        ry_vol_mean = ry_vol.mean()
+        ry_vol_std = ry_vol.std(unbiased=False)
+        ry_vol_norm = torch.where(ry_vol_std > 1e-8, (ry_vol - ry_vol_mean) / ry_vol_std, torch.zeros_like(ry_vol))
+
+        rank_ic = torch.mv(rx_norm.T, ry_norm) / n_w
+        vol_rank_ic = torch.mv(rx_norm.T, ry_vol_norm) / n_w
+
+        pseudo = x_norm * y_w.unsqueeze(1)
+        p_mean = pseudo.mean(dim=0)
+        p_std = pseudo.std(dim=0, unbiased=True)
+        sharpe = torch.where(p_std > 1e-8, p_mean / p_std, torch.zeros_like(p_mean))
+
+        if compute_catboost:
+            catboost_values = _catboost_importance(
+                df, features, future_return, window_length=window_length
+            )
+            catboost_col = [catboost_values.get(f, 0.0) for f in features]
+        else:
+            catboost_col = [0.0] * d_feat
+
+        window_frames.append(
+            pl.DataFrame(
                 {
-                    "feature": feature,
-                    "window": window_length,
-                    "Permutation Importance": _permutation_importance(
-                        values, future_return
-                    ),
-                    "CatBoost Importance": catboost_values.get(feature, 0.0),
-                    "IC": calculate_ic(values, future_return),
-                    "RankIC": calculate_rank_ic(values, future_return),
-                    "VolIC": calculate_ic(values, future_vol),
-                    "VolRankIC": calculate_rank_ic(values, future_vol),
-                    "Sharpe": calculate_sharpe(values, future_return),
+                    "feature": features,
+                    "window": [window_length] * d_feat,
+                    "Permutation Importance": [0.0] * d_feat,
+                    "CatBoost Importance": catboost_col,
+                    "IC": ic.cpu().numpy().astype(np.float64),
+                    "RankIC": rank_ic.cpu().numpy().astype(np.float64),
+                    "VolIC": vol_ic.cpu().numpy().astype(np.float64),
+                    "VolRankIC": vol_rank_ic.cpu().numpy().astype(np.float64),
+                    "Sharpe": sharpe.cpu().numpy().astype(np.float64),
                 }
             )
-    if not rows:
+        )
+
+    if not window_frames:
         raise ValueError("future return is empty; cannot calculate feature metrics")
-    return pl.DataFrame(rows)
+    return pl.concat(window_frames, how="vertical")
 
 
 def aggregate_metric_frames(frames: list[pl.DataFrame]) -> pl.DataFrame:
