@@ -616,6 +616,22 @@ _Avoid_: 选择清单、选择描述
 
 ### VAE And Routing
 
+**路由分位数缓存 (Routing Quantile Cache)**:
+在 VAE 路由回测与超参数调优前，使用双轴 VAE 神经网络及参考似然分布（`id_logpx.npy`）预先针对各合约各时间步批处理计算并持久化的只读静态分位数矩阵（`shape: (T, 6)`，float32）；用于在多进程调优中替代实时模型前向推断，实现零模型副本与纳秒级查表步进。
+_Avoid_: 分位数文件、VAE 缓存、预计算特征
+
+**缓存感知路由 (Cache-Aware Routing)**:
+`vae_risk_aware_routing` 的自适应推断执行模式；当检测到目标合约的路由分位数缓存存在时，自动跳过 6 个 `MLP_VAE` 模型（570MB）的实例化并执行内存映射静态查表；当缓存缺失时自动无缝回退至原有全量神经网络前向推断，以无损兼容单进程 `final_result` 评测与单元测试。
+_Avoid_: 双轨路由、静态路由模式、动态分流
+
+**轻量调优回测 (Lean Tuning Rollout)**:
+在 Optuna 超参数搜索的试运行（Trial）阶段，通过关闭历史轨迹落盘（`save_artifacts=False`）仅在内存中推进状态机并返回标量收益率指标的高吞吐回测模式；彻底消除数万个中间 `.npy` 文件的磁盘 I/O 写入与操作系统 Dirty Page Cache 颠簸。
+_Avoid_: 静默回测、无产物模式、快速回测
+
+**最优超参回放 (Best-Trial Replay)**:
+在 Optuna 并发超参数搜索全部收敛后，主进程提取全局最优超参数组合（`study.best_trial.params`）单独执行一次完整回测并开启全量产物落盘（`save_artifacts=True`）的产物固化流程；保证调优过程零磁盘开销的同时完整留存最优配置的历史诊断轨迹与评估报告。
+_Avoid_: 最佳 Trial 重跑、最终落盘、最优回测
+
 **VAE 跨合约训练 (VAE Cross-contract Training)**:
 从多合约训练数据合并生成统一 VAE 训练集的过程，通过物化 label 训练数据校验特征维度一致性。
 _Avoid_: 跨合约 VAE、多合约 VAE

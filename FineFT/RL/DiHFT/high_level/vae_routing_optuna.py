@@ -17,6 +17,7 @@ import torch  # noqa: E402
 sys.path.append(".")
 from common import ArtifactNames, RoutingParamColumns
 from RL.DiHFT.high_level.vae_routing_util import (  # noqa: E402
+    ensure_precomputed_vae_quantiles,
     load_two_dimensional_selection_manifest,
     vae_risk_aware_routing,
 )
@@ -273,6 +274,57 @@ def suggest_trial_parameters(trial, trial_args, search_args):
     return trial_args
 
 
+
+
+def apply_best_trial_parameters(trial_args, best_params, search_args):
+    """Apply best Optuna parameters to trial_args for canonical replay."""
+    trial_args.slope_window_length = int(
+        best_params[RoutingParamColumns.SLOPE_WINDOW_LENGTH]
+    )
+    trial_args.volatility_window_length = int(
+        best_params[RoutingParamColumns.VOLATILITY_WINDOW_LENGTH]
+    )
+    trial_args.slope_gamma = float(best_params[RoutingParamColumns.SLOPE_GAMMA])
+    trial_args.volatility_gamma = float(
+        best_params[RoutingParamColumns.VOLATILITY_GAMMA]
+    )
+    trial_args.window_length = max(
+        trial_args.slope_window_length,
+        trial_args.volatility_window_length,
+    )
+    trial_args.gamma = trial_args.slope_gamma
+    trial_args.gating_strategy = search_args.gating_strategy
+
+    if search_args.gating_strategy == "hierarchical":
+        trial_args.ood_threshold = float(
+            best_params[RoutingParamColumns.OOD_THRESHOLD]
+        )
+        trial_args.slope_margin_threshold = float(
+            best_params[RoutingParamColumns.SLOPE_MARGIN_THRESHOLD]
+        )
+        trial_args.volatility_margin_threshold = float(
+            best_params[RoutingParamColumns.VOLATILITY_MARGIN_THRESHOLD]
+        )
+        trial_args.slope_rule_base_threshold = 0.0
+        trial_args.volatility_rule_base_threshold = 0.0
+        trial_args.rule_base_threshold = 0.0
+    else:
+        trial_args.slope_rule_base_threshold = float(
+            best_params[RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD]
+        )
+        trial_args.volatility_rule_base_threshold = float(
+            best_params[RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD]
+        )
+        trial_args.ood_threshold = 0.005
+        trial_args.slope_margin_threshold = 0.12
+        trial_args.volatility_margin_threshold = 0.12
+        trial_args.rule_base_threshold = min(
+            trial_args.slope_rule_base_threshold,
+            trial_args.volatility_rule_base_threshold,
+        )
+    return trial_args
+
+
 def seed_torch(seed):
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
@@ -331,6 +383,7 @@ def run_optuna_worker(base_args, args_2, study_name, storage_url, n_trials):
         gpu_id = trial.number % max(torch.cuda.device_count(), 1)
         trial_args.gpu_index = gpu_id
         trial_args.trial_number = trial.number
+        trial_args.save_artifacts = False
         print("gpu_id:", gpu_id)
         trial_args = suggest_trial_parameters(trial, trial_args, args_2)
         if router is None:
@@ -348,6 +401,8 @@ def tune(args_1, args_2):
     seed_torch(12345)
     base_args = prepare_base_args(args_1, args_2)
     print("change parameters:", base_args, args_2)
+
+    base_args.precomputed_quantiles_dir = ensure_precomputed_vae_quantiles(base_args)
 
     storage_url = create_study_storage(base_args)
     study_name = "vae_risk_aware_routing"
@@ -399,6 +454,17 @@ def tune(args_1, args_2):
     if not os.path.exists(optunal_path):
         os.makedirs(optunal_path)
     df.to_csv(os.path.join(optunal_path, ArtifactNames.OPTUNA_RESULTS_CSV))
+
+    print("Replaying best trial to save canonical artifacts...")
+    best_args = copy.deepcopy(base_args)
+    best_args.save_artifacts = True
+    best_args.trial_number = study.best_trial.number
+    best_args = apply_best_trial_parameters(
+        best_args, study.best_trial.params, args_2
+    )
+    best_router = vae_risk_aware_routing(best_args)
+    best_return_rate = best_router.test()
+    print("Best trial evaluation completed with return rate: {:.6f}".format(best_return_rate))
 
 
 if __name__ == "__main__":

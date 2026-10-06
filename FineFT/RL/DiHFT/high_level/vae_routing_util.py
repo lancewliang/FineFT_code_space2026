@@ -28,7 +28,7 @@ from env.env_class.futures_util import (
     map_position_leverage_to_action,
     rule_based_close,
 )
-from RL.DiHFT.VAE.vae import MLP_VAE, analyze_single_sample
+from RL.DiHFT.VAE.vae import MLP_VAE, analyze_single_sample, gaussian_nll, softclip
 from RL.DiHFT.high_level.gating import create_gating_strategy
 
 from analysis.pick_agent.FineFT_two_dimensional_agent_selector import (
@@ -342,6 +342,18 @@ parser.add_argument(
     default=0,
     help="the transcation cost of not holding the same action as before",
 )
+parser.add_argument(
+    "--precomputed_quantiles_dir",
+    type=str,
+    default=None,
+    help="directory containing precomputed VAE quantiles for contracts",
+)
+parser.add_argument(
+    "--save_artifacts",
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help="save simulation history arrays and contract results to disk",
+)
 
 
 def seed_torch(seed):
@@ -359,6 +371,188 @@ def seed_torch(seed):
 
 
 import re
+
+
+
+
+def compute_vae_losses_batch(
+    model: MLP_VAE,
+    data: np.ndarray,
+    device: str,
+    batch_size: int = 512,
+) -> np.ndarray:
+    model.eval()
+    losses = []
+    data_tensor = torch.from_numpy(data).float()
+    with torch.no_grad():
+        for start_idx in range(0, len(data_tensor), batch_size):
+            batch = data_tensor[start_idx : start_idx + batch_size].to(device)
+            recon_mu, recon_logsigma, mu, logvar = model(batch)
+            recon_logvar = softclip(recon_logsigma, -6.0)
+            recon_logvar = -softclip(-recon_logvar, 0.0)
+            rec = gaussian_nll(recon_mu, 0.5 * recon_logvar, batch).sum(dim=-1)
+            kld = 0.5 * torch.sum(mu.pow(2) + logvar.exp() - logvar - 1, dim=-1)
+            batch_loss = -(rec + kld).cpu().numpy()
+            losses.append(batch_loss)
+    return np.concatenate(losses)
+
+
+def default_precomputed_quantiles_dir(
+    dataset_name: str,
+    experiment_name: str,
+    eval_stage: str,
+) -> str:
+    return os.path.join(
+        "analysis_result",
+        "DiHFT",
+        "high_level",
+        dataset_name,
+        experiment_name,
+        "vae_quantiles",
+        eval_stage,
+    )
+
+
+def ensure_precomputed_vae_quantiles(args) -> str:
+    """Precompute VAE routing quantiles for all contracts in stage if missing.
+
+    Runs in a single process (optionally GPU or CPU batch) before worker processes
+    are launched, saving (T, 2*num_labels) float32 arrays into analysis_result/...
+    """
+    target_dir = args.precomputed_quantiles_dir or default_precomputed_quantiles_dir(
+        args.dataset_name, args.experiment_name, args.eval_stage
+    )
+    os.makedirs(target_dir, exist_ok=True)
+
+    stage_dir = os.path.join(args.base_path, args.dataset_name, args.eval_stage)
+    single_file = os.path.join(
+        args.base_path, args.dataset_name, f"{args.eval_stage}.feather"
+    )
+
+    contract_files = []
+    if os.path.isdir(stage_dir):
+        for filename in sorted(os.listdir(stage_dir)):
+            if filename.endswith(".feather"):
+                contract_files.append(
+                    (os.path.splitext(filename)[0], os.path.join(stage_dir, filename))
+                )
+    elif os.path.isfile(single_file):
+        contract_files.append((args.eval_stage, single_file))
+
+    if not contract_files:
+        raise ValueError(f"No contract files found in {stage_dir} or {single_file}")
+
+    all_exist = all(
+        os.path.isfile(os.path.join(target_dir, f"{contract}.npy"))
+        for contract, _ in contract_files
+    )
+    if all_exist:
+        logger.info(
+            "Found complete precomputed VAE quantiles in %s for %d contracts",
+            target_dir,
+            len(contract_files),
+        )
+        return target_dir
+
+    logger.info(
+        "Precomputing VAE quantiles for %d contracts into %s ...",
+        len(contract_files),
+        target_dir,
+    )
+
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+    slope_indicators = np.load(
+        os.path.join(
+            args.base_path, args.dataset_name, ArtifactNames.VAE_SLOPE_STATE_FEATURES_NPY
+        )
+    )
+    vol_indicators = np.load(
+        os.path.join(
+            args.base_path,
+            args.dataset_name,
+            ArtifactNames.VAE_VOLATILITY_STATE_FEATURES_NPY,
+        )
+    )
+
+    manifest = load_two_dimensional_selection_manifest(args.selection_manifest)
+    num_labels = len(manifest.axes.volatility)
+
+    default_vae_root = os.path.join(
+        args.vae_path,
+        args.dataset_name,
+        args.experiment_name,
+    )
+    vae_roots = {
+        "slope": os.path.join(default_vae_root, "slope"),
+        "volatility": os.path.join(default_vae_root, "volatility"),
+    }
+    axis_indicators = {
+        "slope": slope_indicators,
+        "volatility": vol_indicators,
+    }
+
+    vae_models = {}
+    sorted_bases = {}
+    for axis, root in vae_roots.items():
+        vae_models[axis] = []
+        sorted_bases[axis] = []
+        for i in range(num_labels):
+            label = f"label_{i}"
+            path = os.path.join(root, label, ArtifactNames.MODEL_LATEST_PTH)
+            id_path = os.path.join(root, label, ArtifactNames.ID_LOGPX_NPY)
+            model = MLP_VAE(
+                INPUT_DIM=len(axis_indicators[axis]),
+                Z_DIM=args.z_dim,
+                hidden_dims=args.vae_hidden_dims,
+                loss_func=args.loss_type,
+            ).to(device)
+            model.load_state_dict(
+                torch.load(path, map_location=torch.device(device))
+            )
+            model.eval()
+            disable_gradients(model)
+            vae_models[axis].append(model)
+            sorted_bases[axis].append(np.sort(np.load(id_path).reshape(-1)))
+
+    for contract, file_path in contract_files:
+        save_file = os.path.join(target_dir, f"{contract}.npy")
+        if os.path.isfile(save_file):
+            continue
+
+        df = pd.read_feather(file_path)
+        t_len = len(df)
+        quantiles_matrix = np.zeros((t_len, 2 * num_labels), dtype=np.float32)
+
+        for axis_idx, axis in enumerate(("slope", "volatility")):
+            axis_data = df[axis_indicators[axis]].values.astype(np.float32)
+            for label_idx in range(num_labels):
+                col_idx = axis_idx * num_labels + label_idx
+                model = vae_models[axis][label_idx]
+                sorted_base = sorted_bases[axis][label_idx]
+
+                losses = compute_vae_losses_batch(model, axis_data, device)
+                quantiles = np.searchsorted(sorted_base, losses, side="right") / float(
+                    len(sorted_base)
+                )
+                quantiles[losses < sorted_base[0]] = 0.0
+                quantiles[losses > sorted_base[-1]] = 1.0
+                quantiles_matrix[:, col_idx] = quantiles.astype(np.float32)
+
+        np.save(save_file, quantiles_matrix)
+        logger.info(
+            "Saved precomputed quantiles for contract '%s' (shape: %s) -> %s",
+            contract,
+            quantiles_matrix.shape,
+            save_file,
+        )
+
+    del vae_models
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    logger.info("All precomputed VAE quantiles ready in %s", target_dir)
+    return target_dir
 
 
 def resolve_routing_parameters(args):
@@ -541,6 +735,9 @@ class vae_risk_aware_routing:
     action_decision_reason_history: list[int]
     enable_non_main_contract_defense: bool = False
     role_tier_index: int | None = None
+    save_artifacts: bool = True
+    precomputed_quantiles_dir: str | None = None
+    current_contract_quantiles: np.ndarray | None = None
 
     def __init__(self, args) -> None:
         # device
@@ -582,11 +779,14 @@ class vae_risk_aware_routing:
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
         self.experiment_name = args.experiment_name
         self.eval_stage = args.eval_stage
+        self.save_artifacts = args.save_artifacts
+        self.precomputed_quantiles_dir = self._resolve_precomputed_quantiles_dir(args)
+        self.current_contract_quantiles = None
 
         self.test_path = self._resolve_test_path(args)
-        if not os.path.exists(self.test_path):
+        if self.save_artifacts and not os.path.exists(self.test_path):
             os.makedirs(self.test_path, exist_ok=True)
-            #
+
         # trading environment setting
         self.base_path = args.base_path
         self.dataset_name = args.dataset_name
@@ -729,17 +929,26 @@ class vae_risk_aware_routing:
             "slope": os.path.join(default_vae_root, "slope"),
             "volatility": os.path.join(default_vae_root, "volatility"),
         }
-        self.vae_models = {}
-        self.in_ds_logpx = {}
         self.quantiles = {}
-        for axis, root in vae_roots.items():
-            self.vae_models[axis], logpx_list = load_vae_axis(axis, root)
-            # pre-sort once here so find_quantile only needs searchsorted per step
-            self.in_ds_logpx[axis] = [np.sort(logpx) for logpx in logpx_list]
+        for axis in ("slope", "volatility"):
             self.quantiles[axis] = [
                 deque(maxlen=self.axis_window_lengths[axis])
                 for _ in range(self.num_labels)
             ]
+        if self.precomputed_quantiles_dir is not None:
+            self.vae_models = None
+            self.in_ds_logpx = None
+            logger.info(
+                "Using precomputed VAE quantiles from %s; skipping VAE models loading.",
+                self.precomputed_quantiles_dir,
+            )
+        else:
+            self.vae_models = {}
+            self.in_ds_logpx = {}
+            for axis, root in vae_roots.items():
+                self.vae_models[axis], logpx_list = load_vae_axis(axis, root)
+                # pre-sort once here so find_quantile only needs searchsorted per step
+                self.in_ds_logpx[axis] = [np.sort(logpx) for logpx in logpx_list]
         self.action = self.zero_position_action
         self.macro_action_history = []
 
@@ -757,6 +966,23 @@ class vae_risk_aware_routing:
         self.remaining_persist = 0
         self.current_action = self.flat_action
         self.action_decision_reason_history = []
+
+    def _resolve_precomputed_quantiles_dir(self, args) -> str | None:
+        target_dir = args.precomputed_quantiles_dir
+        if target_dir:
+            if os.path.isdir(target_dir):
+                return target_dir
+            return None
+        candidate = default_precomputed_quantiles_dir(
+            dataset_name=self.dataset_name,
+            experiment_name=self.experiment_name,
+            eval_stage=self.eval_stage,
+        )
+        if os.path.isdir(candidate):
+            files = [f for f in os.listdir(candidate) if f.endswith(".npy")]
+            if files:
+                return candidate
+        return None
 
     def _resolve_test_path(self, args):
         if self.eval_stage == "test" or args.result_path.endswith("final_result"):
@@ -821,7 +1047,7 @@ class vae_risk_aware_routing:
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
         self.enable_non_main_contract_defense = args.enable_non_main_contract_defense
         self.test_path = self._resolve_test_path(args)
-        if not os.path.exists(self.test_path):
+        if self.save_artifacts and not os.path.exists(self.test_path):
             os.makedirs(self.test_path, exist_ok=True)
         self.reset_routing_state()
 
@@ -853,6 +1079,16 @@ class vae_risk_aware_routing:
         return quantile
 
     def get_quantiles(self, vae_s_slope, vae_s_vol):
+        if self.current_contract_quantiles is not None:
+            idx = min(self.step_idx, len(self.current_contract_quantiles) - 1)
+            row = self.current_contract_quantiles[idx]
+            for label_idx in range(self.num_labels):
+                self.quantiles["slope"][label_idx].append(float(row[label_idx]))
+                self.quantiles["volatility"][label_idx].append(
+                    float(row[self.num_labels + label_idx])
+                )
+            return self.quantiles
+
         axis_inputs = {
             "slope": vae_s_slope,
             "volatility": vae_s_vol,
@@ -1016,10 +1252,20 @@ class vae_risk_aware_routing:
 
         return action
 
-    def run_single_valid_df(self, df, save_path):
+    def run_single_valid_df(self, df, save_path, contract_name: str | None = None):
         self.df = df
         self.vae_slope_array = self.df[self.vae_slope_indicators].values
         self.vae_vol_array = self.df[self.vae_volatility_indicators].values
+        if self.precomputed_quantiles_dir is not None and contract_name is not None:
+            quant_path = os.path.join(
+                self.precomputed_quantiles_dir, f"{contract_name}.npy"
+            )
+            if os.path.isfile(quant_path):
+                self.current_contract_quantiles = np.load(quant_path, mmap_mode="r")
+            else:
+                self.current_contract_quantiles = None
+        else:
+            self.current_contract_quantiles = None
         env = initiate_base_env(
             df=self.df,
             feature_list=self.tech_indicator_list,
@@ -1101,49 +1347,52 @@ class vae_risk_aware_routing:
             action_unavailable_breaks,
         )
 
-        if not os.path.exists(save_path):
-            os.makedirs(save_path, exist_ok=True)
-        np.save(os.path.join(save_path, HistoryArtifactNames.REWARD_HISTORY_NPY), reward_history)
-        np.save(
-            os.path.join(save_path, HistoryArtifactNames.TOTAL_ASSET_HISTORY_NPY), total_asset_history
-        )
-        np.save(
-            os.path.join(save_path, HistoryArtifactNames.MICRO_ACTION_HISTORY_NPY),
-            micro_action_history,
-        )
-        np.save(
-            os.path.join(save_path, HistoryArtifactNames.ACTION_DECISION_REASON_HISTORY_NPY),
-            reasons,
-        )
-        np.save(os.path.join(save_path, ArtifactNames.TRADING_INFO_NPY), trading_info)
-        np.save(
-            os.path.join(save_path, HistoryArtifactNames.INITIAL_MARGIN_HISTORY_NPY),
-            env.initial_margin_history,
-        )
-        np.save(
-            os.path.join(save_path, HistoryArtifactNames.WALLET_BALANCE_HISTORY_NPY),
-            env.wallet_balance_history,
-        )
-        np.save(
-            os.path.join(save_path, HistoryArtifactNames.UNREALIZED_PNL_HISTORY_NPY),
-            env.unrealized_pnl_history,
-        )
-        np.save(
-            os.path.join(save_path, HistoryArtifactNames.MAINTAIN_MARGIN_HISTORY_NPY),
-            env.maintain_marigine_history,
-        )
-        np.save(
-            os.path.join(save_path, HistoryArtifactNames.NEW_POSITION_REQUIRED_MONEY_HISTORY_NPY),
-            env.new_position_required_money_history,
-        )
-        np.save(
-            os.path.join(save_path, HistoryArtifactNames.MACRO_ACTION_NPY),
-            self.macro_action_history,
-        )
-        np.save(
-            os.path.join(save_path, HistoryArtifactNames.MACRO_ACTION_HISTORY_NPY),
-            self.macro_action_history,
-        )
+        if self.save_artifacts:
+            if not os.path.exists(save_path):
+                os.makedirs(save_path, exist_ok=True)
+            np.save(os.path.join(save_path, HistoryArtifactNames.REWARD_HISTORY_NPY), reward_history)
+            np.save(
+                os.path.join(save_path, HistoryArtifactNames.TOTAL_ASSET_HISTORY_NPY), total_asset_history
+            )
+            np.save(
+                os.path.join(save_path, HistoryArtifactNames.MICRO_ACTION_HISTORY_NPY),
+                micro_action_history,
+            )
+            np.save(
+                os.path.join(save_path, HistoryArtifactNames.ACTION_DECISION_REASON_HISTORY_NPY),
+                reasons,
+            )
+            np.save(os.path.join(save_path, ArtifactNames.TRADING_INFO_NPY), trading_info)
+            np.save(
+                os.path.join(save_path, HistoryArtifactNames.INITIAL_MARGIN_HISTORY_NPY),
+                env.initial_margin_history,
+            )
+            np.save(
+                os.path.join(save_path, HistoryArtifactNames.WALLET_BALANCE_HISTORY_NPY),
+                env.wallet_balance_history,
+            )
+            np.save(
+                os.path.join(save_path, HistoryArtifactNames.UNREALIZED_PNL_HISTORY_NPY),
+                env.unrealized_pnl_history,
+            )
+            np.save(
+                os.path.join(save_path, HistoryArtifactNames.MAINTAIN_MARGIN_HISTORY_NPY),
+                env.maintain_marigine_history,
+            )
+            np.save(
+                os.path.join(save_path, HistoryArtifactNames.NEW_POSITION_REQUIRED_MONEY_HISTORY_NPY),
+                env.new_position_required_money_history,
+            )
+            np.save(
+                os.path.join(save_path, HistoryArtifactNames.MACRO_ACTION_NPY),
+                self.macro_action_history,
+            )
+            np.save(
+                os.path.join(save_path, HistoryArtifactNames.MACRO_ACTION_HISTORY_NPY),
+                self.macro_action_history,
+            )
+
+        self.current_contract_quantiles = None
         require_money = calculate_required_money(
             np.array(env.initial_margin_history),
             np.array(env.maintain_marigine_history),
@@ -1153,14 +1402,15 @@ class vae_risk_aware_routing:
         )
         reward_sum = np.sum(reward_history)
         self.return_rate = reward_sum / (require_money + 1e-12)
-        logger.info(
-            "[Artifacts] Saved simulation history to %s | rows: %d, reward_sum: %.4f, require_money: %.4f, return_rate: %.6f",
-            save_path,
-            len(self.df),
-            reward_sum,
-            require_money,
-            self.return_rate,
-        )
+        if self.save_artifacts:
+            logger.info(
+                "[Artifacts] Saved simulation history to %s | rows: %d, reward_sum: %.4f, require_money: %.4f, return_rate: %.6f",
+                save_path,
+                len(self.df),
+                reward_sum,
+                require_money,
+                self.return_rate,
+            )
         return {
             "rows": len(self.df),
             "reward_sum": float(reward_sum),
@@ -1179,8 +1429,11 @@ class vae_risk_aware_routing:
                 self.test_data_path,
             )
             self.reset_routing_state()
+            contract_name = os.path.splitext(os.path.basename(self.test_data_path))[0]
             result = self.run_single_valid_df(
-                pd.read_feather(self.test_data_path), self.test_path
+                pd.read_feather(self.test_data_path),
+                self.test_path,
+                contract_name=contract_name,
             )
             logger.info(
                 "[Test End] Single dataset test completed | return_rate: %.6f | artifacts: %s",
@@ -1207,6 +1460,7 @@ class vae_risk_aware_routing:
             result = self.run_single_valid_df(
                 pd.read_feather(path),
                 os.path.join(self.test_path, "contracts", contract),
+                contract_name=contract,
             )
             result["contract"] = contract
             result["source_file"] = path
@@ -1221,12 +1475,6 @@ class vae_risk_aware_routing:
                 result["return_rate"],
             )
 
-        first_contract_dir = os.path.join(self.test_path, "contracts", contract_results[0]["contract"])
-        if os.path.isdir(first_contract_dir):
-            for f_name in os.listdir(first_contract_dir):
-                if f_name.endswith(".npy") or f_name.endswith(".csv"):
-                    shutil.copy2(os.path.join(first_contract_dir, f_name), os.path.join(self.test_path, f_name))
-
         result_df = pd.DataFrame(contract_results)
         result_df = result_df[
             [
@@ -1238,9 +1486,16 @@ class vae_risk_aware_routing:
                 MetricColumns.RETURN_RATE,
             ]
         ]
-        csv_path = os.path.join(self.test_path, ArtifactNames.CONTRACT_RESULTS_CSV)
-        result_df.to_csv(csv_path, index=False)
-        logger.info("[Artifacts] Saved contract results summary to %s", csv_path)
+        if self.save_artifacts:
+            first_contract_dir = os.path.join(self.test_path, "contracts", contract_results[0]["contract"])
+            if os.path.isdir(first_contract_dir):
+                for f_name in os.listdir(first_contract_dir):
+                    if f_name.endswith(".npy") or f_name.endswith(".csv"):
+                        shutil.copy2(os.path.join(first_contract_dir, f_name), os.path.join(self.test_path, f_name))
+
+            csv_path = os.path.join(self.test_path, ArtifactNames.CONTRACT_RESULTS_CSV)
+            result_df.to_csv(csv_path, index=False)
+            logger.info("[Artifacts] Saved contract results summary to %s", csv_path)
 
         total_reward_sum = float(result_df[MetricColumns.REWARD_SUM].sum())
         traded_mask = (result_df[MetricColumns.REWARD_SUM] != 0) | (result_df[MetricColumns.RETURN_RATE] != 0)
@@ -1253,18 +1508,20 @@ class vae_risk_aware_routing:
         portfolio_return_rate = total_reward_sum / (total_initial_capital + 1e-12)
         win_rate = float((result_df[MetricColumns.RETURN_RATE] > 0).mean())
         self.return_rate = portfolio_return_rate * win_rate
-        trading_info = {
-            "return_rate": self.return_rate,
-            "portfolio_return_rate": portfolio_return_rate,
-            "win_rate": win_rate,
-            "equal_weighted_mean_return": float(result_df[MetricColumns.RETURN_RATE].mean()),
-            "total_reward_sum": total_reward_sum,
-            "aggregation": "option2_portfolio_return_times_win_rate",
-            "contract_count": len(contract_results),
-        }
-        trading_info_path = os.path.join(self.test_path, ArtifactNames.TRADING_INFO_NPY)
-        np.save(trading_info_path, trading_info)
-        logger.info("[Artifacts] Saved aggregated trading info to %s", trading_info_path)
+
+        if self.save_artifacts:
+            trading_info = {
+                "return_rate": self.return_rate,
+                "portfolio_return_rate": portfolio_return_rate,
+                "win_rate": win_rate,
+                "equal_weighted_mean_return": float(result_df[MetricColumns.RETURN_RATE].mean()),
+                "total_reward_sum": total_reward_sum,
+                "aggregation": "option2_portfolio_return_times_win_rate",
+                "contract_count": len(contract_results),
+            }
+            trading_info_path = os.path.join(self.test_path, ArtifactNames.TRADING_INFO_NPY)
+            np.save(trading_info_path, trading_info)
+            logger.info("[Artifacts] Saved aggregated trading info to %s", trading_info_path)
 
         logger.info(
             "[Test End] Multi-contract test completed | Contracts: %d | Total Reward Sum: %.4f | "

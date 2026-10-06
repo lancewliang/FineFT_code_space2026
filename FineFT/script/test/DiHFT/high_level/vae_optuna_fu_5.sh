@@ -34,11 +34,11 @@ python -u FineFT/RL/DiHFT/high_level/vae_routing_optuna.py \
     --position_choices 3 \
     --order_book_depth 5 \
     --selection_manifest "analysis_result/DiHFT/low_level/${DATASET_NAME}/${EXPERIMENT_NAME}/two_dimensional_selection/two_dimensional_selection_manifest.json" \
-    --n_workers "${N_WORKERS:-45}" \
+    --n_workers "${N_WORKERS:-65}" \
     --transcation_cost 0.0005 \
     --short_estimated_rate 0 \
     --long_estimated_rate 0 \
-    --n_trials 80 \
+    --n_trials 130 \
     --rule_base_threshold_min 0.2 \
     --rule_base_threshold_max 0.5 \
     --action_persistence "${ACTION_PERSISTENCE}" \
