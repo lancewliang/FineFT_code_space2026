@@ -129,7 +129,7 @@ def test_action_persistence_cli_arguments_and_validation(monkeypatch):
         position_choices=3,
         leverage_choices=[1],
         action_persistence=0,
-        stop_loss_abs_threshold=50.0,
+        stop_loss_return_threshold=0.015,
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
@@ -266,6 +266,7 @@ def test_diagnostic_artifacts_and_metrics_saved_to_disk(tmp_path, monkeypatch):
     class MultiStepFakeEnv:
         position = 0.0
         unrealized_pnl = 0.0
+        current_markprice = 100.0
         leverage = 1
         margine_balance_history = [100.0, 100.5, 101.0, 101.5]
         micro_action_history = []
@@ -362,7 +363,7 @@ def test_reconfigure_routing_resets_persistence_state():
         trial_number=1,
         enable_non_main_contract_defense=False,
         action_persistence=4,
-        stop_loss_abs_threshold=50.0,
+        stop_loss_return_threshold=0.015,
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,

@@ -869,7 +869,7 @@ _Avoid_: 翻仓、仓位翻转、flip position
 
 
 **持仓浮亏硬止损 (Unrealized PnL Hard Stop-Loss)**:
-在高层路由主循环中基于当前持仓实时浮动盈亏（`unrealized_pnl`）监控的绝对止损拦截机制；当浮亏达到或超过阈值（如 -50 USDT）时，无条件解除动作持续性锁定并强制规则平仓至 0，阻断极端单边行情下的深套扛单。
+在高层路由主循环中基于当前持仓标的价格相对变动率（`loss_rate = -unrealized_pnl / (|position| * current_markprice)`）监控的相对硬止损拦截机制（方案 A）；当相对持仓浮亏率达到或超过阈值（如 `--stop_loss_return_threshold 0.015` 即 1.5%）时，无条件解除动作持续性锁定并强制规则平仓至 0，与手数、资金规模、品种价格完全解耦，阻断极端单边行情下的深套扛单。
 _Avoid_: 动态止损、追踪止损、软止损
 
 **单向冷静期 (Directional Cooldown Lockout)**:

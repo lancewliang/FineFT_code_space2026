@@ -116,6 +116,7 @@ def test_eval_stage_test_loads_contracts_from_test_directory(tmp_path, monkeypat
             self.required_money = float(df["required_money"].iloc[0])
             self.position = 0.0
             self.unrealized_pnl = 0.0
+            self.current_markprice = 100.0
             self.leverage = 5
             self.margine_balance_history = [100.0, 100.0 + self.reward]
             self.micro_action_history = []
@@ -175,7 +176,7 @@ def test_eval_stage_test_loads_contracts_from_test_directory(tmp_path, monkeypat
         lambda self, env, s, info: (env, s, 0.0, False, info),
         routing,
     )
-    routing.get_action = types.MethodType(lambda self, info, s, current_position, current_leverage, current_unrealized_pnl=0.0: 1, routing)
+    routing.get_action = types.MethodType(lambda self, info, s, current_position, current_leverage, current_unrealized_pnl=0.0, current_markprice=0.0: 1, routing)
     routing.get_quantiles = types.MethodType(lambda self, *args, **kwargs: None, routing)
 
     return_rate = routing.test()
@@ -231,6 +232,7 @@ def test_vae_routing_final_result_macro_action_entrypoint(tmp_path, monkeypatch)
             self.required_money = float(df["required_money"].iloc[0])
             self.position = 0.0
             self.unrealized_pnl = 0.0
+            self.current_markprice = 100.0
             self.leverage = 5
             self.margine_balance_history = [100.0, 100.0 + self.reward]
             self.micro_action_history = []

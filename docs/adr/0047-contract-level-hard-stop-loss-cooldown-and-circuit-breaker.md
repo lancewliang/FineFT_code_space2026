@@ -1,6 +1,6 @@
 # 0047. 单合约持仓浮亏硬止损、单向冷静期与断路器熔断架构
 
-为根治高层 VAE 路由与低层强化学习策略在商品期货单边极端非平稳暴跌行情中出现的“无刹车连续扛单巨亏”（如 `fu2411` 单笔做多长达 18 小时、单笔亏损达 -238 USDT）以及“止损后立即反扑再抄底接飞刀”的系统性失血缺陷，我们决定在高层 VAE 路由中确立一套确定性的三级风控底线架构：**单合约持仓浮亏绝对硬止损（方案 1）**、**止损后单向禁入冷静期（方案 2）**以及**连续止损单合约熔断断路器（方案 4）**，并配套细粒度决策归因审计轨迹。
+为根治高层 VAE 路由与低层强化学习策略在商品期货单边极端非平稳暴跌行情中出现的“无刹车连续扛单巨亏”（如 `fu2411` 单笔做多长达 18 小时、单笔亏损达 -238 USDT）以及“止损后立即反扑再抄底接飞刀”的系统性失血缺陷，我们决定在高层 VAE 路由中确立一套确定性的三级风控底线架构：**单合约持仓标的价格相对变动率硬止损（方案 A）**、**止损后单向禁入冷静期（方案 2）**以及**连续止损单合约熔断断路器（方案 4）**，并配套细粒度决策归因审计轨迹。
 
 ## Status
 
@@ -23,9 +23,10 @@ accepted
   将止损阈值（如 -30 ~ -80 USDT）、冷静期步数等作为超参数加入 Optuna 采样。
   *缺陷*：风控底线必须具有通用性与鲁棒性。若交由 Optuna 针对特定验证集样本寻优，极易诱发针对历史特定波动的严重过拟合，并显著增加调优时间。
 - **选项 3：三级确定性安全风控架构 + 细粒度审计归因（选中）**：
-  1. **Tier 1 单合约持仓浮亏绝对硬止损**：
-     - 配置 `--stop_loss_abs_threshold 50.0`（0 为禁用）；
-     - 当 `current_position != 0 and current_unrealized_pnl <= -stop_loss_abs_threshold` 时，无条件打断持仓持续性（`remaining_persist = 0`），强制调用规则平仓至 Flat，记录被止损方向 `last_stopped_position` 与决策根因 `ActionDecisionReasons.HARD_STOP_LOSS`；
+  1. **Tier 1 单合约标的价格相对变动率硬止损（方案 A）**：
+     - 配置 `--stop_loss_return_threshold 0.015`（默认 1.5% 标的价格反向波动，0 为禁用）；
+     - 采用无量纲标的价格相对变动率公式计算持仓亏损率：`loss_rate = -current_unrealized_pnl / (|current_position| * current_markprice)`；
+     - 当 `current_position != 0 and current_markprice > 0 and loss_rate >= stop_loss_return_threshold` 时，无条件打断持仓持续性（`remaining_persist = 0`），强制调用规则平仓至 Flat，记录被止损方向 `last_stopped_position` 与决策根因 `ActionDecisionReasons.HARD_STOP_LOSS`。与手数、合约单价、初始资金完全解耦；
   2. **Tier 2 止损后单向禁入冷静期**：
      - 配置 `--stop_loss_cooldown_steps 12`（默认 12 步 = 2 小时，0 为禁用）；
      - 触发硬止损后激活冷静期计数器；在冷静期内，**仅单向禁入**：严禁开仓或加仓与 `last_stopped_position` 相同方向的仓位（若策略输出同向动作则强行置为 Flat 并记录 `STOP_LOSS_COOLDOWN`）；顺应大趋势的反向交易（如暴跌中做空）或保持 Flat 允许执行；

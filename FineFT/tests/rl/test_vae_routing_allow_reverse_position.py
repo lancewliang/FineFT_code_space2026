@@ -343,7 +343,7 @@ def test_prepare_base_args_loads_two_dimensional_model_from_manifest(tmp_path):
         selection_manifest=str(manifest_path),
         gating_strategy="absolute",
         action_persistence=3,
-        stop_loss_abs_threshold=50.0,
+        stop_loss_return_threshold=0.015,
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
@@ -386,7 +386,7 @@ def test_prepare_base_args_does_not_mutate_original_args(tmp_path):
         selection_manifest=str(manifest_path),
         gating_strategy="absolute",
         action_persistence=3,
-        stop_loss_abs_threshold=50.0,
+        stop_loss_return_threshold=0.015,
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
@@ -431,7 +431,7 @@ def test_prepare_base_args_rejects_missing_model_assembly(tmp_path):
         selection_manifest=str(manifest_path),
         gating_strategy="absolute",
         action_persistence=3,
-        stop_loss_abs_threshold=50.0,
+        stop_loss_return_threshold=0.015,
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
@@ -464,7 +464,7 @@ def test_prepare_base_args_validates_manifest_contract(tmp_path):
         selection_manifest=str(manifest_path),
         gating_strategy="absolute",
         action_persistence=3,
-        stop_loss_abs_threshold=50.0,
+        stop_loss_return_threshold=0.015,
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
@@ -577,6 +577,7 @@ def test_vae_routing_test_uses_contract_level_valid_features(tmp_path, monkeypat
             self.required_money = float(df["required_money"].iloc[0])
             self.position = 0.0
             self.unrealized_pnl = 0.0
+            self.current_markprice = 100.0
             self.leverage = 5
             self.margine_balance_history = [100.0, 100.0 + self.reward]
             self.micro_action_history = []
@@ -641,7 +642,7 @@ def test_vae_routing_test_uses_contract_level_valid_features(tmp_path, monkeypat
     )
     routing_start_states = []
 
-    def fake_get_action(self, info, s, current_position, current_leverage, current_unrealized_pnl=0.0):
+    def fake_get_action(self, info, s, current_position, current_leverage, current_unrealized_pnl=0.0, current_markprice=0.0):
         routing_start_states.append(
             (
                 self.action,
@@ -686,6 +687,7 @@ def test_vae_routing_test_passes_order_book_depth_to_base_env(tmp_path, monkeypa
     class FakeEnv:
         position = 0.0
         unrealized_pnl = 0.0
+        current_markprice = 100.0
         leverage = 5
         margine_balance_history = [100.0, 102.0]
         micro_action_history = []
@@ -739,7 +741,7 @@ def test_vae_routing_test_passes_order_book_depth_to_base_env(tmp_path, monkeypa
         lambda self, env, s, info: (env, s, 0.0, False, info),
         routing,
     )
-    routing.get_action = types.MethodType(lambda self, info, s, current_position, current_leverage, current_unrealized_pnl=0.0: 1, routing)
+    routing.get_action = types.MethodType(lambda self, info, s, current_position, current_leverage, current_unrealized_pnl=0.0, current_markprice=0.0: 1, routing)
     routing.get_quantiles = types.MethodType(lambda self, *args, **kwargs: None, routing)
 
     routing.test()

@@ -123,10 +123,10 @@ parser_all.add_argument(
     help="number of consecutive steps a non-flat action persists before re-evaluating policy",
 )
 parser_all.add_argument(
-    "--stop_loss_abs_threshold",
+    "--stop_loss_return_threshold",
     type=float,
-    default=50.0,
-    help="unrealized PnL hard stop-loss absolute threshold in quote currency (0.0 to disable)",
+    default=0.015,
+    help="position return rate hard stop-loss threshold, e.g. 0.015 for 1.5% adverse price move (0.0 to disable)",
 )
 parser_all.add_argument(
     "--stop_loss_cooldown_steps",
@@ -210,7 +210,7 @@ def prepare_base_args(args_1, args_2):
     )
     base_args.gating_strategy = args_2.gating_strategy
     base_args.action_persistence = args_2.action_persistence
-    base_args.stop_loss_abs_threshold = args_2.stop_loss_abs_threshold
+    base_args.stop_loss_return_threshold = args_2.stop_loss_return_threshold
     base_args.stop_loss_cooldown_steps = args_2.stop_loss_cooldown_steps
     base_args.circuit_breaker_consecutive_stops = args_2.circuit_breaker_consecutive_stops
     base_args.circuit_breaker_cooling_steps = args_2.circuit_breaker_cooling_steps

@@ -15,9 +15,10 @@ Counterfactual simulation across all 12 validation contracts proved that introdu
 
 Implement a deterministic, three-tiered defensive risk architecture directly at the high-level VAE routing seam:
 
-1. **Tier 1: Position Unrealized PnL Hard Stop-Loss (方案 1)**:
-   - Introduce `--stop_loss_abs_threshold` (default: `50.0` USDT, `0.0` disables).
-   - At each step, if an active position exists and `current_unrealized_pnl <= -stop_loss_abs_threshold`, immediately break action persistence (`remaining_persist = 0`), force a rule-based close to Flat (zero position), record the stopped position direction (`last_stopped_position`), and log decision code `HARD_STOP_LOSS`.
+1. **Tier 1: Position Return Rate Hard Stop-Loss (方案 A)**:
+   - Introduce `--stop_loss_return_threshold` (default: `0.015`, i.e. 1.5% adverse price move against position entry, `0.0` disables).
+   - At each step, compute scale-invariant loss rate: `loss_rate = -current_unrealized_pnl / (|current_position| * current_markprice)`.
+   - If an active position exists and `loss_rate >= stop_loss_return_threshold`, immediately break action persistence (`remaining_persist = 0`), force a rule-based close to Flat (zero position), record the stopped position direction (`last_stopped_position`), and log decision code `HARD_STOP_LOSS`.
 2. **Tier 2: Directional Cooldown Lockout (方案 2)**:
    - Introduce `--stop_loss_cooldown_steps` (default: `12` steps / 2 hours, `0` disables).
    - Following a hard stop-loss trigger, enter a directional cooldown for the configured number of steps.
@@ -69,7 +70,7 @@ Implement a deterministic, three-tiered defensive risk architecture directly at 
     - `CIRCUIT_BREAKER_SUSPENSION = 7`
 - **High-Level VAE Routing (`vae_routing_util.py`)**:
   - Add CLI arguments to `parser`:
-    - `--stop_loss_abs_threshold` (float, default: `50.0`)
+    - `--stop_loss_return_threshold` (float, default: `0.015`)
     - `--stop_loss_cooldown_steps` (int, default: `12`)
     - `--circuit_breaker_consecutive_stops` (int, default: `2`)
     - `--circuit_breaker_cooling_steps` (int, default: `72`)
@@ -85,7 +86,7 @@ Implement a deterministic, three-tiered defensive risk architecture directly at 
   - In `reconfigure_routing(args)`: Re-read arguments and invoke `reset_routing_state()`.
   - In `get_action(info, s, current_position, current_leverage, current_unrealized_pnl: float = 0.0)`:
     - Priority 1: Circuit breaker active (`circuit_breaker_remaining_steps > 0` or `-1`). If active, enforce Flat, decrement timer (if > 0), log `CIRCUIT_BREAKER_SUSPENSION`.
-    - Priority 2: Hard stop-loss check (`current_position != 0 and current_unrealized_pnl <= -self.stop_loss_abs_threshold`).
+    - Priority 2: Hard stop-loss check (`current_position != 0 and loss_rate >= self.stop_loss_return_threshold` where `loss_rate = -current_unrealized_pnl / (|current_position| * current_markprice)`).
       - Increment `consecutive_stop_loss_count += 1` and `hard_stop_loss_count += 1`.
       - Record `last_stopped_position = current_position`.
       - Check if `consecutive_stop_loss_count >= circuit_breaker_consecutive_stops`: if tripped, activate `circuit_breaker_remaining_steps`.
@@ -104,7 +105,7 @@ Implement a deterministic, three-tiered defensive risk architecture directly at 
   - In `prepare_base_args`, forward the risk control flags from CLI into `base_args`.
 - **Shell Scripts**:
   - Update `FineFT/script/test/DiHFT/high_level/vae_optuna_fu_10.sh` and `final_result_fu_10.sh` to provide environment variable overrides with defaults:
-    - `STOP_LOSS_ABS_THRESHOLD=${STOP_LOSS_ABS_THRESHOLD:-50.0}`
+    - `STOP_LOSS_RETURN_THRESHOLD=${STOP_LOSS_RETURN_THRESHOLD:-0.015}`
     - `STOP_LOSS_COOLDOWN_STEPS=${STOP_LOSS_COOLDOWN_STEPS:-12}`
     - `CIRCUIT_BREAKER_CONSECUTIVE_STOPS=${CIRCUIT_BREAKER_CONSECUTIVE_STOPS:-2}`
     - `CIRCUIT_BREAKER_COOLING_STEPS=${CIRCUIT_BREAKER_COOLING_STEPS:-72}`

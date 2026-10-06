@@ -13,7 +13,7 @@ function run_test_agent_index {
         label_types=("$LABEL_TYPE")
     fi
     local result_path=${RESULT_PATH:-result/DiHFT/low_level}
-    local max_parallel=${MAX_PARALLEL:-96}
+    local max_parallel=${MAX_PARALLEL:-70}
     ROOTPATH=${ROOTPATH:-$(pwd)}
     cd "$ROOTPATH"
     export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"

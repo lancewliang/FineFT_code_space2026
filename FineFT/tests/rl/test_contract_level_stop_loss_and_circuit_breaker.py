@@ -64,7 +64,7 @@ def _sample_manifest_payload(num_labels: int = 3, **overrides) -> dict:
 
 def _create_test_router(
     action_persistence: int = 3,
-    stop_loss_abs_threshold: float = 50.0,
+    stop_loss_return_threshold: float = 0.015,
     stop_loss_cooldown_steps: int = 12,
     circuit_breaker_consecutive_stops: int = 2,
     circuit_breaker_cooling_steps: int = 72,
@@ -100,7 +100,7 @@ def _create_test_router(
     routing._defensive_action = lambda info, pos, lev: 1
 
     # Risk controls
-    routing.stop_loss_abs_threshold = stop_loss_abs_threshold
+    routing.stop_loss_return_threshold = stop_loss_return_threshold
     routing.stop_loss_cooldown_steps = stop_loss_cooldown_steps
     routing.circuit_breaker_consecutive_stops = circuit_breaker_consecutive_stops
     routing.circuit_breaker_cooling_steps = circuit_breaker_cooling_steps
@@ -131,7 +131,7 @@ def test_risk_controls_cli_arguments_and_validation(monkeypatch):
 
     # 1. Base parser defaults
     args_default = vru.parser.parse_args([])
-    assert args_default.stop_loss_abs_threshold == 50.0
+    assert args_default.stop_loss_return_threshold == 0.015
     assert args_default.stop_loss_cooldown_steps == 12
     assert args_default.circuit_breaker_consecutive_stops == 2
     assert args_default.circuit_breaker_cooling_steps == 72
@@ -139,26 +139,26 @@ def test_risk_controls_cli_arguments_and_validation(monkeypatch):
     # 2. Custom values in base parser
     args_custom = vru.parser.parse_args(
         [
-            "--stop_loss_abs_threshold", "40.0",
+            "--stop_loss_return_threshold", "0.02",
             "--stop_loss_cooldown_steps", "6",
             "--circuit_breaker_consecutive_stops", "3",
             "--circuit_breaker_cooling_steps", "144",
         ]
     )
-    assert args_custom.stop_loss_abs_threshold == 40.0
+    assert args_custom.stop_loss_return_threshold == 0.02
     assert args_custom.stop_loss_cooldown_steps == 6
     assert args_custom.circuit_breaker_consecutive_stops == 3
     assert args_custom.circuit_breaker_cooling_steps == 144
 
     # 3. Optuna parser defaults and custom
     args_optuna_default = vro.parser_all.parse_args([])
-    assert args_optuna_default.stop_loss_abs_threshold == 50.0
+    assert args_optuna_default.stop_loss_return_threshold == 0.015
     assert args_optuna_default.stop_loss_cooldown_steps == 12
     assert args_optuna_default.circuit_breaker_consecutive_stops == 2
     assert args_optuna_default.circuit_breaker_cooling_steps == 72
 
     base_args = vro.prepare_base_args(args_default, args_custom)
-    assert base_args.stop_loss_abs_threshold == 40.0
+    assert base_args.stop_loss_return_threshold == 0.02
     assert base_args.stop_loss_cooldown_steps == 6
     assert base_args.circuit_breaker_consecutive_stops == 3
     assert base_args.circuit_breaker_cooling_steps == 144
@@ -190,7 +190,7 @@ def test_risk_controls_cli_arguments_and_validation(monkeypatch):
             "trial_number": None,
             "eval_stage": "valid",
             "save_artifacts": False,
-            "stop_loss_abs_threshold": 50.0,
+            "stop_loss_return_threshold": 0.015,
             "stop_loss_cooldown_steps": 12,
             "circuit_breaker_consecutive_stops": 2,
             "circuit_breaker_cooling_steps": 72,
@@ -201,8 +201,8 @@ def test_risk_controls_cli_arguments_and_validation(monkeypatch):
     router = vru.vae_risk_aware_routing.__new__(vru.vae_risk_aware_routing)
     router.save_artifacts = False
 
-    with pytest.raises(ValueError, match="stop_loss_abs_threshold must be non-negative"):
-        router.reconfigure_routing(_create_valid_args(stop_loss_abs_threshold=-1.0))
+    with pytest.raises(ValueError, match="stop_loss_return_threshold must be non-negative"):
+        router.reconfigure_routing(_create_valid_args(stop_loss_return_threshold=-0.01))
 
     with pytest.raises(ValueError, match="stop_loss_cooldown_steps must be non-negative"):
         router.reconfigure_routing(_create_valid_args(stop_loss_cooldown_steps=-1))
@@ -217,7 +217,7 @@ def test_risk_controls_cli_arguments_and_validation(monkeypatch):
 def test_hard_stop_loss_triggers_flat_and_preempts_persistence():
     router = _create_test_router(
         action_persistence=3,
-        stop_loss_abs_threshold=50.0,
+        stop_loss_return_threshold=0.015,
         stop_loss_cooldown_steps=12,
     )
     info = {"avaliable_action": [1, 1, 1]}
@@ -229,9 +229,15 @@ def test_hard_stop_loss_triggers_flat_and_preempts_persistence():
     router.last_stopped_position = 0.0
     router.cooldown_remaining_steps = 0
 
-    # Unrealized loss exceeds threshold (-50.1 <= -50.0)
+    # Unrealized loss exceeds threshold: notional = 1.0 * 3000.0 = 3000.0.
+    # -50.1 / 3000.0 = 0.0167 >= 0.015 -> triggers
     action = router.get_action(
-        info, state, current_position=1.0, current_leverage=1, current_unrealized_pnl=-50.1
+        info,
+        state,
+        current_position=1.0,
+        current_leverage=1,
+        current_unrealized_pnl=-50.1,
+        current_markprice=3000.0,
     )
 
     assert action == router.flat_action
@@ -246,16 +252,21 @@ def test_hard_stop_loss_triggers_flat_and_preempts_persistence():
 def test_hard_stop_loss_does_not_trigger_when_within_tolerance_or_disabled():
     router = _create_test_router(
         action_persistence=3,
-        stop_loss_abs_threshold=50.0,
+        stop_loss_return_threshold=0.015,
     )
     info = {"avaliable_action": [1, 1, 1]}
     state = np.array([0.0])
 
-    # 1. Within tolerance (-49.9 > -50.0)
+    # 1. Within tolerance (-40.0 / 3000.0 = 0.0133 < 0.015)
     router.remaining_persist = 2
     router.current_action = 2
     action = router.get_action(
-        info, state, current_position=1.0, current_leverage=1, current_unrealized_pnl=-49.9
+        info,
+        state,
+        current_position=1.0,
+        current_leverage=1,
+        current_unrealized_pnl=-40.0,
+        current_markprice=3000.0,
     )
     assert action == 2
     assert router.remaining_persist == 1
@@ -263,37 +274,140 @@ def test_hard_stop_loss_does_not_trigger_when_within_tolerance_or_disabled():
     assert router.hard_stop_loss_count == 0
 
     # 2. Disabled when threshold == 0.0
-    router.stop_loss_abs_threshold = 0.0
+    router.stop_loss_return_threshold = 0.0
     router.remaining_persist = 1
     action = router.get_action(
-        info, state, current_position=1.0, current_leverage=1, current_unrealized_pnl=-1000.0
+        info,
+        state,
+        current_position=1.0,
+        current_leverage=1,
+        current_unrealized_pnl=-1000.0,
+        current_markprice=3000.0,
     )
     assert action == 2
     assert router.hard_stop_loss_count == 0
 
     # 3. Flat position (position == 0) ignores unrealized pnl
-    router.stop_loss_abs_threshold = 50.0
+    router.stop_loss_return_threshold = 0.015
     router.remaining_persist = 0
     router.agent_act = lambda s, inf: 2
     action = router.get_action(
-        info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=-100.0
+        info,
+        state,
+        current_position=0.0,
+        current_leverage=1,
+        current_unrealized_pnl=-100.0,
+        current_markprice=3000.0,
     )
     assert action == 2
     assert router.action_decision_reason_history[-1] == ActionDecisionReasons.POLICY_INFERENCE
 
 
+def test_hard_stop_loss_relative_scale_invariance():
+    router = _create_test_router(
+        action_persistence=1,
+        stop_loss_return_threshold=0.015,  # 1.5%
+    )
+    info = {"avaliable_action": [1, 1, 1]}
+    state = np.array([0.0])
+
+    # Case 1: 1 lot at price 3000 (notional = 3000)
+    # -44.0 loss => 44 / 3000 = 1.467% < 1.5% -> no stop
+    router.agent_act = lambda s, inf: 2
+    a = router.get_action(
+        info, state, current_position=1.0, current_leverage=1,
+        current_unrealized_pnl=-44.0, current_markprice=3000.0
+    )
+    assert a == 2
+    assert router.hard_stop_loss_count == 0
+
+    # -46.0 loss => 46 / 3000 = 1.533% >= 1.5% -> stop!
+    a = router.get_action(
+        info, state, current_position=1.0, current_leverage=1,
+        current_unrealized_pnl=-46.0, current_markprice=3000.0
+    )
+    assert a == router.flat_action
+    assert router.hard_stop_loss_count == 1
+
+    # Reset for next case
+    router.reset_routing_state()
+
+    # Case 2: 5 lots at price 3000 (notional = 15000)
+    # -220.0 loss => 220 / 15000 = 1.467% < 1.5% -> no stop (even though absolute loss is $220 >> $46)
+    a = router.get_action(
+        info, state, current_position=5.0, current_leverage=1,
+        current_unrealized_pnl=-220.0, current_markprice=3000.0
+    )
+    assert a == 2
+    assert router.hard_stop_loss_count == 0
+
+    # -230.0 loss => 230 / 15000 = 1.533% >= 1.5% -> stop!
+    a = router.get_action(
+        info, state, current_position=5.0, current_leverage=1,
+        current_unrealized_pnl=-230.0, current_markprice=3000.0
+    )
+    assert a == router.flat_action
+    assert router.hard_stop_loss_count == 1
+
+    # Reset for next case
+    router.reset_routing_state()
+
+    # Case 3: BTC high-priced asset (1 lot at price 60000, notional = 60000)
+    # -800.0 loss => 800 / 60000 = 1.33% < 1.5% -> no stop (despite large absolute dollar loss)
+    a = router.get_action(
+        info, state, current_position=1.0, current_leverage=1,
+        current_unrealized_pnl=-800.0, current_markprice=60000.0
+    )
+    assert a == 2
+    assert router.hard_stop_loss_count == 0
+
+    # -950.0 loss => 950 / 60000 = 1.583% >= 1.5% -> stop!
+    a = router.get_action(
+        info, state, current_position=1.0, current_leverage=1,
+        current_unrealized_pnl=-950.0, current_markprice=60000.0
+    )
+    assert a == router.flat_action
+    assert router.hard_stop_loss_count == 1
+
+    # Reset for next case
+    router.reset_routing_state()
+
+    # Case 4: Short position (-2 lots at price 3000, notional = 6000)
+    # -85.0 loss => 85 / 6000 = 1.417% < 1.5% -> no stop
+    router.agent_act = lambda s, inf: 0
+    a = router.get_action(
+        info, state, current_position=-2.0, current_leverage=1,
+        current_unrealized_pnl=-85.0, current_markprice=3000.0
+    )
+    assert a == 0
+    assert router.hard_stop_loss_count == 0
+
+    # -95.0 loss => 95 / 6000 = 1.583% >= 1.5% -> stop!
+    a = router.get_action(
+        info, state, current_position=-2.0, current_leverage=1,
+        current_unrealized_pnl=-95.0, current_markprice=3000.0
+    )
+    assert a == router.flat_action
+    assert router.hard_stop_loss_count == 1
+
+
 def test_directional_cooldown_intercepts_same_direction_and_allows_opposite():
     router = _create_test_router(
         action_persistence=1,
-        stop_loss_abs_threshold=50.0,
+        stop_loss_return_threshold=0.015,
         stop_loss_cooldown_steps=12,
     )
     info = {"avaliable_action": [1, 1, 1]}
     state = np.array([0.0])
 
-    # 1. Trigger stop-loss on Long (position = 1.0)
+    # 1. Trigger stop-loss on Long (position = 1.0, notional = 3000.0, loss = -55.0 => 1.83%)
     action0 = router.get_action(
-        info, state, current_position=1.0, current_leverage=1, current_unrealized_pnl=-55.0
+        info,
+        state,
+        current_position=1.0,
+        current_leverage=1,
+        current_unrealized_pnl=-55.0,
+        current_markprice=3000.0,
     )
     assert action0 == router.flat_action
     assert router.last_stopped_position == 1.0
@@ -302,7 +416,7 @@ def test_directional_cooldown_intercepts_same_direction_and_allows_opposite():
     # 2. Next step: agent wants to go Long again (action 2 maps to position 1.0)
     router.agent_act = lambda s, inf: 2  # Long
     action1 = router.get_action(
-        info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0
+        info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0, current_markprice=3000.0
     )
     assert action1 == router.flat_action
     assert router.action_decision_reason_history[-1] == ActionDecisionReasons.STOP_LOSS_COOLDOWN
@@ -312,7 +426,7 @@ def test_directional_cooldown_intercepts_same_direction_and_allows_opposite():
     # 3. Next step: agent wants to go Short (action 0 maps to position -1.0)
     router.agent_act = lambda s, inf: 0  # Short
     action2 = router.get_action(
-        info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0
+        info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0, current_markprice=3000.0
     )
     assert action2 == 0  # Allowed!
     assert router.action_decision_reason_history[-1] == ActionDecisionReasons.POLICY_INFERENCE
@@ -322,7 +436,7 @@ def test_directional_cooldown_intercepts_same_direction_and_allows_opposite():
 def test_circuit_breaker_trips_after_consecutive_stops_and_suspends():
     router = _create_test_router(
         action_persistence=1,
-        stop_loss_abs_threshold=50.0,
+        stop_loss_return_threshold=0.015,
         stop_loss_cooldown_steps=2,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
@@ -330,9 +444,14 @@ def test_circuit_breaker_trips_after_consecutive_stops_and_suspends():
     info = {"avaliable_action": [1, 1, 1]}
     state = np.array([0.0])
 
-    # Stop 1
+    # Stop 1 (notional = 3000.0, loss = -55.0 => 1.83%)
     a0 = router.get_action(
-        info, state, current_position=1.0, current_leverage=1, current_unrealized_pnl=-55.0
+        info,
+        state,
+        current_position=1.0,
+        current_leverage=1,
+        current_unrealized_pnl=-55.0,
+        current_markprice=3000.0,
     )
     assert a0 == router.flat_action
     assert router.consecutive_stop_loss_count == 1
@@ -341,14 +460,19 @@ def test_circuit_breaker_trips_after_consecutive_stops_and_suspends():
 
     # Pass 2 cooldown steps with flat
     router.agent_act = lambda s, inf: router.flat_action
-    router.get_action(info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0)
-    router.get_action(info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0)
+    router.get_action(info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0, current_markprice=3000.0)
+    router.get_action(info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0, current_markprice=3000.0)
     assert router.cooldown_remaining_steps == 0
 
-    # New trade opened (Short, position = -1.0)
+    # New trade opened (Short, position = -1.0, notional = 3000.0, loss = -60.0 => 2.0%)
     # Stop 2 hits!
     a3 = router.get_action(
-        info, state, current_position=-1.0, current_leverage=1, current_unrealized_pnl=-60.0
+        info,
+        state,
+        current_position=-1.0,
+        current_leverage=1,
+        current_unrealized_pnl=-60.0,
+        current_markprice=3000.0,
     )
     assert a3 == router.flat_action
     assert router.consecutive_stop_loss_count == 2
@@ -357,7 +481,12 @@ def test_circuit_breaker_trips_after_consecutive_stops_and_suspends():
     # Next step: Circuit breaker suspension active
     router.agent_act = lambda s, inf: 0
     a4 = router.get_action(
-        info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0
+        info,
+        state,
+        current_position=0.0,
+        current_leverage=1,
+        current_unrealized_pnl=0.0,
+        current_markprice=3000.0,
     )
     assert a4 == router.flat_action
     assert router.action_decision_reason_history[-1] == ActionDecisionReasons.CIRCUIT_BREAKER_SUSPENSION
@@ -368,40 +497,45 @@ def test_circuit_breaker_trips_after_consecutive_stops_and_suspends():
 def test_circuit_breaker_resets_streak_on_normal_holding_exit():
     router = _create_test_router(
         action_persistence=1,
-        stop_loss_abs_threshold=50.0,
+        stop_loss_return_threshold=0.015,
         stop_loss_cooldown_steps=1,
         circuit_breaker_consecutive_stops=2,
     )
     info = {"avaliable_action": [1, 1, 1]}
     state = np.array([0.0])
 
-    # Stop 1
+    # Stop 1 (notional = 3000.0, loss = -55.0)
     router.get_action(
-        info, state, current_position=1.0, current_leverage=1, current_unrealized_pnl=-55.0
+        info,
+        state,
+        current_position=1.0,
+        current_leverage=1,
+        current_unrealized_pnl=-55.0,
+        current_markprice=3000.0,
     )
     assert router.consecutive_stop_loss_count == 1
 
     # Cooldown step
     router.agent_act = lambda s, inf: router.flat_action
-    router.get_action(info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0)
+    router.get_action(info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0, current_markprice=3000.0)
 
     # Open Trade 2 (Long, position = 1.0)
     router.agent_act = lambda s, inf: 2
-    router.get_action(info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0)
+    router.get_action(info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0, current_markprice=3000.0)
 
     # Trade 2 exits normally to Flat (profitable / rule close, NOT stop-loss)
     router.agent_act = lambda s, inf: router.flat_action
-    router.get_action(info, state, current_position=1.0, current_leverage=1, current_unrealized_pnl=10.0)
+    router.get_action(info, state, current_position=1.0, current_leverage=1, current_unrealized_pnl=10.0, current_markprice=3000.0)
 
     # Now position is 0.0, consecutive_stop_loss_count should have reset to 0!
-    router.get_action(info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0)
+    router.get_action(info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0, current_markprice=3000.0)
     assert router.consecutive_stop_loss_count == 0
 
 
 def test_circuit_breaker_permanent_suspension():
     router = _create_test_router(
         action_persistence=1,
-        stop_loss_abs_threshold=50.0,
+        stop_loss_return_threshold=0.015,
         stop_loss_cooldown_steps=1,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=-1,  # Permanent suspension
@@ -409,24 +543,39 @@ def test_circuit_breaker_permanent_suspension():
     info = {"avaliable_action": [1, 1, 1]}
     state = np.array([0.0])
 
-    # Stop 1
+    # Stop 1 (notional = 3000.0, loss = -55.0)
     router.get_action(
-        info, state, current_position=1.0, current_leverage=1, current_unrealized_pnl=-55.0
+        info,
+        state,
+        current_position=1.0,
+        current_leverage=1,
+        current_unrealized_pnl=-55.0,
+        current_markprice=3000.0,
     )
     # Cooldown 1 step
     router.agent_act = lambda s, inf: router.flat_action
-    router.get_action(info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0)
+    router.get_action(info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0, current_markprice=3000.0)
 
     # Stop 2 hits
     router.get_action(
-        info, state, current_position=1.0, current_leverage=1, current_unrealized_pnl=-55.0
+        info,
+        state,
+        current_position=1.0,
+        current_leverage=1,
+        current_unrealized_pnl=-55.0,
+        current_markprice=3000.0,
     )
     assert router.circuit_breaker_remaining_steps == -1
 
     # Indefinite suspension for next 5 steps
     for _ in range(5):
         a = router.get_action(
-            info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0
+            info,
+            state,
+            current_position=0.0,
+            current_leverage=1,
+            current_unrealized_pnl=0.0,
+            current_markprice=3000.0,
         )
         assert a == router.flat_action
         assert router.action_decision_reason_history[-1] == ActionDecisionReasons.CIRCUIT_BREAKER_SUSPENSION

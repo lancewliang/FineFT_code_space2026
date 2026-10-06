@@ -13,7 +13,7 @@ POSITION_CHOICES=${POSITION_CHOICES:-3}
 ORDER_BOOK_DEPTH=${ORDER_BOOK_DEPTH:-5}
 TRANSACTION_COST=${TRANSACTION_COST:-0.0005}
 ACTION_PERSISTENCE=${ACTION_PERSISTENCE:-3}
-STOP_LOSS_ABS_THRESHOLD=${STOP_LOSS_ABS_THRESHOLD:-50.0}
+STOP_LOSS_RETURN_THRESHOLD=${STOP_LOSS_RETURN_THRESHOLD:-0.015}
 STOP_LOSS_COOLDOWN_STEPS=${STOP_LOSS_COOLDOWN_STEPS:-12}
 CIRCUIT_BREAKER_CONSECUTIVE_STOPS=${CIRCUIT_BREAKER_CONSECUTIVE_STOPS:-2}
 CIRCUIT_BREAKER_COOLING_STEPS=${CIRCUIT_BREAKER_COOLING_STEPS:-72}
@@ -46,7 +46,7 @@ python -u FineFT/RL/DiHFT/high_level/vae_routing_final_result_macro_action.py \
     --long_estimated_rate 0 \
     --enable_non_main_contract_defense \
     --action_persistence "${ACTION_PERSISTENCE}" \
-    --stop_loss_abs_threshold "${STOP_LOSS_ABS_THRESHOLD}" \
+    --stop_loss_return_threshold "${STOP_LOSS_RETURN_THRESHOLD}" \
     --stop_loss_cooldown_steps "${STOP_LOSS_COOLDOWN_STEPS}" \
     --circuit_breaker_consecutive_stops "${CIRCUIT_BREAKER_CONSECUTIVE_STOPS}" \
     --circuit_breaker_cooling_steps "${CIRCUIT_BREAKER_COOLING_STEPS}" \

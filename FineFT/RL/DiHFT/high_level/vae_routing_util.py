@@ -165,10 +165,10 @@ parser.add_argument(
     help="number of consecutive steps a non-flat action persists before re-evaluating policy",
 )
 parser.add_argument(
-    "--stop_loss_abs_threshold",
+    "--stop_loss_return_threshold",
     type=float,
-    default=50.0,
-    help="unrealized PnL hard stop-loss absolute threshold in quote currency (0.0 to disable)",
+    default=0.015,
+    help="position return rate hard stop-loss threshold, e.g. 0.015 for 1.5% adverse price move (0.0 to disable)",
 )
 parser.add_argument(
     "--stop_loss_cooldown_steps",
@@ -762,7 +762,7 @@ class vae_risk_aware_routing:
     save_artifacts: bool = True
     precomputed_quantiles_dir: str | None = None
     current_contract_quantiles: np.ndarray | None = None
-    stop_loss_abs_threshold: float = 50.0
+    stop_loss_return_threshold: float = 0.015
     stop_loss_cooldown_steps: int = 12
     circuit_breaker_consecutive_stops: int = 2
     circuit_breaker_cooling_steps: int = 72
@@ -805,9 +805,9 @@ class vae_risk_aware_routing:
             "slope": args.slope_rule_base_threshold,
             "volatility": args.volatility_rule_base_threshold,
         }
-        self.stop_loss_abs_threshold = float(args.stop_loss_abs_threshold)
-        if self.stop_loss_abs_threshold < 0:
-            raise ValueError("stop_loss_abs_threshold must be non-negative")
+        self.stop_loss_return_threshold = float(args.stop_loss_return_threshold)
+        if self.stop_loss_return_threshold < 0:
+            raise ValueError("stop_loss_return_threshold must be non-negative")
         self.stop_loss_cooldown_steps = int(args.stop_loss_cooldown_steps)
         if self.stop_loss_cooldown_steps < 0:
             raise ValueError("stop_loss_cooldown_steps must be non-negative")
@@ -856,9 +856,9 @@ class vae_risk_aware_routing:
         )
         self.vae_vol_indicators = self.vae_volatility_indicators
         self.enable_non_main_contract_defense = args.enable_non_main_contract_defense
-        self.stop_loss_abs_threshold = float(args.stop_loss_abs_threshold)
-        if self.stop_loss_abs_threshold < 0:
-            raise ValueError("stop_loss_abs_threshold must be non-negative")
+        self.stop_loss_return_threshold = float(args.stop_loss_return_threshold)
+        if self.stop_loss_return_threshold < 0:
+            raise ValueError("stop_loss_return_threshold must be non-negative")
         self.stop_loss_cooldown_steps = int(args.stop_loss_cooldown_steps)
         if self.stop_loss_cooldown_steps < 0:
             raise ValueError("stop_loss_cooldown_steps must be non-negative")
@@ -1125,9 +1125,9 @@ class vae_risk_aware_routing:
         )
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
         self.enable_non_main_contract_defense = args.enable_non_main_contract_defense
-        self.stop_loss_abs_threshold = float(args.stop_loss_abs_threshold)
-        if self.stop_loss_abs_threshold < 0:
-            raise ValueError("stop_loss_abs_threshold must be non-negative")
+        self.stop_loss_return_threshold = float(args.stop_loss_return_threshold)
+        if self.stop_loss_return_threshold < 0:
+            raise ValueError("stop_loss_return_threshold must be non-negative")
         self.stop_loss_cooldown_steps = int(args.stop_loss_cooldown_steps)
         if self.stop_loss_cooldown_steps < 0:
             raise ValueError("stop_loss_cooldown_steps must be non-negative")
@@ -1265,6 +1265,7 @@ class vae_risk_aware_routing:
         current_position,
         current_leverage,
         current_unrealized_pnl: float = 0.0,
+        current_markprice: float = 0.0,
     ) -> int:
         current_pos_float = float(current_position)
 
@@ -1297,11 +1298,20 @@ class vae_risk_aware_routing:
             self.previous_step_position = current_pos_float
             return action
 
-        # 2. Tier 1: Unrealized PnL Hard Stop-Loss
+        # 2. Tier 1: Position Return Rate Hard Stop-Loss (Scheme A)
+        loss_rate = 0.0
         if (
-            self.stop_loss_abs_threshold > 0.0
+            current_pos_float != 0.0
+            and current_markprice > 0.0
+            and current_unrealized_pnl < 0.0
+        ):
+            notional = abs(current_pos_float) * current_markprice
+            loss_rate = -current_unrealized_pnl / notional
+
+        if (
+            self.stop_loss_return_threshold > 0.0
             and current_pos_float != 0.0
-            and current_unrealized_pnl <= -self.stop_loss_abs_threshold
+            and loss_rate >= self.stop_loss_return_threshold
         ):
             self.active_trade_stopped = True
             self.last_stopped_position = current_pos_float
@@ -1488,6 +1498,7 @@ class vae_risk_aware_routing:
                 env.position,
                 env.leverage,
                 current_unrealized_pnl=float(env.unrealized_pnl),
+                current_markprice=float(env.current_markprice),
             )
             s_, r, done, info = env.step(action)
             self.step_idx += 1
