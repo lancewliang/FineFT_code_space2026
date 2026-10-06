@@ -164,6 +164,30 @@ parser.add_argument(
     default=3,
     help="number of consecutive steps a non-flat action persists before re-evaluating policy",
 )
+parser.add_argument(
+    "--stop_loss_abs_threshold",
+    type=float,
+    default=50.0,
+    help="unrealized PnL hard stop-loss absolute threshold in quote currency (0.0 to disable)",
+)
+parser.add_argument(
+    "--stop_loss_cooldown_steps",
+    type=int,
+    default=12,
+    help="directional lockout cooldown steps after stop-loss trigger (0 to disable)",
+)
+parser.add_argument(
+    "--circuit_breaker_consecutive_stops",
+    type=int,
+    default=2,
+    help="consecutive stop-loss trigger count to trip contract-level circuit breaker (0 to disable)",
+)
+parser.add_argument(
+    "--circuit_breaker_cooling_steps",
+    type=int,
+    default=72,
+    help="steps to suspend trading on circuit breaker (-1 for permanent suspension)",
+)
 # low level network setting
 parser.add_argument(
     "--hidden_nodes",
@@ -738,6 +762,19 @@ class vae_risk_aware_routing:
     save_artifacts: bool = True
     precomputed_quantiles_dir: str | None = None
     current_contract_quantiles: np.ndarray | None = None
+    stop_loss_abs_threshold: float = 50.0
+    stop_loss_cooldown_steps: int = 12
+    circuit_breaker_consecutive_stops: int = 2
+    circuit_breaker_cooling_steps: int = 72
+    cooldown_remaining_steps: int = 0
+    last_stopped_position: float = 0.0
+    consecutive_stop_loss_count: int = 0
+    circuit_breaker_remaining_steps: int = 0
+    hard_stop_loss_count: int = 0
+    cooldown_intercept_count: int = 0
+    circuit_breaker_suspension_count: int = 0
+    previous_step_position: float = 0.0
+    active_trade_stopped: bool = False
 
     def __init__(self, args) -> None:
         # device
@@ -768,6 +805,18 @@ class vae_risk_aware_routing:
             "slope": args.slope_rule_base_threshold,
             "volatility": args.volatility_rule_base_threshold,
         }
+        self.stop_loss_abs_threshold = float(args.stop_loss_abs_threshold)
+        if self.stop_loss_abs_threshold < 0:
+            raise ValueError("stop_loss_abs_threshold must be non-negative")
+        self.stop_loss_cooldown_steps = int(args.stop_loss_cooldown_steps)
+        if self.stop_loss_cooldown_steps < 0:
+            raise ValueError("stop_loss_cooldown_steps must be non-negative")
+        self.circuit_breaker_consecutive_stops = int(args.circuit_breaker_consecutive_stops)
+        if self.circuit_breaker_consecutive_stops < 0:
+            raise ValueError("circuit_breaker_consecutive_stops must be non-negative")
+        self.circuit_breaker_cooling_steps = int(args.circuit_breaker_cooling_steps)
+        if self.circuit_breaker_cooling_steps < -1:
+            raise ValueError("circuit_breaker_cooling_steps must be -1 or non-negative")
         self.gating_strategy = create_gating_strategy(
             args.gating_strategy,
             slope_threshold=self.axis_thresholds["slope"],
@@ -807,6 +856,18 @@ class vae_risk_aware_routing:
         )
         self.vae_vol_indicators = self.vae_volatility_indicators
         self.enable_non_main_contract_defense = args.enable_non_main_contract_defense
+        self.stop_loss_abs_threshold = float(args.stop_loss_abs_threshold)
+        if self.stop_loss_abs_threshold < 0:
+            raise ValueError("stop_loss_abs_threshold must be non-negative")
+        self.stop_loss_cooldown_steps = int(args.stop_loss_cooldown_steps)
+        if self.stop_loss_cooldown_steps < 0:
+            raise ValueError("stop_loss_cooldown_steps must be non-negative")
+        self.circuit_breaker_consecutive_stops = int(args.circuit_breaker_consecutive_stops)
+        if self.circuit_breaker_consecutive_stops < 0:
+            raise ValueError("circuit_breaker_consecutive_stops must be non-negative")
+        self.circuit_breaker_cooling_steps = int(args.circuit_breaker_cooling_steps)
+        if self.circuit_breaker_cooling_steps < -1:
+            raise ValueError("circuit_breaker_cooling_steps must be -1 or non-negative")
         role_tier_indices = np.where(
             self.tech_indicator_list == "prev_day_contract_role_tier"
         )[0]
@@ -868,6 +929,15 @@ class vae_risk_aware_routing:
         self.remaining_persist = 0
         self.current_action = self.flat_action
         self.action_decision_reason_history = []
+        self.cooldown_remaining_steps = 0
+        self.last_stopped_position = 0.0
+        self.consecutive_stop_loss_count = 0
+        self.circuit_breaker_remaining_steps = 0
+        self.hard_stop_loss_count = 0
+        self.cooldown_intercept_count = 0
+        self.circuit_breaker_suspension_count = 0
+        self.previous_step_position = 0.0
+        self.active_trade_stopped = False
 
         # low-level network
         self.time_info_dim = args.time_info_dim
@@ -966,6 +1036,15 @@ class vae_risk_aware_routing:
         self.remaining_persist = 0
         self.current_action = self.flat_action
         self.action_decision_reason_history = []
+        self.cooldown_remaining_steps = 0
+        self.last_stopped_position = 0.0
+        self.consecutive_stop_loss_count = 0
+        self.circuit_breaker_remaining_steps = 0
+        self.hard_stop_loss_count = 0
+        self.cooldown_intercept_count = 0
+        self.circuit_breaker_suspension_count = 0
+        self.previous_step_position = 0.0
+        self.active_trade_stopped = False
 
     def _resolve_precomputed_quantiles_dir(self, args) -> str | None:
         target_dir = args.precomputed_quantiles_dir
@@ -1046,6 +1125,18 @@ class vae_risk_aware_routing:
         )
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
         self.enable_non_main_contract_defense = args.enable_non_main_contract_defense
+        self.stop_loss_abs_threshold = float(args.stop_loss_abs_threshold)
+        if self.stop_loss_abs_threshold < 0:
+            raise ValueError("stop_loss_abs_threshold must be non-negative")
+        self.stop_loss_cooldown_steps = int(args.stop_loss_cooldown_steps)
+        if self.stop_loss_cooldown_steps < 0:
+            raise ValueError("stop_loss_cooldown_steps must be non-negative")
+        self.circuit_breaker_consecutive_stops = int(args.circuit_breaker_consecutive_stops)
+        if self.circuit_breaker_consecutive_stops < 0:
+            raise ValueError("circuit_breaker_consecutive_stops must be non-negative")
+        self.circuit_breaker_cooling_steps = int(args.circuit_breaker_cooling_steps)
+        if self.circuit_breaker_cooling_steps < -1:
+            raise ValueError("circuit_breaker_cooling_steps must be -1 or non-negative")
         self.test_path = self._resolve_test_path(args)
         if self.save_artifacts and not os.path.exists(self.test_path):
             os.makedirs(self.test_path, exist_ok=True)
@@ -1145,6 +1236,8 @@ class vae_risk_aware_routing:
     def _apply_defensive_action(
         self, info, current_position, current_leverage
     ) -> int:
+        if self.cooldown_remaining_steps > 0:
+            self.cooldown_remaining_steps -= 1
         reason = (
             ActionDecisionReasons.DEFENSIVE_PREEMPTION
             if self.remaining_persist > 0
@@ -1156,6 +1249,7 @@ class vae_risk_aware_routing:
         self.macro_action_history.append(self.slot_count)
         self.action_decision_reason_history.append(reason)
         self.action = action
+        self.previous_step_position = float(current_position)
         return action
 
     def _arm_persistence(self, action: int) -> None:
@@ -1164,14 +1258,82 @@ class vae_risk_aware_routing:
         else:
             self.remaining_persist = 0
 
-    def get_action(self, info, s, current_position, current_leverage):
+    def get_action(
+        self,
+        info,
+        s,
+        current_position,
+        current_leverage,
+        current_unrealized_pnl: float = 0.0,
+    ) -> int:
+        current_pos_float = float(current_position)
+
+        # 0. Trade lifecycle tracking: detect trade exit and reset consecutive stop-out streak
+        if self.previous_step_position == 0.0 and current_pos_float != 0.0:
+            self.active_trade_stopped = False
+        elif (
+            self.previous_step_position != 0.0
+            and (current_pos_float == 0.0 or self.previous_step_position * current_pos_float < 0)
+        ):
+            if not self.active_trade_stopped:
+                self.consecutive_stop_loss_count = 0
+            self.active_trade_stopped = False
+
+        # 1. Tier 3: Contract-Level Circuit Breaker Suspension
+        if self.circuit_breaker_remaining_steps != 0:
+            if self.circuit_breaker_remaining_steps > 0:
+                self.circuit_breaker_remaining_steps -= 1
+            if self.cooldown_remaining_steps > 0:
+                self.cooldown_remaining_steps -= 1
+            self.remaining_persist = 0
+            action = self._defensive_action(info, current_pos_float, current_leverage)
+            self.current_action = action
+            self.macro_action_history.append(self.slot_count)
+            self.action_decision_reason_history.append(
+                ActionDecisionReasons.CIRCUIT_BREAKER_SUSPENSION
+            )
+            self.circuit_breaker_suspension_count += 1
+            self.action = action
+            self.previous_step_position = current_pos_float
+            return action
+
+        # 2. Tier 1: Unrealized PnL Hard Stop-Loss
+        if (
+            self.stop_loss_abs_threshold > 0.0
+            and current_pos_float != 0.0
+            and current_unrealized_pnl <= -self.stop_loss_abs_threshold
+        ):
+            self.active_trade_stopped = True
+            self.last_stopped_position = current_pos_float
+            self.hard_stop_loss_count += 1
+            self.consecutive_stop_loss_count += 1
+            self.remaining_persist = 0
+
+            if (
+                self.circuit_breaker_consecutive_stops > 0
+                and self.consecutive_stop_loss_count >= self.circuit_breaker_consecutive_stops
+            ):
+                self.circuit_breaker_remaining_steps = self.circuit_breaker_cooling_steps
+                self.cooldown_remaining_steps = 0
+            else:
+                self.cooldown_remaining_steps = self.stop_loss_cooldown_steps
+
+            action = self._defensive_action(info, current_pos_float, current_leverage)
+            self.current_action = action
+            self.macro_action_history.append(self.slot_count)
+            self.action_decision_reason_history.append(ActionDecisionReasons.HARD_STOP_LOSS)
+            self.action = action
+            self.previous_step_position = current_pos_float
+            return action
+
+        # 3. Existing high-level defenses
         if (
             self.enable_non_main_contract_defense
             and self.role_tier_index is not None
             and float(s[self.role_tier_index]) < 0.5
         ):
             return self._apply_defensive_action(
-                info, current_position, current_leverage
+                info, current_pos_float, current_leverage
             )
 
         volatility_weights = self.calculate_axis_window_result("volatility")
@@ -1179,7 +1341,7 @@ class vae_risk_aware_routing:
         decision = self.gating_strategy.decide(volatility_weights, slope_weights)
         if decision.is_defensive:
             return self._apply_defensive_action(
-                info, current_position, current_leverage
+                info, current_pos_float, current_leverage
             )
 
         volatility_index = decision.volatility_index
@@ -1188,33 +1350,54 @@ class vae_risk_aware_routing:
         slot = self.selection_manifest.slots[slot_id]
         if slot["kind"] == "empty_model":
             return self._apply_defensive_action(
-                info, current_position, current_leverage
+                info, current_pos_float, current_leverage
             )
 
         self.selected_agent_index = slot_id
         self.macro_action_history.append(slot_id)
 
+        # 4. Candidate Action Query
         if self.remaining_persist > 0 and not bool(
             info["avaliable_action"][self.current_action]
         ):
             self.remaining_persist = 0
-            action = self.agent_act(s, info)
-            self.current_action = action
-            self._arm_persistence(action)
-            reason = ActionDecisionReasons.ACTION_UNAVAILABLE_BREAK
+            candidate_action = self.agent_act(s, info)
+            candidate_reason = ActionDecisionReasons.ACTION_UNAVAILABLE_BREAK
         elif self.remaining_persist > 0:
-            action = self.current_action
-            self.remaining_persist -= 1
-            reason = ActionDecisionReasons.ACTION_PERSISTENCE
+            candidate_action = self.current_action
+            candidate_reason = ActionDecisionReasons.ACTION_PERSISTENCE
         else:
-            action = self.agent_act(s, info)
-            self.current_action = action
-            self._arm_persistence(action)
-            reason = ActionDecisionReasons.POLICY_INFERENCE
+            candidate_action = self.agent_act(s, info)
+            candidate_reason = ActionDecisionReasons.POLICY_INFERENCE
 
-        self.action_decision_reason_history.append(reason)
-        self.action = action
-        return action
+        # 5. Tier 2: Directional Cooldown Lockout Interception
+        if self.cooldown_remaining_steps > 0:
+            self.cooldown_remaining_steps -= 1
+            target_pos, _ = map_action_to_position_leverage(
+                candidate_action, self.leverage_choices, self.position_list
+            )
+            if target_pos * self.last_stopped_position > 0:
+                self.remaining_persist = 0
+                action = self._defensive_action(info, current_pos_float, current_leverage)
+                self.current_action = action
+                self.action_decision_reason_history.append(
+                    ActionDecisionReasons.STOP_LOSS_COOLDOWN
+                )
+                self.cooldown_intercept_count += 1
+                self.action = action
+                self.previous_step_position = current_pos_float
+                return action
+
+        if candidate_reason == ActionDecisionReasons.ACTION_PERSISTENCE:
+            self.remaining_persist -= 1
+        else:
+            self._arm_persistence(candidate_action)
+
+        self.current_action = candidate_action
+        self.action_decision_reason_history.append(candidate_reason)
+        self.action = candidate_action
+        self.previous_step_position = current_pos_float
+        return candidate_action
 
     def agent_act(self, state, info):
         # low level agent
@@ -1299,7 +1482,13 @@ class vae_risk_aware_routing:
         self.step_idx = 0
         env, s, r, done, info = self.initial_rollout(env, s, info)
         while not done:
-            action = self.get_action(info, s, env.position, env.leverage)
+            action = self.get_action(
+                info,
+                s,
+                env.position,
+                env.leverage,
+                current_unrealized_pnl=float(env.unrealized_pnl),
+            )
             s_, r, done, info = env.step(action)
             self.step_idx += 1
             vae_idx = min(self.step_idx, len(self.vae_slope_array) - 1)
@@ -1327,6 +1516,9 @@ class vae_risk_aware_routing:
         skip_inference_ratio = (
             float(persistence_held_steps / total_steps) if total_steps > 0 else 0.0
         )
+        hard_stop_loss_steps = int(np.sum(reasons == ActionDecisionReasons.HARD_STOP_LOSS))
+        stop_loss_cooldown_steps = int(np.sum(reasons == ActionDecisionReasons.STOP_LOSS_COOLDOWN))
+        circuit_breaker_suspension_steps = int(np.sum(reasons == ActionDecisionReasons.CIRCUIT_BREAKER_SUSPENSION))
         trading_info = {
             "return rate": total_asset_history[-1] / self.initial_wallet_balance,
             "total_steps": total_steps,
@@ -1335,6 +1527,12 @@ class vae_risk_aware_routing:
             "skip_inference_ratio": skip_inference_ratio,
             "defensive_preemptions": defensive_preemptions,
             "action_unavailable_breaks": action_unavailable_breaks,
+            "hard_stop_loss_steps": hard_stop_loss_steps,
+            "stop_loss_cooldown_steps": stop_loss_cooldown_steps,
+            "circuit_breaker_suspension_steps": circuit_breaker_suspension_steps,
+            "hard_stop_loss_count": self.hard_stop_loss_count,
+            "cooldown_intercept_count": self.cooldown_intercept_count,
+            "circuit_breaker_suspension_count": self.circuit_breaker_suspension_count,
         }
         logger.info(
             "[Trading Diagnostics] steps=%d, inference=%d, persisted=%d, "

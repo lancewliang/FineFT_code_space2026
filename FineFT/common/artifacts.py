@@ -63,6 +63,9 @@ class ActionDecisionReasons(IntEnum):
     DEFENSIVE_PREEMPTION = 2
     DEFENSIVE_RULE_CLOSE = 3
     ACTION_UNAVAILABLE_BREAK = 4
+    HARD_STOP_LOSS = 5
+    STOP_LOSS_COOLDOWN = 6
+    CIRCUIT_BREAKER_SUSPENSION = 7
 
 
 def get_df_chunk_filename(index: int) -> str:

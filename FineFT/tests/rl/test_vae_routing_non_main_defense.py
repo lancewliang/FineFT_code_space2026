@@ -109,6 +109,10 @@ def test_prepare_base_args_forwards_enable_non_main_contract_defense(tmp_path):
         enable_non_main_contract_defense=False,
         gating_strategy="absolute",
         action_persistence=3,
+        stop_loss_abs_threshold=50.0,
+        stop_loss_cooldown_steps=12,
+        circuit_breaker_consecutive_stops=2,
+        circuit_breaker_cooling_steps=72,
     )
     args_2 = types.SimpleNamespace(
         dataset_name="fu",
@@ -120,6 +124,10 @@ def test_prepare_base_args_forwards_enable_non_main_contract_defense(tmp_path):
         enable_non_main_contract_defense=True,
         gating_strategy="absolute",
         action_persistence=3,
+        stop_loss_abs_threshold=50.0,
+        stop_loss_cooldown_steps=12,
+        circuit_breaker_consecutive_stops=2,
+        circuit_breaker_cooling_steps=72,
     )
 
     base_args = vro.prepare_base_args(args_1, args_2)
@@ -201,6 +209,10 @@ def test_reconfigure_routing_preserves_defense_flag(monkeypatch):
         slope_margin_threshold=0.12,
         volatility_margin_threshold=0.12,
         action_persistence=3,
+        stop_loss_abs_threshold=50.0,
+        stop_loss_cooldown_steps=12,
+        circuit_breaker_consecutive_stops=2,
+        circuit_breaker_cooling_steps=72,
     )
     monkeypatch.setattr(routing, "_resolve_test_path", lambda a: "/tmp/test_trial_1")
     monkeypatch.setattr(routing, "reset_routing_state", lambda: None)

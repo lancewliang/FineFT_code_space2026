@@ -223,6 +223,7 @@ def _make_mock_router_for_gating(strategy_name: str, **kwargs):
     router.position_list = [-1.0, 0.0, 1.0]
     router.action = 4
     router.macro_action_history = []
+    router.action_decision_reason_history = []
     router.selection_manifest = TwoDimensionalSelectionManifest.from_dict(
         _sample_manifest_payload(num_labels=3)
     )

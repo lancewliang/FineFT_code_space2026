@@ -30,15 +30,15 @@ python -u FineFT/RL/DiHFT/high_level/vae_routing_optuna.py \
     --dataset_name "${DATASET_NAME}" \
     --experiment_name "${EXPERIMENT_NAME}" \
     --max_holding_number "${MAX_HOLDING_NUMBER}" \
-    --initial_wallet_balance 10000 \
+    --initial_wallet_balance 6000 \
     --position_choices 3 \
     --order_book_depth 5 \
     --selection_manifest "analysis_result/DiHFT/low_level/${DATASET_NAME}/${EXPERIMENT_NAME}/two_dimensional_selection/two_dimensional_selection_manifest.json" \
-    --n_workers "${N_WORKERS:-65}" \
+    --n_workers "${N_WORKERS:-60}" \
     --transcation_cost 0.0005 \
     --short_estimated_rate 0 \
     --long_estimated_rate 0 \
-    --n_trials 130 \
+    --n_trials 200 \
     --rule_base_threshold_min 0.2 \
     --rule_base_threshold_max 0.5 \
     --action_persistence "${ACTION_PERSISTENCE}" \

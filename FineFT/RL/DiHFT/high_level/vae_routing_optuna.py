@@ -123,6 +123,30 @@ parser_all.add_argument(
     help="number of consecutive steps a non-flat action persists before re-evaluating policy",
 )
 parser_all.add_argument(
+    "--stop_loss_abs_threshold",
+    type=float,
+    default=50.0,
+    help="unrealized PnL hard stop-loss absolute threshold in quote currency (0.0 to disable)",
+)
+parser_all.add_argument(
+    "--stop_loss_cooldown_steps",
+    type=int,
+    default=12,
+    help="directional lockout cooldown steps after stop-loss trigger (0 to disable)",
+)
+parser_all.add_argument(
+    "--circuit_breaker_consecutive_stops",
+    type=int,
+    default=2,
+    help="consecutive stop-loss trigger count to trip contract-level circuit breaker (0 to disable)",
+)
+parser_all.add_argument(
+    "--circuit_breaker_cooling_steps",
+    type=int,
+    default=72,
+    help="steps to suspend trading on circuit breaker (-1 for permanent suspension)",
+)
+parser_all.add_argument(
     "--gating_strategy",
     type=str,
     default="absolute",
@@ -186,6 +210,10 @@ def prepare_base_args(args_1, args_2):
     )
     base_args.gating_strategy = args_2.gating_strategy
     base_args.action_persistence = args_2.action_persistence
+    base_args.stop_loss_abs_threshold = args_2.stop_loss_abs_threshold
+    base_args.stop_loss_cooldown_steps = args_2.stop_loss_cooldown_steps
+    base_args.circuit_breaker_consecutive_stops = args_2.circuit_breaker_consecutive_stops
+    base_args.circuit_breaker_cooling_steps = args_2.circuit_breaker_cooling_steps
     base_args.ood_threshold = 0.005
     base_args.slope_margin_threshold = 0.12
     base_args.volatility_margin_threshold = 0.12
