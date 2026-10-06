@@ -174,6 +174,14 @@ run_commodity_cross_section_process() {
         log_symbol="${symbol}/${contract}"
     fi
 
+    local symbol_path="${symbol}"
+    if [ -n "${contract}" ]; then
+        symbol_path="${symbol}/${contract}"
+    fi
+    mkdir -p "${root_path}/PREPROCESS_DATASET/commodity-futures/CROSS_SECTION/KLINE_FEATURE/${symbol_path}/${target_freq}"
+    mkdir -p "${root_path}/PREPROCESS_DATASET/commodity-futures/CROSS_SECTION/QUOTES_FEATURE/${symbol_path}/${target_freq}"
+    mkdir -p "${root_path}/PREPROCESS_DATASET/commodity-futures/CROSS_SECTION/SNAPSHOT_FEATURE/${symbol_path}/${target_freq}"
+
     local current_date
     current_date=$(date -I -d "$start_date")
     local process_count=0
@@ -314,6 +322,13 @@ run_commodity_merge_process() {
         contract_args=(--contract "${contract}")
         log_symbol="${symbol}/${contract}"
     fi
+
+    local symbol_path="${symbol}"
+    if [ -n "${contract}" ]; then
+        symbol_path="${symbol}/${contract}"
+    fi
+    mkdir -p "${root_path}/PREPROCESS_DATASET/commodity-futures/MERGE_CONCAT/MERGED_FEATURE/${symbol_path}/${target_freq}/CONCURRENT_FEATURE"
+    mkdir -p "${root_path}/PREPROCESS_DATASET/commodity-futures/MERGE_CONCAT/MERGED_FEATURE/${symbol_path}/${target_freq}/FUTURE_FEATURE"
 
     local current_date
     current_date=$(date -I -d "$start_date")

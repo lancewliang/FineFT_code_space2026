@@ -121,24 +121,18 @@ def main(args):
         snapshot, depth=args.orderbook_depth
     )
 
-    if not os.path.exists(
-        os.path.join(args.save_path, "KLINE_FEATURE", *symbol_parts, args.target_freq)
-    ):
-        os.makedirs(
-            os.path.join(args.save_path, "KLINE_FEATURE", *symbol_parts, args.target_freq)
-        )
-    if not os.path.exists(
-        os.path.join(args.save_path, "QUOTES_FEATURE", *symbol_parts, args.target_freq)
-    ):
-        os.makedirs(
-            os.path.join(args.save_path, "QUOTES_FEATURE", *symbol_parts, args.target_freq)
-        )
-    if not os.path.exists(
-        os.path.join(args.save_path, "SNAPSHOT_FEATURE", *symbol_parts, args.target_freq)
-    ):
-        os.makedirs(
-            os.path.join(args.save_path, "SNAPSHOT_FEATURE", *symbol_parts, args.target_freq)
-        )
+    os.makedirs(
+        os.path.join(args.save_path, "KLINE_FEATURE", *symbol_parts, args.target_freq),
+        exist_ok=True,
+    )
+    os.makedirs(
+        os.path.join(args.save_path, "QUOTES_FEATURE", *symbol_parts, args.target_freq),
+        exist_ok=True,
+    )
+    os.makedirs(
+        os.path.join(args.save_path, "SNAPSHOT_FEATURE", *symbol_parts, args.target_freq),
+        exist_ok=True,
+    )
     kline_output_path = os.path.join(
         args.save_path,
         "KLINE_FEATURE",

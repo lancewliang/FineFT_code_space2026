@@ -297,42 +297,26 @@ def main(args):
     # )
     # merged_feature.reset_index(inplace=True)
 
-    if not os.path.exists(
+    os.makedirs(
         os.path.join(
             args.save_path,
             "MERGED_FEATURE",
             *symbol_parts,
             args.target_freq,
             "CONCURRENT_FEATURE",
-        )
-    ):
-        os.makedirs(
-            os.path.join(
-                args.save_path,
-                "MERGED_FEATURE",
-                *symbol_parts,
-                args.target_freq,
-                "CONCURRENT_FEATURE",
-            )
-        )
-    if not os.path.exists(
+        ),
+        exist_ok=True,
+    )
+    os.makedirs(
         os.path.join(
             args.save_path,
             "MERGED_FEATURE",
             *symbol_parts,
             args.target_freq,
             "FUTURE_FEATURE",
-        )
-    ):
-        os.makedirs(
-            os.path.join(
-                args.save_path,
-                "MERGED_FEATURE",
-                *symbol_parts,
-                args.target_freq,
-                "FUTURE_FEATURE",
-            )
-        )
+        ),
+        exist_ok=True,
+    )
     reward_output_path = os.path.join(
         args.save_path,
         "MERGED_FEATURE",

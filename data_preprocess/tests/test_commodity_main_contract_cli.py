@@ -421,6 +421,75 @@ def test_cross_section_create_feature_writes_csv_outputs(tmp_path):
     assert "timestamp" in pl.read_csv(snapshot_csv).columns
 
 
+def test_cross_section_create_feature_handles_concurrent_directory_creation(tmp_path, monkeypatch):
+    output_root = tmp_path / "PREPROCESS_DATASET" / "commodity-futures"
+    base_dir = output_root / "BASE_FEATURE" / "fu" / "fu2602" / "5min"
+    book_dir = output_root / "DOWNSCALE_ORDERBOOK_25" / "fu" / "fu2602" / "5min"
+    base_dir.mkdir(parents=True)
+    book_dir.mkdir(parents=True)
+    pl.DataFrame(
+        {
+            "timestamp": [1, 2],
+            "open": [100.0, 102.0],
+            "high": [105.0, 106.0],
+            "low": [99.0, 101.0],
+            "close": [103.0, 104.0],
+            "twap": [102.0, 103.0],
+            "awap": [101.0, 102.0],
+            "vwap": [102.5, 103.5],
+        }
+    ).write_ipc(base_dir / "2026-01-05.feather")
+    rows = []
+    for idx in range(2):
+        row = {"timestamp": idx + 1}
+        for level in range(1, 6):
+            row[f"ask{level}_price"] = 101.0 + idx + level
+            row[f"ask{level}_size"] = 2.0 + level
+            row[f"bid{level}_price"] = 100.0 + idx - level
+            row[f"bid{level}_size"] = 3.0 + level
+        rows.append(row)
+    pl.DataFrame(rows).write_ipc(book_dir / "2026-01-05.feather")
+
+    target_dir = os.path.join(
+        str(output_root), "CROSS_SECTION", "KLINE_FEATURE", "fu", "fu2602", "5min"
+    )
+    os.makedirs(target_dir)
+
+    orig_exists = os.path.exists
+    def fake_exists(check_path):
+        if check_path == target_dir:
+            return False
+        return orig_exists(check_path)
+
+    monkeypatch.setattr(os.path, "exists", fake_exists)
+
+    from operator_futures.cross_section import create_feature
+
+    args = create_feature.parser.parse_args(
+        [
+            "--root_path",
+            str(tmp_path),
+            "--data_path",
+            "PREPROCESS_DATASET/commodity-futures/",
+            "--save_path",
+            str(output_root / "CROSS_SECTION"),
+            "--symbols",
+            "fu",
+            "--contract",
+            "fu2602",
+            "--target_freq",
+            "5min",
+            "--date",
+            "2026-01-05",
+            "--market_type",
+            "commodity_futures",
+            "--orderbook_depth",
+            "5",
+        ]
+    )
+    create_feature.main(args)
+
+
 def test_downscale_continuous_cli_reads_summary_and_writes_contract_outputs(tmp_path):
     raw_file = tmp_path / "raw" / "fu2602.csv"
     _write_continuous_day(raw_file, "fu2602", "20260105", "20260105")
