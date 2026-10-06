@@ -7,7 +7,7 @@ function run_test_agent_index {
     local base_path=$5
     local experiment_name=$6
     local device=${7:-${DEVICE:-cpu}}
-    local ensemble_number=${ENSEMBLE_NUMBER:-13}
+    local ensemble_number=${ENSEMBLE_NUMBER:-11}
     local label_types=("slope" "volatility")
     if [ -n "$LABEL_TYPE" ]; then
         label_types=("$LABEL_TYPE")
