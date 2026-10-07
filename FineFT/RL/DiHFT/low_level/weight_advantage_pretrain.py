@@ -361,10 +361,22 @@ parser.add_argument(
     help="relative threshold for near-limit shaping",
 )
 parser.add_argument(
+    "--turnover_base_rate",
+    type=float,
+    default=0.0001,
+    help="proportional baseline turnover penalty rate for reward shaping",
+)
+parser.add_argument(
+    "--turnover_adverse_ratio",
+    type=float,
+    default=6.0,
+    help="multiplier applied to turnover_base_rate for adverse / counter-trend / choppy transitions",
+)
+parser.add_argument(
     "--turnover_penalty_rate",
     type=float,
-    default=0.0,
-    help="proportional turnover penalty rate for reward shaping",
+    default=None,
+    help="proportional turnover penalty rate (legacy alias; overrides base_rate and sets adverse_ratio=1.0)",
 )
 
 # network setting
@@ -707,7 +719,13 @@ class Weighted_Contexts_DQN:
         self.limit_stay_bonus = args.limit_stay_bonus
         self.limit_reverse_penalty = args.limit_reverse_penalty
         self.near_limit_threshold = args.near_limit_threshold
-        self.turnover_penalty_rate = float(args.turnover_penalty_rate)
+        if args.turnover_penalty_rate is not None:
+            self.turnover_base_rate = float(args.turnover_penalty_rate)
+            self.turnover_adverse_ratio = 1.0
+        else:
+            self.turnover_base_rate = float(args.turnover_base_rate)
+            self.turnover_adverse_ratio = float(args.turnover_adverse_ratio)
+        self.turnover_penalty_rate = self.turnover_base_rate
 
         # network
         self.time_info_dim = args.time_info_dim
@@ -1334,6 +1352,8 @@ class Weighted_Contexts_DQN:
             limit_reverse_penalty=self.limit_reverse_penalty,
             near_limit_threshold=self.near_limit_threshold,
             turnover_penalty_rate=self.turnover_penalty_rate,
+            turnover_base_rate=self.turnover_base_rate,
+            turnover_adverse_ratio=self.turnover_adverse_ratio,
         )
         env_kwargs = {
             "feature_list": self.tech_indicator_list,
@@ -1357,6 +1377,8 @@ class Weighted_Contexts_DQN:
             "limit_reverse_penalty": self.limit_reverse_penalty,
             "near_limit_threshold": self.near_limit_threshold,
             "turnover_penalty_rate": self.turnover_penalty_rate,
+            "turnover_base_rate": self.turnover_base_rate,
+            "turnover_adverse_ratio": self.turnover_adverse_ratio,
         }
         diagnostics_result = prepare_pretrain_qtable_diagnostics(
             total_df_index_length=self.total_df_index_length,

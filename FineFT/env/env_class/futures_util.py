@@ -143,6 +143,46 @@ def compute_limit_reward(
     return base * intensity
 
 
+def compute_directional_turnover_penalty_rate(
+    old_position: float,
+    new_position: float,
+    regime_grid_id: int | None,
+    turnover_base_rate: float,
+    turnover_adverse_ratio: float = 1.0,
+) -> float:
+    """计算非对称方向性调仓惩罚率 (ADR 0050)。
+
+    规则：
+    - 若 turnover_base_rate <= 0 或 old_position == new_position，返回 0.0；
+    - 若 regime_grid_id 为 None 或 < 0 或 turnover_adverse_ratio <= 1.0，优雅降级为对称 turnover_base_rate；
+    - slope_bin = int(regime_grid_id) % 3：
+      - 上涨趋势 (slope_bin == 2)：
+        - 顺势多头调仓 (new_position > old_position)：turnover_base_rate
+        - 逆势离场/做空 (new_position < old_position)：turnover_base_rate * turnover_adverse_ratio
+      - 下跌趋势 (slope_bin == 0)：
+        - 顺势空头调仓 (new_position < old_position)：turnover_base_rate
+        - 逆势离场/做多 (new_position > old_position)：turnover_base_rate * turnover_adverse_ratio
+      - 横盘震荡 (slope_bin == 1)：
+        - 减仓或平仓止损离场 (abs(new_position) < abs(old_position))：turnover_base_rate
+        - 新增风险敞口或反手乱动 (abs(new_position) >= abs(old_position))：turnover_base_rate * turnover_adverse_ratio
+    """
+    if turnover_base_rate <= 0.0 or old_position == new_position:
+        return 0.0
+
+    if regime_grid_id is None or regime_grid_id < 0 or turnover_adverse_ratio <= 1.0:
+        return turnover_base_rate
+
+    slope_bin = int(regime_grid_id) % 3
+    adverse_rate = turnover_base_rate * turnover_adverse_ratio
+
+    if slope_bin == 2:
+        return turnover_base_rate if new_position > old_position else adverse_rate
+    elif slope_bin == 0:
+        return turnover_base_rate if new_position < old_position else adverse_rate
+    else:
+        return turnover_base_rate if abs(new_position) < abs(old_position) else adverse_rate
+
+
 def change_of_wallet(
     markprice,
     ask_prices,
@@ -1375,6 +1415,9 @@ def create_optimal_q_table(
     limit_reverse_penalty=1.5,
     near_limit_threshold=0.003,
     turnover_penalty_rate=0.0,
+    regime_grid_ids_array=None,
+    turnover_base_rate=0.0,
+    turnover_adverse_ratio=1.0,
 ):
     assert (
         len(ask_prices_array)
@@ -1407,6 +1450,9 @@ def create_optimal_q_table(
     )
     position_list.sort()
     q_table = np.zeros((total_length, num_action, num_action))
+    effective_base_rate = turnover_base_rate
+    if effective_base_rate <= 0.0 and turnover_penalty_rate > 0.0:
+        effective_base_rate = turnover_penalty_rate
     # max punishment 为了限制单边量变化超过snapshot提供的量以及仓量反转的情况
     for t in range(2, total_length + 1):
         # variable initialization
@@ -1511,12 +1557,25 @@ def create_optimal_q_table(
                             current_wallet_balance + current_unrealized_pnL
                         )
                         turnover_penalty = 0.0
-                        if future_position != current_position and turnover_penalty_rate > 0.0:
-                            turnover_penalty = (
-                                turnover_penalty_rate
-                                * abs(future_position - current_position)
-                                * current_markprice
+                        if future_position != current_position and effective_base_rate > 0.0:
+                            current_grid_id = (
+                                None
+                                if regime_grid_ids_array is None
+                                else int(regime_grid_ids_array[current_timestamp_index])
                             )
+                            eff_rate = compute_directional_turnover_penalty_rate(
+                                old_position=current_position,
+                                new_position=future_position,
+                                regime_grid_id=current_grid_id,
+                                turnover_base_rate=effective_base_rate,
+                                turnover_adverse_ratio=turnover_adverse_ratio,
+                            )
+                            if eff_rate > 0.0:
+                                turnover_penalty = (
+                                    eff_rate
+                                    * abs(future_position - current_position)
+                                    * current_markprice
+                                )
                         reward = (
                             current_margine_balance
                             - previous_margine_balance
@@ -1587,6 +1646,9 @@ def create_optimal_q_table_from_df(
     limit_reverse_penalty: float = 1.5,
     near_limit_threshold: float = 0.003,
     turnover_penalty_rate: float = 0.0,
+    regime_grid_ids_array: np.ndarray | None = None,
+    turnover_base_rate: float = 0.0,
+    turnover_adverse_ratio: float = 1.0,
 ) -> np.ndarray:
     bid_prices_names = ["bid{}_price".format(i) for i in range(1, order_book_depth + 1)]
     ask_prices_names = ["ask{}_price".format(i) for i in range(1, order_book_depth + 1)]
@@ -1647,6 +1709,9 @@ def create_optimal_q_table_from_df(
         limit_reverse_penalty,
         near_limit_threshold,
         turnover_penalty_rate=turnover_penalty_rate,
+        regime_grid_ids_array=regime_grid_ids_array if regime_grid_ids_array is not None else _col("regime_grid_id"),
+        turnover_base_rate=turnover_base_rate,
+        turnover_adverse_ratio=turnover_adverse_ratio,
     )
 
 

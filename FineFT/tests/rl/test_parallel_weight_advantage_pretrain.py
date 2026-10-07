@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+import pytest
 
 
 FINEFT_ROOT = Path(__file__).resolve().parents[2]
@@ -1623,6 +1624,25 @@ def test_parallel_parser_allow_reverse_position_default_and_flag():
     assert args_flag.allow_reverse_position is True
 
 
+def test_parallel_parser_turnover_rates_default_and_flags():
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+
+    args_default = pwap.parser.parse_args([])
+    assert args_default.turnover_base_rate == pytest.approx(0.0001)
+    assert args_default.turnover_adverse_ratio == pytest.approx(6.0)
+    assert args_default.turnover_penalty_rate is None
+
+    args_custom = pwap.parser.parse_args([
+        "--turnover_base_rate", "0.0002",
+        "--turnover_adverse_ratio", "4.0",
+    ])
+    assert args_custom.turnover_base_rate == pytest.approx(0.0002)
+    assert args_custom.turnover_adverse_ratio == pytest.approx(4.0)
+
+    args_legacy = pwap.parser.parse_args(["--turnover_penalty_rate", "0.0005"])
+    assert args_legacy.turnover_penalty_rate == pytest.approx(0.0005)
+
+
 def test_parallel_parser_curriculum_block_epochs_default_and_flags():
     from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
 
@@ -2683,6 +2703,8 @@ def test_trainer_train_skips_warmup_when_load_pretrain_model_is_true(tmp_path, m
     trainer.transcation_cost = 0
     trainer.allow_reverse_position = False
     trainer.turnover_penalty_rate = 0.0
+    trainer.turnover_base_rate = 0.0
+    trainer.turnover_adverse_ratio = 1.0
     trainer.enable_limit_reward = True
     trainer.limit_hold_bonus = 1.0
     trainer.limit_stay_bonus = 0.5

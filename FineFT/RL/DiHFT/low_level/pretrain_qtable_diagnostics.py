@@ -383,6 +383,8 @@ def create_demo_env(
         limit_reverse_penalty=env_kwargs.get("limit_reverse_penalty", 1.5),
         near_limit_threshold=env_kwargs.get("near_limit_threshold", 0.003),
         turnover_penalty_rate=env_kwargs.get("turnover_penalty_rate", 0.0),
+        turnover_base_rate=env_kwargs.get("turnover_base_rate", 0.0),
+        turnover_adverse_ratio=env_kwargs.get("turnover_adverse_ratio", 1.0),
     )
 
 

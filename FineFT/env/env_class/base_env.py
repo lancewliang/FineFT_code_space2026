@@ -29,6 +29,7 @@ except ImportError:
 
 sys.path.append(".")
 from env.env_class.futures_util import (
+    compute_directional_turnover_penalty_rate,
     change_of_wallet,
     calculate_avaiable_action,
     compute_limit_reward,
@@ -109,6 +110,8 @@ class Base_Env(gym.Env):
         near_limit_threshold=0.003,
         regime_grid_ids_array=None,
         turnover_penalty_rate=0.0,
+        turnover_base_rate=0.0,
+        turnover_adverse_ratio=1.0,
     ):
         # trading setting
         self.max_holding_number = max_holding_number
@@ -137,7 +140,12 @@ class Base_Env(gym.Env):
         self.limit_reverse_penalty = float(limit_reverse_penalty)
         self.near_limit_threshold = float(near_limit_threshold)
         self.regime_grid_ids_array = regime_grid_ids_array
-        self.turnover_penalty_rate = float(turnover_penalty_rate)
+        effective_base = float(turnover_base_rate)
+        if effective_base <= 0.0 and turnover_penalty_rate > 0.0:
+            effective_base = float(turnover_penalty_rate)
+        self.turnover_base_rate = effective_base
+        self.turnover_adverse_ratio = float(turnover_adverse_ratio)
+        self.turnover_penalty_rate = self.turnover_base_rate
         # RL setting
         self.single_side_action_num = int((position_choices - 1) / 2)
         self.action_space = spaces.Discrete(
@@ -596,12 +604,21 @@ class Base_Env(gym.Env):
         slippage = wallet_change.slippage_step
 
         turnover_penalty = 0.0
-        if position != old_position and self.turnover_penalty_rate > 0.0:
-            turnover_penalty = (
-                self.turnover_penalty_rate
-                * abs(position - old_position)
-                * float(previous_markprice)
+        if position != old_position and self.turnover_base_rate > 0.0:
+            current_grid_id = self._get_current_regime_grid_id()
+            eff_rate = compute_directional_turnover_penalty_rate(
+                old_position=old_position,
+                new_position=position,
+                regime_grid_id=current_grid_id,
+                turnover_base_rate=self.turnover_base_rate,
+                turnover_adverse_ratio=self.turnover_adverse_ratio,
             )
+            if eff_rate > 0.0:
+                turnover_penalty = (
+                    eff_rate
+                    * abs(position - old_position)
+                    * float(previous_markprice)
+                )
 
         self._update_execution_metrics(wallet_change)
         self._update_position_cost(old_position, wallet_change)

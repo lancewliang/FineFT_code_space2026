@@ -187,3 +187,192 @@ def test_demo_env_turnover_penalty():
     _, reward, _, info = env.step(2)
     assert "q_value" in info
     assert env.turnover_penalty_rate == pytest.approx(0.0002)
+
+
+from env.env_class.futures_util import compute_directional_turnover_penalty_rate
+
+
+def test_compute_directional_turnover_penalty_rate_uptrend():
+    base = 0.0001
+    ratio = 6.0
+    adverse = 0.0006
+    # Regime grid 2, 5, 8 are uptrend (slope_bin == 2)
+    for grid in [2, 5, 8]:
+        # Open long: 0 -> 1 (aligned)
+        assert compute_directional_turnover_penalty_rate(0.0, 1.0, grid, base, ratio) == pytest.approx(base)
+        # Add long: 0.5 -> 1.0 (aligned)
+        assert compute_directional_turnover_penalty_rate(0.5, 1.0, grid, base, ratio) == pytest.approx(base)
+        # Reverse short to long: -1 -> 1 (aligned correction)
+        assert compute_directional_turnover_penalty_rate(-1.0, 1.0, grid, base, ratio) == pytest.approx(base)
+        # Close short: -1 -> 0 (aligned correction)
+        assert compute_directional_turnover_penalty_rate(-1.0, 0.0, grid, base, ratio) == pytest.approx(base)
+        # Premature exit / close long: 1 -> 0 (adverse)
+        assert compute_directional_turnover_penalty_rate(1.0, 0.0, grid, base, ratio) == pytest.approx(adverse)
+        # Counter-trend reverse: 1 -> -1 (adverse)
+        assert compute_directional_turnover_penalty_rate(1.0, -1.0, grid, base, ratio) == pytest.approx(adverse)
+        # Counter-trend open short: 0 -> -1 (adverse)
+        assert compute_directional_turnover_penalty_rate(0.0, -1.0, grid, base, ratio) == pytest.approx(adverse)
+
+
+def test_compute_directional_turnover_penalty_rate_downtrend():
+    base = 0.0001
+    ratio = 6.0
+    adverse = 0.0006
+    # Regime grid 0, 3, 6 are downtrend (slope_bin == 0)
+    for grid in [0, 3, 6]:
+        # Open short: 0 -> -1 (aligned)
+        assert compute_directional_turnover_penalty_rate(0.0, -1.0, grid, base, ratio) == pytest.approx(base)
+        # Add short: -0.5 -> -1.0 (aligned)
+        assert compute_directional_turnover_penalty_rate(-0.5, -1.0, grid, base, ratio) == pytest.approx(base)
+        # Reverse long to short: 1 -> -1 (aligned correction)
+        assert compute_directional_turnover_penalty_rate(1.0, -1.0, grid, base, ratio) == pytest.approx(base)
+        # Close long: 1 -> 0 (aligned correction)
+        assert compute_directional_turnover_penalty_rate(1.0, 0.0, grid, base, ratio) == pytest.approx(base)
+        # Premature exit / close short: -1 -> 0 (adverse)
+        assert compute_directional_turnover_penalty_rate(-1.0, 0.0, grid, base, ratio) == pytest.approx(adverse)
+        # Counter-trend reverse: -1 -> 1 (adverse)
+        assert compute_directional_turnover_penalty_rate(-1.0, 1.0, grid, base, ratio) == pytest.approx(adverse)
+        # Counter-trend open long: 0 -> 1 (adverse)
+        assert compute_directional_turnover_penalty_rate(0.0, 1.0, grid, base, ratio) == pytest.approx(adverse)
+
+
+def test_compute_directional_turnover_penalty_rate_range():
+    base = 0.0001
+    ratio = 6.0
+    adverse = 0.0006
+    # Regime grid 1, 4, 7 are range/flat (slope_bin == 1)
+    for grid in [1, 4, 7]:
+        # Open long into noise: 0 -> 1 (adverse)
+        assert compute_directional_turnover_penalty_rate(0.0, 1.0, grid, base, ratio) == pytest.approx(adverse)
+        # Open short into noise: 0 -> -1 (adverse)
+        assert compute_directional_turnover_penalty_rate(0.0, -1.0, grid, base, ratio) == pytest.approx(adverse)
+        # Reversal back and forth: 1 -> -1, -1 -> 1 (adverse)
+        assert compute_directional_turnover_penalty_rate(1.0, -1.0, grid, base, ratio) == pytest.approx(adverse)
+        assert compute_directional_turnover_penalty_rate(-1.0, 1.0, grid, base, ratio) == pytest.approx(adverse)
+        # De-risking exit: 1 -> 0, -1 -> 0 (base_rate)
+        assert compute_directional_turnover_penalty_rate(1.0, 0.0, grid, base, ratio) == pytest.approx(base)
+        assert compute_directional_turnover_penalty_rate(-1.0, 0.0, grid, base, ratio) == pytest.approx(base)
+
+
+def test_compute_directional_turnover_penalty_rate_fallbacks():
+    base = 0.0002
+    ratio = 5.0
+    # No position change -> 0.0
+    assert compute_directional_turnover_penalty_rate(1.0, 1.0, 8, base, ratio) == 0.0
+    # Zero base rate -> 0.0
+    assert compute_directional_turnover_penalty_rate(0.0, 1.0, 8, 0.0, ratio) == 0.0
+    # Missing regime_grid_id -> fallback to base_rate
+    assert compute_directional_turnover_penalty_rate(0.0, 1.0, None, base, ratio) == pytest.approx(base)
+    # Negative regime_grid_id -> fallback to base_rate
+    assert compute_directional_turnover_penalty_rate(0.0, 1.0, -1, base, ratio) == pytest.approx(base)
+    # Ratio <= 1.0 -> fallback to base_rate
+    assert compute_directional_turnover_penalty_rate(1.0, 0.0, 8, base, 1.0) == pytest.approx(base)
+
+
+def test_base_env_step_asymmetric_directional_turnover_penalty():
+    df = _make_dummy_df(num_rows=10)
+    # Assign regime_grid_id: first 5 rows are uptrend (grid 8), last 5 rows are range (grid 4)
+    df["regime_grid_id"] = np.array([8, 8, 8, 8, 8, 4, 4, 4, 4, 4], dtype=np.int64)
+
+    base_rate = 0.0001
+    adverse_ratio = 6.0  # adverse_rate = 0.0006
+
+    env_plain = initiate_base_env(
+        df,
+        feature_list=["feat1"],
+        max_holding_number=1,
+        position_choices=3,
+        leverage_choice=[1],
+        initial_state=(1e5, 0.0, 0.0, 0.0, 1),
+        turnover_base_rate=0.0,
+    )
+    env_asym = initiate_base_env(
+        df,
+        feature_list=["feat1"],
+        max_holding_number=1,
+        position_choices=3,
+        leverage_choice=[1],
+        initial_state=(1e5, 0.0, 0.0, 0.0, 1),
+        turnover_base_rate=base_rate,
+        turnover_adverse_ratio=adverse_ratio,
+    )
+
+    env_plain.reset()
+    env_asym.reset()
+
+    # Step 1 (Uptrend grid 8): Open long (0 -> 1). Aligned -> base_rate (0.0001)
+    # Penalty = 0.0001 * 1.0 * 100.0 = 0.01
+    _, r_plain_1, _, _ = env_plain.step(2)
+    _, r_asym_1, _, _ = env_asym.step(2)
+    assert r_asym_1 == pytest.approx(r_plain_1 - 0.01)
+
+    # Step 2 (Uptrend grid 8): Close long (1 -> 0). Adverse early exit -> adverse_rate (0.0006)
+    # Penalty = 0.0006 * 1.0 * 100.0 = 0.06
+    _, r_plain_2, _, _ = env_plain.step(1)
+    _, r_asym_2, _, _ = env_asym.step(1)
+    assert r_asym_2 == pytest.approx(r_plain_2 - 0.06)
+
+
+def test_create_optimal_q_table_asymmetric_directional_synchronization():
+    n = 3
+    ask_prices = np.tile([100.0, 101.0], (n, 1))
+    bid_prices = np.tile([99.0, 98.0], (n, 1))
+    ask_qtys = np.tile([10.0, 10.0], (n, 1))
+    bid_qtys = np.tile([10.0, 10.0], (n, 1))
+    markprices = np.full(n, 100.0)
+    timestamps = np.arange(1, n + 1)
+    funding_rates = np.zeros(n)
+    funding_timestamps = np.zeros(n)
+    # Grid 8 (uptrend)
+    regimes = np.full(n, 8, dtype=np.int64)
+
+    common_kwargs = dict(
+        max_holding_number=2,
+        position_choices=3,
+        leverage_choice=[1],
+        commission_rate=0.0,
+        long_estimated_rate=0.0,
+        short_estimated_rate=0.0,
+        gamma=1.0,
+        regime_grid_ids_array=regimes,
+    )
+    base_rate = 0.0001
+    ratio = 6.0  # adverse = 0.0006
+
+    q_plain = create_optimal_q_table(
+        ask_prices,
+        bid_prices,
+        ask_qtys,
+        bid_qtys,
+        markprices,
+        timestamps,
+        funding_rates,
+        funding_timestamps,
+        turnover_base_rate=0.0,
+        **common_kwargs,
+    )
+
+    q_asym = create_optimal_q_table(
+        ask_prices,
+        bid_prices,
+        ask_qtys,
+        bid_qtys,
+        markprices,
+        timestamps,
+        funding_rates,
+        funding_timestamps,
+        turnover_base_rate=base_rate,
+        turnover_adverse_ratio=ratio,
+        **common_kwargs,
+    )
+
+    # In uptrend:
+    # 1) Transition 1 -> 2 (flat -> long +2): aligned -> penalty = 0.0001 * 2 * 100 = 0.02
+    q_plain_open_long = q_plain[1, 1, 2]
+    q_asym_open_long = q_asym[1, 1, 2]
+    assert q_asym_open_long == pytest.approx(q_plain_open_long - 0.02)
+
+    # 2) Transition 1 -> 0 (flat -> short -2): counter-trend -> penalty = 0.0006 * 2 * 100 = 0.12
+    q_plain_open_short = q_plain[1, 1, 0]
+    q_asym_open_short = q_asym[1, 1, 0]
+    assert q_asym_open_short == pytest.approx(q_plain_open_short - 0.12)
