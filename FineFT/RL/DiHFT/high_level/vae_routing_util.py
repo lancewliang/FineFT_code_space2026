@@ -354,6 +354,12 @@ parser.add_argument(
     help="volatility top-1 vs top-2 probability margin threshold for hierarchical gating",
 )
 parser.add_argument(
+    "--hysteresis_exit_ratio",
+    type=float,
+    default=0.65,
+    help="hysteresis exit threshold ratio relative to entry threshold (0.0 to 1.0)",
+)
+parser.add_argument(
     "--trial_number",
     type=int,
     default=None,
@@ -592,6 +598,7 @@ def resolve_routing_parameters(args):
     ood_threshold = args.ood_threshold
     slope_margin_threshold = args.slope_margin_threshold
     volatility_margin_threshold = args.volatility_margin_threshold
+    hysteresis_exit_ratio = args.hysteresis_exit_ratio
 
     para_file = args.para_file
     optuna_csv = args.optuna_csv
@@ -630,6 +637,8 @@ def resolve_routing_parameters(args):
                 slope_margin_threshold = float(r[RoutingParamColumns.PARAMS_SLOPE_MARGIN_THRESHOLD])
             if RoutingParamColumns.PARAMS_VOLATILITY_MARGIN_THRESHOLD in df.columns:
                 volatility_margin_threshold = float(r[RoutingParamColumns.PARAMS_VOLATILITY_MARGIN_THRESHOLD])
+            if RoutingParamColumns.PARAMS_HYSTERESIS_EXIT_RATIO in df.columns:
+                hysteresis_exit_ratio = float(r[RoutingParamColumns.PARAMS_HYSTERESIS_EXIT_RATIO])
 
     # 2. Try resolving via explicit ws_ / wv_ format in para_str
     if para_str:
@@ -661,12 +670,15 @@ def resolve_routing_parameters(args):
         ood_match = re.search(r"ood_([0-9.]+)", para_str)
         ms_match = re.search(r"ms_([0-9.]+)", para_str)
         mv_match = re.search(r"mv_([0-9.]+)", para_str)
+        hr_match = re.search(r"hr_([0-9.]+)", para_str)
         if ood_match:
             ood_threshold = float(ood_match.group(1))
         if ms_match:
             slope_margin_threshold = float(ms_match.group(1))
         if mv_match:
             volatility_margin_threshold = float(mv_match.group(1))
+        if hr_match:
+            hysteresis_exit_ratio = float(hr_match.group(1))
 
     # 3. Fallback to single gamma_ / window_ / threshold_ format if present in para_str
     if para_str:
@@ -699,6 +711,7 @@ def resolve_routing_parameters(args):
     args.ood_threshold = ood_threshold
     args.slope_margin_threshold = slope_margin_threshold
     args.volatility_margin_threshold = volatility_margin_threshold
+    args.hysteresis_exit_ratio = hysteresis_exit_ratio
 
     args.slope_rule_base_threshold = slope_rule_base_threshold if slope_rule_base_threshold is not None else base_threshold
     args.volatility_rule_base_threshold = volatility_rule_base_threshold if volatility_rule_base_threshold is not None else base_threshold
@@ -817,10 +830,12 @@ class vae_risk_aware_routing:
         self.circuit_breaker_cooling_steps = int(args.circuit_breaker_cooling_steps)
         if self.circuit_breaker_cooling_steps < -1:
             raise ValueError("circuit_breaker_cooling_steps must be -1 or non-negative")
+        self.hysteresis_exit_ratio = float(args.hysteresis_exit_ratio)
         self.gating_strategy = create_gating_strategy(
             args.gating_strategy,
             slope_threshold=self.axis_thresholds["slope"],
             volatility_threshold=self.axis_thresholds["volatility"],
+            hysteresis_exit_ratio=self.hysteresis_exit_ratio,
             ood_threshold=args.ood_threshold,
             slope_margin_threshold=args.slope_margin_threshold,
             volatility_margin_threshold=args.volatility_margin_threshold,
@@ -1115,10 +1130,12 @@ class vae_risk_aware_routing:
             "slope": args.slope_rule_base_threshold,
             "volatility": args.volatility_rule_base_threshold,
         }
+        self.hysteresis_exit_ratio = float(args.hysteresis_exit_ratio)
         self.gating_strategy = create_gating_strategy(
             args.gating_strategy,
             slope_threshold=self.axis_thresholds["slope"],
             volatility_threshold=self.axis_thresholds["volatility"],
+            hysteresis_exit_ratio=self.hysteresis_exit_ratio,
             ood_threshold=args.ood_threshold,
             slope_margin_threshold=args.slope_margin_threshold,
             volatility_margin_threshold=args.volatility_margin_threshold,
@@ -1348,7 +1365,9 @@ class vae_risk_aware_routing:
 
         volatility_weights = self.calculate_axis_window_result("volatility")
         slope_weights = self.calculate_axis_window_result("slope")
-        decision = self.gating_strategy.decide(volatility_weights, slope_weights)
+        decision = self.gating_strategy.decide(
+            volatility_weights, slope_weights, current_position=current_pos_float
+        )
         if decision.is_defensive:
             return self._apply_defensive_action(
                 info, current_pos_float, current_leverage

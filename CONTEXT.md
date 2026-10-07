@@ -530,6 +530,14 @@ _Avoid_: Q 表预计算、qtable 缓存
 从 Q 表和初始动作推导的动态规划最优动作序列，用于预训练 warmup 和盈利诊断。
 _Avoid_: 专家路径、最优路径
 
+**换手惩罚 (Turnover Penalty)**:
+在低层 Agent 的离散动作转移中注入的纯 Reward Shaping 惩罚项，数值与仓位变动绝对值及合约名义货值成正比，且同步贯穿于动态规划专家 Q 表与强化学习单步奖励以抑制无效微观翻转。
+_Avoid_: 交易摩擦惩罚、手续费税、调仓惩罚
+
+**换手惩罚系数 (Turnover Penalty Rate)**:
+计算换手惩罚时的基点费率乘数（默认 2 bps = 0.0002），将仓位跳变的名义金额折算为扣减的虚拟奖励标量。
+_Avoid_: 惩罚权重、换手率因子、penalty lambda
+
 **Diverse Training (多样化训练)**:
 Stage I 中使用随机初始动作的探索训练阶段，与预训练 warmup 区分。
 _Avoid_: 探索训练、随机训练
@@ -631,6 +639,14 @@ _Avoid_: 静默回测、无产物模式、快速回测
 **最优超参回放 (Best-Trial Replay)**:
 在 Optuna 并发超参数搜索全部收敛后，主进程提取全局最优超参数组合（`study.best_trial.params`）单独执行一次完整回测并开启全量产物落盘（`save_artifacts=True`）的产物固化流程；保证调优过程零磁盘开销的同时完整留存最优配置的历史诊断轨迹与评估报告。
 _Avoid_: 最佳 Trial 重跑、最终落盘、最优回测
+
+**门控迟滞带 (Hysteresis Gating)**:
+在高层 VAE 路由中将进入（开仓）置信度门槛与退出（平仓防守）置信度门槛进行双重非对称解耦的机制；通过平仓衰减比率维持开仓高门槛与平仓宽容度，消除单阈值在临界边界抖动诱发的频繁假平仓与换手损耗。
+_Avoid_: 动态双阈值、滞回控制、上下限门控
+
+**平仓衰减比率 (Hysteresis Exit Ratio)**:
+门控迟滞带中平仓防守阈值相对于开仓进场阈值的衰减系数（取值范围 0.50 ~ 0.80），满足 $T^{\text{exit}} = \alpha_{\text{exit}} \cdot T^{\text{enter}}$。
+_Avoid_: 退出系数、打折率、exit discount
 
 **VAE 跨合约训练 (VAE Cross-contract Training)**:
 从多合约训练数据合并生成统一 VAE 训练集的过程，通过物化 label 训练数据校验特征维度一致性。
@@ -879,3 +895,21 @@ _Avoid_: 全局禁交易、双向冷却、全品种停牌
 **单合约断路器 (Contract-Level Circuit Breaker)**:
 针对单个合约在特定评估周期内连续多次触发硬止损时激活的长周期时序熔断停机机制；熔断期间该合约全量强制置为 Flat 空仓，直至惩罚期满或回测结束，防止结构性策略失效拖垮全组合。
 _Avoid_: 组合熔断、市场熔断、全系统停机
+
+### Trading Diagnostics & Performance Attribution
+
+**盘面择时毛收益 (Gross Timing Return / Gross PnL)**:
+在扣除交易手续费和订单簿深度冲击滑点前，基于各步持仓（多头 +1、空头 -1、空仓 0）与标的资产标记价格点位变化计算的理论纯择时收益额（$\sum \text{position}_t \times \Delta P_t \times \text{multiplier}$），度量策略模型本身的行情方向预测能力。
+_Avoid_: 扣费前净值、理论上限收益、零成本回测收益
+
+**摩擦损耗吞噬率 (Friction Consumption Ratio)**:
+交易摩擦成本（手续费总额 + 滑点总额）占盘面择时毛收益的百分比（$\frac{\text{Commission} + \text{Slippage}}{\text{Gross PnL}}$）；用于量化日内高频频繁调仓对策略真实盈利的侵蚀程度。
+_Avoid_: 交易损耗率、滑点占比、费用率
+
+**资金换手倍数 (Turnover Capital Multiple)**:
+全周期内所有调仓买卖交易的名义成交总金额与账户初始总本金的比值（$\frac{\sum |\Delta \text{position}_t| \times P_t \times \text{multiplier}}{\text{Initial Capital}}$）；反映策略的资金周转速率与过度交易倾向。
+_Avoid_: 换手率、交易周转量、总成交量
+
+**全维度诊断三件套 (Diagnostic Triad Artifacts)**:
+标准化自动化诊断工具产出的一组评估文件集合，包含机器可读高精度 JSON (`diagnostics_summary.json`)、人眼/Pandas 分析表格 CSV (`contract_pnl_friction.csv`, `contract_behavior_risk.csv`, `macro_routing_distribution.csv`) 以及自动排版的 Markdown 简报 (`diagnostics_summary.md`)。
+_Avoid_: 回测报告、分析附件、诊断日志

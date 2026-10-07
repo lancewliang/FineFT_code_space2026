@@ -45,6 +45,7 @@ def test_resolve_parameters_from_optuna_csv_via_trial_id(tmp_path):
         ood_threshold=0.005,
         slope_margin_threshold=0.12,
         volatility_margin_threshold=0.12,
+        hysteresis_exit_ratio=0.65,
     )
 
     resolved = vru.resolve_routing_parameters(args)
@@ -82,6 +83,7 @@ def test_resolve_parameters_from_formatted_string_without_csv(tmp_path):
         ood_threshold=0.005,
         slope_margin_threshold=0.12,
         volatility_margin_threshold=0.12,
+        hysteresis_exit_ratio=0.65,
     )
 
     resolved = vru.resolve_routing_parameters(args)

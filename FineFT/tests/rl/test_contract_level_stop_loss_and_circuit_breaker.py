@@ -194,6 +194,7 @@ def test_risk_controls_cli_arguments_and_validation(monkeypatch):
             "stop_loss_cooldown_steps": 12,
             "circuit_breaker_consecutive_stops": 2,
             "circuit_breaker_cooling_steps": 72,
+            "hysteresis_exit_ratio": 0.65,
         }
         d.update(overrides)
         return types.SimpleNamespace(**d)

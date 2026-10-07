@@ -18,6 +18,7 @@ def build_optimal_qtable_kwargs(
     limit_stay_bonus: float = 0.5,
     limit_reverse_penalty: float = 1.5,
     near_limit_threshold: float = 0.003,
+    turnover_penalty_rate: float = 0.0,
 ) -> dict[str, object]:
     """Build the DP teacher configuration from the active training config."""
 
@@ -37,4 +38,5 @@ def build_optimal_qtable_kwargs(
         "limit_stay_bonus": limit_stay_bonus,
         "limit_reverse_penalty": limit_reverse_penalty,
         "near_limit_threshold": near_limit_threshold,
+        "turnover_penalty_rate": turnover_penalty_rate,
     }

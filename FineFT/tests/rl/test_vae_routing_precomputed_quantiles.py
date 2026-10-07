@@ -175,6 +175,7 @@ def test_apply_best_trial_parameters_absolute():
         RoutingParamColumns.VOLATILITY_GAMMA: 0.96,
         RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD: 0.25,
         RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD: 0.35,
+        RoutingParamColumns.HYSTERESIS_EXIT_RATIO: 0.70,
     }
     search_args = types.SimpleNamespace(gating_strategy="absolute")
     trial_args = types.SimpleNamespace()
@@ -186,6 +187,7 @@ def test_apply_best_trial_parameters_absolute():
     assert res.slope_rule_base_threshold == pytest.approx(0.25)
     assert res.volatility_rule_base_threshold == pytest.approx(0.35)
     assert res.rule_base_threshold == pytest.approx(0.25)
+    assert res.hysteresis_exit_ratio == pytest.approx(0.70)
 
 
 def test_lean_rollout_skips_disk_artifacts(tmp_path, monkeypatch):

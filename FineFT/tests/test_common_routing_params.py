@@ -47,3 +47,10 @@ def test_routing_param_columns_literals() -> None:
         == "params_rule_base_threshold"
     )
     assert RoutingParamColumns.NUMBER == "number"
+    assert (
+        RoutingParamColumns.HYSTERESIS_EXIT_RATIO == "hysteresis_exit_ratio"
+    )
+    assert (
+        RoutingParamColumns.PARAMS_HYSTERESIS_EXIT_RATIO
+        == "params_hysteresis_exit_ratio"
+    )

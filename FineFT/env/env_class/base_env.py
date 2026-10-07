@@ -108,6 +108,7 @@ class Base_Env(gym.Env):
         limit_reverse_penalty=1.5,
         near_limit_threshold=0.003,
         regime_grid_ids_array=None,
+        turnover_penalty_rate=0.0,
     ):
         # trading setting
         self.max_holding_number = max_holding_number
@@ -136,6 +137,7 @@ class Base_Env(gym.Env):
         self.limit_reverse_penalty = float(limit_reverse_penalty)
         self.near_limit_threshold = float(near_limit_threshold)
         self.regime_grid_ids_array = regime_grid_ids_array
+        self.turnover_penalty_rate = float(turnover_penalty_rate)
         # RL setting
         self.single_side_action_num = int((position_choices - 1) / 2)
         self.action_space = spaces.Discrete(
@@ -592,6 +594,15 @@ class Base_Env(gym.Env):
         unrealized_pnL = wallet_change.unrealized_pnl
         wallet_balance = wallet_change.wallet_balance
         slippage = wallet_change.slippage_step
+
+        turnover_penalty = 0.0
+        if position != old_position and self.turnover_penalty_rate > 0.0:
+            turnover_penalty = (
+                self.turnover_penalty_rate
+                * abs(position - old_position)
+                * float(previous_markprice)
+            )
+
         self._update_execution_metrics(wallet_change)
         self._update_position_cost(old_position, wallet_change)
         self.slippage_sum += slippage
@@ -755,7 +766,7 @@ class Base_Env(gym.Env):
                 self.last_limit_reward = 0.0
                 return (
                     self.state_array[self.day],
-                    self.wallet_balance + self.unrealized_pnl - previous_margine_balance,
+                    self.wallet_balance + self.unrealized_pnl - previous_margine_balance - turnover_penalty,
                     self.terminal,
                     {
                         "avaiable_action_list": avaiable_actions,
@@ -940,7 +951,7 @@ class Base_Env(gym.Env):
                     self.terminal = True
                 reward = (
                     self.wallet_balance + self.unrealized_pnl - previous_margine_balance
-                )
+                ) - turnover_penalty
                 limit_reward = self._compute_step_limit_reward(old_position)
                 reward += limit_reward
                 self.last_limit_reward = limit_reward

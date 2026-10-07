@@ -360,6 +360,12 @@ parser.add_argument(
     default=0.003,
     help="relative threshold for near-limit shaping",
 )
+parser.add_argument(
+    "--turnover_penalty_rate",
+    type=float,
+    default=0.0,
+    help="proportional turnover penalty rate for reward shaping",
+)
 
 # network setting
 parser.add_argument(
@@ -701,6 +707,7 @@ class Weighted_Contexts_DQN:
         self.limit_stay_bonus = args.limit_stay_bonus
         self.limit_reverse_penalty = args.limit_reverse_penalty
         self.near_limit_threshold = args.near_limit_threshold
+        self.turnover_penalty_rate = float(args.turnover_penalty_rate)
 
         # network
         self.time_info_dim = args.time_info_dim
@@ -1326,6 +1333,7 @@ class Weighted_Contexts_DQN:
             limit_stay_bonus=self.limit_stay_bonus,
             limit_reverse_penalty=self.limit_reverse_penalty,
             near_limit_threshold=self.near_limit_threshold,
+            turnover_penalty_rate=self.turnover_penalty_rate,
         )
         env_kwargs = {
             "feature_list": self.tech_indicator_list,
@@ -1348,6 +1356,7 @@ class Weighted_Contexts_DQN:
             "limit_stay_bonus": self.limit_stay_bonus,
             "limit_reverse_penalty": self.limit_reverse_penalty,
             "near_limit_threshold": self.near_limit_threshold,
+            "turnover_penalty_rate": self.turnover_penalty_rate,
         }
         diagnostics_result = prepare_pretrain_qtable_diagnostics(
             total_df_index_length=self.total_df_index_length,

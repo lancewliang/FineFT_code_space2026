@@ -36,3 +36,6 @@ class RoutingParamColumns:
     PARAMS_VOLATILITY_MARGIN_THRESHOLD: str = (
         "params_volatility_margin_threshold"
     )
+
+    HYSTERESIS_EXIT_RATIO: str = "hysteresis_exit_ratio"
+    PARAMS_HYSTERESIS_EXIT_RATIO: str = "params_hysteresis_exit_ratio"

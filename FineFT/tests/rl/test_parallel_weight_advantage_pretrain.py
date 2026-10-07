@@ -2682,6 +2682,7 @@ def test_trainer_train_skips_warmup_when_load_pretrain_model_is_true(tmp_path, m
     trainer.short_estimated_rate = 0
     trainer.transcation_cost = 0
     trainer.allow_reverse_position = False
+    trainer.turnover_penalty_rate = 0.0
     trainer.enable_limit_reward = True
     trainer.limit_hold_bonus = 1.0
     trainer.limit_stay_bonus = 0.5

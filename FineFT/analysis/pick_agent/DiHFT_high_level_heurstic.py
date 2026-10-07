@@ -174,6 +174,10 @@ class Picker:
                 entry[RoutingParamColumns.VOLATILITY_MARGIN_THRESHOLD] = float(
                     row[RoutingParamColumns.PARAMS_VOLATILITY_MARGIN_THRESHOLD]
                 )
+            if RoutingParamColumns.PARAMS_HYSTERESIS_EXIT_RATIO in df.columns:
+                entry[RoutingParamColumns.HYSTERESIS_EXIT_RATIO] = float(
+                    row[RoutingParamColumns.PARAMS_HYSTERESIS_EXIT_RATIO]
+                )
             lookup[trial_id] = entry
         return lookup
 
@@ -342,6 +346,7 @@ class Picker:
                 ood_m = re.search(r"ood_([0-9.]+)", parameter)
                 ms_m = re.search(r"ms_([0-9.]+)", parameter)
                 mv_m = re.search(r"mv_([0-9.]+)", parameter)
+                hr_m = re.search(r"hr_([0-9.]+)", parameter)
                 if "strat_hierarchical" in parameter or ood_m:
                     result[RoutingParamColumns.GATING_STRATEGY] = "hierarchical"
                     result[RoutingParamColumns.OOD_THRESHOLD] = float(ood_m.group(1)) if ood_m else 0.005
@@ -349,6 +354,8 @@ class Picker:
                     result[RoutingParamColumns.VOLATILITY_MARGIN_THRESHOLD] = float(mv_m.group(1)) if mv_m else 0.12
                 else:
                     result[RoutingParamColumns.GATING_STRATEGY] = "absolute"
+                if hr_m:
+                    result[RoutingParamColumns.HYSTERESIS_EXIT_RATIO] = float(hr_m.group(1))
 
             result_list.append(result)
         result_df = pd.DataFrame(result_list)
@@ -492,11 +499,27 @@ class Picker:
             for f_name in os.listdir(first_dir):
                 if f_name.endswith(".npy") or f_name.endswith(".csv"):
                     shutil.copy2(os.path.join(first_dir, f_name), os.path.join(high_level_path, f_name))
+
         else:
             first_dir = contract_dirs[0]
             for f_name in os.listdir(first_dir):
                 if f_name.endswith(".npy") or f_name.endswith(".csv"):
                     shutil.copy2(os.path.join(first_dir, f_name), os.path.join(high_level_path, f_name))
+
+        # Generate comprehensive trading diagnostics when market data exists
+        if self._find_valid_contract_files():
+            from analysis.diagnostics.trading_diagnostics import TradingDiagnosticsCalculator
+
+            valid_data_dir = os.path.join(self.base_path, self.dataset_name, "valid")
+            diag_calculator = TradingDiagnosticsCalculator(
+                result_dir=high_level_path,
+                data_dir=valid_data_dir,
+                output_dir=os.path.join(self.save_path, "diagnostics"),
+                initial_wallet_balance=6000.0,
+                commission_rate=0.0005,
+                contract_unit=10.0,
+            )
+            diag_calculator.run()
 
     def _find_valid_contract_files(self):
         candidates = [

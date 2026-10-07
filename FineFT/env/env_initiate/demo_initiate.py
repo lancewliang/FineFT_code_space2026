@@ -38,6 +38,7 @@ def initiate_demo_env(
     limit_stay_bonus=0.5,
     limit_reverse_penalty=1.5,
     near_limit_threshold=0.003,
+    turnover_penalty_rate=0.0,
 ):
 
     # 对应钱包余额，起始保证金，未实现盈亏，持仓量，对应的杠杆):
@@ -115,6 +116,7 @@ def initiate_demo_env(
         limit_reverse_penalty=limit_reverse_penalty,
         near_limit_threshold=near_limit_threshold,
         regime_grid_ids_array=regime_grid_ids_array,
+        turnover_penalty_rate=turnover_penalty_rate,
     )
     return env
 

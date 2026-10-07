@@ -204,6 +204,7 @@ def test_create_best_agent_writes_self_contained_2d_parameters(tmp_path: Path):
         ood_threshold=0.005,
         slope_margin_threshold=0.12,
         volatility_margin_threshold=0.12,
+        hysteresis_exit_ratio=0.65,
     )
     resolved_args = vru.resolve_routing_parameters(mock_final_args)
     assert resolved_args.slope_window_length in (60, 80)

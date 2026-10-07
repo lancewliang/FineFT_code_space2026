@@ -128,6 +128,7 @@ def test_prepare_base_args_forwards_enable_non_main_contract_defense(tmp_path):
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
+        hysteresis_exit_ratio=0.65,
     )
 
     base_args = vro.prepare_base_args(args_1, args_2)
@@ -213,6 +214,7 @@ def test_reconfigure_routing_preserves_defense_flag(monkeypatch):
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
+        hysteresis_exit_ratio=0.65,
     )
     monkeypatch.setattr(routing, "_resolve_test_path", lambda a: "/tmp/test_trial_1")
     monkeypatch.setattr(routing, "reset_routing_state", lambda: None)

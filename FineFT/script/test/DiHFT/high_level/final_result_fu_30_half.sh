@@ -41,3 +41,12 @@ python -u FineFT/RL/DiHFT/high_level/vae_routing_final_result_macro_action.py \
     --long_estimated_rate 0 \
     --allow_reverse_position \
     >"${LOG_DIR}/final_result.log" 2>&1
+
+python -u FineFT/analysis/diagnostics/trading_diagnostics.py \
+    --result_dir "result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}" \
+    --data_dir "${BASE_PATH}/${DATASET_NAME}/test" \
+    --output_dir "result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/diagnostics" \
+    --initial_wallet_balance 10000 \
+    --commission_rate "${TRANSACTION_COST}" \
+    --contract_unit 10.0 \
+    >>"${LOG_DIR}/final_result.log" 2>&1

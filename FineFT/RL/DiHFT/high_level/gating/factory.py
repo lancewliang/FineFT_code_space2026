@@ -11,6 +11,7 @@ def create_gating_strategy(
     *,
     slope_threshold: float = 0.2,
     volatility_threshold: float = 0.2,
+    hysteresis_exit_ratio: float = 0.65,
     ood_threshold: float = 0.005,
     slope_margin_threshold: float = 0.12,
     volatility_margin_threshold: float = 0.12,
@@ -22,9 +23,11 @@ def create_gating_strategy(
     if normalized_type == "absolute":
         st = kwargs["slope_rule_base_threshold"] if "slope_rule_base_threshold" in kwargs else slope_threshold
         vt = kwargs["volatility_rule_base_threshold"] if "volatility_rule_base_threshold" in kwargs else volatility_threshold
+        her = kwargs["hysteresis_exit_ratio"] if "hysteresis_exit_ratio" in kwargs else hysteresis_exit_ratio
         return AbsoluteThresholdGating(
             slope_threshold=float(st),
             volatility_threshold=float(vt),
+            hysteresis_exit_ratio=float(her),
         )
 
     if normalized_type == "hierarchical":

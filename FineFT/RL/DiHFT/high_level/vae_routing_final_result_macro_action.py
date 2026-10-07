@@ -83,6 +83,21 @@ def main():
     vae_routing = vae_risk_aware_routing(args)
     final_return_rate = vae_routing.test()
     logger.info("Final result test completed with return rate: %.6f", final_return_rate)
+
+    # Automatically generate comprehensive diagnostics for final result
+    from analysis.diagnostics.trading_diagnostics import TradingDiagnosticsCalculator
+
+    data_dir = os.path.join(args.base_path, args.dataset_name, args.eval_stage)
+    diag_calculator = TradingDiagnosticsCalculator(
+        result_dir=vae_routing.test_path,
+        data_dir=data_dir,
+        output_dir=os.path.join(vae_routing.test_path, "diagnostics"),
+        initial_wallet_balance=float(args.initial_wallet_balance),
+        commission_rate=float(args.transcation_cost),
+        contract_unit=10.0,
+    )
+    diag_calculator.run()
+
     return final_return_rate
 
 

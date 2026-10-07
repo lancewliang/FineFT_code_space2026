@@ -23,4 +23,5 @@ python -u FineFT/RL/DiHFT/low_level/parallel_weight_advantage_pretrain.py \
     --order_book_depth 5 --early_stop 2  --N 11 --buffer_size 700000 \
     --pretrain_epoch 2 --curriculum_block_epochs 5 --num_epoch 62 --lr_init 0.0005 --lr_min 0.0001 --ada_init 96.0 --epsilon_min 0.05 \
     --ada_min 0.1 --neighbor_size 2 --load_pretrain_model False --action_persistence 3 --eval_dfs "0,6,12" \
+    --turnover_penalty_rate "${TURNOVER_PENALTY_RATE:-0.0002}" \
     >"log/DiHFT/fu/low_level/train/10min/${EXPERIMENT_NAME}/advantage-10min-parallel.log"

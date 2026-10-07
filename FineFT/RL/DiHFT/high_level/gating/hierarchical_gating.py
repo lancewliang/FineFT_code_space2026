@@ -37,6 +37,7 @@ class HierarchicalDualGating(BaseGatingStrategy):
         self,
         volatility_weights: Sequence[float] | np.ndarray,
         slope_weights: Sequence[float] | np.ndarray,
+        current_position: float = 0.0,
     ) -> GatingDecision:
         vol_arr = np.asarray(volatility_weights, dtype=float)
         slope_arr = np.asarray(slope_weights, dtype=float)

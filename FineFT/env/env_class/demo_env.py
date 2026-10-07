@@ -59,6 +59,7 @@ class Demo_Env(Base_Env):
         limit_reverse_penalty=1.5,
         near_limit_threshold=0.003,
         regime_grid_ids_array=None,
+        turnover_penalty_rate=0.0,
         q_table=None,
     ):
 
@@ -99,6 +100,7 @@ class Demo_Env(Base_Env):
             limit_reverse_penalty=limit_reverse_penalty,
             near_limit_threshold=near_limit_threshold,
             regime_grid_ids_array=regime_grid_ids_array,
+            turnover_penalty_rate=turnover_penalty_rate,
         )
         if q_table is not None:
             self.q_table = q_table
@@ -132,6 +134,7 @@ class Demo_Env(Base_Env):
                 limit_stay_bonus=limit_stay_bonus,
                 limit_reverse_penalty=limit_reverse_penalty,
                 near_limit_threshold=near_limit_threshold,
+                turnover_penalty_rate=turnover_penalty_rate,
             )
 
     def reset(self, initial_state: tuple[float, float, float, float, float] | None = None):

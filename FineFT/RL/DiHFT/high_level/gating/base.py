@@ -29,6 +29,7 @@ class BaseGatingStrategy(abc.ABC):
         self,
         volatility_weights: Sequence[float] | np.ndarray,
         slope_weights: Sequence[float] | np.ndarray,
+        current_position: float = 0.0,
     ) -> GatingDecision:
         """Evaluate dual-axis weights and return a GatingDecision."""
         ...

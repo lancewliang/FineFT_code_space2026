@@ -371,6 +371,7 @@ def test_reconfigure_routing_resets_persistence_state():
         ood_threshold=0.005,
         slope_margin_threshold=0.12,
         volatility_margin_threshold=0.12,
+        hysteresis_exit_ratio=0.65,
     )
     router._resolve_test_path = lambda a: "/tmp/trial_test"
 

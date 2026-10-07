@@ -382,6 +382,7 @@ def create_demo_env(
         limit_stay_bonus=env_kwargs.get("limit_stay_bonus", 0.5),
         limit_reverse_penalty=env_kwargs.get("limit_reverse_penalty", 1.5),
         near_limit_threshold=env_kwargs.get("near_limit_threshold", 0.003),
+        turnover_penalty_rate=env_kwargs.get("turnover_penalty_rate", 0.0),
     )
 
 

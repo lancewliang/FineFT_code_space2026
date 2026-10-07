@@ -347,6 +347,7 @@ def test_prepare_base_args_loads_two_dimensional_model_from_manifest(tmp_path):
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
+        hysteresis_exit_ratio=0.65,
     )
 
     prepared = vro.prepare_base_args(args_1, args_2)
@@ -390,6 +391,7 @@ def test_prepare_base_args_does_not_mutate_original_args(tmp_path):
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
+        hysteresis_exit_ratio=0.65,
     )
 
     prepared = vro.prepare_base_args(args_1, args_2)
@@ -435,6 +437,7 @@ def test_prepare_base_args_rejects_missing_model_assembly(tmp_path):
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
+        hysteresis_exit_ratio=0.65,
     )
     with pytest.raises(
         ValueError, match="two-dimensional manifest has no model_assembly artifact"
@@ -468,6 +471,7 @@ def test_prepare_base_args_validates_manifest_contract(tmp_path):
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
+        hysteresis_exit_ratio=0.65,
     )
     with pytest.raises(
         ValueError, match="manifest slot_count does not match the two-dimensional axes"
@@ -491,6 +495,7 @@ def test_suggest_trial_parameters_uses_independent_axis_parameters():
                 "volatility_gamma": 0.97,
                 "slope_rule_base_threshold": 0.25,
                 "volatility_rule_base_threshold": 0.45,
+                "hysteresis_exit_ratio": 0.65,
             }[name]
 
         def suggest_categorical(self, name, choices):
@@ -507,6 +512,8 @@ def test_suggest_trial_parameters_uses_independent_axis_parameters():
         rule_base_threshold_min=0.2,
         rule_base_threshold_max=0.5,
         gating_strategy="absolute",
+        hysteresis_exit_ratio_min=0.50,
+        hysteresis_exit_ratio_max=0.80,
     )
 
     vro.suggest_trial_parameters(trial, trial_args, search_args)
@@ -519,6 +526,7 @@ def test_suggest_trial_parameters_uses_independent_axis_parameters():
         "gating_strategy",
         "slope_rule_base_threshold",
         "volatility_rule_base_threshold",
+        "hysteresis_exit_ratio",
     ]
     assert trial_args.window_length == 90
     assert trial_args.gamma == 0.93

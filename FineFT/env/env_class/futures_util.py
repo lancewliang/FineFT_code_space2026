@@ -1374,6 +1374,7 @@ def create_optimal_q_table(
     limit_stay_bonus=0.5,
     limit_reverse_penalty=1.5,
     near_limit_threshold=0.003,
+    turnover_penalty_rate=0.0,
 ):
     assert (
         len(ask_prices_array)
@@ -1509,7 +1510,18 @@ def create_optimal_q_table(
                         current_margine_balance = (
                             current_wallet_balance + current_unrealized_pnL
                         )
-                        reward = current_margine_balance - previous_margine_balance
+                        turnover_penalty = 0.0
+                        if future_position != current_position and turnover_penalty_rate > 0.0:
+                            turnover_penalty = (
+                                turnover_penalty_rate
+                                * abs(future_position - current_position)
+                                * current_markprice
+                            )
+                        reward = (
+                            current_margine_balance
+                            - previous_margine_balance
+                            - turnover_penalty
+                        )
                         if enable_limit_reward:
                             # transition current_position -> future_position,
                             # evaluated against the limit state at the action time
@@ -1574,6 +1586,7 @@ def create_optimal_q_table_from_df(
     limit_stay_bonus: float = 0.5,
     limit_reverse_penalty: float = 1.5,
     near_limit_threshold: float = 0.003,
+    turnover_penalty_rate: float = 0.0,
 ) -> np.ndarray:
     bid_prices_names = ["bid{}_price".format(i) for i in range(1, order_book_depth + 1)]
     ask_prices_names = ["ask{}_price".format(i) for i in range(1, order_book_depth + 1)]
@@ -1633,6 +1646,7 @@ def create_optimal_q_table_from_df(
         limit_stay_bonus,
         limit_reverse_penalty,
         near_limit_threshold,
+        turnover_penalty_rate=turnover_penalty_rate,
     )
 
 

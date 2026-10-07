@@ -177,6 +177,24 @@ parser_all.add_argument(
     default=0.30,
     help="maximum margin threshold for hierarchical gating",
 )
+parser_all.add_argument(
+    "--hysteresis_exit_ratio",
+    type=float,
+    default=0.65,
+    help="hysteresis exit ratio default for absolute gating",
+)
+parser_all.add_argument(
+    "--hysteresis_exit_ratio_min",
+    type=float,
+    default=0.50,
+    help="minimum hysteresis exit ratio for absolute gating",
+)
+parser_all.add_argument(
+    "--hysteresis_exit_ratio_max",
+    type=float,
+    default=0.80,
+    help="maximum hysteresis exit ratio for absolute gating",
+)
 
 
 def default_selection_manifest_path(args):
@@ -217,6 +235,7 @@ def prepare_base_args(args_1, args_2):
     base_args.ood_threshold = 0.005
     base_args.slope_margin_threshold = 0.12
     base_args.volatility_margin_threshold = 0.12
+    base_args.hysteresis_exit_ratio = float(args_2.hysteresis_exit_ratio)
     manifest_path = args_2.selection_manifest or default_selection_manifest_path(base_args)
     manifest = load_two_dimensional_selection_manifest(manifest_path)
     if not manifest.artifacts.model_assembly:
@@ -281,6 +300,7 @@ def suggest_trial_parameters(trial, trial_args, search_args):
         trial_args.slope_rule_base_threshold = 0.0
         trial_args.volatility_rule_base_threshold = 0.0
         trial_args.rule_base_threshold = 0.0
+        trial_args.hysteresis_exit_ratio = 1.0
     else:
         trial_args.slope_rule_base_threshold = trial.suggest_float(
             RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD,
@@ -291,6 +311,11 @@ def suggest_trial_parameters(trial, trial_args, search_args):
             RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD,
             search_args.rule_base_threshold_min,
             search_args.rule_base_threshold_max,
+        )
+        trial_args.hysteresis_exit_ratio = trial.suggest_float(
+            RoutingParamColumns.HYSTERESIS_EXIT_RATIO,
+            search_args.hysteresis_exit_ratio_min,
+            search_args.hysteresis_exit_ratio_max,
         )
         trial_args.ood_threshold = 0.005
         trial_args.slope_margin_threshold = 0.12
@@ -336,12 +361,18 @@ def apply_best_trial_parameters(trial_args, best_params, search_args):
         trial_args.slope_rule_base_threshold = 0.0
         trial_args.volatility_rule_base_threshold = 0.0
         trial_args.rule_base_threshold = 0.0
+        trial_args.hysteresis_exit_ratio = 1.0
     else:
         trial_args.slope_rule_base_threshold = float(
             best_params[RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD]
         )
         trial_args.volatility_rule_base_threshold = float(
             best_params[RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD]
+        )
+        trial_args.hysteresis_exit_ratio = float(
+            best_params[RoutingParamColumns.HYSTERESIS_EXIT_RATIO]
+            if RoutingParamColumns.HYSTERESIS_EXIT_RATIO in best_params
+            else 0.65
         )
         trial_args.ood_threshold = 0.005
         trial_args.slope_margin_threshold = 0.12
