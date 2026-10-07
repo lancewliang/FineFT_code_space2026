@@ -35,7 +35,8 @@ function run_test_agent_index {
                 --dataset_name "${dataset_name}" --experiment_name "${experiment_name}" \
                 --result_path "${result_path}" \
                 --max_holding_number "${max_holding_number}" --initial_wallet_balance 6000 --order_book_depth 5 \
-                --epoch_num "${epoch}" --position_choices 3 --N "${ensemble_number}" --transcation_cost 0.0005 --short_estimated_rate 0 --long_estimated_rate 0 \
+                --epoch_num "${epoch}" --position_choices 3 --N "${ensemble_number}" \
+                --transcation_cost 0.0003 --short_estimated_rate 0 --long_estimated_rate 0 \
                 --allow_reverse_position False \
                 --label_type "${label_type}" \
                 --device "${device}" \
