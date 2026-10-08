@@ -196,7 +196,7 @@ def test_act_test_only_evaluates_selected_context_qnet():
             "avaliable_action": [1, 1, 1],
             "funding_count_down_hour": 1,
             "funding_count_down_minute": 30,
-            "trading_info": [0.0, 0.0, 0.0, 0.0],
+            "trading_info": [0.0, 0.0, 0.0, 0.0, 0.0],
         },
         context_index=1,
     )
@@ -205,7 +205,7 @@ def test_act_test_only_evaluates_selected_context_qnet():
     assert [qnet.calls for qnet in trader.eval_net.qnet_list] == [0, 1, 0]
 
 
-def test_act_test_selected_context_accepts_real_four_field_ensemble():
+def test_act_test_selected_context_accepts_real_five_field_ensemble():
     from model.low_level import ensemble_Qnet
     from RL.DiHFT.low_level import test_agent_index as tai
 
@@ -227,7 +227,7 @@ def test_act_test_selected_context_accepts_real_four_field_ensemble():
             "avaliable_action": [1, 1, 1],
             "funding_count_down_hour": 1,
             "funding_count_down_minute": 30,
-            "trading_info": [0.0, 0.0, 0.0, 0.0],
+            "trading_info": [0.0, 0.0, 0.0, 0.0, 0.0],
         },
         context_index=1,
     )
@@ -235,7 +235,7 @@ def test_act_test_selected_context_accepts_real_four_field_ensemble():
     assert action in [0, 1, 2]
 
 
-def test_average_act_test_accepts_real_four_field_ensemble():
+def test_average_act_test_accepts_real_five_field_ensemble():
     from model.low_level import ensemble_Qnet
     from RL.DiHFT.low_level import test_agent_average as taa
 
@@ -256,7 +256,7 @@ def test_average_act_test_accepts_real_four_field_ensemble():
             "avaliable_action": [1, 1, 1],
             "funding_count_down_hour": 1,
             "funding_count_down_minute": 30,
-            "trading_info": np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            "trading_info": np.array([0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
         },
     )
 
@@ -670,7 +670,7 @@ def test_weighted_trader_device_cpu(monkeypatch):
             "avaliable_action": [1, 1, 1],
             "funding_count_down_hour": 0,
             "funding_count_down_minute": 0,
-            "trading_info": [0.0, 0.0, 0.0, 0.0],
+            "trading_info": [0.0, 0.0, 0.0, 0.0, 0.0],
         },
         context_index=0,
     )

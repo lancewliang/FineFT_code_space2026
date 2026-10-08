@@ -6,6 +6,7 @@ from typing import Any
 import numpy as np
 import torch
 
+from env.env_class.base_env import TRADING_INFO_DIM, TRADING_INFO_DURATION_INDEX
 from RL.DiHFT.low_level.parallel_pretrain import extract_stacked_tensor_dict
 
 logger = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ def build_semantic_transition_key(
     previous_action = int(info["previous_action"])
     trading_info = info["trading_info"]
     pos_dir = int(np.round(float(trading_info[0])))
-    raw_steps = int(float(trading_info[3]) * 180)
+    raw_steps = int(float(trading_info[TRADING_INFO_DURATION_INDEX]) * 180)
     if raw_steps <= 2:
         dur_bucket = 0
     elif raw_steps <= 12:
@@ -216,14 +217,14 @@ class RegimeStratifiedReplayBuffer:
             self.avaliable_actions[g] = torch.zeros((self.grid_capacity, action_dim), dtype=torch.float32, device=self.device)
             self.hours[g] = torch.zeros((self.grid_capacity,), dtype=torch.float32, device=self.device)
             self.minutes[g] = torch.zeros((self.grid_capacity,), dtype=torch.float32, device=self.device)
-            self.trading_infos[g] = torch.zeros((self.grid_capacity, 4), dtype=torch.float32, device=self.device)
+            self.trading_infos[g] = torch.zeros((self.grid_capacity, TRADING_INFO_DIM), dtype=torch.float32, device=self.device)
             self.q_values[g] = torch.zeros((self.grid_capacity, action_dim), dtype=torch.float32, device=self.device)
 
             self.next_previous_actions[g] = torch.zeros((self.grid_capacity,), dtype=torch.float32, device=self.device)
             self.next_avaliable_actions[g] = torch.zeros((self.grid_capacity, action_dim), dtype=torch.float32, device=self.device)
             self.next_hours[g] = torch.zeros((self.grid_capacity,), dtype=torch.float32, device=self.device)
             self.next_minutes[g] = torch.zeros((self.grid_capacity,), dtype=torch.float32, device=self.device)
-            self.next_trading_infos[g] = torch.zeros((self.grid_capacity, 4), dtype=torch.float32, device=self.device)
+            self.next_trading_infos[g] = torch.zeros((self.grid_capacity, TRADING_INFO_DIM), dtype=torch.float32, device=self.device)
         self._initialized = True
 
     def _write_slot(self, grid_id: int, idx: int, transition: tuple[Any, ...]) -> None:

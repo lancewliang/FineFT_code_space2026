@@ -197,29 +197,36 @@ def test_trading_info_retracement_observation():
         commission_rate=0.0,
     )
 
-    # Reset: pos=0 -> trading_info[2] must be 0.0
+    # Reset: pos=0 -> trading_info has shape (5,) with peak=0.0, retrace=0.0
     _, info = env.reset()
+    assert info["trading_info"].shape == (5,)
     assert info["trading_info"][2] == 0.0
+    assert info["trading_info"][3] == 0.0
 
     # Step 1: Open long at 100.0
     _, _, _, info = env.step(2)
     assert info["trading_info"][2] == 0.0
+    assert info["trading_info"][3] == 0.0
 
-    # Step 2: Hold long at 104.0 (gain 4% < 8% -> inactive -> 0.0)
+    # Step 2: Hold long at 104.0 (gain 4% < 8% -> peak=0.04, retrace inactive -> 0.0)
     _, _, _, info = env.step(2)
-    assert info["trading_info"][2] == 0.0
+    assert info["trading_info"][2] == pytest.approx(0.04, abs=1e-4)
+    assert info["trading_info"][3] == 0.0
 
     # Step 3: Hold long at 110.0 (gain 10% >= 8%, peak=10%, retrace=0.0)
     _, _, _, info = env.step(2)
-    assert info["trading_info"][2] == 0.0
+    assert info["trading_info"][2] == pytest.approx(0.10, abs=1e-4)
+    assert info["trading_info"][3] == 0.0
 
-    # Step 4: Hold long at 107.0 (gain 7%, retrace = (0.10 - 0.07)/0.10 = 0.30)
+    # Step 4: Hold long at 107.0 (gain 7%, peak=10%, retrace = (0.10 - 0.07)/0.10 = 0.30)
     _, _, _, info = env.step(2)
-    assert info["trading_info"][2] == pytest.approx(0.30, abs=1e-4)
+    assert info["trading_info"][2] == pytest.approx(0.10, abs=1e-4)
+    assert info["trading_info"][3] == pytest.approx(0.30, abs=1e-4)
 
-    # Step 5: Exit to flat
+    # Step 5: Exit to flat -> all fields zero
     _, _, _, info = env.step(1)
     assert info["trading_info"][2] == 0.0
+    assert info["trading_info"][3] == 0.0
 
 
 def test_take_profit_turnover_penalty_exemption_unit():

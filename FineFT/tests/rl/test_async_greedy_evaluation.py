@@ -60,7 +60,7 @@ def test_async_evaluator_lifecycle_and_non_blocking():
         hidden_nodes=16,
         TIME_INFO_DIM=2,
         ensemble_number=2,
-        TRADING_INFO_DIM=4,
+        TRADING_INFO_DIM=5,
     )
 
     trainer = MagicMock()
@@ -112,7 +112,7 @@ def test_async_evaluator_thread_safe_early_stopping():
         hidden_nodes=16,
         TIME_INFO_DIM=2,
         ensemble_number=2,
-        TRADING_INFO_DIM=4,
+        TRADING_INFO_DIM=5,
     )
 
     trainer = MagicMock()

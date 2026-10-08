@@ -39,16 +39,18 @@ from env.env_class.futures_util import (
     map_position_leverage_to_action,
 )
 from analysis.calculate_metric.calculate_metric import (
-    calculate_required_money,
     calculate_single_holsing_max_draw_down,
 )
 
 TRADING_INFO_KEYS = (
     "position_exposure",
     "single_holding_return_rate",
-    "single_holding_max_drawdown",
+    "peak_return_rate",
+    "instant_profit_retracement",
     "current_holding_duration_norm",
 )
+TRADING_INFO_DIM = len(TRADING_INFO_KEYS)
+TRADING_INFO_DURATION_INDEX = TRADING_INFO_KEYS.index("current_holding_duration_norm")
 
 # 已从 step/reset 返回 info 中移除、仅供按需显式查询的字段（见 get_info_field）。
 INFO_DIAGNOSTIC_FIELDS = (
@@ -61,6 +63,7 @@ INFO_DIAGNOSTIC_FIELDS = (
     "limit_reward",
     "drawdown_penalty",
     "instant_profit_retracement",
+    "peak_return_rate",
 )
 
 
@@ -240,14 +243,13 @@ class Base_Env(gym.Env):
             self.current_holding_duration = 1
 
 
-    def _compute_step_drawdown_penalty(self) -> float:
-        if not self.enable_drawdown_reward_shaping or self.position == 0:
+    def _update_holding_metrics(self) -> None:
+        if self.position == 0 or float(self.current_holding_opening_price) <= 0.0:
+            self.single_holding_return_rate = 0.0
+            self.episode_peak_return_rate = 0.0
             self.instant_profit_retracement = 0.0
-            return 0.0
+            return
         opening_price = float(self.current_holding_opening_price)
-        if opening_price <= 0.0:
-            self.instant_profit_retracement = 0.0
-            return 0.0
         markprice = float(self.current_markprice)
         pos = float(self.position)
         if pos > 0:
@@ -257,18 +259,26 @@ class Base_Env(gym.Env):
             holding_return = (opening_price - markprice) / opening_price
             self.episode_peak_price = min(float(self.episode_peak_price), markprice) if self.episode_peak_price > 0.0 else markprice
 
-        self.episode_peak_return_rate = max(float(self.episode_peak_return_rate), holding_return)
+        self.single_holding_return_rate = float(holding_return)
+        self.episode_peak_return_rate = float(np.clip(max(float(self.episode_peak_return_rate), holding_return), 0.0, 1.0))
         if self.episode_peak_return_rate < self.drawdown_profit_min:
             self.instant_profit_retracement = 0.0
+        else:
+            retracement = (self.episode_peak_return_rate - holding_return) / max(self.episode_peak_return_rate, 1e-12)
+            self.instant_profit_retracement = float(np.clip(retracement, 0.0, 1.0))
+
+    def _compute_step_drawdown_penalty(self) -> float:
+        self._update_holding_metrics()
+        if not self.enable_drawdown_reward_shaping or self.position == 0:
+            return 0.0
+        if self.episode_peak_return_rate < self.drawdown_profit_min:
+            return 0.0
+        if self.instant_profit_retracement <= self.drawdown_allow_ratio:
             return 0.0
 
-        retracement = (self.episode_peak_return_rate - holding_return) / max(self.episode_peak_return_rate, 1e-12)
-        self.instant_profit_retracement = float(np.clip(retracement, 0.0, 1.0))
-
-        if retracement <= self.drawdown_allow_ratio:
-            return 0.0
-
-        excess = retracement - self.drawdown_allow_ratio
+        excess = self.instant_profit_retracement - self.drawdown_allow_ratio
+        pos = float(self.position)
+        markprice = float(self.current_markprice)
         notional = abs(pos) * markprice
         penalty = float(self.drawdown_penalty_weight * (excess ** 2) * notional)
         return penalty
@@ -296,12 +306,15 @@ class Base_Env(gym.Env):
             return self._zero_trading_info()
         duration_norm = min(float(self.current_holding_duration) / float(self.holding_duration_norm_steps), 1.0)
         if self.allow_reverse_position and old_position * self.position < 0:
-            return np.array([position_exposure, 0.0, 0.0, duration_norm], dtype=np.float32)
+            return np.array([position_exposure, 0.0, 0.0, 0.0, duration_norm], dtype=np.float32)
+        self._update_holding_metrics()
+        peak_return_clipped = float(np.clip(self.episode_peak_return_rate, 0.0, 1.0))
         return np.array(
             [
                 position_exposure,
                 float(self.single_holding_return_rate),
-                float(self.single_holding_max_drawdown),
+                peak_return_clipped,
+                float(self.instant_profit_retracement),
                 duration_norm,
             ],
             dtype=np.float32,
@@ -401,6 +414,8 @@ class Base_Env(gym.Env):
             return self.last_drawdown_penalty
         if field == "instant_profit_retracement":
             return self.instant_profit_retracement
+        if field == "peak_return_rate":
+            return float(np.clip(self.episode_peak_return_rate, 0.0, 1.0))
         raise ValueError(
             "unknown info field {!r}; supported fields: {}".format(
                 field, ", ".join(INFO_DIAGNOSTIC_FIELDS)
@@ -785,16 +800,7 @@ class Base_Env(gym.Env):
             avaiable_action_mask = np.zeros(self.action_space.n)
             avaiable_action_mask[avaiable_actions] = 1
             state = self.state_array[self.day]
-            require_money = calculate_required_money(
-                np.array(self.initial_margin_history),
-                np.array(self.maintain_marigine_history),
-                np.array(self.new_position_required_money_history),
-                np.array(self.unrealized_pnl_history),
-                np.array(self.wallet_balance_history),
-            )
-            self.single_holding_return_rate = self.single_holding_return / (
-                require_money + 1e-12
-            )
+            self._update_holding_metrics()
             self._update_single_holding_max_drawdown()
             self._clear_position_cost()
             self.last_limit_reward = 0.0
@@ -841,16 +847,7 @@ class Base_Env(gym.Env):
                 avaiable_action_mask = np.zeros(self.action_space.n)
                 avaiable_action_mask[avaiable_actions] = 1
 
-                require_money = calculate_required_money(
-                    np.array(self.initial_margin_history),
-                    np.array(self.maintain_marigine_history),
-                    np.array(self.new_position_required_money_history),
-                    np.array(self.unrealized_pnl_history),
-                    np.array(self.wallet_balance_history),
-                )
-                self.single_holding_return_rate = self.single_holding_return / (
-                    require_money + 1e-12
-                )
+                self._update_holding_metrics()
                 self._update_single_holding_max_drawdown()
                 self.last_limit_reward = 0.0
                 self.last_drawdown_penalty = 0.0
@@ -946,16 +943,7 @@ class Base_Env(gym.Env):
                 avaiable_action_mask = np.zeros(self.action_space.n)
                 avaiable_action_mask[avaiable_actions] = 1
 
-                require_money = calculate_required_money(
-                    np.array(self.initial_margin_history),
-                    np.array(self.maintain_marigine_history),
-                    np.array(self.new_position_required_money_history),
-                    np.array(self.unrealized_pnl_history),
-                    np.array(self.wallet_balance_history),
-                )
-                self.single_holding_return_rate = self.single_holding_return / (
-                    require_money + 1e-12
-                )
+                self._update_holding_metrics()
                 self._update_single_holding_max_drawdown()
                 self._clear_position_cost()
                 self.last_limit_reward = 0.0
@@ -1041,16 +1029,7 @@ class Base_Env(gym.Env):
                 reward -= drawdown_penalty
                 self.last_drawdown_penalty = drawdown_penalty
 
-                require_money = calculate_required_money(
-                    np.array(self.initial_margin_history),
-                    np.array(self.maintain_marigine_history),
-                    np.array(self.new_position_required_money_history),
-                    np.array(self.unrealized_pnl_history),
-                    np.array(self.wallet_balance_history),
-                )
-                self.single_holding_return_rate = self.single_holding_return / (
-                    require_money + 1e-12
-                )
+                self._update_holding_metrics()
                 self._update_single_holding_max_drawdown()
                 if self.position == 0:
                     self.current_holding_duration = 0
@@ -1087,6 +1066,9 @@ class Base_Env(gym.Env):
                         )
                     ]
                     self.new_position_required_money_history = [0]
+                    self.episode_peak_return_rate = 0.0
+                    self.episode_peak_price = 0.0
+                    self.instant_profit_retracement = 0.0
 
                 return (
                     state,

@@ -17,7 +17,7 @@ def _make_dummy_transition(step_idx: int, grid_id: int, reward: float = 1.0, don
     info = {
         "previous_action": 0,
         "regime_grid_id": grid_id,
-        "trading_info": np.array([1.0, 0.0, 0.0, 0.1], dtype=np.float32),
+        "trading_info": np.array([1.0, 0.0, 0.0, 0.0, 0.1], dtype=np.float32),
         "avaliable_action": np.array([1, 1, 1], dtype=np.int64),
         "funding_count_down_hour": 0.0,
         "funding_count_down_minute": 0.0,
@@ -289,11 +289,52 @@ def test_regime_stratified_buffer_fifo_eviction_and_tensor_shapes():
     assert infos["avaliable_action"].shape == (9, 3)
     assert infos["funding_count_down_hour"].shape == (9,)
     assert infos["funding_count_down_minute"].shape == (9,)
-    assert infos["trading_info"].shape == (9, 4)
+    assert infos["trading_info"].shape == (9, 5)
     assert infos["q_value"].shape == (9, 3)
 
     assert next_infos["previous_action"].shape == (9,)
     assert next_infos["avaliable_action"].shape == (9, 3)
     assert next_infos["funding_count_down_hour"].shape == (9,)
     assert next_infos["funding_count_down_minute"].shape == (9,)
-    assert next_infos["trading_info"].shape == (9, 4)
+    assert next_infos["trading_info"].shape == (9, 5)
+
+
+def test_semantic_transition_key_duration_index_and_bucket_resolution():
+    from RL.util.regime_stratified_replay_buffer import build_semantic_transition_key
+    from env.env_class.base_env import TRADING_INFO_DURATION_INDEX
+
+    state = np.array([0.1, 0.2], dtype=np.float32)
+    action = 1
+
+    # Base info with duration = 1 step (bucket 0)
+    def _create_info(duration_norm: float, peak_return: float = 0.05, retracement: float = 0.1):
+        ti = np.zeros(5, dtype=np.float32)
+        ti[0] = 1.0  # pos
+        ti[1] = 0.02  # return
+        ti[2] = peak_return
+        ti[3] = retracement
+        ti[TRADING_INFO_DURATION_INDEX] = duration_norm
+        return {
+            "previous_action": 0,
+            "regime_grid_id": 0,
+            "trading_info": ti,
+        }
+
+    # Duration = 1 step / 180 (<= 2 steps -> bucket 0)
+    key_b0 = build_semantic_transition_key(state, action, _create_info(1.0 / 180.0))
+    # Duration = 10 steps / 180 (<= 12 steps -> bucket 1)
+    key_b1 = build_semantic_transition_key(state, action, _create_info(10.0 / 180.0))
+    # Duration = 30 steps / 180 (<= 60 steps -> bucket 2)
+    key_b2 = build_semantic_transition_key(state, action, _create_info(30.0 / 180.0))
+    # Duration = 100 steps / 180 (> 60 steps -> bucket 3)
+    key_b3 = build_semantic_transition_key(state, action, _create_info(100.0 / 180.0))
+
+    assert key_b0 != key_b1
+    assert key_b1 != key_b2
+    assert key_b2 != key_b3
+
+    # Changing peak return (index 2) or retracement (index 3) should not alter duration bucket calculation
+    key_b0_alt_peak = build_semantic_transition_key(
+        state, action, _create_info(1.0 / 180.0, peak_return=0.50, retracement=0.80)
+    )
+    assert key_b0 == key_b0_alt_peak

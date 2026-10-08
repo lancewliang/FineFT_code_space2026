@@ -26,6 +26,7 @@ FINEFT_ROOT = REPO_ROOT / "FineFT"
 if str(FINEFT_ROOT) not in sys.path:
     sys.path.insert(0, str(FINEFT_ROOT))
 
+from env.env_class.base_env import TRADING_INFO_DIM
 from env.env_initiate.base_initiate import initiate_base_env
 from model.low_level import Qnet, ensemble_Qnet
 from common import ArtifactNames
@@ -425,7 +426,7 @@ def run_contract_static_scan(
             t = torch.tensor(np.stack([h_down[start_idx:end_idx], m_down[start_idx:end_idx]], axis=1), dtype=torch.float32, device=device)
             pa = torch.zeros((b, 1), dtype=torch.float32, device=device)
             aa = torch.ones((b, n_actions), dtype=torch.float32, device=device)
-            ti = torch.zeros((b, 4), dtype=torch.float32, device=device)
+            ti = torch.zeros((b, TRADING_INFO_DIM), dtype=torch.float32, device=device)
 
             q_vals, latents = forward_ensemble_with_latents(ensemble, s, t, pa, aa, ti)
             metrics = compute_step_ood_metrics(q_vals, latents, baseline)

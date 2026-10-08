@@ -73,7 +73,7 @@ def test_reset_exposes_zero_cost_for_flat_position_without_changing_trading_info
     assert env.current_holding_average_price == 0.0
     assert cost_info["current_holding_opening_price"] == 0.0
     assert cost_info["current_holding_average_price"] == 0.0
-    assert info["trading_info"].shape == (4,)
+    assert info["trading_info"].shape == (5,)
 
 
 def test_reset_uses_first_mark_price_for_nonzero_initial_position():

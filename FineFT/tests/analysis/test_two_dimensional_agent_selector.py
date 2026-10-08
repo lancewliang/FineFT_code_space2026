@@ -391,7 +391,7 @@ def test_assemble_and_save_ensemble_includes_flat_empty_model(
         torch.randn(batch_size, time_info_dim),
         torch.zeros(batch_size, 1),
         torch.ones(batch_size, n_actions),
-        torch.randn(batch_size, 4),
+        torch.randn(batch_size, 5),
     )
     assert q_values[:, 1].argmax(dim=1).tolist() == [n_actions // 2] * batch_size
 

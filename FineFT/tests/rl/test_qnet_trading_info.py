@@ -18,12 +18,12 @@ def test_qnet_forward_with_default_trading_info():
     time_info_dim = 2
 
     model = Qnet(n_states, n_actions, hidden_nodes, time_info_dim)
-    assert model.fc_trading.in_features == 4
+    assert model.fc_trading.in_features == 5
     state = torch.randn(batch_size, n_states)
     time_tensor = torch.randn(batch_size, time_info_dim)
     previous_action = torch.zeros(batch_size, 1)
     avaliable_action = torch.ones(batch_size, n_actions)
-    trading_info = torch.randn(batch_size, 4)
+    trading_info = torch.randn(batch_size, 5)
 
     out = model(state, time_tensor, previous_action, avaliable_action, trading_info)
     assert out.shape == (batch_size, n_actions)
@@ -40,12 +40,12 @@ def test_ensemble_qnet_forward_with_default_trading_info():
     model = ensemble_Qnet(
         n_states, n_actions, hidden_nodes, time_info_dim, ensemble_number
     )
-    assert model.qnet_list[0].fc_trading.in_features == 4
+    assert model.qnet_list[0].fc_trading.in_features == 5
     state = torch.randn(batch_size, n_states)
     time_tensor = torch.randn(batch_size, time_info_dim)
     previous_action = torch.zeros(batch_size, 1)
     avaliable_action = torch.ones(batch_size, n_actions)
-    trading_info = torch.randn(batch_size, 4)
+    trading_info = torch.randn(batch_size, 5)
 
     q_vals = model(state, time_tensor, previous_action, avaliable_action, trading_info)
     assert q_vals.shape == (batch_size, ensemble_number, n_actions)
@@ -70,4 +70,16 @@ def test_qnet_state_dict_contains_fc_trading():
     state_dict = model.state_dict()
     assert "fc_trading.weight" in state_dict
     assert "fc_trading.bias" in state_dict
-    assert state_dict["fc_trading.weight"].shape[1] == 4
+    assert state_dict["fc_trading.weight"].shape[1] == 5
+
+
+def test_qnet_mismatched_trading_info_dimension_fails():
+    model = Qnet(10, 5, 64, 2)
+    state = torch.randn(2, 10)
+    time_tensor = torch.randn(2, 2)
+    previous_action = torch.zeros(2, 1)
+    avaliable_action = torch.ones(2, 5)
+    legacy_4dim_trading_info = torch.randn(2, 4)
+
+    with pytest.raises(RuntimeError):
+        model(state, time_tensor, previous_action, avaliable_action, legacy_4dim_trading_info)

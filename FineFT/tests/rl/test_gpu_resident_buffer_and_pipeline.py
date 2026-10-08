@@ -24,7 +24,7 @@ def _make_sample_transition(step_idx: int, grid_id: int, reward: float = 1.0) ->
     info = {
         "previous_action": 0,
         "regime_grid_id": grid_id,
-        "trading_info": np.array([1.0, 0.0, 0.0, 0.1], dtype=np.float32),
+        "trading_info": np.array([1.0, 0.0, 0.0, 0.0, 0.1], dtype=np.float32),
         "avaliable_action": np.array([1, 1, 1], dtype=np.int64),
         "funding_count_down_hour": 0.0,
         "funding_count_down_minute": 0.0,
@@ -149,7 +149,7 @@ def test_end_to_end_parallel_diverse_pipeline_integration(tmp_path, monkeypatch)
             info = {
                 "previous_action": 0,
                 "regime_grid_id": 8,  # Phase 0 active grid
-                "trading_info": np.zeros(4, dtype=np.float32),
+                "trading_info": np.zeros(5, dtype=np.float32),
                 "avaliable_action": np.array([1, 1, 1], dtype=np.int64),
                 "funding_count_down_hour": 0.0,
                 "funding_count_down_minute": 0.0,

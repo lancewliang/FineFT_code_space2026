@@ -146,7 +146,7 @@ def _make_info(current_action=1, markprice=100.0, unrealized_pnl=0.0):
         "avaiable_action_list": [0, 1, 2],
         "avaliable_action": np.array([1, 1, 1], dtype=np.int32),
         "previous_action": current_action,
-        "trading_info": np.zeros(4, dtype=np.float32),
+        "trading_info": np.zeros(5, dtype=np.float32),
         "funding_count_down_hour": 0,
         "funding_count_down_minute": 0,
         "current_markprice": markprice,

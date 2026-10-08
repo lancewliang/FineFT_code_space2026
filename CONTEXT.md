@@ -542,8 +542,16 @@ _Avoid_: 惩罚权重、换手率因子、penalty lambda
 在低层 Agent 单步环境奖励中针对持仓浮盈大幅回吐注入的路径依赖型二次惩罚项，打破折扣累积回报对利润路径形态的无感性，促使智能体在持仓冲顶回落时自发选择保盈平仓。
 _Avoid_: 动态止盈奖励、回撤惩罚（未区分浮盈回吐与资产回撤时）、移动止损塑形
 
+**增广马尔可夫状态 (Augmented Markov State)**:
+将无记忆前馈策略在 POMDP 环境中对历史价格与浮盈路径的依赖，通过在当前状态输入端注入一阶确定性累加标量（如峰值浮盈率与即时浮盈回吐率）转换为标准一阶马尔可夫决策过程的状态表征方法。
+_Avoid_: 历史路径特征、带记忆特征、时序拼接特征
+
+**峰值浮盈率 (Peak Return Rate / peak_return_rate)**:
+当前持仓存续期内达到的历史最高标的标记价格变动收益率 $R_{\text{max}} = \text{clip}(\max(0.0, \max_{\tau \le t} R_\tau), 0.0, 1.0)$，作为一阶累加标量填入 `trading_info[2]`，与即时浮盈回吐率共同构成高水位增广马尔可夫状态。
+_Avoid_: 历史最大浮盈、历史最高点、最高浮动盈亏、peak_pnl
+
 **即时浮盈回吐率 (Instant Profit Retracement Ratio)**:
-当前持仓收益率相对该笔持仓历史最高浮盈的回吐深度比例 $(R_{\text{max}} - R_t) / R_{\text{max}}$，替代原有的全账户资产回撤填入 `trading_info[2]` 作为马尔可夫增广状态输入。
+当前持仓收益率相对该笔持仓历史最高浮盈的回吐深度比例 $(R_{\text{max}} - R_t) / R_{\text{max}}$，死区截断在 $\theta_{\text{profit\_min}}$ 且硬饱和截断至 $[0.0, 1.0]$，填入 `trading_info[3]` 作为马尔可夫增广状态输入。
 _Avoid_: 账户回撤率、单笔持仓最大回撤、跌幅比例
 
 **保盈平仓豁免 (Take-Profit Penalty Exemption)**:
@@ -865,7 +873,7 @@ _Avoid_: mark price、保证金、账户累计成本
 _Avoid_: 全局 episode 时间、自然时间持仓时长、订单批次年龄
 
 **current_holding_duration_norm**:
-`trading_info` 中表示当前持仓时长的归一化字段，取值为 `min(current_holding_duration / holding_duration_norm_steps, 1.0)`。
+`trading_info` 中表示当前持仓时长的归一化字段，取值为 `min(current_holding_duration / holding_duration_norm_steps, 1.0)`，位于五维 `trading_info[4]`。
 _Avoid_: current_holding_duration、holding_time、holding_length
 
 **持仓时长归一化窗口 (Holding Duration Normalization Window)**:

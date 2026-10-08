@@ -99,7 +99,7 @@ def test_df_rollout_worker_runner_run_task_atomic(monkeypatch):
                 "avaiable_action_list": [0, 1, 2],
                 "funding_count_down_hour": 0,
                 "funding_count_down_minute": 0,
-                "trading_info": np.zeros(4, dtype=np.float32),
+                "trading_info": np.zeros(5, dtype=np.float32),
                 "q_value": [1.0, 0.0, 0.0],
             }
 
@@ -116,7 +116,7 @@ def test_df_rollout_worker_runner_run_task_atomic(monkeypatch):
                     "avaiable_action_list": [0, 1, 2],
                     "funding_count_down_hour": 0,
                     "funding_count_down_minute": 0,
-                    "trading_info": np.zeros(4, dtype=np.float32),
+                    "trading_info": np.zeros(5, dtype=np.float32),
                     "q_value": [1.0, 0.0, 0.0],
                 },
             )
@@ -221,7 +221,7 @@ def test_run_epoch_exploration_task_pool_dispatch_and_collection(monkeypatch):
                             {
                                 "previous_action": 0,
                                 "regime_grid_id": 0,
-                                "trading_info": np.zeros(4, dtype=np.float32),
+                                "trading_info": np.zeros(5, dtype=np.float32),
                                 "avaliable_action": np.array([1, 1, 1], dtype=np.int64),
                                 "funding_count_down_hour": 0.0,
                                 "funding_count_down_minute": 0.0,
@@ -233,7 +233,7 @@ def test_run_epoch_exploration_task_pool_dispatch_and_collection(monkeypatch):
                             {
                                 "previous_action": 0,
                                 "regime_grid_id": 0,
-                                "trading_info": np.zeros(4, dtype=np.float32),
+                                "trading_info": np.zeros(5, dtype=np.float32),
                                 "avaliable_action": np.array([1, 1, 1], dtype=np.int64),
                                 "funding_count_down_hour": 0.0,
                                 "funding_count_down_minute": 0.0,

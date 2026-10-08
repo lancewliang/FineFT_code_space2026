@@ -15,7 +15,7 @@ def _make_dummy_transition(step_idx: int, grid_id: int):
     info = {
         "previous_action": 0,
         "regime_grid_id": grid_id,
-        "trading_info": np.array([1.0, 0.0, 0.0, 0.1], dtype=np.float32),
+        "trading_info": np.array([1.0, 0.0, 0.0, 0.0, 0.1], dtype=np.float32),
         "avaliable_action": np.array([1, 1, 1], dtype=np.int64),
         "funding_count_down_hour": 0.0,
         "funding_count_down_minute": 0.0,
@@ -249,7 +249,7 @@ def test_run_parallel_diverse_training_executes_training_phase_after_buffer_snap
         info = {
             "previous_action": 0,
             "regime_grid_id": g,
-            "trading_info": np.zeros(4, dtype=np.float32),
+            "trading_info": np.zeros(5, dtype=np.float32),
             "avaliable_action": np.array([1, 1, 1], dtype=np.int64),
             "funding_count_down_hour": 0.0,
             "funding_count_down_minute": 0.0,

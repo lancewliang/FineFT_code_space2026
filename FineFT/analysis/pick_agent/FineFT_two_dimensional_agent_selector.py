@@ -1648,7 +1648,7 @@ def assemble_and_save_ensemble(
     n_actions: int,
     hidden_nodes: int,
     time_info_dim: int,
-    trading_info_dim: int = 4,
+    trading_info_dim: int = 5,
 ) -> Path:
     """Assemble selected agents and flat placeholders in logical slot order."""
 
@@ -1782,7 +1782,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--position_choices", type=int, default=5)
     parser.add_argument("--hidden_nodes", type=int, default=128)
     parser.add_argument("--time_info_dim", type=int, default=2)
-    parser.add_argument("--trading_info_dim", type=int, default=4)
+    parser.add_argument("--trading_info_dim", type=int, default=5)
     parser.add_argument(
         "--missing_joint_policy",
         choices=["empty_model", "slope_marginal_best"],

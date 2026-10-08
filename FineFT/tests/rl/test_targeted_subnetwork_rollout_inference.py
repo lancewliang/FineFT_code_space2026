@@ -55,7 +55,7 @@ def test_targeted_subnetwork_vs_ensemble_equivalence():
         hidden_nodes=hidden_nodes,
         TIME_INFO_DIM=time_info_dim,
         ensemble_number=ensemble_number,
-        TRADING_INFO_DIM=4,
+        TRADING_INFO_DIM=5,
     )
     model.eval()
 
@@ -79,7 +79,7 @@ def test_targeted_subnetwork_vs_ensemble_equivalence():
 
         funding_count_down_hour = float(np.random.randint(0, 8))
         funding_count_down_minute = float(np.random.randint(0, 60))
-        trading_info = np.random.randn(4).astype(np.float32)
+        trading_info = np.random.randn(5).astype(np.float32)
 
         info = {
             "previous_action": previous_action,
@@ -146,7 +146,7 @@ def test_irrelevant_subnets_not_invoked_during_act():
         "avaiable_action_list": list(range(cfg["action_count"])),
         "funding_count_down_hour": 0.0,
         "funding_count_down_minute": 0.0,
-        "trading_info": np.zeros(4, dtype=np.float32),
+        "trading_info": np.zeros(5, dtype=np.float32),
     }
 
     target_context = 2
@@ -187,7 +187,7 @@ def test_action_persistence_preserves_non_flat_action():
                 "avaiable_action_list": [0, 1, 2, 3, 4],
                 "funding_count_down_hour": 0.0,
                 "funding_count_down_minute": 0.0,
-                "trading_info": np.zeros(4, dtype=np.float32),
+                "trading_info": np.zeros(5, dtype=np.float32),
                 "regime_grid_id": 0,
             }
 
@@ -204,7 +204,7 @@ def test_action_persistence_preserves_non_flat_action():
                     "avaiable_action_list": [0, 1, 2, 3, 4],
                     "funding_count_down_hour": 0.0,
                     "funding_count_down_minute": 0.0,
-                    "trading_info": np.zeros(4, dtype=np.float32),
+                    "trading_info": np.zeros(5, dtype=np.float32),
                     "regime_grid_id": 0,
                 },
             )
