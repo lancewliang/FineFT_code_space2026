@@ -2041,13 +2041,13 @@ def test_commodity_full_process_shell_decoupled_dual_stream_blacklists():
     # VAE Slope 10min includes macro drift features and filters volatility
     assert "log_price_slope_96" in sections["VAE_SLOPE_10MIN"]
     assert "realized_volatility_192" in sections["VAE_SLOPE_10MIN"]
-    assert "prev_2_week_open_interest_change_quantile_rank" in sections["VAE_SLOPE_10MIN"]
+    assert "prev_5_day_trade_imbalance" in sections["VAE_SLOPE_10MIN"]
     assert "atr_pct_6" in sections["VAE_SLOPE_10MIN"]
 
     # VAE Vol 10min includes macro drift features and filters trend slopes
     assert "log_price_slope_96" in sections["VAE_VOL_10MIN"]
     assert "realized_volatility_192" in sections["VAE_VOL_10MIN"]
-    assert "prev_2_week_open_interest_change_quantile_rank" in sections["VAE_VOL_10MIN"]
+    assert "prev_5_day_trade_imbalance" in sections["VAE_VOL_10MIN"]
     assert "wap_1_trend_24" in sections["VAE_VOL_10MIN"]
 
     # RL 10min includes global hygiene but liberates all macro drift features
@@ -2104,8 +2104,8 @@ def test_commodity_feature_blacklists_single_file_and_python_resolution():
 
     # Stream resolution for 10min
     vae_slope_10min, vae_vol_10min, rl_10min = get_commodity_stream_blacklists("10min")
-    assert len(vae_slope_10min) == 243
-    assert len(vae_vol_10min) == 317
+    assert len(vae_slope_10min) == 213
+    assert len(vae_vol_10min) == 288
     assert len(rl_10min) == 88
 
     # Global hygiene must be subset of slope and volatility blacklists, and equal to rl
@@ -2118,7 +2118,7 @@ def test_commodity_feature_blacklists_single_file_and_python_resolution():
         "realized_volatility_192",
         "ema_slope_192",
         "log_price_slope_96",
-        "prev_5_day_trade_imbalance_quantile_rank",
+        "prev_5_day_trade_imbalance",
         "cm_current_main_spread_rolling_zscore_192",
     ):
         assert macro_feat in vae_slope_10min

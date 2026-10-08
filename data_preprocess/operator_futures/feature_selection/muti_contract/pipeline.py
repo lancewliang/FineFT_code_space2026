@@ -321,13 +321,33 @@ def _evaluate_stream_branch(
         if stream_dropped:
             filter_drops["Stream Blacklist Dropped"] = stream_dropped
 
+    has_macro = any(classify_feature_scale(f) == "macro" for f in pool)
+
+    if has_macro and profile.name in STREAM_TIER_QUOTAS and STREAM_TIER_QUOTAS[profile.name]["micro"].max_quota == 0:
+        micro_drops = [f for f in pool if classify_feature_scale(f) == "micro"]
+        if micro_drops:
+            pool = [f for f in pool if classify_feature_scale(f) != "micro"]
+            stream_mandatory = [f for f in stream_mandatory if classify_feature_scale(f) != "micro"]
+            if "Stream Blacklist Dropped" in filter_drops:
+                filter_drops["Stream Blacklist Dropped"].extend(micro_drops)
+            else:
+                filter_drops["Stream Blacklist Dropped"] = micro_drops
+
     # (a) Distribution Drift Gating
     psi_dropped: list[str] = []
     psi_surviving: list[str] = []
     for f in pool:
+        if has_macro:
+            f_tier = classify_feature_scale(f)
+            tier_cfg = SCALE_TIER_CONFIGS.get(f_tier)
+            eff_max_mean_psi = max(profile.max_mean_psi, tier_cfg.max_mean_psi if tier_cfg else 0.0)
+            eff_max_pair_psi = max(profile.max_pair_psi, tier_cfg.max_pair_psi if tier_cfg else 0.0)
+        else:
+            eff_max_mean_psi = profile.max_mean_psi
+            eff_max_pair_psi = profile.max_pair_psi
         mean_psi = mean_psi_map.get(f, 0.0)
         max_pair_psi = max_pair_psi_map.get(f, 0.0)
-        if mean_psi <= profile.max_mean_psi and max_pair_psi <= profile.max_pair_psi:
+        if mean_psi <= eff_max_mean_psi and max_pair_psi <= eff_max_pair_psi:
             psi_surviving.append(f)
         else:
             psi_dropped.append(f)
@@ -361,7 +381,13 @@ def _evaluate_stream_branch(
     hard_dropped: list[str] = []
     hard_surviving: list[str] = []
     for f in pool:
-        if abs(target_ic_mean_map.get(f, 0.0)) >= profile.min_abs_ic:
+        if has_macro:
+            f_tier = classify_feature_scale(f)
+            tier_cfg = SCALE_TIER_CONFIGS.get(f_tier)
+            eff_min_abs_ic = tier_cfg.min_abs_ic if (tier_cfg and profile.min_abs_ic > 0.0) else profile.min_abs_ic
+        else:
+            eff_min_abs_ic = profile.min_abs_ic
+        if abs(target_ic_mean_map.get(f, 0.0)) >= eff_min_abs_ic:
             hard_surviving.append(f)
         else:
             hard_dropped.append(f)
@@ -372,7 +398,13 @@ def _evaluate_stream_branch(
     sc_dropped: list[str] = []
     sc_surviving: list[str] = []
     for f in pool:
-        if effective_sc_map.get(f, 1.0) >= profile.min_sign_consistency:
+        if has_macro:
+            f_tier = classify_feature_scale(f)
+            tier_cfg = SCALE_TIER_CONFIGS.get(f_tier)
+            eff_min_sc = tier_cfg.min_sign_consistency if (tier_cfg and profile.min_sign_consistency > 0.0) else profile.min_sign_consistency
+        else:
+            eff_min_sc = profile.min_sign_consistency
+        if effective_sc_map.get(f, 1.0) >= eff_min_sc:
             sc_surviving.append(f)
         else:
             sc_dropped.append(f)
@@ -383,10 +415,16 @@ def _evaluate_stream_branch(
     stab_dropped: list[str] = []
     stab_surviving: list[str] = []
     for f in pool:
+        if has_macro:
+            f_tier = classify_feature_scale(f)
+            tier_cfg = SCALE_TIER_CONFIGS.get(f_tier)
+            eff_min_ir = tier_cfg.min_rank_ic_ir if (tier_cfg and profile.min_rank_ic_ir > 0.0) else profile.min_rank_ic_ir
+        else:
+            eff_min_ir = profile.min_rank_ic_ir
         mean_r = abs(target_ic_mean_map.get(f, 0.0))
         std_r = target_ic_std_map.get(f, 0.0)
         ir = mean_r / (std_r + 1e-6)
-        if ir >= profile.min_rank_ic_ir:
+        if ir >= eff_min_ir:
             stab_surviving.append(f)
         else:
             stab_dropped.append(f)
@@ -500,10 +538,7 @@ def _evaluate_stream_branch(
     if corr_np is not None:
         np.fill_diagonal(corr_np, 1.0)
 
-    has_meso_or_macro = any(
-        classify_feature_scale(f) in ("meso", "macro") for f in pool
-    )
-    if profile.name in STREAM_TIER_QUOTAS and has_meso_or_macro:
+    if profile.name in STREAM_TIER_QUOTAS and has_macro:
         tier_quotas_dict = STREAM_TIER_QUOTAS[profile.name]
         canonical_max = (
             DEFAULT_RL_PROFILE.max_clusters
@@ -522,6 +557,8 @@ def _evaluate_stream_branch(
 
         selected_candidates: list[str] = []
         all_cluster_dropped: list[str] = []
+        tier_target_max_map: dict[str, int] = {}
+        selected_by_tier: dict[str, list[str]] = {t: [] for t in ("micro", "meso", "macro")}
 
         for tier_name in ("micro", "meso", "macro"):
             t_quota = tier_quotas_dict[tier_name]
@@ -539,6 +576,7 @@ def _evaluate_stream_branch(
 
             target_max_t = max(eff_max - len(t_mandatory), 0)
             target_min_t = max(eff_min - len(t_mandatory), 0)
+            tier_target_max_map[tier_name] = target_max_t
 
             if target_max_t == 0:
                 all_cluster_dropped.extend(t_pool)
@@ -597,18 +635,22 @@ def _evaluate_stream_branch(
                 t_dropped.extend(vif_dropped)
 
             selected_candidates.extend(t_selected)
+            selected_by_tier[tier_name].extend(t_selected)
             all_cluster_dropped.extend(t_dropped)
 
         target_max_candidates = max(profile.max_clusters - len(stream_mandatory), 1)
         target_min_candidates = max(profile.min_clusters - len(stream_mandatory), 1)
         if len(selected_candidates) < target_min_candidates and len(pool) > len(selected_candidates):
-            remaining_pool = [f for f in pool if f not in set(selected_candidates)]
-            deficit = min(
-                target_max_candidates - len(selected_candidates),
-                target_min_candidates - len(selected_candidates),
-                len(remaining_pool),
-            )
-            selected_candidates.extend(remaining_pool[:deficit])
+            for f in pool:
+                if len(selected_candidates) >= min(target_min_candidates, target_max_candidates):
+                    break
+                if f in set(selected_candidates):
+                    continue
+                f_tier = classify_feature_scale(f)
+                max_t = tier_target_max_map.get(f_tier, 0)
+                if len(selected_by_tier[f_tier]) < max_t:
+                    selected_candidates.append(f)
+                    selected_by_tier[f_tier].append(f)
 
         all_cluster_dropped = [f for f in pool if f not in set(selected_candidates)]
         if all_cluster_dropped:
