@@ -11,6 +11,8 @@ from scipy.stats import ks_2samp
 from operator_futures.feature_selection.muti_contract.types import (
     DistributionAuditConfig,
     PipelineStepResult,
+    SCALE_TIER_CONFIGS,
+    classify_feature_scale,
 )
 
 logger = logging.getLogger(__name__)
@@ -255,15 +257,22 @@ def audit_distribution_drift(
             else:
                 forward_psi_dict[feat] = 0.0
 
-    passing = [
-        feat
-        for feat in feature_universe
-        if mean_psi_dict[feat] <= max_mean_psi
-        and max_pair_psi_dict[feat] <= max_pair_psi
-        and (
-            forward_outpost_frame is None
-            or forward_psi_dict[feat] <= forward_outpost_max_psi
+    def _feature_passes_drift(f_name: str, eff_base_mean: float, eff_base_pair: float) -> bool:
+        f_tier = classify_feature_scale(f_name)
+        tier_cfg = SCALE_TIER_CONFIGS.get(f_tier)
+        eff_mean = max(eff_base_mean, tier_cfg.max_mean_psi if tier_cfg else 0.0)
+        eff_pair = max(eff_base_pair, tier_cfg.max_pair_psi if tier_cfg else 0.0)
+        return (
+            mean_psi_dict[f_name] <= eff_mean
+            and max_pair_psi_dict[f_name] <= eff_pair
+            and (
+                forward_outpost_frame is None
+                or forward_psi_dict[f_name] <= forward_outpost_max_psi
+            )
         )
+
+    passing = [
+        feat for feat in feature_universe if _feature_passes_drift(feat, max_mean_psi, max_pair_psi)
     ]
 
     target_survivors = min(len(feature_universe), min_drift_survivors)
@@ -281,14 +290,7 @@ def audit_distribution_drift(
             RELAXED_MAX_MEAN_PSI,
         )
         passing_relaxed = [
-            feat
-            for feat in feature_universe
-            if mean_psi_dict[feat] <= RELAXED_MAX_MEAN_PSI
-            and max_pair_psi_dict[feat] <= max_pair_psi
-            and (
-                forward_outpost_frame is None
-                or forward_psi_dict[feat] <= forward_outpost_max_psi
-            )
+            feat for feat in feature_universe if _feature_passes_drift(feat, RELAXED_MAX_MEAN_PSI, max_pair_psi)
         ]
         if len(passing_relaxed) >= target_survivors:
             passing = passing_relaxed

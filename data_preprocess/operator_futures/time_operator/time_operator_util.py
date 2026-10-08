@@ -165,22 +165,23 @@ def compute_macro_trend_beta_and_purity(
     for w in windows:
         results[f"trend_beta_{w}"] = np.zeros(n, dtype=float)
         results[f"trend_to_noise_{w}"] = np.zeros(n, dtype=float)
-    if n < 2:
+    if n < min_periods or n < 2:
         return results
 
     s1 = np.concatenate(([0.0], np.cumsum(prices)))
     indices = np.arange(n, dtype=float)
     s2 = np.concatenate(([0.0], np.cumsum(indices * prices)))
-    abs_diffs = np.concatenate(([0.0], np.abs(np.diff(prices))))
-    s_diff = np.concatenate(([0.0], np.cumsum(abs_diffs)))
+    step_diffs = np.abs(np.diff(prices))
+    step_cum = np.concatenate(([0.0], np.cumsum(step_diffs)))
 
     for w in windows:
         betas = results[f"trend_beta_{w}"]
         ttns = results[f"trend_to_noise_{w}"]
 
-        # Expanding window: 1 <= t < min(n, w)
-        t_exp = np.arange(1, min(n, w))
-        if len(t_exp) > 0:
+        # Expanding window: min_periods <= t < min(n, w - 1)
+        t_exp_end = min(n, w - 1)
+        if t_exp_end > min_periods:
+            t_exp = np.arange(min_periods, t_exp_end)
             w_eff = t_exp + 1.0
             sum_p = s1[t_exp + 1]
             sum_kp = s2[t_exp + 1]
@@ -189,18 +190,16 @@ def compute_macro_trend_beta_and_purity(
             var_x = w_eff * (w_eff**2 - 1.0) / 12.0
             slope = cov_xy / np.maximum(var_x, 1e-12)
             base_price = prices[0]
-            betas[t_exp] = np.clip((slope * w) / (base_price + 1e-8), -10.0, 10.0)
+            betas[t_exp] = np.clip((slope * w_eff) / (base_price + 1e-8), -10.0, 10.0)
 
-            path_len = s_diff[t_exp + 1]
+            path_len = step_cum[t_exp]
             disp = np.abs(prices[t_exp] - base_price)
             ttns[t_exp] = np.clip(disp / (path_len + 1e-8), 0.0, 1.0)
 
-        # Rolling window: w <= t < n
-        if n > w:
-            t_roll = np.arange(w, n)
+        # Rolling window: w - 1 <= t < n
+        if n >= w:
+            t_roll = np.arange(w - 1, n)
             a = t_roll - w + 1
-            sum_p = s1[b := t_roll] - s1[a]
-            # fix sum_p indexing
             sum_p = s1[t_roll + 1] - s1[a]
             sum_kp = s2[t_roll + 1] - s2[a]
             sum_ip = sum_kp - a * sum_p
@@ -211,7 +210,7 @@ def compute_macro_trend_beta_and_purity(
             base_price = prices[a]
             betas[t_roll] = np.clip((slope * w) / (base_price + 1e-8), -10.0, 10.0)
 
-            path_len = s_diff[t_roll + 1] - s_diff[a]
+            path_len = step_cum[t_roll] - step_cum[a]
             disp = np.abs(prices[t_roll] - base_price)
             ttns[t_roll] = np.clip(disp / (path_len + 1e-8), 0.0, 1.0)
 
