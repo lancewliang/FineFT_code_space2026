@@ -66,6 +66,9 @@ class ActionDecisionReasons(IntEnum):
     HARD_STOP_LOSS = 5
     STOP_LOSS_COOLDOWN = 6
     CIRCUIT_BREAKER_SUSPENSION = 7
+    TREND_ENTRY_LOCK = 8
+    TRAILING_PROFIT_STOP = 9
+    TRAILING_STOP_COOLDOWN = 10
 
 
 def get_df_chunk_filename(index: int) -> str:

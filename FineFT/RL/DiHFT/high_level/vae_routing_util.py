@@ -188,6 +188,48 @@ parser.add_argument(
     default=72,
     help="steps to suspend trading on circuit breaker (-1 for permanent suspension)",
 )
+parser.add_argument(
+    "--enable_trend_entry_lock",
+    type=lambda x: str(x).lower() in ("yes", "true", "t", "1"),
+    default=True,
+    help="enforce directional trend action masking in bull and bear regimes",
+)
+parser.add_argument(
+    "--enable_trailing_stop",
+    type=lambda x: str(x).lower() in ("yes", "true", "t", "1"),
+    default=True,
+    help="enable execution-layer Tier 4 trailing profit stop engine",
+)
+parser.add_argument(
+    "--trailing_stop_activation_threshold",
+    type=float,
+    default=0.08,
+    help="unrealized return threshold on position notional to activate trailing stop",
+)
+parser.add_argument(
+    "--trailing_stop_retracement_ratio",
+    type=float,
+    default=0.25,
+    help="fraction of peak return surrendered before trailing stop triggers",
+)
+parser.add_argument(
+    "--trailing_stop_profit_floor",
+    type=float,
+    default=0.003,
+    help="minimum return required when trailing stop triggers",
+)
+parser.add_argument(
+    "--trailing_stop_cooldown_steps",
+    type=int,
+    default=24,
+    help="directional lockout cooldown steps after trailing stop trigger",
+)
+parser.add_argument(
+    "--trailing_stop_require_peak_breakout",
+    type=lambda x: str(x).lower() in ("yes", "true", "t", "1"),
+    default=True,
+    help="require price to break out past previous peak before allowing same-direction re-entry",
+)
 # low level network setting
 parser.add_argument(
     "--hidden_nodes",
@@ -779,6 +821,23 @@ class vae_risk_aware_routing:
     stop_loss_cooldown_steps: int = 12
     circuit_breaker_consecutive_stops: int = 2
     circuit_breaker_cooling_steps: int = 72
+    enable_trend_entry_lock: bool = False
+    enable_trailing_stop: bool = False
+    trailing_stop_activation_threshold: float = 0.08
+    trailing_stop_retracement_ratio: float = 0.25
+    trailing_stop_profit_floor: float = 0.003
+    trailing_stop_cooldown_steps: int = 24
+    trailing_stop_require_peak_breakout: bool = True
+    trailing_stop_active: bool = False
+    trailing_peak_return: float = 0.0
+    trailing_peak_markprice: float = 0.0
+    trailing_stop_remaining_steps: int = 0
+    trailing_stop_last_position: float = 0.0
+    trailing_stop_hurdle_price: float | None = None
+    trailing_stop_hurdle_slope: int | None = None
+    trailing_stop_count: int = 0
+    trailing_stop_cooldown_intercept_count: int = 0
+    trend_entry_lock_count: int = 0
     cooldown_remaining_steps: int = 0
     last_stopped_position: float = 0.0
     consecutive_stop_loss_count: int = 0
@@ -830,6 +889,19 @@ class vae_risk_aware_routing:
         self.circuit_breaker_cooling_steps = int(args.circuit_breaker_cooling_steps)
         if self.circuit_breaker_cooling_steps < -1:
             raise ValueError("circuit_breaker_cooling_steps must be -1 or non-negative")
+        self.enable_trend_entry_lock = bool(args.enable_trend_entry_lock)
+        self.enable_trailing_stop = bool(args.enable_trailing_stop)
+        self.trailing_stop_activation_threshold = float(args.trailing_stop_activation_threshold)
+        if self.trailing_stop_activation_threshold < 0:
+            raise ValueError("trailing_stop_activation_threshold must be non-negative")
+        self.trailing_stop_retracement_ratio = float(args.trailing_stop_retracement_ratio)
+        if not (0.0 <= self.trailing_stop_retracement_ratio <= 1.0):
+            raise ValueError("trailing_stop_retracement_ratio must be between 0.0 and 1.0")
+        self.trailing_stop_profit_floor = float(args.trailing_stop_profit_floor)
+        self.trailing_stop_cooldown_steps = int(args.trailing_stop_cooldown_steps)
+        if self.trailing_stop_cooldown_steps < 0:
+            raise ValueError("trailing_stop_cooldown_steps must be non-negative")
+        self.trailing_stop_require_peak_breakout = bool(args.trailing_stop_require_peak_breakout)
         self.hysteresis_exit_ratio = float(args.hysteresis_exit_ratio)
         self.gating_strategy = create_gating_strategy(
             args.gating_strategy,
@@ -951,6 +1023,16 @@ class vae_risk_aware_routing:
         self.hard_stop_loss_count = 0
         self.cooldown_intercept_count = 0
         self.circuit_breaker_suspension_count = 0
+        self.trailing_stop_active = False
+        self.trailing_peak_return = 0.0
+        self.trailing_peak_markprice = 0.0
+        self.trailing_stop_remaining_steps = 0
+        self.trailing_stop_last_position = 0.0
+        self.trailing_stop_hurdle_price = None
+        self.trailing_stop_hurdle_slope = None
+        self.trailing_stop_count = 0
+        self.trailing_stop_cooldown_intercept_count = 0
+        self.trend_entry_lock_count = 0
         self.previous_step_position = 0.0
         self.active_trade_stopped = False
 
@@ -1154,6 +1236,19 @@ class vae_risk_aware_routing:
         self.circuit_breaker_cooling_steps = int(args.circuit_breaker_cooling_steps)
         if self.circuit_breaker_cooling_steps < -1:
             raise ValueError("circuit_breaker_cooling_steps must be -1 or non-negative")
+        self.enable_trend_entry_lock = bool(args.enable_trend_entry_lock)
+        self.enable_trailing_stop = bool(args.enable_trailing_stop)
+        self.trailing_stop_activation_threshold = float(args.trailing_stop_activation_threshold)
+        if self.trailing_stop_activation_threshold < 0:
+            raise ValueError("trailing_stop_activation_threshold must be non-negative")
+        self.trailing_stop_retracement_ratio = float(args.trailing_stop_retracement_ratio)
+        if not (0.0 <= self.trailing_stop_retracement_ratio <= 1.0):
+            raise ValueError("trailing_stop_retracement_ratio must be between 0.0 and 1.0")
+        self.trailing_stop_profit_floor = float(args.trailing_stop_profit_floor)
+        self.trailing_stop_cooldown_steps = int(args.trailing_stop_cooldown_steps)
+        if self.trailing_stop_cooldown_steps < 0:
+            raise ValueError("trailing_stop_cooldown_steps must be non-negative")
+        self.trailing_stop_require_peak_breakout = bool(args.trailing_stop_require_peak_breakout)
         self.test_path = self._resolve_test_path(args)
         if self.save_artifacts and not os.path.exists(self.test_path):
             os.makedirs(self.test_path, exist_ok=True)
@@ -1289,6 +1384,9 @@ class vae_risk_aware_routing:
         # 0. Trade lifecycle tracking: detect trade exit and reset consecutive stop-out streak
         if self.previous_step_position == 0.0 and current_pos_float != 0.0:
             self.active_trade_stopped = False
+            self.trailing_stop_active = False
+            self.trailing_peak_return = 0.0
+            self.trailing_peak_markprice = float(current_markprice)
         elif (
             self.previous_step_position != 0.0
             and (current_pos_float == 0.0 or self.previous_step_position * current_pos_float < 0)
@@ -1296,6 +1394,9 @@ class vae_risk_aware_routing:
             if not self.active_trade_stopped:
                 self.consecutive_stop_loss_count = 0
             self.active_trade_stopped = False
+            self.trailing_stop_active = False
+            self.trailing_peak_return = 0.0
+            self.trailing_peak_markprice = float(current_markprice)
 
         # 1. Tier 3: Contract-Level Circuit Breaker Suspension
         if self.circuit_breaker_remaining_steps != 0:
@@ -1352,6 +1453,59 @@ class vae_risk_aware_routing:
             self.action = action
             self.previous_step_position = current_pos_float
             return action
+
+        # 2b. Tier 4: Position Return Rate Trailing Profit Stop Engine
+        if (
+            self.enable_trailing_stop
+            and current_pos_float != 0.0
+            and current_markprice > 0.0
+        ):
+            notional = abs(current_pos_float) * current_markprice
+            holding_return = current_unrealized_pnl / notional
+
+            if not self.trailing_stop_active:
+                if holding_return >= self.trailing_stop_activation_threshold:
+                    self.trailing_stop_active = True
+                    self.trailing_peak_return = holding_return
+                    self.trailing_peak_markprice = float(current_markprice)
+            else:
+                if holding_return > self.trailing_peak_return:
+                    self.trailing_peak_return = holding_return
+                    self.trailing_peak_markprice = float(current_markprice)
+
+                retrace_ratio = (
+                    (self.trailing_peak_return - holding_return)
+                    / max(self.trailing_peak_return, 1e-6)
+                )
+                if (
+                    retrace_ratio >= self.trailing_stop_retracement_ratio
+                    and holding_return >= self.trailing_stop_profit_floor
+                ):
+                    self.trailing_stop_count += 1
+                    self.trailing_stop_remaining_steps = self.trailing_stop_cooldown_steps
+                    self.trailing_stop_last_position = current_pos_float
+                    self.trailing_stop_hurdle_price = self.trailing_peak_markprice
+
+                    vol_w = self.calculate_axis_window_result("volatility")
+                    slp_w = self.calculate_axis_window_result("slope")
+                    dec_stop = self.gating_strategy.decide(
+                        vol_w, slp_w, current_position=current_pos_float
+                    )
+                    self.trailing_stop_hurdle_slope = dec_stop.slope_index
+
+                    self.trailing_stop_active = False
+                    self.trailing_peak_return = 0.0
+                    self.remaining_persist = 0
+
+                    action = self._defensive_action(info, current_pos_float, current_leverage)
+                    self.current_action = action
+                    self.macro_action_history.append(self.slot_count)
+                    self.action_decision_reason_history.append(
+                        ActionDecisionReasons.TRAILING_PROFIT_STOP
+                    )
+                    self.action = action
+                    self.previous_step_position = current_pos_float
+                    return action
 
         # 3. Existing high-level defenses
         if (
@@ -1413,6 +1567,80 @@ class vae_risk_aware_routing:
                     ActionDecisionReasons.STOP_LOSS_COOLDOWN
                 )
                 self.cooldown_intercept_count += 1
+                self.action = action
+                self.previous_step_position = current_pos_float
+                return action
+
+        # 5b. Tier 4: Trailing Stop Dual Spatiotemporal Guard Interception
+        if (
+            self.enable_trailing_stop
+            and self.trailing_stop_last_position != 0.0
+        ):
+            target_pos, _ = map_action_to_position_leverage(
+                candidate_action, self.leverage_choices, self.position_list
+            )
+            if target_pos * self.trailing_stop_last_position > 0:
+                if (
+                    self.trailing_stop_hurdle_slope is not None
+                    and slope_index != self.trailing_stop_hurdle_slope
+                ):
+                    self.trailing_stop_remaining_steps = 0
+                    self.trailing_stop_hurdle_price = None
+                    self.trailing_stop_hurdle_slope = None
+                    self.trailing_stop_last_position = 0.0
+                else:
+                    is_in_cooldown = (self.trailing_stop_remaining_steps > 0)
+                    price_not_broken = False
+                    if (
+                        self.trailing_stop_require_peak_breakout
+                        and self.trailing_stop_hurdle_price is not None
+                    ):
+                        if self.trailing_stop_last_position > 0:
+                            price_not_broken = (current_markprice < self.trailing_stop_hurdle_price)
+                        elif self.trailing_stop_last_position < 0:
+                            price_not_broken = (current_markprice > self.trailing_stop_hurdle_price)
+
+                    if is_in_cooldown or price_not_broken:
+                        if self.trailing_stop_remaining_steps > 0:
+                            self.trailing_stop_remaining_steps -= 1
+                        self.remaining_persist = 0
+                        action = self._defensive_action(info, current_pos_float, current_leverage)
+                        self.current_action = action
+                        self.action_decision_reason_history.append(
+                            ActionDecisionReasons.TRAILING_STOP_COOLDOWN
+                        )
+                        self.trailing_stop_cooldown_intercept_count += 1
+                        self.action = action
+                        self.previous_step_position = current_pos_float
+                        return action
+
+        if self.trailing_stop_remaining_steps > 0:
+            self.trailing_stop_remaining_steps -= 1
+
+        # 5c. Directional Trend Action Mask Interception
+        if self.enable_trend_entry_lock and slope_index in (0, 2):
+            target_pos, _ = map_action_to_position_leverage(
+                candidate_action, self.leverage_choices, self.position_list
+            )
+            if slope_index == 2 and target_pos < 0:
+                self.remaining_persist = 0
+                action = self._defensive_action(info, current_pos_float, current_leverage)
+                self.current_action = action
+                self.action_decision_reason_history.append(
+                    ActionDecisionReasons.TREND_ENTRY_LOCK
+                )
+                self.trend_entry_lock_count += 1
+                self.action = action
+                self.previous_step_position = current_pos_float
+                return action
+            elif slope_index == 0 and target_pos > 0:
+                self.remaining_persist = 0
+                action = self._defensive_action(info, current_pos_float, current_leverage)
+                self.current_action = action
+                self.action_decision_reason_history.append(
+                    ActionDecisionReasons.TREND_ENTRY_LOCK
+                )
+                self.trend_entry_lock_count += 1
                 self.action = action
                 self.previous_step_position = current_pos_float
                 return action

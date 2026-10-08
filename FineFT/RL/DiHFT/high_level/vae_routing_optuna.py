@@ -147,6 +147,48 @@ parser_all.add_argument(
     help="steps to suspend trading on circuit breaker (-1 for permanent suspension)",
 )
 parser_all.add_argument(
+    "--enable_trend_entry_lock",
+    type=lambda x: str(x).lower() in ("yes", "true", "t", "1"),
+    default=True,
+    help="enforce directional trend action masking in bull and bear regimes",
+)
+parser_all.add_argument(
+    "--enable_trailing_stop",
+    type=lambda x: str(x).lower() in ("yes", "true", "t", "1"),
+    default=True,
+    help="enable execution-layer Tier 4 trailing profit stop engine",
+)
+parser_all.add_argument(
+    "--trailing_stop_activation_threshold",
+    type=float,
+    default=0.08,
+    help="unrealized return threshold on position notional to activate trailing stop",
+)
+parser_all.add_argument(
+    "--trailing_stop_retracement_ratio",
+    type=float,
+    default=0.25,
+    help="fraction of peak return surrendered before trailing stop triggers",
+)
+parser_all.add_argument(
+    "--trailing_stop_profit_floor",
+    type=float,
+    default=0.003,
+    help="minimum return required when trailing stop triggers",
+)
+parser_all.add_argument(
+    "--trailing_stop_cooldown_steps",
+    type=int,
+    default=24,
+    help="directional lockout cooldown steps after trailing stop trigger",
+)
+parser_all.add_argument(
+    "--trailing_stop_require_peak_breakout",
+    type=lambda x: str(x).lower() in ("yes", "true", "t", "1"),
+    default=True,
+    help="require price to break out past previous peak before allowing same-direction re-entry",
+)
+parser_all.add_argument(
     "--gating_strategy",
     type=str,
     default="absolute",
@@ -232,6 +274,13 @@ def prepare_base_args(args_1, args_2):
     base_args.stop_loss_cooldown_steps = args_2.stop_loss_cooldown_steps
     base_args.circuit_breaker_consecutive_stops = args_2.circuit_breaker_consecutive_stops
     base_args.circuit_breaker_cooling_steps = args_2.circuit_breaker_cooling_steps
+    base_args.enable_trend_entry_lock = args_2.enable_trend_entry_lock
+    base_args.enable_trailing_stop = args_2.enable_trailing_stop
+    base_args.trailing_stop_activation_threshold = args_2.trailing_stop_activation_threshold
+    base_args.trailing_stop_retracement_ratio = args_2.trailing_stop_retracement_ratio
+    base_args.trailing_stop_profit_floor = args_2.trailing_stop_profit_floor
+    base_args.trailing_stop_cooldown_steps = args_2.trailing_stop_cooldown_steps
+    base_args.trailing_stop_require_peak_breakout = args_2.trailing_stop_require_peak_breakout
     base_args.ood_threshold = 0.005
     base_args.slope_margin_threshold = 0.12
     base_args.volatility_margin_threshold = 0.12

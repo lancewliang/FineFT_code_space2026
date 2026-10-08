@@ -1418,6 +1418,7 @@ def create_optimal_q_table(
     regime_grid_ids_array=None,
     turnover_base_rate=0.0,
     turnover_adverse_ratio=1.0,
+    enable_trend_entry_lock=False,
 ):
     assert (
         len(ask_prices_array)
@@ -1498,6 +1499,17 @@ def create_optimal_q_table(
                 )
                 if future_position * current_position < 0 and not allow_reverse_position:
                     #   仓位反转且开关关闭，直接惩罚
+                    q_table[current_timestamp_index, current_action, future_action] = (
+                        -max_punishment
+                    )
+                elif (
+                    enable_trend_entry_lock
+                    and regime_grid_ids_array is not None
+                    and (
+                        (int(regime_grid_ids_array[current_timestamp_index]) % 3 == 2 and future_position < 0)
+                        or (int(regime_grid_ids_array[current_timestamp_index]) % 3 == 0 and future_position > 0)
+                    )
+                ):
                     q_table[current_timestamp_index, current_action, future_action] = (
                         -max_punishment
                     )
@@ -1619,6 +1631,8 @@ def create_optimal_q_table(
                         ] = reward + gamma * np.max(
                             q_table[future_timestamp_index][future_action][:]
                         )
+    if total_length >= 2:
+        q_table[-1] = q_table[-2].copy()
     return q_table
 
 
@@ -1649,6 +1663,7 @@ def create_optimal_q_table_from_df(
     regime_grid_ids_array: np.ndarray | None = None,
     turnover_base_rate: float = 0.0,
     turnover_adverse_ratio: float = 1.0,
+    enable_trend_entry_lock: bool = False,
 ) -> np.ndarray:
     bid_prices_names = ["bid{}_price".format(i) for i in range(1, order_book_depth + 1)]
     ask_prices_names = ["ask{}_price".format(i) for i in range(1, order_book_depth + 1)]
@@ -1712,6 +1727,7 @@ def create_optimal_q_table_from_df(
         regime_grid_ids_array=regime_grid_ids_array if regime_grid_ids_array is not None else _col("regime_grid_id"),
         turnover_base_rate=turnover_base_rate,
         turnover_adverse_ratio=turnover_adverse_ratio,
+        enable_trend_entry_lock=enable_trend_entry_lock,
     )
 
 
