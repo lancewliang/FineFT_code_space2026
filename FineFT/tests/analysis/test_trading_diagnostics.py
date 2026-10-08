@@ -38,7 +38,7 @@ def test_trading_diagnostics_calculator_e2e(tmp_path: Path):
     reasons[1] = ActionDecisionReasons.POLICY_INFERENCE.value
 
     # Rewards: positive
-    rewards = np.array([0.0] + [35.0] * (n_steps - 1), dtype=np.float64)
+    rewards = np.array([0.0] + [3.5] * (n_steps - 1), dtype=np.float64)
     total_asset = 6000.0 + np.cumsum(rewards)
 
     np.save(contract_result_dir / HistoryArtifactNames.REWARD_HISTORY_NPY, rewards)

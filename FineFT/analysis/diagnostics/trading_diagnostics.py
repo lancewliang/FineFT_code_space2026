@@ -89,8 +89,8 @@ class TradingDiagnosticsCalculator:
         data_dir: str,
         output_dir: str | None = None,
         initial_wallet_balance: float = 6000.0,
-        commission_rate: float = 0.0005,
-        contract_unit: float = 10.0,
+        commission_rate: float = 0.0003,
+        contract_unit: float = 1.0,
         freq: int = 12,
     ) -> None:
         self.result_dir = Path(result_dir)
@@ -174,7 +174,8 @@ class TradingDiagnosticsCalculator:
                 gross_pts -= float(price_diffs[i])
 
         gross_pnl = float(gross_pts * self.contract_unit)
-        net_pnl = float(np.sum(reward_history))
+        scaled_reward_history = reward_history * self.contract_unit
+        net_pnl = float(np.sum(scaled_reward_history))
         friction = float(gross_pnl - net_pnl)
         friction_ratio = float((friction / gross_pnl * 100.0) if gross_pnl > 0 else 0.0)
 
@@ -194,7 +195,7 @@ class TradingDiagnosticsCalculator:
         # 4. Financial Metrics
         freq_calc = self.freq if steps >= 24 else max(1, steps // 2)
         tr, daily_vol, mdd, downside_dev, annual_sr, daily_cr, daily_sor = calculate_metric(
-            req_money, reward_history, freq=freq_calc
+            req_money, scaled_reward_history, freq=freq_calc
         )
 
         alpha_vs_bh = float(tr - bh_tr)
@@ -496,8 +497,8 @@ def main() -> None:
     parser.add_argument("--data_dir", type=str, required=True, help="Path to market feather data folder")
     parser.add_argument("--output_dir", type=str, default=None, help="Output directory for diagnostics")
     parser.add_argument("--initial_wallet_balance", type=float, default=6000.0, help="Initial wallet balance per contract")
-    parser.add_argument("--commission_rate", type=float, default=0.0005, help="Commission rate")
-    parser.add_argument("--contract_unit", type=float, default=10.0, help="Contract unit multiplier")
+    parser.add_argument("--commission_rate", type=float, default=0.0003, help="Commission rate")
+    parser.add_argument("--contract_unit", type=float, default=1.0, help="Contract unit multiplier")
     parser.add_argument("--freq", type=int, default=12, help="Bar frequency per day for annualization")
     args = parser.parse_args()
 
