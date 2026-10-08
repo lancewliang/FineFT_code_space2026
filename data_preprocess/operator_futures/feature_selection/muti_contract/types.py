@@ -46,13 +46,98 @@ class StationarityAuditConfig:
     active_feature_pattern: str | None = None
 
 
+import re
+
+MACRO_SCALE_PATTERN = re.compile(
+    r"(_(720|1440|2160)(_|$)|prev_(5|10|15|20|30)_day|prev_(1|2|4|6)_week|cm_.*_(720|1440))"
+)
+MESO_SCALE_PATTERN = re.compile(
+    r"(_(48|96|192)(_|$)|prev_day_|prev_2_day_|.*session.*|trading_minute_|base_time_|contract_month_|contract_life_|is_opening_|is_closing_)"
+)
+
+
+def classify_feature_scale(feature_name: str) -> str:
+    if MACRO_SCALE_PATTERN.search(feature_name):
+        return "macro"
+    if MESO_SCALE_PATTERN.search(feature_name):
+        return "meso"
+    return "micro"
+
+
+@dataclass(frozen=True)
+class ScaleTierConfig:
+    name: str
+    forward_horizons: tuple[int, ...]
+    decision_horizon: int
+    min_abs_ic: float
+    min_sign_consistency: float
+    min_rank_ic_ir: float
+
+
+SCALE_TIER_CONFIGS: dict[str, ScaleTierConfig] = {
+    "micro": ScaleTierConfig(
+        name="micro",
+        forward_horizons=(1, 2, 6, 12),
+        decision_horizon=6,
+        min_abs_ic=0.010,
+        min_sign_consistency=0.55,
+        min_rank_ic_ir=0.18,
+    ),
+    "meso": ScaleTierConfig(
+        name="meso",
+        forward_horizons=(16, 24, 48, 96),
+        decision_horizon=24,
+        min_abs_ic=0.015,
+        min_sign_consistency=0.58,
+        min_rank_ic_ir=0.15,
+    ),
+    "macro": ScaleTierConfig(
+        name="macro",
+        forward_horizons=(192, 384, 720),
+        decision_horizon=192,
+        min_abs_ic=0.020,
+        min_sign_consistency=0.60,
+        min_rank_ic_ir=0.12,
+    ),
+}
+
+DEFAULT_MULTI_HORIZON_WINDOWS: tuple[int, ...] = (
+    1, 2, 6, 12, 16, 24, 48, 96, 192, 384, 720
+)
+
+
+@dataclass(frozen=True)
+class StreamTierQuota:
+    min_quota: int
+    max_quota: int
+
+
+STREAM_TIER_QUOTAS: dict[str, dict[str, StreamTierQuota]] = {
+    "rl_decision": {
+        "micro": StreamTierQuota(min_quota=85, max_quota=100),
+        "meso": StreamTierQuota(min_quota=35, max_quota=45),
+        "macro": StreamTierQuota(min_quota=10, max_quota=15),
+    },
+    "vae_slope": {
+        "micro": StreamTierQuota(min_quota=0, max_quota=0),
+        "meso": StreamTierQuota(min_quota=8, max_quota=10),
+        "macro": StreamTierQuota(min_quota=4, max_quota=6),
+    },
+    "vae_volatility": {
+        "micro": StreamTierQuota(min_quota=0, max_quota=1),
+        "meso": StreamTierQuota(min_quota=6, max_quota=8),
+        "macro": StreamTierQuota(min_quota=4, max_quota=5),
+    },
+}
+
+
 @dataclass(frozen=True)
 class PredictiveAuditConfig:
     min_abs_ic: float = 0.010
     min_sign_consistency: float = 0.55
     min_rank_ic_ir: float = 0.18
     target_decision_window: int = 6
-    windows_list: tuple[int, ...] = (1, 2, 6, 12, 24, 48)
+    windows_list: tuple[int, ...] = DEFAULT_MULTI_HORIZON_WINDOWS
     fdr_threshold: float = 0.05
     ic_anomaly_ceiling: float = 0.45
     rank_ic_mode: str = "absolute"
@@ -164,8 +249,8 @@ DEFAULT_RL_PROFILE = StreamFilterProfile(
     min_sign_consistency=0.55,
     min_rank_ic_ir=0.18,
     max_correlation=0.80,
-    min_clusters=100,
-    max_clusters=155,
+    min_clusters=135,
+    max_clusters=160,
     psi_weight=0.15,
     rank_ic_weight=0.70,
     catboost_weight=0.15,

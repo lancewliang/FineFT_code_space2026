@@ -14,6 +14,8 @@ from operator_futures.feature_selection.muti_contract.metrics import (
 from operator_futures.feature_selection.muti_contract.types import (
     PipelineStepResult,
     PredictiveAuditConfig,
+    SCALE_TIER_CONFIGS,
+    classify_feature_scale,
 )
 
 logger = logging.getLogger(__name__)
@@ -76,110 +78,102 @@ def execute_predictive_audit(
 
     aggregate_df = aggregate_metric_frames(contract_metric_frames)
 
-    # 2. Extract SignConsistency at target decision window
+    # 2. ADR-0054: Three-Tier Multi-Horizon Native Predictive Audit
     combined_mf = pl.concat(contract_metric_frames, how="vertical")
-    dec_window = config.target_decision_window
-    w_frames = combined_mf.filter(pl.col("window") == dec_window)
     n_contracts = float(len(contract_metric_frames))
 
-    if w_frames.height > 0:
-        sc_df = (
-            w_frames.group_by("feature")
-            .agg(
-                [
-                    (pl.col("RankIC") > 0.0).sum().alias("pos_cnt"),
-                    (pl.col("RankIC") < 0.0).sum().alias("neg_cnt"),
-                ]
-            )
-            .with_columns(
-                (pl.max_horizontal("pos_cnt", "neg_cnt") / n_contracts).alias(
-                    "SignConsistency"
-                )
-            )
-        )
-        sc_map = dict(
-            zip(sc_df["feature"].to_list(), sc_df["SignConsistency"].to_list())
-        )
-        if "VolRankIC" in w_frames.columns:
-            vol_sc_df = (
-                w_frames.group_by("feature")
-                .agg(
-                    [
-                        (pl.col("VolRankIC") > 0.0).sum().alias("vol_pos_cnt"),
-                        (pl.col("VolRankIC") < 0.0).sum().alias("vol_neg_cnt"),
-                    ]
-                )
-                .with_columns(
-                    (pl.max_horizontal("vol_pos_cnt", "vol_neg_cnt") / n_contracts).alias(
-                        "VolSignConsistency"
-                    )
-                )
-            )
-            vol_sc_map = dict(
-                zip(vol_sc_df["feature"].to_list(), vol_sc_df["VolSignConsistency"].to_list())
-            )
-        else:
-            vol_sc_map = {feat: 1.0 for feat in features}
-    elif "SignConsistency_Mean" in aggregate_df.columns:
-        sc_map = dict(
-            zip(
-                aggregate_df["feature"].to_list(),
-                aggregate_df["SignConsistency_Mean"].to_list(),
-            )
-        )
-        vol_sc_map = (
-            dict(
-                zip(
-                    aggregate_df["feature"].to_list(),
-                    aggregate_df["VolSignConsistency_Mean"].to_list(),
-                )
-            )
-            if "VolSignConsistency_Mean" in aggregate_df.columns
-            else {feat: 1.0 for feat in features}
-        )
-    else:
-        sc_map = {feat: 1.0 for feat in features}
-        vol_sc_map = {feat: 1.0 for feat in features}
+    # Initialize per-tier diagnostic tracking
+    tier_diagnostics: dict[str, dict[str, Any]] = {
+        tier_name: {
+            "forward_horizons": list(t_cfg.forward_horizons),
+            "decision_horizon": t_cfg.decision_horizon,
+            "thresholds": {
+                "min_abs_ic": t_cfg.min_abs_ic,
+                "sign_consistency": t_cfg.min_sign_consistency,
+                "stability_ir": t_cfg.min_rank_ic_ir,
+            },
+            "candidates": 0,
+            "anti_causal_dropped": 0,
+            "rank_ic_dropped": 0,
+            "sign_consistency_dropped": 0,
+            "stability_dropped": 0,
+            "survivors": 0,
+        }
+        for tier_name, t_cfg in SCALE_TIER_CONFIGS.items()
+    }
+
+    rank_ic_mean_map: dict[str, float] = {}
+    rank_ic_std_map: dict[str, float] = {}
+    ic_mean_map: dict[str, float] = {}
+    ic_std_map: dict[str, float] = {}
+    vol_rank_ic_mean_map: dict[str, float] = {}
+    vol_rank_ic_std_map: dict[str, float] = {}
+    vol_ic_mean_map: dict[str, float] = {}
+    vol_ic_std_map: dict[str, float] = {}
+    sc_map: dict[str, float] = {}
+    vol_sc_map: dict[str, float] = {}
+
+    has_vol = "VolRankIC" in combined_mf.columns
 
     for feat in features:
-        if feat not in sc_map:
-            sc_map[feat] = 0.0
-        if feat not in vol_sc_map:
-            vol_sc_map[feat] = 0.0
+        feat_tier = classify_feature_scale(feat)
+        tier_cfg = SCALE_TIER_CONFIGS[feat_tier]
+        tier_diagnostics[feat_tier]["candidates"] += 1
 
-    rank_ic_mean_map = dict(
-        zip(aggregate_df["feature"].to_list(), aggregate_df["RankIC_Mean"].to_list())
-    )
-    rank_ic_std_map = dict(
-        zip(aggregate_df["feature"].to_list(), aggregate_df["RankIC_Std"].to_list())
-    )
-    ic_mean_map = dict(
-        zip(aggregate_df["feature"].to_list(), aggregate_df["IC_Mean"].to_list())
-    )
-    ic_std_map = dict(
-        zip(aggregate_df["feature"].to_list(), aggregate_df["IC_Std"].to_list())
-    )
+        f_sub = combined_mf.filter(
+            (pl.col("feature") == feat) & (pl.col("window").is_in(list(tier_cfg.forward_horizons)))
+        )
+        if f_sub.height == 0:
+            f_sub = combined_mf.filter(pl.col("feature") == feat)
 
-    vol_rank_ic_mean_map = (
-        dict(zip(aggregate_df["feature"].to_list(), aggregate_df["VolRankIC_Mean"].to_list()))
-        if "VolRankIC_Mean" in aggregate_df.columns
-        else {feat: 0.0 for feat in features}
-    )
-    vol_rank_ic_std_map = (
-        dict(zip(aggregate_df["feature"].to_list(), aggregate_df["VolRankIC_Std"].to_list()))
-        if "VolRankIC_Std" in aggregate_df.columns
-        else {feat: 0.0 for feat in features}
-    )
-    vol_ic_mean_map = (
-        dict(zip(aggregate_df["feature"].to_list(), aggregate_df["VolIC_Mean"].to_list()))
-        if "VolIC_Mean" in aggregate_df.columns
-        else {feat: 0.0 for feat in features}
-    )
-    vol_ic_std_map = (
-        dict(zip(aggregate_df["feature"].to_list(), aggregate_df["VolIC_Std"].to_list()))
-        if "VolIC_Std" in aggregate_df.columns
-        else {feat: 0.0 for feat in features}
-    )
+        if f_sub.height > 0:
+            rank_ic_mean_map[feat] = float(f_sub["RankIC"].mean())
+            rank_ic_std_map[feat] = float(f_sub["RankIC"].std()) if f_sub.height > 1 else 0.0
+            ic_mean_map[feat] = float(f_sub["IC"].mean())
+            ic_std_map[feat] = float(f_sub["IC"].std()) if f_sub.height > 1 else 0.0
+            if has_vol:
+                vol_rank_ic_mean_map[feat] = float(f_sub["VolRankIC"].mean())
+                vol_rank_ic_std_map[feat] = float(f_sub["VolRankIC"].std()) if f_sub.height > 1 else 0.0
+                vol_ic_mean_map[feat] = float(f_sub["VolIC"].mean())
+                vol_ic_std_map[feat] = float(f_sub["VolIC"].std()) if f_sub.height > 1 else 0.0
+            else:
+                vol_rank_ic_mean_map[feat] = 0.0
+                vol_rank_ic_std_map[feat] = 0.0
+                vol_ic_mean_map[feat] = 0.0
+                vol_ic_std_map[feat] = 0.0
+        else:
+            rank_ic_mean_map[feat] = 0.0
+            rank_ic_std_map[feat] = 0.0
+            ic_mean_map[feat] = 0.0
+            ic_std_map[feat] = 0.0
+            vol_rank_ic_mean_map[feat] = 0.0
+            vol_rank_ic_std_map[feat] = 0.0
+            vol_ic_mean_map[feat] = 0.0
+            vol_ic_std_map[feat] = 0.0
+
+        f_dec = combined_mf.filter(
+            (pl.col("feature") == feat) & (pl.col("window") == tier_cfg.decision_horizon)
+        )
+        if f_dec.height == 0:
+            avail = combined_mf.filter(pl.col("feature") == feat)
+            if avail.height > 0:
+                windows_avail = sorted(avail["window"].unique().to_list())
+                closest_w = min(windows_avail, key=lambda w: abs(w - tier_cfg.decision_horizon))
+                f_dec = combined_mf.filter((pl.col("feature") == feat) & (pl.col("window") == closest_w))
+
+        if f_dec.height > 0:
+            pos_cnt = float((f_dec["RankIC"] > 0.0).sum())
+            neg_cnt = float((f_dec["RankIC"] < 0.0).sum())
+            sc_map[feat] = max(pos_cnt, neg_cnt) / float(f_dec.height)
+            if has_vol:
+                vol_pos = float((f_dec["VolRankIC"] > 0.0).sum())
+                vol_neg = float((f_dec["VolRankIC"] < 0.0).sum())
+                vol_sc_map[feat] = max(vol_pos, vol_neg) / float(f_dec.height)
+            else:
+                vol_sc_map[feat] = 1.0
+        else:
+            sc_map[feat] = 1.0
+            vol_sc_map[feat] = 1.0
 
     # 3. Gate 1: Anti-causality Anomaly Screening
     anti_causal_dropped: list[str] = []
@@ -189,11 +183,13 @@ def execute_predictive_audit(
         mean_ic = ic_mean_map[feat]
         vol_mean_rank_ic = vol_rank_ic_mean_map[feat]
         vol_mean_ic = vol_ic_mean_map[feat]
+        feat_tier = classify_feature_scale(feat)
         if (
             (abs(mean_rank_ic) >= config.ic_anomaly_ceiling and abs(vol_mean_rank_ic) >= config.ic_anomaly_ceiling)
             or (abs(mean_ic) >= config.ic_anomaly_ceiling and abs(vol_mean_ic) >= config.ic_anomaly_ceiling)
         ):
             anti_causal_dropped.append(feat)
+            tier_diagnostics[feat_tier]["anti_causal_dropped"] += 1
             logger.warning(
                 "Feature %s flagged and dropped by anti-causality screen (|RankIC|=%.4f, |IC|=%.4f >= %.2f)",
                 feat,
@@ -204,46 +200,58 @@ def execute_predictive_audit(
         else:
             surviving_after_anti_causal.append(feat)
 
-    # 4. Gate 2: Hard RankIC Filter (Survives if directional OR volatility passes)
+    # 4. Gate 2: Hard RankIC Filter (Evaluated against tier-specific min_abs_ic)
     hard_filter_dropped: list[str] = []
     surviving_after_hard: list[str] = []
     for feat in surviving_after_anti_causal:
         mean_rank_ic = rank_ic_mean_map[feat]
         vol_mean_rank_ic = vol_rank_ic_mean_map[feat]
+        feat_tier = classify_feature_scale(feat)
+        tier_cfg = SCALE_TIER_CONFIGS[feat_tier]
+
         if config.rank_ic_mode == "signed":
-            passed_dir = mean_rank_ic >= config.min_abs_ic
+            passed_dir = mean_rank_ic >= tier_cfg.min_abs_ic
         else:
-            passed_dir = abs(mean_rank_ic) >= config.min_abs_ic
-        passed_vol = abs(vol_mean_rank_ic) >= config.min_abs_ic
+            passed_dir = abs(mean_rank_ic) >= tier_cfg.min_abs_ic
+        passed_vol = abs(vol_mean_rank_ic) >= tier_cfg.min_abs_ic
 
         if passed_dir or passed_vol:
             surviving_after_hard.append(feat)
         else:
             hard_filter_dropped.append(feat)
+            tier_diagnostics[feat_tier]["rank_ic_dropped"] += 1
 
-    # 5. Gate 3: Sign Consistency Filter (Survives if directional OR volatility passes)
+    # 5. Gate 3: Sign Consistency Filter (Evaluated against tier-specific min_sign_consistency)
     sign_consistency_dropped: list[str] = []
     surviving_after_sign: list[str] = []
     for feat in surviving_after_hard:
-        passed_dir = sc_map[feat] >= config.min_sign_consistency
-        passed_vol = vol_sc_map[feat] >= config.min_sign_consistency
+        feat_tier = classify_feature_scale(feat)
+        tier_cfg = SCALE_TIER_CONFIGS[feat_tier]
+
+        passed_dir = sc_map[feat] >= tier_cfg.min_sign_consistency
+        passed_vol = vol_sc_map[feat] >= tier_cfg.min_sign_consistency
         if passed_dir or passed_vol:
             surviving_after_sign.append(feat)
         else:
             sign_consistency_dropped.append(feat)
+            tier_diagnostics[feat_tier]["sign_consistency_dropped"] += 1
 
-    # 6. Gate 4: Stability IR Filter (Survives if directional OR volatility passes)
+    # 6. Gate 4: Stability IR Filter (Evaluated against tier-specific min_rank_ic_ir)
     stability_dropped: list[str] = []
     surviving_after_stability: list[str] = []
     for feat in surviving_after_sign:
+        feat_tier = classify_feature_scale(feat)
+        tier_cfg = SCALE_TIER_CONFIGS[feat_tier]
+
         dir_ir = abs(rank_ic_mean_map[feat]) / (rank_ic_std_map[feat] + 1e-6)
         vol_ir = abs(vol_rank_ic_mean_map[feat]) / (vol_rank_ic_std_map[feat] + 1e-6)
-        passed_dir = (dir_ir >= config.min_rank_ic_ir and ic_std_map[feat] <= config.max_metric_std)
-        passed_vol = (vol_ir >= config.min_rank_ic_ir and vol_ic_std_map[feat] <= config.max_metric_std)
+        passed_dir = (dir_ir >= tier_cfg.min_rank_ic_ir and ic_std_map[feat] <= config.max_metric_std)
+        passed_vol = (vol_ir >= tier_cfg.min_rank_ic_ir and vol_ic_std_map[feat] <= config.max_metric_std)
         if passed_dir or passed_vol:
             surviving_after_stability.append(feat)
         else:
             stability_dropped.append(feat)
+            tier_diagnostics[feat_tier]["stability_dropped"] += 1
 
     # 7. Gate 5: Benjamini-Hochberg FDR Control
     fdr_dropped: list[str] = []
@@ -288,6 +296,10 @@ def execute_predictive_audit(
 
     all_dropped = [feat for feat in features if feat not in set(final_surviving)]
 
+    for feat in final_surviving:
+        feat_tier = classify_feature_scale(feat)
+        tier_diagnostics[feat_tier]["survivors"] += 1
+
     step_result = PipelineStepResult(
         step_name="predictive_audit",
         surviving_features=final_surviving,
@@ -302,6 +314,7 @@ def execute_predictive_audit(
             "metric_frames": contract_metric_frames,
             "sign_consistency_map": sc_map,
             "vol_sign_consistency_map": vol_sc_map,
+            "tier_breakdown": tier_diagnostics,
         },
     )
     return aggregate_df, step_result
