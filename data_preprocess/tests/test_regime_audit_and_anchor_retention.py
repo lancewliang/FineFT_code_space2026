@@ -155,7 +155,7 @@ def test_conditional_anchor_retention_and_regular_candidate_exclusion(tmp_path):
     )
 
     manifest = res_train.manifest
-    selected = set(manifest.selected_features)
+    selected = set(manifest.union_selected_features)
 
     # Any conditionally retained features in manifest should be market state anchors only
     if manifest.conditional_anchors_retained:

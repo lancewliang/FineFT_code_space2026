@@ -66,6 +66,7 @@ class StreamAuditRecord:
     filter_results: dict[str, list[str]] = field(default_factory=dict)
     candidate_count: int | None = None
     dropped_counts: dict[str, int] | None = None
+    tier_breakdown: dict[str, dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -82,6 +83,8 @@ class StreamAuditRecord:
             payload["dropped_counts"] = {
                 key: int(val) for key, val in self.dropped_counts.items()
             }
+        if self.tier_breakdown is not None:
+            payload["tier_breakdown"] = self.tier_breakdown
         return payload
 
     @classmethod
@@ -98,6 +101,7 @@ class StreamAuditRecord:
             filter_results=filter_results,
             candidate_count=data.get("candidate_count"),
             dropped_counts=data.get("dropped_counts"),
+            tier_breakdown=data.get("tier_breakdown"),
         )
 
 @dataclass
@@ -124,14 +128,14 @@ class FeatureSelectionManifest:
     rl_feature_file: str | None = None
     vae_slope_feature_file: str | None = None
     vae_volatility_feature_file: str | None = None
-    selected_feature_count: int | None = None
-    selected_features: list[str] | None = None
+    union_selected_feature_count: int | None = None
+    union_selected_features: list[str] | None = None
     composite_drop_ratio: float | None = None
-    feature_blacklist: list[str] | None = None
+    global_feature_blacklist: list[str] | None = None
     feature_ablation_patterns: list[str] | None = None
     rank_ic_mode: str | None = None
     mandatory_state_features: list[str] | None = None
-    filter_results: dict[str, list[str]] | None = None
+    shared_filter_results: dict[str, list[str]] | None = None
     persistence_filter: PersistenceFilterConfig | None = None
     persistence_diagnostics: list[PersistenceDiagnostic] | None = None
     filtered_outputs: list[FilteredOutputRecord] | None = None
@@ -144,15 +148,16 @@ class FeatureSelectionManifest:
     regime_quantiles: dict[str, list[float]] | None = None
     regime_audit_path: str | None = None
     distribution_audit_path: str | None = None
-    max_mean_psi: float | None = None
-    max_pair_psi: float | None = None
+    global_max_mean_psi: float | None = None
+    global_max_pair_psi: float | None = None
     min_drift_survivors: int | None = None
-    min_sign_consistency: float | None = None
+    global_min_sign_consistency: float | None = None
     conditional_anchors_retained: list[dict[str, Any]] | None = None
     stream_mode: str | None = None
     vae_slope_stream: StreamAuditRecord | None = None
     vae_volatility_stream: StreamAuditRecord | None = None
     rl_stream: StreamAuditRecord | None = None
+    process_documentation: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -167,10 +172,10 @@ class FeatureSelectionManifest:
             payload["vae_slope_feature_file"] = self.vae_slope_feature_file
         if self.vae_volatility_feature_file is not None:
             payload["vae_volatility_feature_file"] = self.vae_volatility_feature_file
-        if self.selected_feature_count is not None:
-            payload["selected_feature_count"] = self.selected_feature_count
-        if self.selected_features is not None:
-            payload["selected_features"] = list(self.selected_features)
+        if self.union_selected_feature_count is not None:
+            payload["union_selected_feature_count"] = self.union_selected_feature_count
+        if self.union_selected_features is not None:
+            payload["union_selected_features"] = list(self.union_selected_features)
         if self.evaluated_feature_file is not None:
             payload["evaluated_feature_file"] = self.evaluated_feature_file
         if self.evaluated_feature_count is not None:
@@ -180,8 +185,8 @@ class FeatureSelectionManifest:
         payload["windows_list"] = list(self.windows_list)
         if self.composite_drop_ratio is not None:
             payload["composite_drop_ratio"] = self.composite_drop_ratio
-        if self.feature_blacklist is not None:
-            payload["feature_blacklist"] = list(self.feature_blacklist)
+        if self.global_feature_blacklist is not None:
+            payload["global_feature_blacklist"] = list(self.global_feature_blacklist)
         if self.feature_ablation_patterns is not None:
             payload["feature_ablation_patterns"] = list(self.feature_ablation_patterns)
         if self.rank_ic_mode is not None:
@@ -189,9 +194,9 @@ class FeatureSelectionManifest:
         if self.mandatory_state_features is not None:
             payload["mandatory_state_features"] = list(self.mandatory_state_features)
         payload["aggregate_metrics_path"] = self.aggregate_metrics_path
-        if self.filter_results is not None:
-            payload["filter_results"] = {
-                key: list(values) for key, values in self.filter_results.items()
+        if self.shared_filter_results is not None:
+            payload["shared_filter_results"] = {
+                key: list(values) for key, values in self.shared_filter_results.items()
             }
         if self.persistence_filter is not None:
             payload["persistence_filter"] = dict(self.persistence_filter)
@@ -216,14 +221,14 @@ class FeatureSelectionManifest:
             payload["regime_audit_path"] = self.regime_audit_path
         if self.distribution_audit_path is not None:
             payload["distribution_audit_path"] = self.distribution_audit_path
-        if self.max_mean_psi is not None:
-            payload["max_mean_psi"] = self.max_mean_psi
-        if self.max_pair_psi is not None:
-            payload["max_pair_psi"] = self.max_pair_psi
+        if self.global_max_mean_psi is not None:
+            payload["global_max_mean_psi"] = self.global_max_mean_psi
+        if self.global_max_pair_psi is not None:
+            payload["global_max_pair_psi"] = self.global_max_pair_psi
         if self.min_drift_survivors is not None:
             payload["min_drift_survivors"] = self.min_drift_survivors
-        if self.min_sign_consistency is not None:
-            payload["min_sign_consistency"] = self.min_sign_consistency
+        if self.global_min_sign_consistency is not None:
+            payload["global_min_sign_consistency"] = self.global_min_sign_consistency
         if self.conditional_anchors_retained is not None:
             payload["conditional_anchors_retained"] = self.conditional_anchors_retained
         if self.stream_mode is not None:
@@ -234,6 +239,8 @@ class FeatureSelectionManifest:
             payload["vae_volatility_stream"] = self.vae_volatility_stream.to_dict()
         if self.rl_stream is not None:
             payload["rl_stream"] = self.rl_stream.to_dict()
+        if self.process_documentation is not None:
+            payload["process_documentation"] = self.process_documentation
         return payload
 
     def write_json(self, path: Path) -> None:
@@ -286,14 +293,14 @@ class FeatureSelectionManifest:
             rl_feature_file=data.get("rl_feature_file"),
             vae_slope_feature_file=data.get("vae_slope_feature_file"),
             vae_volatility_feature_file=data.get("vae_volatility_feature_file"),
-            selected_feature_count=data.get("selected_feature_count"),
-            selected_features=data.get("selected_features"),
+            union_selected_feature_count=data.get("union_selected_feature_count"),
+            union_selected_features=data.get("union_selected_features"),
             composite_drop_ratio=data.get("composite_drop_ratio"),
-            feature_blacklist=data.get("feature_blacklist"),
+            global_feature_blacklist=data.get("global_feature_blacklist"),
             feature_ablation_patterns=data.get("feature_ablation_patterns"),
             rank_ic_mode=data.get("rank_ic_mode"),
             mandatory_state_features=data.get("mandatory_state_features"),
-            filter_results=data.get("filter_results"),
+            shared_filter_results=data.get("shared_filter_results"),
             persistence_filter=data.get("persistence_filter"),
             persistence_diagnostics=data.get("persistence_diagnostics"),
             filtered_outputs=filtered_outputs,
@@ -306,15 +313,16 @@ class FeatureSelectionManifest:
             regime_quantiles=data.get("regime_quantiles"),
             regime_audit_path=data.get("regime_audit_path"),
             distribution_audit_path=data.get("distribution_audit_path"),
-            max_mean_psi=data.get("max_mean_psi"),
-            max_pair_psi=data.get("max_pair_psi"),
+            global_max_mean_psi=data.get("global_max_mean_psi"),
+            global_max_pair_psi=data.get("global_max_pair_psi"),
             min_drift_survivors=data.get("min_drift_survivors"),
-            min_sign_consistency=data.get("min_sign_consistency"),
+            global_min_sign_consistency=data.get("global_min_sign_consistency"),
             conditional_anchors_retained=data.get("conditional_anchors_retained"),
             stream_mode=data.get("stream_mode"),
             vae_slope_stream=vae_slope_stream,
             vae_volatility_stream=vae_volatility_stream,
             rl_stream=rl_stream,
+            process_documentation=data.get("process_documentation"),
         )
 
     @classmethod

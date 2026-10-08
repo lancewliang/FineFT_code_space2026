@@ -142,5 +142,5 @@ def test_feature_selection_allows_blacklist_to_override_mandatory_base_time(tmp_
         rl_profile=toy_profile,
     )
     manifest = res.manifest
-    assert "trading_minute_progress" not in manifest.selected_features
-    assert "trading_minute_progress" in manifest.filter_results["Feature Blacklist Dropped"]
+    assert "trading_minute_progress" not in manifest.union_selected_features
+    assert "trading_minute_progress" in manifest.shared_filter_results["Feature Blacklist Dropped"]

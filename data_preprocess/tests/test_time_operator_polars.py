@@ -807,3 +807,102 @@ def test_bollinger_bandwidth_log_transformation_polars():
     bw_vals_ohlc = res_ohlc.get_column("bollinger_bandwidth_3").to_numpy()
     assert np.all(np.isfinite(bw_vals_ohlc))
     assert np.all(bw_vals_ohlc < 0.0)
+
+
+def test_macro_operators_expanding_fallback_zero_nans_short_and_long_series():
+    # 1. Short series (N = 60 < 720)
+    n_short = 60
+    short_df = pl.DataFrame({
+        "timestamp": np.arange(n_short),
+        "open": 2000.0 + np.arange(n_short),
+        "high": 2005.0 + np.arange(n_short),
+        "low": 1995.0 + np.arange(n_short),
+        "close": 2000.5 + np.arange(n_short),
+        "mark_price": 2000.25 + np.arange(n_short),
+        "cm_main_sub_relative_price_spread": np.sin(np.arange(n_short) / 5.0) * 0.01,
+    })
+    res_short = process_enhanced_state_features(short_df)
+    macro_cols = [
+        "mark_price_ema_deviation_720",
+        "mark_price_ema_deviation_1440",
+        "mark_price_roc_720",
+        "mark_price_roc_1440",
+        "trend_beta_720",
+        "trend_beta_1440",
+        "trend_to_noise_720",
+        "trend_to_noise_1440",
+        "cm_main_sub_spread_rolling_zscore_720",
+        "cm_main_sub_spread_rolling_zscore_1440",
+    ]
+    for col in macro_cols:
+        assert col in res_short.columns, f"{col} missing from short series output"
+        arr = res_short.get_column(col).to_numpy()
+        assert np.all(np.isfinite(arr)), f"{col} has non-finite values in short series"
+        assert res_short.get_column(col).null_count() == 0, f"{col} has nulls in short series"
+
+    # 2. Long series (N = 3000 > 720 and > 1440)
+    n_long = 3000
+    np.random.seed(42)
+    p_long = 2500.0 + np.cumsum(np.random.randn(n_long) * 2.0)
+    long_df = pl.DataFrame({
+        "timestamp": np.arange(n_long),
+        "open": p_long,
+        "high": p_long + 2.0,
+        "low": p_long - 2.0,
+        "close": p_long + 0.5,
+        "mark_price": p_long + 0.2,
+        "cm_main_sub_relative_price_spread": np.sin(np.arange(n_long) / 10.0) * 0.02,
+    })
+    res_long = process_enhanced_state_features(long_df)
+    for col in macro_cols:
+        assert col in res_long.columns, f"{col} missing from long series output"
+        arr = res_long.get_column(col).to_numpy()
+        assert np.all(np.isfinite(arr)), f"{col} has non-finite values in long series"
+        assert res_long.get_column(col).null_count() == 0, f"{col} has nulls in long series"
+
+    # Check bounds on trend_to_noise in [0, 1]
+    ttn_720 = res_long.get_column("trend_to_noise_720").to_numpy()
+    assert np.all((ttn_720 >= 0.0) & (ttn_720 <= 1.0))
+    ttn_1440 = res_long.get_column("trend_to_noise_1440").to_numpy()
+    assert np.all((ttn_1440 >= 0.0) & (ttn_1440 <= 1.0))
+
+
+def test_macro_operators_scale_invariance():
+    n = 1500
+    np.random.seed(42)
+    p = 2000.0 + np.cumsum(np.random.randn(n) * 5.0)
+    df1 = pl.DataFrame({
+        "timestamp": np.arange(n),
+        "high": p + 3.0,
+        "low": p - 3.0,
+        "close": p,
+        "mark_price": p,
+    })
+    scale = 3.5
+    df2 = pl.DataFrame({
+        "timestamp": np.arange(n),
+        "high": (p + 3.0) * scale,
+        "low": (p - 3.0) * scale,
+        "close": p * scale,
+        "mark_price": p * scale,
+    })
+    res1 = process_enhanced_state_features(df1)
+    res2 = process_enhanced_state_features(df2)
+
+    scale_invariant_cols = [
+        "mark_price_ema_deviation_720",
+        "mark_price_ema_deviation_1440",
+        "mark_price_roc_720",
+        "mark_price_roc_1440",
+        "trend_beta_720",
+        "trend_beta_1440",
+        "trend_to_noise_720",
+        "trend_to_noise_1440",
+    ]
+    for col in scale_invariant_cols:
+        arr1 = res1.get_column(col).to_numpy()
+        arr2 = res2.get_column(col).to_numpy()
+        np.testing.assert_allclose(
+            arr1, arr2, rtol=1e-5, atol=1e-5,
+            err_msg=f"{col} violated scale invariance under price scaling"
+        )

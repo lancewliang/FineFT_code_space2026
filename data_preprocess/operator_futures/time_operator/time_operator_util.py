@@ -154,6 +154,70 @@ def _rolling_log_price_anchors(
 
 
 # 程序开始前的时间
+
+def compute_macro_trend_beta_and_purity(
+    prices: np.ndarray,
+    windows: tuple[int, ...] = (720, 1440),
+    min_periods: int = 48,
+) -> dict[str, np.ndarray]:
+    n = len(prices)
+    results = {}
+    for w in windows:
+        results[f"trend_beta_{w}"] = np.zeros(n, dtype=float)
+        results[f"trend_to_noise_{w}"] = np.zeros(n, dtype=float)
+    if n < 2:
+        return results
+
+    s1 = np.concatenate(([0.0], np.cumsum(prices)))
+    indices = np.arange(n, dtype=float)
+    s2 = np.concatenate(([0.0], np.cumsum(indices * prices)))
+    abs_diffs = np.concatenate(([0.0], np.abs(np.diff(prices))))
+    s_diff = np.concatenate(([0.0], np.cumsum(abs_diffs)))
+
+    for w in windows:
+        betas = results[f"trend_beta_{w}"]
+        ttns = results[f"trend_to_noise_{w}"]
+
+        # Expanding window: 1 <= t < min(n, w)
+        t_exp = np.arange(1, min(n, w))
+        if len(t_exp) > 0:
+            w_eff = t_exp + 1.0
+            sum_p = s1[t_exp + 1]
+            sum_kp = s2[t_exp + 1]
+            x_bar = t_exp / 2.0
+            cov_xy = sum_kp - x_bar * sum_p
+            var_x = w_eff * (w_eff**2 - 1.0) / 12.0
+            slope = cov_xy / np.maximum(var_x, 1e-12)
+            base_price = prices[0]
+            betas[t_exp] = np.clip((slope * w) / (base_price + 1e-8), -10.0, 10.0)
+
+            path_len = s_diff[t_exp + 1]
+            disp = np.abs(prices[t_exp] - base_price)
+            ttns[t_exp] = np.clip(disp / (path_len + 1e-8), 0.0, 1.0)
+
+        # Rolling window: w <= t < n
+        if n > w:
+            t_roll = np.arange(w, n)
+            a = t_roll - w + 1
+            sum_p = s1[b := t_roll] - s1[a]
+            # fix sum_p indexing
+            sum_p = s1[t_roll + 1] - s1[a]
+            sum_kp = s2[t_roll + 1] - s2[a]
+            sum_ip = sum_kp - a * sum_p
+            x_bar = (w - 1.0) / 2.0
+            cov_xy = sum_ip - x_bar * sum_p
+            var_x = float(w * (w**2 - 1.0) / 12.0)
+            slope = cov_xy / var_x
+            base_price = prices[a]
+            betas[t_roll] = np.clip((slope * w) / (base_price + 1e-8), -10.0, 10.0)
+
+            path_len = s_diff[t_roll + 1] - s_diff[a]
+            disp = np.abs(prices[t_roll] - base_price)
+            ttns[t_roll] = np.clip(disp / (path_len + 1e-8), 0.0, 1.0)
+
+    return results
+
+
 def my_rank(x):
     return pd.Series(x).rank(pct=True).iloc[-1]
 
@@ -585,6 +649,67 @@ def process_enhanced_state_features(df: pl.DataFrame) -> pl.DataFrame:
             anchors = _rolling_log_price_anchors(close_values)
         exprs.extend(pl.Series(name, values) for name, values in anchors.items())
 
+        # ADR-0054: Scale-Invariant Continuous Causal Macro Operators (W in {720, 1440})
+        price_col_name = "mark_price" if "mark_price" in frame.columns else "close"
+        macro_price_values = frame.get_column(price_col_name).cast(pl.Float64).to_numpy()
+        if "contract" in frame.columns:
+            contracts = frame.get_column("contract").to_numpy()
+            macro_anchors = None
+            for contract in dict.fromkeys(contracts.tolist()):
+                contract_rows = contracts == contract
+                c_macro = compute_macro_trend_beta_and_purity(
+                    macro_price_values[contract_rows],
+                    windows=(720, 1440),
+                    min_periods=48,
+                )
+                if macro_anchors is None:
+                    macro_anchors = {
+                        k: np.zeros(frame.height, dtype=float) for k in c_macro
+                    }
+                for k, v in c_macro.items():
+                    macro_anchors[k][contract_rows] = v
+            if macro_anchors is None:
+                macro_anchors = compute_macro_trend_beta_and_purity(macro_price_values)
+        else:
+            macro_anchors = compute_macro_trend_beta_and_purity(macro_price_values)
+        exprs.extend(pl.Series(name, values) for name, values in macro_anchors.items())
+
+        p_macro_col = pl.col(price_col_name).cast(pl.Float64)
+        if {"high", "low", "close"}.issubset(frame.columns):
+            tr_macro = pl.max_horizontal(
+                [
+                    pl.col("high") - pl.col("low"),
+                    (pl.col("high") - pl.col("close").shift(1)).abs(),
+                    (pl.col("low") - pl.col("close").shift(1)).abs(),
+                ]
+            ).fill_null(0.0)
+        else:
+            tr_macro = (p_macro_col - p_macro_col.shift(1)).abs().fill_null(0.0)
+
+        for w_macro in (720, 1440):
+            ema_macro = p_macro_col.ewm_mean(span=w_macro, adjust=False, min_samples=1)
+            atr_macro = tr_macro.ewm_mean(span=w_macro, adjust=False, min_samples=1).fill_null(0.0)
+            ema_dev = (
+                pl.when(atr_macro > 1e-8)
+                .then((p_macro_col - ema_macro) / (atr_macro + 1e-8))
+                .otherwise(0.0)
+                .clip(-10.0, 10.0)
+                .fill_null(0.0)
+                .fill_nan(0.0)
+            )
+            exprs.append(ema_dev.alias(f"mark_price_ema_deviation_{w_macro}"))
+
+            prev_p_macro = pl.coalesce([p_macro_col.shift(w_macro), p_macro_col.first(), p_macro_col])
+            roc_macro = (
+                pl.when(prev_p_macro > 1e-8)
+                .then((p_macro_col - prev_p_macro) / (prev_p_macro + 1e-8) * 1000.0)
+                .otherwise(0.0)
+                .clip(-500.0, 500.0)
+                .fill_null(0.0)
+                .fill_nan(0.0)
+            )
+            exprs.append(roc_macro.alias(f"mark_price_roc_{w_macro}"))
+
         close = pl.col("close")
         v10_raw = close.ewm_mean(span=10) - close.ewm_mean(span=20)
         v10 = v10_raw / close
@@ -909,21 +1034,35 @@ def process_enhanced_state_features(df: pl.DataFrame) -> pl.DataFrame:
         spread_col = f"cm_{pair}_relative_price_spread"
         if spread_col in frame.columns:
             spread = pl.col(spread_col)
-            for window in (48, 192):
+            for window in (48, 192, 720, 1440):
+                min_p = min(48, window)
                 spread_mean = (
-                    spread.rolling_mean(window).over("contract")
+                    pl.coalesce([
+                        spread.rolling_mean(window, min_samples=min_p).over("contract"),
+                        spread.cum_sum().over("contract") / (pl.int_range(1, pl.len() + 1).over("contract")),
+                    ])
                     if has_contract
-                    else spread.rolling_mean(window)
+                    else pl.coalesce([
+                        spread.rolling_mean(window, min_samples=min_p),
+                        spread.cum_sum() / (pl.int_range(1, pl.len() + 1)),
+                    ])
                 )
                 spread_std = (
-                    spread.rolling_std(window).over("contract").fill_null(0.0)
+                    pl.coalesce([
+                        spread.rolling_std(window, min_samples=min_p).over("contract"),
+                        pl.lit(0.0),
+                    ])
                     if has_contract
-                    else spread.rolling_std(window).fill_null(0.0)
+                    else pl.coalesce([
+                        spread.rolling_std(window, min_samples=min_p),
+                        pl.lit(0.0),
+                    ])
                 )
                 zscore = (
                     pl.when(spread_std > 1e-8)
                     .then((spread - spread_mean) / spread_std)
                     .otherwise(0.0)
+                    .clip(-5.0, 5.0)
                 )
                 exprs.append(
                     zscore.fill_null(0.0)

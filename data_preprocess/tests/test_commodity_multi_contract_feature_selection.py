@@ -422,8 +422,8 @@ def test_build_config_from_legacy_kwargs_preserves_rl_and_vae_stream_profile_par
     assert config.rl_profile.min_sign_consistency == DEFAULT_RL_PROFILE.min_sign_consistency == 0.55
     assert config.rl_profile.min_rank_ic_ir == DEFAULT_RL_PROFILE.min_rank_ic_ir == 0.18
     assert config.rl_profile.max_correlation == DEFAULT_RL_PROFILE.max_correlation == 0.80
-    assert config.rl_profile.min_clusters == DEFAULT_RL_PROFILE.min_clusters == 100
-    assert config.rl_profile.max_clusters == DEFAULT_RL_PROFILE.max_clusters == 155
+    assert config.rl_profile.min_clusters == DEFAULT_RL_PROFILE.min_clusters == 135
+    assert config.rl_profile.max_clusters == DEFAULT_RL_PROFILE.max_clusters == 160
 
     # VAE streams must preserve their specialized profiles
     assert config.vae_slope_profile.max_mean_psi == DEFAULT_VAE_SLOPE_PROFILE.max_mean_psi == 0.10
@@ -485,7 +485,7 @@ def test_train_stage_writes_final_features_metrics_filtered_outputs_and_manifest
     assert manifest.output_dir == stage_dir
     assert manifest.manifest.stage == "train"
     assert manifest.manifest.rl_feature_file.endswith("train/rl_state_features.npy")
-    assert manifest.manifest.selected_feature_count == len(manifest.manifest.selected_features)
+    assert manifest.manifest.union_selected_feature_count == len(manifest.manifest.union_selected_features)
     assert persisted_manifest == manifest.manifest.to_dict()
     metrics = pl.read_csv(stage_dir / "aggregate_metrics.csv")
     assert {"IC_Mean", "IC_Std", "IC_Median", "Sharpe_Mean", "Sharpe_Std", "Sharpe_Median"}.issubset(metrics.columns)
@@ -582,15 +582,15 @@ def test_train_stage_front_loads_feature_blacklist_preventing_metric_evaluation(
     assert "custom_signal" not in filtered.columns
     assert "mark_price" in filtered.columns
     assert "ask1_price" in filtered.columns
-    assert manifest.manifest.feature_blacklist == ["custom_signal", "mark_price", "ask1_price"]
-    assert persisted_manifest["feature_blacklist"] == [
+    assert manifest.manifest.global_feature_blacklist == ["custom_signal", "mark_price", "ask1_price"]
+    assert persisted_manifest["global_feature_blacklist"] == [
         "custom_signal",
         "mark_price",
         "ask1_price",
     ]
-    assert manifest.manifest.filter_results["Feature Blacklist Dropped"] == ["custom_signal"]
-    assert persisted_manifest["filter_results"]["Feature Blacklist Dropped"] == ["custom_signal"]
-    assert manifest.manifest.selected_feature_count == len(selected_features)
+    assert manifest.manifest.shared_filter_results["Feature Blacklist Dropped"] == ["custom_signal"]
+    assert persisted_manifest["shared_filter_results"]["Feature Blacklist Dropped"] == ["custom_signal"]
+    assert manifest.manifest.union_selected_feature_count == len(selected_features)
 
 
 def test_front_loaded_blacklist_eliminates_borrowed_knife_correlation_dropping(tmp_path, fake_catboost):
@@ -649,7 +649,7 @@ def test_front_loaded_blacklist_eliminates_borrowed_knife_correlation_dropping(t
 
     assert "toxic_feature" not in selected_features
     assert "valid_stationary_feature" in selected_features
-    assert "toxic_feature" in manifest.manifest.filter_results["Feature Blacklist Dropped"]
+    assert "toxic_feature" in manifest.manifest.shared_filter_results["Feature Blacklist Dropped"]
 
 
 def test_train_stage_filters_fast_decay_micro_returns_by_persistence(
@@ -783,7 +783,7 @@ def test_train_stage_does_not_filter_equivalent_log_return_aliases(
     assert "wap_1_log_return_6" in aggregate_features
     assert "buy_volume_oe_trend_2" in aggregate_features
     assert "Feature Semantic Deduplication Dropped" not in (
-        manifest.manifest.filter_results
+        manifest.manifest.shared_filter_results
     )
 
 
@@ -856,7 +856,7 @@ def test_valid_stage_evaluates_train_features_without_writing_downstream_feature
     assert persisted_manifest["report_only"] is True
     assert persisted_manifest["evaluated_feature_count"] == 1
     assert persisted_manifest["evaluated_features"] == ["alpha"]
-    assert "filter_results" not in persisted_manifest
+    assert "shared_filter_results" not in persisted_manifest
     assert "rl_feature_file" not in persisted_manifest
     assert "vae_feature_file" not in persisted_manifest
     assert "filtered_outputs" not in persisted_manifest
@@ -1085,8 +1085,8 @@ def test_stream_filter_profile_immutability_and_defaults():
     assert DEFAULT_RL_PROFILE.min_sign_consistency == 0.55
     assert DEFAULT_RL_PROFILE.min_rank_ic_ir == 0.18
     assert DEFAULT_RL_PROFILE.max_correlation == 0.80
-    assert DEFAULT_RL_PROFILE.min_clusters == 100
-    assert DEFAULT_RL_PROFILE.max_clusters == 155
+    assert DEFAULT_RL_PROFILE.min_clusters == 135
+    assert DEFAULT_RL_PROFILE.max_clusters == 160
 
     # Verify frozen immutability
     with pytest.raises(Exception):
@@ -1145,8 +1145,8 @@ def test_feature_selection_manifest_triple_stream_serialization(tmp_path: Path):
         vae_slope_feature_file=str(tmp_path / "vae_slope_state_features.npy"),
         vae_volatility_feature_file=str(tmp_path / "vae_volatility_state_features.npy"),
         rl_feature_file=str(tmp_path / "rl_state_features.npy"),
-        selected_features=["base_time_day_progress", "time_hour_sin", "trading_minute_progress", "realized_volatility_6", "level5_ofi_weighted_norm"],
-        selected_feature_count=5,
+        union_selected_features=["base_time_day_progress", "time_hour_sin", "trading_minute_progress", "realized_volatility_6", "level5_ofi_weighted_norm"],
+        union_selected_feature_count=5,
         vae_slope_stream=slope_record,
         vae_volatility_stream=vol_record,
         rl_stream=rl_record,
@@ -1158,7 +1158,7 @@ def test_feature_selection_manifest_triple_stream_serialization(tmp_path: Path):
     # Read back and verify deserialization roundtrip
     loaded = FeatureSelectionManifest.read_json(manifest_path)
     assert loaded.stream_mode == "triple"
-    assert loaded.selected_feature_count == 5
+    assert loaded.union_selected_feature_count == 5
     assert loaded.vae_slope_stream is not None
     assert loaded.vae_slope_stream.profile_name == "vae_slope"
     assert loaded.vae_volatility_stream is not None
@@ -1327,8 +1327,8 @@ def test_triple_stream_train_stage_writes_triple_artifacts_and_union(tmp_path, f
     # Verify manifest audit payload
     manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
     assert manifest_data["stream_mode"] == "triple"
-    assert manifest_data["selected_feature_count"] == len(union_feats)
-    assert manifest_data["selected_features"] == union_feats
+    assert manifest_data["union_selected_feature_count"] == len(union_feats)
+    assert manifest_data["union_selected_features"] == union_feats
     assert "vae_slope_stream" in manifest_data
     assert "vae_volatility_stream" in manifest_data
     assert "rl_stream" in manifest_data
@@ -2073,3 +2073,143 @@ def test_triple_stream_feature_selection_orthogonality_and_bounds(tmp_path, fake
     # vae_volatility must contain 0 directional indicators
     for f in vol_feats:
         assert not any(dir_pat in f for dir_pat in ["directional_trend", "log_price_slope", "linear_slope"]), f"Directional indicator {f} leaked into vae_volatility!"
+
+
+def test_multi_horizon_triple_stream_stratified_clustering_and_manifest_diagnostics(tmp_path, fake_catboost):
+    from operator_futures.feature_selection.manifests import FeatureSelectionManifest
+    from operator_futures.feature_selection.muti_contract.types import (
+        StreamFilterProfile,
+        classify_feature_scale,
+    )
+
+    row_count = 50
+    rng = np.random.RandomState(42)
+
+    features_dict = {}
+    # 1. Micro candidates
+    for i in range(10):
+        features_dict[f"orderbook_imbalance_{i}"] = rng.normal(0, 1, row_count).tolist()
+
+    # 2. Meso candidates
+    for i in range(8):
+        features_dict[f"roc_48_ask_{i}"] = rng.normal(0, 1, row_count).tolist()
+    features_dict["mark_price_ema_deviation_48"] = rng.normal(0, 1, row_count).tolist()
+
+    # 3. Macro candidates
+    features_dict["mark_price_ema_deviation_720"] = (rng.normal(0, 1, row_count) + 0.5).tolist()
+    features_dict["mark_price_roc_720"] = (rng.normal(0, 1, row_count) + 0.4).tolist()
+    features_dict["trend_beta_720"] = (rng.normal(0, 1, row_count) + 0.3).tolist()
+    features_dict["trend_to_noise_720"] = rng.uniform(0.1, 0.9, row_count).tolist()
+    features_dict["cm_main_sub_spread_rolling_zscore_720"] = rng.normal(0, 1, row_count).tolist()
+
+    _write_long_split_contract(
+        tmp_path, "train", "fu2601",
+        [float(i) for i in range(row_count)], [float(row_count - i) for i in range(row_count)],
+        extra_features=features_dict,
+    )
+    _write_long_split_contract(
+        tmp_path, "train", "fu2605",
+        [float(i + 1) for i in range(row_count)], [float(row_count - i + 1) for i in range(row_count)],
+        extra_features=features_dict,
+    )
+
+    # Permissive profiles to test tiered allocation and manifest diagnostics
+    test_slope = StreamFilterProfile(
+        name="vae_slope",
+        max_mean_psi=0.5,
+        max_pair_psi=1.5,
+        min_abs_ic=0.0,
+        min_sign_consistency=0.0,
+        min_rank_ic_ir=0.0,
+        max_correlation=0.65,
+        min_clusters=5,
+        max_clusters=16,
+        psi_weight=0.45,
+        rank_ic_weight=0.35,
+        catboost_weight=0.20,
+        filter_micro_persistence=False,
+    )
+    test_vol = StreamFilterProfile(
+        name="vae_volatility",
+        max_mean_psi=0.5,
+        max_pair_psi=1.5,
+        min_abs_ic=0.0,
+        min_sign_consistency=0.0,
+        min_rank_ic_ir=0.0,
+        max_correlation=0.60,
+        min_clusters=5,
+        max_clusters=14,
+        psi_weight=0.45,
+        rank_ic_weight=0.35,
+        catboost_weight=0.20,
+        filter_micro_persistence=False,
+    )
+    test_rl = StreamFilterProfile(
+        name="rl_decision",
+        max_mean_psi=0.5,
+        max_pair_psi=1.5,
+        min_abs_ic=0.0,
+        min_sign_consistency=0.0,
+        min_rank_ic_ir=0.0,
+        max_correlation=0.80,
+        min_clusters=10,
+        max_clusters=160,
+        psi_weight=0.15,
+        rank_ic_weight=0.70,
+        catboost_weight=0.15,
+        filter_micro_persistence=False,
+    )
+
+    res = run_feature_selection(
+        root_path=tmp_path,
+        split_path="PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST",
+        save_path="PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION",
+        symbol="fu",
+        target_freq="5min",
+        stage="train",
+        orderbook_depth=5,
+        vae_slope_profile=test_slope,
+        vae_volatility_profile=test_vol,
+        rl_profile=test_rl,
+    )
+
+    manifest = res.manifest
+
+    # 1. Process documentation check
+    assert manifest.process_documentation is not None
+    assert "# Multi-Horizon Cross-Frequency Triple-Stream Feature Selection Process" in manifest.process_documentation
+    assert "Three-Tier Native Predictive Funnel" in manifest.process_documentation
+    assert "Slope VAE Stream" in manifest.process_documentation
+
+    # 2. Tier breakdown verification on RL Stream
+    assert manifest.rl_stream is not None
+    rl_tiers = manifest.rl_stream.tier_breakdown
+    assert rl_tiers is not None
+    assert "micro" in rl_tiers and "meso" in rl_tiers and "macro" in rl_tiers
+
+    macro_breakdown = rl_tiers["macro"]
+    assert macro_breakdown["decision_horizon"] == 192
+    assert macro_breakdown["selected_quota"]["min"] == 10
+    assert macro_breakdown["selected_quota"]["max"] == 15
+    assert macro_breakdown["selected"] > 0
+    for feat in macro_breakdown["features"]:
+        assert classify_feature_scale(feat) == "macro"
+
+    # 3. Slope VAE strictly blacklists micro features
+    assert manifest.vae_slope_stream is not None
+    slope_tiers = manifest.vae_slope_stream.tier_breakdown
+    assert slope_tiers is not None
+    slope_micro = slope_tiers["micro"]
+    assert slope_micro["selected"] == 0
+    assert len(slope_micro["features"]) == 0
+    for feat in manifest.vae_slope_stream.selected_features:
+        assert classify_feature_scale(feat) in ("meso", "macro"), f"Micro feature {feat} leaked into Slope VAE!"
+
+    # 4. JSON Serialization & Deserialization round-trip
+    manifest_path = tmp_path / "manifest_test.json"
+    manifest.write_json(manifest_path)
+    loaded_manifest = FeatureSelectionManifest.read_json(manifest_path)
+
+    assert loaded_manifest.process_documentation == manifest.process_documentation
+    assert loaded_manifest.rl_stream.tier_breakdown == manifest.rl_stream.tier_breakdown
+    assert loaded_manifest.vae_slope_stream.tier_breakdown == manifest.vae_slope_stream.tier_breakdown

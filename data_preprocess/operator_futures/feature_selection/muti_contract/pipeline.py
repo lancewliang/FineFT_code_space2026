@@ -56,6 +56,9 @@ from operator_futures.feature_selection.muti_contract.types import (
     DEFAULT_RL_PROFILE,
     DEFAULT_VAE_SLOPE_PROFILE,
     DEFAULT_VAE_VOLATILITY_PROFILE,
+    SCALE_TIER_CONFIGS,
+    STREAM_TIER_QUOTAS,
+    classify_feature_scale,
     DataHygieneConfig,
     DistributionAuditConfig,
     FeatureSelectionPipelineConfig,
@@ -229,6 +232,31 @@ def _build_config_from_legacy_kwargs(**kwargs) -> FeatureSelectionPipelineConfig
 
 
 
+def _build_process_documentation() -> str:
+    return """# Multi-Horizon Cross-Frequency Triple-Stream Feature Selection Process
+
+## 1. Multi-Scale Hierarchy & Regular Expression Contracting
+Candidate features are classified into three temporal scale tiers based on causal naming contracts:
+- **Micro Tier (k in [1..12] bars, 10m ~ 2h)**: High-frequency orderbook microstructure, depth imbalances, and short returns. Default fallback for technical indicators.
+- **Meso Tier (k in [16..96] bars, 2.6h ~ 16h)**: Intraday wave momentum, session indicators (`session_`, `trading_minute_`), multiday bars (`prev_day_`, `prev_2_day_`), and calendar features (`base_time_`, `contract_month_`, `contract_life_`).
+- **Macro Tier (k in [192..720] bars, 32h ~ 120h)**: Continuous causal macro operators (`_(720|1440|2160)`, `prev_(5|10|15|20|30)_day`, `prev_(1|2|4|6)_week`, `cm_.*_(720|1440)`), including mark price EMA deviations, ROC, trend betas, trend-to-noise ratios, and cross-month rolling Z-scores.
+
+## 2. Three-Tier Native Predictive Funnel
+To prevent long-horizon macro features from being erroneously discarded by short-term IC tests, candidate features are evaluated strictly against their tier-matched forward return windows:
+- **Micro Gate**: forward horizons [1, 2, 6, 12], decision horizon 6. Thresholds: |RankIC| >= 0.010, SignConsistency >= 0.55, RankIC-IR >= 0.18.
+- **Meso Gate**: forward horizons [16, 24, 48, 96], decision horizon 24. Thresholds: |RankIC| >= 0.015, SignConsistency >= 0.58, RankIC-IR >= 0.15.
+- **Macro Gate**: forward horizons [192, 384, 720], decision horizon 192. Thresholds: |RankIC| >= 0.020, SignConsistency >= 0.60, RankIC-IR >= 0.12.
+
+## 3. Asymmetric Triple-Stream Specialization & Allocation
+- **Slope VAE Stream (Strategic Direction Router)**: Operates strictly on Meso (8~10 features) and Macro (4~6 features). Micro features are strictly blacklisted (0% micro) to eliminate latent space jitter and false OOD halts.
+- **Volatility VAE Stream (Regime Dispersion Router)**: Operates on Meso (6~8 features) and Macro (4~5 features), with at most 0~1 micro feature.
+- **RL Decision Stream (Execution Policy)**: Flat multi-horizon state vector with 85~100 micro, 35~45 meso, and 10~15 macro features (total 135~160 dimensions).
+
+## 4. Stratified Correlation Clustering Quotas & OOD Prevention
+- Agglomerative correlation clustering (Ward linkage) is executed within each scale tier independently to enforce tier capacity quotas and prevent macro factors from being crowded out by micro indicators.
+- Macro operators are mathematically scale-invariant (EMA deviation normalized by ATR, ROC normalized by base price, trend-to-noise bounded in [0, 1]) and incorporate expanding-window fallbacks (min_periods=48), ensuring zero-NaN generation and eliminating out-of-distribution (OOD) feature drift across market price level regimes.
+"""
+
 def _evaluate_stream_branch(
     profile: StreamFilterProfile,
     candidate_features: list[str],
@@ -245,6 +273,7 @@ def _evaluate_stream_branch(
     retained_anchors: list[str],
     *,
     vol_sign_consistency_map: dict[str, float] | None = None,
+    pred_tier_diagnostics: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[str], dict[str, list[str]], StreamAuditRecord]:
     import re
     from scipy.cluster.hierarchy import fcluster, linkage
@@ -457,25 +486,149 @@ def _evaluate_stream_branch(
         pool = [pool[i] for i in sorted_indices]
         filter_drops["Composite Score"] = pool
 
-    # (e) Orthogonal Deduplication & Clustering
-    target_max_candidates = max(profile.max_clusters - len(stream_mandatory), 1)
-    target_min_candidates = max(profile.min_clusters - len(stream_mandatory), 1)
-
-    if not pool:
-        selected_candidates: list[str] = []
-        cluster_dropped: list[str] = []
-    elif len(pool) == 1:
-        selected_candidates = list(pool)
-        cluster_dropped = []
-    else:
-        corre_df = compute_contract_normalized_spearman_correlation_matrix(frames, pool)
-        corr_np = np.array(corre_df.select(pool).to_numpy(), copy=True)
+    # (e) Orthogonal Deduplication & Clustering (ADR-0054 Scale-Stratified Quotas)
+    corre_df = (
+        compute_contract_normalized_spearman_correlation_matrix(frames, pool)
+        if len(pool) > 1
+        else None
+    )
+    corr_np = (
+        np.array(corre_df.select(pool).to_numpy(), copy=True)
+        if corre_df is not None
+        else None
+    )
+    if corr_np is not None:
         np.fill_diagonal(corr_np, 1.0)
-        n_feat = len(pool)
 
-        if False:
-            pass
+    has_meso_or_macro = any(
+        classify_feature_scale(f) in ("meso", "macro") for f in pool
+    )
+    if profile.name in STREAM_TIER_QUOTAS and has_meso_or_macro:
+        tier_quotas_dict = STREAM_TIER_QUOTAS[profile.name]
+        canonical_max = (
+            DEFAULT_RL_PROFILE.max_clusters
+            if profile.name == "rl_decision"
+            else (
+                DEFAULT_VAE_SLOPE_PROFILE.max_clusters
+                if profile.name == "vae_slope"
+                else DEFAULT_VAE_VOLATILITY_PROFILE.max_clusters
+            )
+        )
+        scale_factor = (
+            profile.max_clusters / float(canonical_max)
+            if profile.max_clusters != canonical_max
+            else 1.0
+        )
+
+        selected_candidates: list[str] = []
+        all_cluster_dropped: list[str] = []
+
+        for tier_name in ("micro", "meso", "macro"):
+            t_quota = tier_quotas_dict[tier_name]
+            t_mandatory = [f for f in stream_mandatory if classify_feature_scale(f) == tier_name]
+            t_pool = [f for f in pool if classify_feature_scale(f) == tier_name]
+
+            if scale_factor != 1.0:
+                eff_max = max(0, int(round(t_quota.max_quota * scale_factor)))
+                eff_min = max(0, int(round(t_quota.min_quota * scale_factor)))
+                if t_quota.max_quota > 0 and eff_max == 0:
+                    eff_max = 1
+            else:
+                eff_max = t_quota.max_quota
+                eff_min = t_quota.min_quota
+
+            target_max_t = max(eff_max - len(t_mandatory), 0)
+            target_min_t = max(eff_min - len(t_mandatory), 0)
+
+            if target_max_t == 0:
+                all_cluster_dropped.extend(t_pool)
+                continue
+            if not t_pool:
+                continue
+            if len(t_pool) <= target_max_t:
+                t_selected = list(t_pool)
+                t_dropped = []
+            else:
+                if corre_df is not None:
+                    t_indices = [pool.index(f) for f in t_pool]
+                    t_corr = corr_np[np.ix_(t_indices, t_indices)]
+                    np.fill_diagonal(t_corr, 1.0)
+                    dist_matrix = np.sqrt(np.clip((1.0 - t_corr) / 2.0, 0.0, 1.0))
+                    np.fill_diagonal(dist_matrix, 0.0)
+                    condensed_dist = squareform(dist_matrix, checks=False)
+                    z = linkage(condensed_dist, method="ward")
+
+                    dist_threshold = np.sqrt(max((1.0 - profile.max_correlation) / 2.0, 0.0))
+                    cluster_ids = fcluster(z, t=dist_threshold, criterion="distance")
+                    num_clusters = len(np.unique(cluster_ids))
+
+                    if num_clusters > target_max_t and len(t_pool) > target_max_t:
+                        cluster_ids = fcluster(z, t=target_max_t, criterion="maxclust")
+                        num_clusters = len(np.unique(cluster_ids))
+
+                    cluster_members = []
+                    for cid in sorted(np.unique(cluster_ids)):
+                        members = [t_pool[idx] for idx, c in enumerate(cluster_ids) if c == cid]
+                        members_sorted = sorted(members, key=lambda f: t_pool.index(f))
+                        cluster_members.append(members_sorted)
+
+                    cluster_selected = [m[0] for m in cluster_members]
+                    if len(cluster_selected) < target_min_t and len(t_pool) > len(cluster_selected):
+                        remaining_candidates = []
+                        for members in cluster_members:
+                            remaining_candidates.extend(members[1:])
+                        remaining_candidates.sort(key=lambda f: t_pool.index(f))
+                        deficit = min(
+                            target_max_t - len(cluster_selected),
+                            len(remaining_candidates),
+                        )
+                        cluster_selected.extend(remaining_candidates[:deficit])
+
+                    t_dropped = [f for f in t_pool if f not in set(cluster_selected)]
+                    t_selected = cluster_selected
+                else:
+                    t_selected = t_pool[:target_max_t]
+                    t_dropped = t_pool[target_max_t:]
+
+            if corre_df is not None and len(t_selected) > 1:
+                t_selected, vif_dropped = prune_by_vif(
+                    t_selected, corre_df, max_vif=profile.max_vif
+                )
+                t_dropped.extend(vif_dropped)
+
+            selected_candidates.extend(t_selected)
+            all_cluster_dropped.extend(t_dropped)
+
+        target_max_candidates = max(profile.max_clusters - len(stream_mandatory), 1)
+        target_min_candidates = max(profile.min_clusters - len(stream_mandatory), 1)
+        if len(selected_candidates) < target_min_candidates and len(pool) > len(selected_candidates):
+            remaining_pool = [f for f in pool if f not in set(selected_candidates)]
+            deficit = min(
+                target_max_candidates - len(selected_candidates),
+                target_min_candidates - len(selected_candidates),
+                len(remaining_pool),
+            )
+            selected_candidates.extend(remaining_pool[:deficit])
+
+        all_cluster_dropped = [f for f in pool if f not in set(selected_candidates)]
+        if all_cluster_dropped:
+            filter_drops["Correlation Filter Dropped"] = all_cluster_dropped
+    else:
+        target_max_candidates = max(profile.max_clusters - len(stream_mandatory), 1)
+        target_min_candidates = max(profile.min_clusters - len(stream_mandatory), 1)
+
+        if not pool:
+            selected_candidates = []
+            cluster_dropped = []
+        elif len(pool) == 1:
+            selected_candidates = list(pool)
+            cluster_dropped = []
         else:
+            assert corre_df is not None
+            corr_np = np.array(corre_df.select(pool).to_numpy(), copy=True)
+            np.fill_diagonal(corr_np, 1.0)
+            n_feat = len(pool)
+
             dist_matrix = np.sqrt(np.clip((1.0 - corr_np) / 2.0, 0.0, 1.0))
             np.fill_diagonal(dist_matrix, 0.0)
             condensed_dist = squareform(dist_matrix, checks=False)
@@ -510,12 +663,12 @@ def _evaluate_stream_branch(
             cluster_dropped = [f for f in pool if f not in set(cluster_selected)]
             selected_candidates = cluster_selected
 
-        selected_candidates, vif_dropped = prune_by_vif(
-            selected_candidates, corre_df, max_vif=profile.max_vif
-        )
-        all_dedup_dropped = [f for f in pool if f not in set(selected_candidates)]
-        if all_dedup_dropped:
-            filter_drops["Correlation Filter Dropped"] = all_dedup_dropped
+            selected_candidates, vif_dropped = prune_by_vif(
+                selected_candidates, corre_df, max_vif=profile.max_vif
+            )
+            all_dedup_dropped = [f for f in pool if f not in set(selected_candidates)]
+            if all_dedup_dropped:
+                filter_drops["Correlation Filter Dropped"] = all_dedup_dropped
 
     if retained_anchors:
         for a in retained_anchors:
@@ -541,6 +694,34 @@ def _evaluate_stream_branch(
     dropped_counts = {
         k: len(v) for k, v in filter_drops.items() if k.endswith("Dropped")
     }
+
+    tier_breakdown: dict[str, dict[str, Any]] = {}
+    for t_name in ("micro", "meso", "macro"):
+        t_sel = [f for f in final_stream_features if classify_feature_scale(f) == t_name]
+        t_cfg = SCALE_TIER_CONFIGS[t_name]
+        t_diag = (pred_tier_diagnostics or {}).get(t_name, {})
+        t_q = STREAM_TIER_QUOTAS.get(profile.name, {}).get(t_name)
+        q_min = t_q.min_quota if t_q else 0
+        q_max = t_q.max_quota if t_q else len(t_sel)
+        tier_breakdown[t_name] = {
+            "forward_horizons": t_diag.get("forward_horizons", list(t_cfg.forward_horizons)),
+            "decision_horizon": t_diag.get("decision_horizon", t_cfg.decision_horizon),
+            "thresholds": t_diag.get("thresholds", {
+                "min_abs_ic": t_cfg.min_abs_ic,
+                "sign_consistency": t_cfg.min_sign_consistency,
+                "stability_ir": t_cfg.min_rank_ic_ir,
+            }),
+            "candidates": t_diag.get("candidates", 0),
+            "anti_causal_dropped": t_diag.get("anti_causal_dropped", 0),
+            "rank_ic_dropped": t_diag.get("rank_ic_dropped", 0),
+            "sign_consistency_dropped": t_diag.get("sign_consistency_dropped", 0),
+            "stability_dropped": t_diag.get("stability_dropped", 0),
+            "survivors": t_diag.get("survivors", 0),
+            "selected_quota": {"min": q_min, "max": q_max},
+            "selected": len(t_sel),
+            "features": t_sel,
+        }
+
     audit_record = StreamAuditRecord(
         profile_name=profile.name,
         selected_features=final_stream_features,
@@ -548,6 +729,7 @@ def _evaluate_stream_branch(
         filter_results=filter_drops,
         candidate_count=len(candidate_features),
         dropped_counts=dropped_counts,
+        tier_breakdown=tier_breakdown,
     )
     return final_stream_features, filter_drops, audit_record
 
@@ -736,6 +918,8 @@ def _run_triple_stream_train_stage(
             if a in raw_universe and a not in blacklist_set and a not in rl_blacklist_set
         ]
 
+    pred_tier_diagnostics = pred_res.diagnostics.get("tier_breakdown")
+
     # Branch A: Slope VAE Regime Stream Evaluation
     vae_slope_selected, vae_slope_filter_drops, vae_slope_audit = _evaluate_stream_branch(
         profile=config.vae_slope_profile,
@@ -752,6 +936,7 @@ def _run_triple_stream_train_stage(
         sign_consistency_map=sign_consistency_map,
         retained_anchors=[],
         vol_sign_consistency_map=vol_sign_consistency_map,
+        pred_tier_diagnostics=pred_tier_diagnostics,
     )
 
     # Branch B: Volatility VAE Regime Stream Evaluation
@@ -770,6 +955,7 @@ def _run_triple_stream_train_stage(
         sign_consistency_map=sign_consistency_map,
         retained_anchors=[],
         vol_sign_consistency_map=vol_sign_consistency_map,
+        pred_tier_diagnostics=pred_tier_diagnostics,
     )
 
     # Branch C: RL Decision Stream Evaluation
@@ -788,6 +974,7 @@ def _run_triple_stream_train_stage(
         sign_consistency_map=sign_consistency_map,
         retained_anchors=rl_anchors,
         vol_sign_consistency_map=vol_sign_consistency_map,
+        pred_tier_diagnostics=pred_tier_diagnostics,
     )
 
     # Mathematical Union: S_union = S_vae_slope U S_vae_vol U S_rl
@@ -828,7 +1015,7 @@ def _run_triple_stream_train_stage(
         ]
     if dist_res.dropped_features:
         shared_filter_results["Distribution Drift Dropped"] = dist_res.dropped_features
-    shared_filter_results["Hard Filter"] = pred_res.surviving_features
+    shared_filter_results["Hard Filter Survivors"] = pred_res.surviving_features
 
     manifest = FeatureSelectionManifest(
         symbol=config.symbol,
@@ -838,15 +1025,15 @@ def _run_triple_stream_train_stage(
         rl_feature_file=str(rl_file),
         vae_slope_feature_file=str(vae_slope_file),
         vae_volatility_feature_file=str(vae_vol_file),
-        selected_feature_count=len(final_selected),
-        selected_features=final_selected,
+        union_selected_feature_count=len(final_selected),
+        union_selected_features=final_selected,
         stream_mode="triple",
         vae_slope_stream=vae_slope_audit,
         vae_volatility_stream=vae_vol_audit,
         rl_stream=rl_audit,
         windows_list=list(config.predictive.windows_list),
         composite_drop_ratio=config.scoring.composite_drop_ratio,
-        feature_blacklist=(
+        global_feature_blacklist=(
             list(config.hygiene.feature_blacklist)
             if config.hygiene.feature_blacklist
             else None
@@ -866,7 +1053,7 @@ def _run_triple_stream_train_stage(
         ),
         persistence_diagnostics=persistence_diagnostics,
         aggregate_metrics_path=str(aggregate_path),
-        filter_results=shared_filter_results,
+        shared_filter_results=shared_filter_results,
         contracts=per_contract_records,
         filtered_outputs=filtered_outputs,
         regime_bins=config.regime.regime_bins,
@@ -874,11 +1061,12 @@ def _run_triple_stream_train_stage(
         regime_quantiles=regime_quantiles,
         regime_audit_path=str(regime_audit_path),
         distribution_audit_path=str(dist_path),
-        max_mean_psi=config.drift.max_mean_psi,
-        max_pair_psi=config.drift.max_pair_psi,
+        global_max_mean_psi=config.drift.max_mean_psi,
+        global_max_pair_psi=config.drift.max_pair_psi,
         min_drift_survivors=config.drift.min_drift_survivors,
-        min_sign_consistency=config.predictive.min_sign_consistency,
+        global_min_sign_consistency=config.predictive.min_sign_consistency,
         conditional_anchors_retained=retention_details if retention_details else None,
+        process_documentation=_build_process_documentation(),
     )
     io.save_manifest(manifest)
     return FeatureSelectionResult(output_dir=io.output_dir, manifest=manifest)
@@ -1034,10 +1222,10 @@ def _run_validation_stage(
         regime_quantiles=regime_quantiles,
         regime_audit_path=str(regime_audit_path),
         distribution_audit_path=str(dist_path),
-        max_mean_psi=config.drift.max_mean_psi,
-        max_pair_psi=config.drift.max_pair_psi,
+        global_max_mean_psi=config.drift.max_mean_psi,
+        global_max_pair_psi=config.drift.max_pair_psi,
         min_drift_survivors=config.drift.min_drift_survivors,
-        min_sign_consistency=config.predictive.min_sign_consistency,
+        global_min_sign_consistency=config.predictive.min_sign_consistency,
         conditional_anchors_retained=retention_details if retention_details else None,
     )
     io.save_manifest(manifest)
