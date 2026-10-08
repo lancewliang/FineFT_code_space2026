@@ -128,6 +128,13 @@ def test_prepare_base_args_forwards_enable_non_main_contract_defense(tmp_path):
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
+        enable_trend_entry_lock=True,
+        enable_trailing_stop=True,
+        trailing_stop_activation_threshold=0.08,
+        trailing_stop_retracement_ratio=0.25,
+        trailing_stop_profit_floor=0.003,
+        trailing_stop_cooldown_steps=24,
+        trailing_stop_require_peak_breakout=True,
         hysteresis_exit_ratio=0.65,
     )
 
@@ -214,6 +221,13 @@ def test_reconfigure_routing_preserves_defense_flag(monkeypatch):
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
+        enable_trend_entry_lock=True,
+        enable_trailing_stop=True,
+        trailing_stop_activation_threshold=0.08,
+        trailing_stop_retracement_ratio=0.25,
+        trailing_stop_profit_floor=0.003,
+        trailing_stop_cooldown_steps=24,
+        trailing_stop_require_peak_breakout=True,
         hysteresis_exit_ratio=0.65,
     )
     monkeypatch.setattr(routing, "_resolve_test_path", lambda a: "/tmp/test_trial_1")

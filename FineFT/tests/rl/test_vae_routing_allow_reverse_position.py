@@ -347,6 +347,13 @@ def test_prepare_base_args_loads_two_dimensional_model_from_manifest(tmp_path):
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
+        enable_trend_entry_lock=True,
+        enable_trailing_stop=True,
+        trailing_stop_activation_threshold=0.08,
+        trailing_stop_retracement_ratio=0.25,
+        trailing_stop_profit_floor=0.003,
+        trailing_stop_cooldown_steps=24,
+        trailing_stop_require_peak_breakout=True,
         hysteresis_exit_ratio=0.65,
     )
 
@@ -391,6 +398,13 @@ def test_prepare_base_args_does_not_mutate_original_args(tmp_path):
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
+        enable_trend_entry_lock=True,
+        enable_trailing_stop=True,
+        trailing_stop_activation_threshold=0.08,
+        trailing_stop_retracement_ratio=0.25,
+        trailing_stop_profit_floor=0.003,
+        trailing_stop_cooldown_steps=24,
+        trailing_stop_require_peak_breakout=True,
         hysteresis_exit_ratio=0.65,
     )
 
@@ -437,6 +451,13 @@ def test_prepare_base_args_rejects_missing_model_assembly(tmp_path):
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
+        enable_trend_entry_lock=True,
+        enable_trailing_stop=True,
+        trailing_stop_activation_threshold=0.08,
+        trailing_stop_retracement_ratio=0.25,
+        trailing_stop_profit_floor=0.003,
+        trailing_stop_cooldown_steps=24,
+        trailing_stop_require_peak_breakout=True,
         hysteresis_exit_ratio=0.65,
     )
     with pytest.raises(
@@ -471,6 +492,13 @@ def test_prepare_base_args_validates_manifest_contract(tmp_path):
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
+        enable_trend_entry_lock=True,
+        enable_trailing_stop=True,
+        trailing_stop_activation_threshold=0.08,
+        trailing_stop_retracement_ratio=0.25,
+        trailing_stop_profit_floor=0.003,
+        trailing_stop_cooldown_steps=24,
+        trailing_stop_require_peak_breakout=True,
         hysteresis_exit_ratio=0.65,
     )
     with pytest.raises(

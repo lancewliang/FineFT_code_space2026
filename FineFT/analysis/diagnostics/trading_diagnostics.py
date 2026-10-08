@@ -78,6 +78,9 @@ class ContractDiagnostics:
     hard_stop_losses: int
     stop_loss_cooldown_steps: int
     circuit_breaker_suspension_steps: int
+    trend_entry_locks: int
+    trailing_profit_stops: int
+    trailing_stop_cooldown_steps: int
     # Macro routing slots
     macro_counts: dict[str, int]
 
@@ -217,6 +220,9 @@ class TradingDiagnosticsCalculator:
         hard_stop = int(reason_cnt.get(ActionDecisionReasons.HARD_STOP_LOSS.value, 0))
         stop_cool = int(reason_cnt.get(ActionDecisionReasons.STOP_LOSS_COOLDOWN.value, 0))
         circ_brk = int(reason_cnt.get(ActionDecisionReasons.CIRCUIT_BREAKER_SUSPENSION.value, 0))
+        trend_lock = int(reason_cnt.get(ActionDecisionReasons.TREND_ENTRY_LOCK.value, 0))
+        trailing_stop = int(reason_cnt.get(ActionDecisionReasons.TRAILING_PROFIT_STOP.value, 0))
+        trailing_cool = int(reason_cnt.get(ActionDecisionReasons.TRAILING_STOP_COOLDOWN.value, 0))
 
         # 7. Macro Routing
         macro_cnt = Counter(macro_actions.tolist())
@@ -264,6 +270,9 @@ class TradingDiagnosticsCalculator:
             hard_stop_losses=hard_stop,
             stop_loss_cooldown_steps=stop_cool,
             circuit_breaker_suspension_steps=circ_brk,
+            trend_entry_locks=trend_lock,
+            trailing_profit_stops=trailing_stop,
+            trailing_stop_cooldown_steps=trailing_cool,
             macro_counts=macro_dict,
         )
 
@@ -322,6 +331,9 @@ class TradingDiagnosticsCalculator:
                 "hard_stop_losses": d.hard_stop_losses,
                 "stop_loss_cooldown_steps": d.stop_loss_cooldown_steps,
                 "circuit_breaker_suspension_steps": d.circuit_breaker_suspension_steps,
+                "trend_entry_locks": d.trend_entry_locks,
+                "trailing_profit_stops": d.trailing_profit_stops,
+                "trailing_stop_cooldown_steps": d.trailing_stop_cooldown_steps,
             }
             for d in contract_diagnostics
         ])
@@ -474,6 +486,9 @@ class TradingDiagnosticsCalculator:
                     "defensive_rule_closes",
                     "hard_stop_losses",
                     "circuit_breaker_suspension_steps",
+                    "trend_entry_locks",
+                    "trailing_profit_stops",
+                    "trailing_stop_cooldown_steps",
                 ]
             ]),
 

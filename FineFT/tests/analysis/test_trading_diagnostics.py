@@ -36,6 +36,9 @@ def test_trading_diagnostics_calculator_e2e(tmp_path: Path):
     macro_actions = np.array([8] * n_steps, dtype=np.int32)
     reasons = np.array([ActionDecisionReasons.ACTION_PERSISTENCE.value] * n_steps, dtype=np.int32)
     reasons[1] = ActionDecisionReasons.POLICY_INFERENCE.value
+    reasons[2] = ActionDecisionReasons.TREND_ENTRY_LOCK.value
+    reasons[3] = ActionDecisionReasons.TRAILING_PROFIT_STOP.value
+    reasons[4] = ActionDecisionReasons.TRAILING_STOP_COOLDOWN.value
 
     # Rewards: positive
     rewards = np.array([0.0] + [3.5] * (n_steps - 1), dtype=np.float64)
@@ -81,4 +84,14 @@ def test_trading_diagnostics_calculator_e2e(tmp_path: Path):
         loaded = json.load(f)
     assert loaded["portfolio"]["contract_count"] == 1
     assert len(loaded["contracts"]) == 1
-    assert loaded["contracts"][0]["contract"] == contract_name
+    c0 = loaded["contracts"][0]
+    assert c0["contract"] == contract_name
+    assert c0["trend_entry_locks"] == 1
+    assert c0["trailing_profit_stops"] == 1
+    assert c0["trailing_stop_cooldown_steps"] == 1
+
+    # Verify Behavior CSV
+    df_beh = pd.read_csv(output_dir / "contract_behavior_risk.csv")
+    assert df_beh["trend_entry_locks"].iloc[0] == 1
+    assert df_beh["trailing_profit_stops"].iloc[0] == 1
+    assert df_beh["trailing_stop_cooldown_steps"].iloc[0] == 1

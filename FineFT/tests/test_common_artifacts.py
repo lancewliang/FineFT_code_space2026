@@ -114,6 +114,12 @@ def test_history_artifact_names_literals_and_typo_compatibility() -> None:
     assert ActionDecisionReasons.DEFENSIVE_PREEMPTION == 2
     assert ActionDecisionReasons.DEFENSIVE_RULE_CLOSE == 3
     assert ActionDecisionReasons.ACTION_UNAVAILABLE_BREAK == 4
+    assert ActionDecisionReasons.HARD_STOP_LOSS == 5
+    assert ActionDecisionReasons.STOP_LOSS_COOLDOWN == 6
+    assert ActionDecisionReasons.CIRCUIT_BREAKER_SUSPENSION == 7
+    assert ActionDecisionReasons.TREND_ENTRY_LOCK == 8
+    assert ActionDecisionReasons.TRAILING_PROFIT_STOP == 9
+    assert ActionDecisionReasons.TRAILING_STOP_COOLDOWN == 10
 
 
 def test_dynamic_filename_builders() -> None:
