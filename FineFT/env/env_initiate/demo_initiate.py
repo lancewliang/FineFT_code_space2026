@@ -41,6 +41,11 @@ def initiate_demo_env(
     turnover_penalty_rate=0.0,
     turnover_base_rate=0.0,
     turnover_adverse_ratio=1.0,
+    enable_drawdown_reward_shaping=False,
+    drawdown_profit_min=0.08,
+    drawdown_allow_ratio=0.15,
+    drawdown_penalty_weight=0.01,
+    enable_take_profit_turnover_exemption=True,
 ):
 
     # 对应钱包余额，起始保证金，未实现盈亏，持仓量，对应的杠杆):
@@ -121,6 +126,11 @@ def initiate_demo_env(
         turnover_penalty_rate=turnover_penalty_rate,
         turnover_base_rate=turnover_base_rate,
         turnover_adverse_ratio=turnover_adverse_ratio,
+        enable_drawdown_reward_shaping=enable_drawdown_reward_shaping,
+        drawdown_profit_min=drawdown_profit_min,
+        drawdown_allow_ratio=drawdown_allow_ratio,
+        drawdown_penalty_weight=drawdown_penalty_weight,
+        enable_take_profit_turnover_exemption=enable_take_profit_turnover_exemption,
     )
     return env
 

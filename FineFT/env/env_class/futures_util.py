@@ -149,12 +149,15 @@ def compute_directional_turnover_penalty_rate(
     regime_grid_id: int | None,
     turnover_base_rate: float,
     turnover_adverse_ratio: float = 1.0,
+    is_take_profit_exit: bool = False,
 ) -> float:
-    """计算非对称方向性调仓惩罚率 (ADR 0050)。
+    """计算非对称方向性调仓惩罚率 (ADR 0050, ADR 0052)。
 
     规则：
     - 若 turnover_base_rate <= 0 或 old_position == new_position，返回 0.0；
     - 若 regime_grid_id 为 None 或 < 0 或 turnover_adverse_ratio <= 1.0，优雅降级为对称 turnover_base_rate；
+    - 若 is_take_profit_exit=True 且属于减仓或平仓 (abs(new_position) < abs(old_position))，
+      豁免逆势惩罚，降级结算为对称 turnover_base_rate (ADR 0052)；
     - slope_bin = int(regime_grid_id) % 3：
       - 上涨趋势 (slope_bin == 2)：
         - 顺势多头调仓 (new_position > old_position)：turnover_base_rate
@@ -170,6 +173,9 @@ def compute_directional_turnover_penalty_rate(
         return 0.0
 
     if regime_grid_id is None or regime_grid_id < 0 or turnover_adverse_ratio <= 1.0:
+        return turnover_base_rate
+
+    if is_take_profit_exit:
         return turnover_base_rate
 
     slope_bin = int(regime_grid_id) % 3

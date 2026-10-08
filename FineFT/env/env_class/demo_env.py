@@ -62,6 +62,11 @@ class Demo_Env(Base_Env):
         turnover_penalty_rate=0.0,
         turnover_base_rate=0.0,
         turnover_adverse_ratio=1.0,
+        enable_drawdown_reward_shaping=False,
+        drawdown_profit_min=0.08,
+        drawdown_allow_ratio=0.15,
+        drawdown_penalty_weight=0.01,
+        enable_take_profit_turnover_exemption=True,
         q_table=None,
     ):
 
@@ -105,6 +110,11 @@ class Demo_Env(Base_Env):
             turnover_penalty_rate=turnover_penalty_rate,
             turnover_base_rate=turnover_base_rate,
             turnover_adverse_ratio=turnover_adverse_ratio,
+            enable_drawdown_reward_shaping=enable_drawdown_reward_shaping,
+            drawdown_profit_min=drawdown_profit_min,
+            drawdown_allow_ratio=drawdown_allow_ratio,
+            drawdown_penalty_weight=drawdown_penalty_weight,
+            enable_take_profit_turnover_exemption=enable_take_profit_turnover_exemption,
         )
         if q_table is not None:
             self.q_table = q_table

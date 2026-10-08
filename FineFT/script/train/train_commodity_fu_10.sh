@@ -25,4 +25,9 @@ python -u FineFT/RL/DiHFT/low_level/parallel_weight_advantage_pretrain.py \
     --ada_min 0.1 --neighbor_size 2 --load_pretrain_model False --action_persistence 6 --eval_dfs "0,6,12" \
     --turnover_base_rate "${TURNOVER_BASE_RATE:-0.002}" \
     --turnover_adverse_ratio "${TURNOVER_ADVERSE_RATIO:-6.0}" \
+    --enable_drawdown_reward_shaping "${ENABLE_DRAWDOWN_REWARD_SHAPING:-true}" \
+    --drawdown_profit_min "${DRAWDOWN_PROFIT_MIN:-0.08}" \
+    --drawdown_allow_ratio "${DRAWDOWN_ALLOW_RATIO:-0.15}" \
+    --drawdown_penalty_weight "${DRAWDOWN_PENALTY_WEIGHT:-0.01}" \
+    --enable_take_profit_turnover_exemption "${ENABLE_TAKE_PROFIT_TURNOVER_EXEMPTION:-true}" \
     >"log/DiHFT/fu/low_level/train/10min/${EXPERIMENT_NAME}/advantage-10min-parallel.log"

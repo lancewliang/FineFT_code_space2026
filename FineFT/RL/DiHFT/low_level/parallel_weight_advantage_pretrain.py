@@ -335,6 +335,36 @@ parser.add_argument(
     default=None,
     help="proportional turnover penalty rate (legacy alias; overrides base_rate and sets adverse_ratio=1.0)",
 )
+parser.add_argument(
+    "--enable_drawdown_reward_shaping",
+    type=lambda x: str(x).lower() in ("yes", "true", "t", "1"),
+    default=False,
+    help="whether to enable high-water mark drawdown reward shaping",
+)
+parser.add_argument(
+    "--drawdown_profit_min",
+    type=float,
+    default=0.08,
+    help="minimum peak return required to activate drawdown reward shaping",
+)
+parser.add_argument(
+    "--drawdown_allow_ratio",
+    type=float,
+    default=0.15,
+    help="allowable retracement deadband before drawdown penalty activates",
+)
+parser.add_argument(
+    "--drawdown_penalty_weight",
+    type=float,
+    default=0.01,
+    help="quadratic scaling weight for drawdown reward shaping",
+)
+parser.add_argument(
+    "--enable_take_profit_turnover_exemption",
+    type=lambda x: str(x).lower() in ("yes", "true", "t", "1"),
+    default=True,
+    help="exempt take-profit exits from adverse turnover penalty rate",
+)
 
 # network setting
 parser.add_argument(
@@ -911,6 +941,11 @@ class Weighted_Contexts_DQN:
             self.turnover_base_rate = float(args.turnover_base_rate)
             self.turnover_adverse_ratio = float(args.turnover_adverse_ratio)
         self.turnover_penalty_rate = self.turnover_base_rate
+        self.enable_drawdown_reward_shaping = bool(args.enable_drawdown_reward_shaping)
+        self.drawdown_profit_min = float(args.drawdown_profit_min)
+        self.drawdown_allow_ratio = float(args.drawdown_allow_ratio)
+        self.drawdown_penalty_weight = float(args.drawdown_penalty_weight)
+        self.enable_take_profit_turnover_exemption = bool(args.enable_take_profit_turnover_exemption)
         self.action_persistence = int(args.action_persistence)
         if self.action_persistence <= 0:
             raise ValueError("action_persistence must be positive")
@@ -1030,6 +1065,11 @@ class Weighted_Contexts_DQN:
             "turnover_penalty_rate": self.turnover_penalty_rate,
             "turnover_base_rate": self.turnover_base_rate,
             "turnover_adverse_ratio": self.turnover_adverse_ratio,
+            "enable_drawdown_reward_shaping": self.enable_drawdown_reward_shaping,
+            "drawdown_profit_min": self.drawdown_profit_min,
+            "drawdown_allow_ratio": self.drawdown_allow_ratio,
+            "drawdown_penalty_weight": self.drawdown_penalty_weight,
+            "enable_take_profit_turnover_exemption": self.enable_take_profit_turnover_exemption,
         }
         diagnostics_result = prepare_pretrain_qtable_diagnostics(
             total_df_index_length=self.total_df_index_length,

@@ -59,6 +59,8 @@ INFO_DIAGNOSTIC_FIELDS = (
     "funding_count_down_second",
     "single_holding_return_rate",
     "limit_reward",
+    "drawdown_penalty",
+    "instant_profit_retracement",
 )
 
 
@@ -112,6 +114,11 @@ class Base_Env(gym.Env):
         turnover_penalty_rate=0.0,
         turnover_base_rate=0.0,
         turnover_adverse_ratio=1.0,
+        enable_drawdown_reward_shaping=False,
+        drawdown_profit_min=0.08,
+        drawdown_allow_ratio=0.15,
+        drawdown_penalty_weight=0.01,
+        enable_take_profit_turnover_exemption=True,
     ):
         # trading setting
         self.max_holding_number = max_holding_number
@@ -146,6 +153,15 @@ class Base_Env(gym.Env):
         self.turnover_base_rate = effective_base
         self.turnover_adverse_ratio = float(turnover_adverse_ratio)
         self.turnover_penalty_rate = self.turnover_base_rate
+        self.enable_drawdown_reward_shaping = bool(enable_drawdown_reward_shaping)
+        self.drawdown_profit_min = float(drawdown_profit_min)
+        self.drawdown_allow_ratio = float(drawdown_allow_ratio)
+        self.drawdown_penalty_weight = float(drawdown_penalty_weight)
+        self.enable_take_profit_turnover_exemption = bool(enable_take_profit_turnover_exemption)
+        self.episode_peak_return_rate = 0.0
+        self.episode_peak_price = 0.0
+        self.instant_profit_retracement = 0.0
+        self.last_drawdown_penalty = 0.0
         # RL setting
         self.single_side_action_num = int((position_choices - 1) / 2)
         self.action_space = spaces.Discrete(
@@ -223,6 +239,52 @@ class Base_Env(gym.Env):
         else:
             self.current_holding_duration = 1
 
+
+    def _compute_step_drawdown_penalty(self) -> float:
+        if not self.enable_drawdown_reward_shaping or self.position == 0:
+            self.instant_profit_retracement = 0.0
+            return 0.0
+        opening_price = float(self.current_holding_opening_price)
+        if opening_price <= 0.0:
+            self.instant_profit_retracement = 0.0
+            return 0.0
+        markprice = float(self.current_markprice)
+        pos = float(self.position)
+        if pos > 0:
+            holding_return = (markprice - opening_price) / opening_price
+            self.episode_peak_price = max(float(self.episode_peak_price), markprice) if self.episode_peak_price > 0.0 else markprice
+        else:
+            holding_return = (opening_price - markprice) / opening_price
+            self.episode_peak_price = min(float(self.episode_peak_price), markprice) if self.episode_peak_price > 0.0 else markprice
+
+        self.episode_peak_return_rate = max(float(self.episode_peak_return_rate), holding_return)
+        if self.episode_peak_return_rate < self.drawdown_profit_min:
+            self.instant_profit_retracement = 0.0
+            return 0.0
+
+        retracement = (self.episode_peak_return_rate - holding_return) / max(self.episode_peak_return_rate, 1e-12)
+        self.instant_profit_retracement = float(np.clip(retracement, 0.0, 1.0))
+
+        if retracement <= self.drawdown_allow_ratio:
+            return 0.0
+
+        excess = retracement - self.drawdown_allow_ratio
+        notional = abs(pos) * markprice
+        penalty = float(self.drawdown_penalty_weight * (excess ** 2) * notional)
+        return penalty
+
+    def _update_single_holding_max_drawdown(self):
+        if self.enable_drawdown_reward_shaping:
+            self.single_holding_max_drawdown = self.instant_profit_retracement
+        else:
+            self.single_holding_max_drawdown = calculate_single_holsing_max_draw_down(
+                self.single_holding_history,
+                self.initial_margin_history,
+                self.maintain_marigine_history,
+                self.new_position_required_money_history,
+                self.unrealized_pnl_history,
+                self.wallet_balance_history,
+            )
 
     def _zero_trading_info(self):
         return np.zeros(len(TRADING_INFO_KEYS), dtype=np.float32)
@@ -335,6 +397,10 @@ class Base_Env(gym.Env):
             return self.single_holding_return_rate
         if field == "limit_reward":
             return self.last_limit_reward
+        if field == "drawdown_penalty":
+            return self.last_drawdown_penalty
+        if field == "instant_profit_retracement":
+            return self.instant_profit_retracement
         raise ValueError(
             "unknown info field {!r}; supported fields: {}".format(
                 field, ", ".join(INFO_DIAGNOSTIC_FIELDS)
@@ -388,6 +454,9 @@ class Base_Env(gym.Env):
     def _clear_position_cost(self):
         self.current_holding_opening_price = 0.0
         self.current_holding_average_price = 0.0
+        self.episode_peak_return_rate = 0.0
+        self.episode_peak_price = 0.0
+        self.instant_profit_retracement = 0.0
 
     def _update_position_cost(self, old_position, wallet_change):
         new_position = wallet_change.position
@@ -411,6 +480,9 @@ class Base_Env(gym.Env):
         if old_position == 0 or old_position * new_position < 0:
             self.current_holding_opening_price = opened_price
             self.current_holding_average_price = opened_price
+            self.episode_peak_return_rate = 0.0
+            self.episode_peak_price = float(opened_price)
+            self.instant_profit_retracement = 0.0
             return
 
         old_quantity = abs(old_position)
@@ -533,6 +605,10 @@ class Base_Env(gym.Env):
         self.slippage_sum = 0
         self._reset_execution_metrics()
         self.last_limit_reward = 0.0
+        self.last_drawdown_penalty = 0.0
+        self.episode_peak_return_rate = 0.0
+        self.episode_peak_price = 0.0
+        self.instant_profit_retracement = 0.0
         self.new_position_required_money_history = [0]
         self.single_holding_return = 0
         self.single_holding_return_rate = 0
@@ -606,12 +682,21 @@ class Base_Env(gym.Env):
         turnover_penalty = 0.0
         if position != old_position and self.turnover_base_rate > 0.0:
             current_grid_id = self._get_current_regime_grid_id()
+            is_tp_exit = False
+            if (
+                self.enable_drawdown_reward_shaping
+                and self.enable_take_profit_turnover_exemption
+                and abs(position) < abs(old_position)
+                and self.episode_peak_return_rate >= self.drawdown_profit_min
+            ):
+                is_tp_exit = True
             eff_rate = compute_directional_turnover_penalty_rate(
                 old_position=old_position,
                 new_position=position,
                 regime_grid_id=current_grid_id,
                 turnover_base_rate=self.turnover_base_rate,
                 turnover_adverse_ratio=self.turnover_adverse_ratio,
+                is_take_profit_exit=is_tp_exit,
             )
             if eff_rate > 0.0:
                 turnover_penalty = (
@@ -710,16 +795,10 @@ class Base_Env(gym.Env):
             self.single_holding_return_rate = self.single_holding_return / (
                 require_money + 1e-12
             )
-            self.single_holding_max_drawdown = calculate_single_holsing_max_draw_down(
-                self.single_holding_history,
-                self.initial_margin_history,
-                self.maintain_marigine_history,
-                self.new_position_required_money_history,
-                self.unrealized_pnl_history,
-                self.wallet_balance_history,
-            )
+            self._update_single_holding_max_drawdown()
             self._clear_position_cost()
             self.last_limit_reward = 0.0
+            self.last_drawdown_penalty = 0.0
             return (
                 state,
                 reward,
@@ -772,15 +851,9 @@ class Base_Env(gym.Env):
                 self.single_holding_return_rate = self.single_holding_return / (
                     require_money + 1e-12
                 )
-                self.single_holding_max_drawdown = calculate_single_holsing_max_draw_down(
-                    self.single_holding_history,
-                    self.initial_margin_history,
-                    self.maintain_marigine_history,
-                    self.new_position_required_money_history,
-                    self.unrealized_pnl_history,
-                    self.wallet_balance_history,
-                )
+                self._update_single_holding_max_drawdown()
                 self.last_limit_reward = 0.0
+                self.last_drawdown_penalty = 0.0
                 return (
                     self.state_array[self.day],
                     self.wallet_balance + self.unrealized_pnl - previous_margine_balance - turnover_penalty,
@@ -883,18 +956,10 @@ class Base_Env(gym.Env):
                 self.single_holding_return_rate = self.single_holding_return / (
                     require_money + 1e-12
                 )
-                self.single_holding_max_drawdown = (
-                    calculate_single_holsing_max_draw_down(
-                        self.single_holding_history,
-                        self.initial_margin_history,
-                        self.maintain_marigine_history,
-                        self.new_position_required_money_history,
-                        self.unrealized_pnl_history,
-                        self.wallet_balance_history,
-                    )
-                )
+                self._update_single_holding_max_drawdown()
                 self._clear_position_cost()
                 self.last_limit_reward = 0.0
+                self.last_drawdown_penalty = 0.0
                 return (
                     state,
                     reward,
@@ -972,6 +1037,9 @@ class Base_Env(gym.Env):
                 limit_reward = self._compute_step_limit_reward(old_position)
                 reward += limit_reward
                 self.last_limit_reward = limit_reward
+                drawdown_penalty = self._compute_step_drawdown_penalty()
+                reward -= drawdown_penalty
+                self.last_drawdown_penalty = drawdown_penalty
 
                 require_money = calculate_required_money(
                     np.array(self.initial_margin_history),
@@ -983,16 +1051,7 @@ class Base_Env(gym.Env):
                 self.single_holding_return_rate = self.single_holding_return / (
                     require_money + 1e-12
                 )
-                self.single_holding_max_drawdown = (
-                    calculate_single_holsing_max_draw_down(
-                        self.single_holding_history,
-                        self.initial_margin_history,
-                        self.maintain_marigine_history,
-                        self.new_position_required_money_history,
-                        self.unrealized_pnl_history,
-                        self.wallet_balance_history,
-                    )
-                )
+                self._update_single_holding_max_drawdown()
                 if self.position == 0:
                     self.current_holding_duration = 0
                 elif old_position == 0 or (self.allow_reverse_position and old_position * self.position < 0):
@@ -1001,7 +1060,22 @@ class Base_Env(gym.Env):
                     self.current_holding_duration += 1
                 trading_info = self._calculate_trading_info(old_position)
                 # 在step之后才对single holding进行重置
-                if self.position == 0 or (self.allow_reverse_position and old_position * self.position < 0):
+                if self.position == 0:
+                    self.single_holding_return = 0
+                    self.single_holding_history = [0]
+                    self.initial_margin_history = [self.initial_margin]
+                    self.wallet_balance_history = [self.wallet_balance]
+                    self.unrealized_pnl_history = [self.unrealized_pnl]
+                    self.maintain_marigine_history = [
+                        calculate_maintenance_margin(
+                            np.abs(self.current_markprice * self.position)
+                        )
+                    ]
+                    self.new_position_required_money_history = [0]
+                    self.episode_peak_return_rate = 0.0
+                    self.episode_peak_price = 0.0
+                    self.instant_profit_retracement = 0.0
+                elif self.allow_reverse_position and old_position * self.position < 0:
                     self.single_holding_return = 0
                     self.single_holding_history = [0]
                     self.initial_margin_history = [self.initial_margin]

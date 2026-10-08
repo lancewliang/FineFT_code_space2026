@@ -468,5 +468,10 @@ def create_demo_env_from_pack(
         turnover_penalty_rate=env_kwargs.get("turnover_penalty_rate", 0.0),
         turnover_base_rate=env_kwargs.get("turnover_base_rate", 0.0),
         turnover_adverse_ratio=env_kwargs.get("turnover_adverse_ratio", 1.0),
+        enable_drawdown_reward_shaping=env_kwargs.get("enable_drawdown_reward_shaping", False),
+        drawdown_profit_min=env_kwargs.get("drawdown_profit_min", 0.08),
+        drawdown_allow_ratio=env_kwargs.get("drawdown_allow_ratio", 0.15),
+        drawdown_penalty_weight=env_kwargs.get("drawdown_penalty_weight", 0.01),
+        enable_take_profit_turnover_exemption=env_kwargs.get("enable_take_profit_turnover_exemption", True),
         q_table=arrays["q_table_array"],
     )

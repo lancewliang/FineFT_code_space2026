@@ -2705,6 +2705,11 @@ def test_trainer_train_skips_warmup_when_load_pretrain_model_is_true(tmp_path, m
     trainer.turnover_penalty_rate = 0.0
     trainer.turnover_base_rate = 0.0
     trainer.turnover_adverse_ratio = 1.0
+    trainer.enable_drawdown_reward_shaping = False
+    trainer.drawdown_profit_min = 0.08
+    trainer.drawdown_allow_ratio = 0.15
+    trainer.drawdown_penalty_weight = 0.01
+    trainer.enable_take_profit_turnover_exemption = True
     trainer.enable_limit_reward = True
     trainer.limit_hold_bonus = 1.0
     trainer.limit_stay_bonus = 0.5
