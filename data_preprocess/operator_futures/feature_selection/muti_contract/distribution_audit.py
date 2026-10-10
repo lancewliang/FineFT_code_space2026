@@ -262,12 +262,13 @@ def audit_distribution_drift(
         tier_cfg = SCALE_TIER_CONFIGS.get(f_tier)
         eff_mean = max(eff_base_mean, tier_cfg.max_mean_psi if tier_cfg else 0.0)
         eff_pair = max(eff_base_pair, tier_cfg.max_pair_psi if tier_cfg else 0.0)
+        eff_forward = max(forward_outpost_max_psi, tier_cfg.max_forward_psi if tier_cfg else 0.0)
         return (
             mean_psi_dict[f_name] <= eff_mean
             and max_pair_psi_dict[f_name] <= eff_pair
             and (
                 forward_outpost_frame is None
-                or forward_psi_dict[f_name] <= forward_outpost_max_psi
+                or forward_psi_dict[f_name] <= eff_forward
             )
         )
 

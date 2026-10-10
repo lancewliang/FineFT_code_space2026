@@ -79,7 +79,6 @@ def _create_test_router(
     )
     routing.enable_non_main_contract_defense = enable_defense
     routing.role_tier_index = role_tier_index
-    routing.enable_trend_entry_lock = False
     routing.enable_trailing_stop = False
     routing.zero_position_action = 1
     routing.flat_action = 1
@@ -369,7 +368,6 @@ def test_reconfigure_routing_resets_persistence_state():
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
-        enable_trend_entry_lock=False,
         enable_trailing_stop=False,
         trailing_stop_activation_threshold=0.08,
         trailing_stop_retracement_ratio=0.25,

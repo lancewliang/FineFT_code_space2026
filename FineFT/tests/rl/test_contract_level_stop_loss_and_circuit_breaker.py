@@ -112,7 +112,6 @@ def _create_test_router(
     routing.hard_stop_loss_count = 0
     routing.cooldown_intercept_count = 0
     routing.circuit_breaker_suspension_count = 0
-    routing.enable_trend_entry_lock = False
     routing.enable_trailing_stop = False
 
     return routing

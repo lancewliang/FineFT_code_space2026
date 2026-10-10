@@ -192,7 +192,13 @@ parser.add_argument(
     "--enable_trend_entry_lock",
     type=lambda x: str(x).lower() in ("yes", "true", "t", "1"),
     default=True,
-    help="enforce directional trend action masking in bull and bear regimes",
+    help="enforce loss-governed directional trend compliance in bull and bear regimes",
+)
+parser.add_argument(
+    "--trend_loss_threshold",
+    type=float,
+    default=0.015,
+    help="adverse position loss rate threshold on capital to trigger forced trend compliance",
 )
 parser.add_argument(
     "--enable_trailing_stop",
@@ -821,9 +827,12 @@ class vae_risk_aware_routing:
     stop_loss_cooldown_steps: int = 12
     circuit_breaker_consecutive_stops: int = 2
     circuit_breaker_cooling_steps: int = 72
-    enable_trend_entry_lock: bool = False
     enable_trailing_stop: bool = False
     trailing_stop_activation_threshold: float = 0.08
+    enable_trend_entry_lock: bool = True
+    trend_loss_threshold: float = 0.015
+    trend_entry_lock_count: int = 0
+    trend_locked_slope: int | None = None
     trailing_stop_retracement_ratio: float = 0.25
     trailing_stop_profit_floor: float = 0.003
     trailing_stop_cooldown_steps: int = 24
@@ -837,7 +846,6 @@ class vae_risk_aware_routing:
     trailing_stop_hurdle_slope: int | None = None
     trailing_stop_count: int = 0
     trailing_stop_cooldown_intercept_count: int = 0
-    trend_entry_lock_count: int = 0
     cooldown_remaining_steps: int = 0
     last_stopped_position: float = 0.0
     consecutive_stop_loss_count: int = 0
@@ -890,6 +898,9 @@ class vae_risk_aware_routing:
         if self.circuit_breaker_cooling_steps < -1:
             raise ValueError("circuit_breaker_cooling_steps must be -1 or non-negative")
         self.enable_trend_entry_lock = bool(args.enable_trend_entry_lock)
+        self.trend_loss_threshold = float(args.trend_loss_threshold)
+        self.trend_entry_lock_count = 0
+        self.trend_locked_slope = None
         self.enable_trailing_stop = bool(args.enable_trailing_stop)
         self.trailing_stop_activation_threshold = float(args.trailing_stop_activation_threshold)
         if self.trailing_stop_activation_threshold < 0:
@@ -1032,6 +1043,9 @@ class vae_risk_aware_routing:
         self.trailing_stop_hurdle_slope = None
         self.trailing_stop_count = 0
         self.trailing_stop_cooldown_intercept_count = 0
+        self.trend_locked_slope = None
+        self.trend_entry_lock_count = 0
+        self.trend_locked_slope = None
         self.trend_entry_lock_count = 0
         self.previous_step_position = 0.0
         self.active_trade_stopped = False
@@ -1142,6 +1156,15 @@ class vae_risk_aware_routing:
         self.circuit_breaker_suspension_count = 0
         self.previous_step_position = 0.0
         self.active_trade_stopped = False
+        self.trailing_stop_active = False
+        self.trailing_stop_remaining_steps = 0
+        self.trailing_stop_last_position = 0.0
+        self.trailing_stop_hurdle_price = None
+        self.trailing_stop_hurdle_slope = None
+        self.trailing_stop_count = 0
+        self.trailing_stop_cooldown_intercept_count = 0
+        self.trend_locked_slope = None
+        self.trend_entry_lock_count = 0
 
     def _resolve_precomputed_quantiles_dir(self, args) -> str | None:
         target_dir = args.precomputed_quantiles_dir
@@ -1236,7 +1259,6 @@ class vae_risk_aware_routing:
         self.circuit_breaker_cooling_steps = int(args.circuit_breaker_cooling_steps)
         if self.circuit_breaker_cooling_steps < -1:
             raise ValueError("circuit_breaker_cooling_steps must be -1 or non-negative")
-        self.enable_trend_entry_lock = bool(args.enable_trend_entry_lock)
         self.enable_trailing_stop = bool(args.enable_trailing_stop)
         self.trailing_stop_activation_threshold = float(args.trailing_stop_activation_threshold)
         if self.trailing_stop_activation_threshold < 0:
@@ -1460,8 +1482,10 @@ class vae_risk_aware_routing:
             and current_pos_float != 0.0
             and current_markprice > 0.0
         ):
-            notional = abs(current_pos_float) * current_markprice
-            holding_return = current_unrealized_pnl / notional
+            effective_capital = (abs(current_pos_float) * current_markprice) / max(
+                float(current_leverage), 1.0
+            )
+            holding_return = current_unrealized_pnl / effective_capital
 
             if not self.trailing_stop_active:
                 if holding_return >= self.trailing_stop_activation_threshold:
@@ -1538,6 +1562,40 @@ class vae_risk_aware_routing:
 
         self.selected_agent_index = slot_id
         self.macro_action_history.append(slot_id)
+
+        # 3b. Adverse Trend Loss Liquidation (Loss-governed Trend Guard)
+        if (
+            self.enable_trend_entry_lock
+            and current_pos_float != 0.0
+            and slope_index in (0, 2)
+        ):
+            is_adverse = (
+                (slope_index == 2 and current_pos_float < 0)
+                or (slope_index == 0 and current_pos_float > 0)
+            )
+            if is_adverse and current_unrealized_pnl < 0.0 and current_markprice > 0.0:
+                effective_capital = (abs(current_pos_float) * current_markprice) / max(
+                    float(current_leverage), 1.0
+                )
+                adverse_loss_rate = -current_unrealized_pnl / effective_capital
+                if (
+                    self.trend_loss_threshold > 0.0
+                    and adverse_loss_rate >= self.trend_loss_threshold
+                ):
+                    self.trend_locked_slope = slope_index
+                    self.remaining_persist = 0
+                    action = self._defensive_action(
+                        info, current_pos_float, current_leverage
+                    )
+                    self.current_action = action
+                    self.macro_action_history.append(self.slot_count)
+                    self.action_decision_reason_history.append(
+                        ActionDecisionReasons.TREND_ENTRY_LOCK
+                    )
+                    self.trend_entry_lock_count += 1
+                    self.action = action
+                    self.previous_step_position = current_pos_float
+                    return action
 
         # 4. Candidate Action Query
         if self.remaining_persist > 0 and not bool(
@@ -1617,33 +1675,37 @@ class vae_risk_aware_routing:
         if self.trailing_stop_remaining_steps > 0:
             self.trailing_stop_remaining_steps -= 1
 
-        # 5c. Directional Trend Action Mask Interception
-        if self.enable_trend_entry_lock and slope_index in (0, 2):
-            target_pos, _ = map_action_to_position_leverage(
-                candidate_action, self.leverage_choices, self.position_list
-            )
-            if slope_index == 2 and target_pos < 0:
-                self.remaining_persist = 0
-                action = self._defensive_action(info, current_pos_float, current_leverage)
-                self.current_action = action
-                self.action_decision_reason_history.append(
-                    ActionDecisionReasons.TREND_ENTRY_LOCK
+        # 5c. Regime Trend Lock Interception (强制顺势拦截)
+        if self.enable_trend_entry_lock:
+            if (
+                self.trend_locked_slope is not None
+                and slope_index != self.trend_locked_slope
+            ):
+                self.trend_locked_slope = None
+
+            if slope_index in (0, 2):
+                is_locked = (self.trend_loss_threshold <= 0.0) or (
+                    self.trend_locked_slope == slope_index
                 )
-                self.trend_entry_lock_count += 1
-                self.action = action
-                self.previous_step_position = current_pos_float
-                return action
-            elif slope_index == 0 and target_pos > 0:
-                self.remaining_persist = 0
-                action = self._defensive_action(info, current_pos_float, current_leverage)
-                self.current_action = action
-                self.action_decision_reason_history.append(
-                    ActionDecisionReasons.TREND_ENTRY_LOCK
-                )
-                self.trend_entry_lock_count += 1
-                self.action = action
-                self.previous_step_position = current_pos_float
-                return action
+                if is_locked:
+                    target_pos, _ = map_action_to_position_leverage(
+                        candidate_action, self.leverage_choices, self.position_list
+                    )
+                    if (slope_index == 2 and target_pos < 0) or (
+                        slope_index == 0 and target_pos > 0
+                    ):
+                        self.remaining_persist = 0
+                        action = self._defensive_action(
+                            info, current_pos_float, current_leverage
+                        )
+                        self.current_action = action
+                        self.action_decision_reason_history.append(
+                            ActionDecisionReasons.TREND_ENTRY_LOCK
+                        )
+                        self.trend_entry_lock_count += 1
+                        self.action = action
+                        self.previous_step_position = current_pos_float
+                        return action
 
         if candidate_reason == ActionDecisionReasons.ACTION_PERSISTENCE:
             self.remaining_persist -= 1

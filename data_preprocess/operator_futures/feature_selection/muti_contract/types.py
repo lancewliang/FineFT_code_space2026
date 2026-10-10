@@ -74,6 +74,7 @@ class ScaleTierConfig:
     min_rank_ic_ir: float
     max_mean_psi: float = 0.15
     max_pair_psi: float = 0.35
+    max_forward_psi: float = 0.50
 
 
 SCALE_TIER_CONFIGS: dict[str, ScaleTierConfig] = {
@@ -86,6 +87,7 @@ SCALE_TIER_CONFIGS: dict[str, ScaleTierConfig] = {
         min_rank_ic_ir=0.18,
         max_mean_psi=0.15,
         max_pair_psi=0.35,
+        max_forward_psi=0.50,
     ),
     "meso": ScaleTierConfig(
         name="meso",
@@ -96,6 +98,7 @@ SCALE_TIER_CONFIGS: dict[str, ScaleTierConfig] = {
         min_rank_ic_ir=0.15,
         max_mean_psi=0.25,
         max_pair_psi=0.60,
+        max_forward_psi=1.00,
     ),
     "macro": ScaleTierConfig(
         name="macro",
@@ -104,8 +107,9 @@ SCALE_TIER_CONFIGS: dict[str, ScaleTierConfig] = {
         min_abs_ic=0.020,
         min_sign_consistency=0.60,
         min_rank_ic_ir=0.12,
-        max_mean_psi=0.35,
-        max_pair_psi=1.00,
+        max_mean_psi=25.0,
+        max_pair_psi=50.0,
+        max_forward_psi=25.0,
     ),
 }
 

@@ -267,3 +267,39 @@ def test_forward_boundary_drift_outpost_rejects_future_drift():
     assert result.forward_psi_by_feature["stable_feat"] <= 0.15
     assert result.forward_psi_by_feature["forward_drifting_feat"] > 1.0
     assert "forward_psi" in result.metrics_df.columns
+
+
+def test_macro_continuous_features_pass_distribution_audit_with_macro_tier_policy():
+    rng = np.random.RandomState(42)
+    n = 300
+    # Macro feature with realistic inter-contract macro cycle drift (mean_psi ~ 3.5)
+    train_frames = {
+        "c1": pl.DataFrame({
+            "trend_beta_720": rng.normal(0.0, 1.0, n),
+            "micro_drifting_feat": rng.normal(0.0, 1.0, n),
+        }),
+        "c2": pl.DataFrame({
+            "trend_beta_720": rng.normal(3.5, 1.0, n),
+            "micro_drifting_feat": rng.normal(3.5, 1.0, n),
+        }),
+    }
+    outpost_frame = pl.DataFrame({
+        "trend_beta_720": rng.normal(2.5, 1.0, n),
+        "micro_drifting_feat": rng.normal(2.5, 1.0, n),
+    })
+
+    result = audit_distribution_drift(
+        frames=train_frames,
+        feature_universe=["trend_beta_720", "micro_drifting_feat"],
+        num_bins=10,
+        max_mean_psi=0.10,
+        max_pair_psi=0.25,
+        min_drift_survivors=1,
+        forward_outpost_frame=outpost_frame,
+        forward_outpost_max_psi=0.50,
+    )
+
+    # Macro feature should be preserved because cycle variation across contracts is expected
+    assert "trend_beta_720" in result.surviving_features
+    # Micro feature with identical drift must be rejected
+    assert "micro_drifting_feat" in result.dropped_features

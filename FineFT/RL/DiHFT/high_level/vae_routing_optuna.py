@@ -150,7 +150,13 @@ parser_all.add_argument(
     "--enable_trend_entry_lock",
     type=lambda x: str(x).lower() in ("yes", "true", "t", "1"),
     default=True,
-    help="enforce directional trend action masking in bull and bear regimes",
+    help="enforce loss-governed directional trend compliance in bull and bear regimes",
+)
+parser_all.add_argument(
+    "--trend_loss_threshold",
+    type=float,
+    default=0.015,
+    help="adverse position loss rate threshold on capital to trigger forced trend compliance",
 )
 parser_all.add_argument(
     "--enable_trailing_stop",
@@ -275,6 +281,7 @@ def prepare_base_args(args_1, args_2):
     base_args.circuit_breaker_consecutive_stops = args_2.circuit_breaker_consecutive_stops
     base_args.circuit_breaker_cooling_steps = args_2.circuit_breaker_cooling_steps
     base_args.enable_trend_entry_lock = args_2.enable_trend_entry_lock
+    base_args.trend_loss_threshold = float(args_2.trend_loss_threshold)
     base_args.enable_trailing_stop = args_2.enable_trailing_stop
     base_args.trailing_stop_activation_threshold = args_2.trailing_stop_activation_threshold
     base_args.trailing_stop_retracement_ratio = args_2.trailing_stop_retracement_ratio

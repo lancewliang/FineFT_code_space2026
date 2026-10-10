@@ -66,6 +66,7 @@ def _create_test_router(
     volatility_index: int = 1,
     action_persistence: int = 1,
     enable_trend_entry_lock: bool = True,
+    trend_loss_threshold: float = 0.015,
     enable_trailing_stop: bool = True,
     trailing_stop_activation_threshold: float = 0.08,
     trailing_stop_retracement_ratio: float = 0.25,
@@ -119,6 +120,9 @@ def _create_test_router(
 
     # Trend lock & trailing stop configs
     routing.enable_trend_entry_lock = enable_trend_entry_lock
+    routing.trend_loss_threshold = trend_loss_threshold
+    routing.trend_entry_lock_count = 0
+    routing.trend_locked_slope = None
     routing.enable_trailing_stop = enable_trailing_stop
     routing.trailing_stop_activation_threshold = trailing_stop_activation_threshold
     routing.trailing_stop_retracement_ratio = trailing_stop_retracement_ratio
@@ -136,7 +140,6 @@ def _create_test_router(
     routing.trailing_stop_hurdle_slope = None
     routing.trailing_stop_count = 0
     routing.trailing_stop_cooldown_intercept_count = 0
-    routing.trend_entry_lock_count = 0
 
     return routing
 
@@ -155,32 +158,8 @@ def _make_info(current_action=1, markprice=100.0, unrealized_pnl=0.0):
     }
 
 
-def test_trend_entry_lock_intercepts_short_in_bull():
-    router = _create_test_router(slope_index=2)  # Bull
-    # Agent wants to output action 0 (short) from flat
-    router.agent_act = MagicMock(return_value=0)
-    info = _make_info(current_action=1, markprice=100.0)
-    state = np.zeros(10)
-
-    action = router.get_action(info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0, current_markprice=100.0)
-    # Action must be intercepted to flat (1)
-    assert action == 1
-    assert router.action_decision_reason_history[-1] == ActionDecisionReasons.TREND_ENTRY_LOCK
-    assert router.trend_entry_lock_count == 1
 
 
-def test_trend_entry_lock_allows_closing_long_in_bull():
-    router = _create_test_router(slope_index=2)  # Bull
-    # Agent holds long (+1.0) and wants to output flat (1)
-    router.agent_act = MagicMock(return_value=1)
-    info = _make_info(current_action=2, markprice=100.0)
-    state = np.zeros(10)
-
-    action = router.get_action(info, state, current_position=1.0, current_leverage=1, current_unrealized_pnl=0.0, current_markprice=100.0)
-    # Closing to flat must be allowed!
-    assert action == 1
-    assert router.action_decision_reason_history[-1] == ActionDecisionReasons.POLICY_INFERENCE
-    assert router.trend_entry_lock_count == 0
 
 
 def test_trailing_profit_stop_activation_and_execution():
@@ -245,16 +224,6 @@ def test_trailing_stop_dual_spatiotemporal_guard():
     assert router.action_decision_reason_history[-1] == ActionDecisionReasons.POLICY_INFERENCE
 
 
-def test_trend_entry_lock_intercepts_long_in_bear():
-    router = _create_test_router(slope_index=0)  # Bear
-    router.agent_act = MagicMock(return_value=2)  # Agent wants long
-    info = _make_info(current_action=1, markprice=100.0)
-    state = np.zeros(10)
-
-    action = router.get_action(info, state, current_position=0.0, current_leverage=1, current_unrealized_pnl=0.0, current_markprice=100.0)
-    assert action == 1  # Intercepted to flat
-    assert router.action_decision_reason_history[-1] == ActionDecisionReasons.TREND_ENTRY_LOCK
-    assert router.trend_entry_lock_count == 1
 
 
 def test_trailing_stop_hurdle_resets_on_regime_shift():
@@ -283,9 +252,105 @@ def test_trailing_stop_hurdle_resets_on_regime_shift():
     assert router.action_decision_reason_history[-1] == ActionDecisionReasons.POLICY_INFERENCE
 
 
+def test_adverse_position_triggers_trend_loss_liquidation():
+    router = _create_test_router(slope_index=2, trend_loss_threshold=0.015)  # Bull
+    state = np.zeros(10)
+
+    # 1. Adverse short position (-1.0) with small loss (-0.5% on capital 100) -> not stopped
+    info1 = _make_info(current_action=0, markprice=100.0, unrealized_pnl=-0.5)
+    router.agent_act = MagicMock(return_value=0)
+    a1 = router.get_action(
+        info1, state,
+        current_position=-1.0, current_leverage=1,
+        current_unrealized_pnl=-0.5, current_markprice=100.0
+    )
+    assert a1 == 0  # Allowed to continue holding
+    assert router.trend_locked_slope is None
+
+    # 2. Adverse short position with loss exceeding 1.5% (-2.0 / 100 = 2.0% >= 1.5%)
+    info2 = _make_info(current_action=0, markprice=100.0, unrealized_pnl=-2.0)
+    a2 = router.get_action(
+        info2, state,
+        current_position=-1.0, current_leverage=1,
+        current_unrealized_pnl=-2.0, current_markprice=100.0
+    )
+    assert a2 == 1  # Liquidated to flat!
+    assert router.action_decision_reason_history[-1] == ActionDecisionReasons.TREND_ENTRY_LOCK
+    assert router.trend_locked_slope == 2
+    assert router.trend_entry_lock_count == 1
+
+
+def test_trend_locked_regime_intercepts_counter_trend_reentry_but_allows_trend_action():
+    router = _create_test_router(slope_index=2, trend_loss_threshold=0.015)  # Bull
+    router.trend_locked_slope = 2  # Already locked due to prior adverse loss
+    state = np.zeros(10)
+
+    # Agent is flat and tries to open Short again (counter-trend)
+    router.agent_act = MagicMock(return_value=0)
+    info1 = _make_info(current_action=1, markprice=100.0)
+    a1 = router.get_action(
+        info1, state,
+        current_position=0.0, current_leverage=1,
+        current_unrealized_pnl=0.0, current_markprice=100.0
+    )
+    assert a1 == 1  # Intercepted to flat!
+    assert router.action_decision_reason_history[-1] == ActionDecisionReasons.TREND_ENTRY_LOCK
+
+    # Agent tries to open Long (trend-aligned) -> "强制顺势" allows it!
+    router.agent_act = MagicMock(return_value=2)
+    info2 = _make_info(current_action=1, markprice=100.0)
+    a2 = router.get_action(
+        info2, state,
+        current_position=0.0, current_leverage=1,
+        current_unrealized_pnl=0.0, current_markprice=100.0
+    )
+    assert a2 == 2  # Permitted!
+    assert router.action_decision_reason_history[-1] == ActionDecisionReasons.POLICY_INFERENCE
+
+
+def test_profitable_adverse_position_not_stopped():
+    router = _create_test_router(slope_index=2, trend_loss_threshold=0.015)  # Bull
+    router.agent_act = MagicMock(return_value=0)
+    state = np.zeros(10)
+
+    # Holding Short with positive profit (+5.0) in Bull -> scalp is running profitably
+    info = _make_info(current_action=0, markprice=100.0, unrealized_pnl=5.0)
+    a = router.get_action(
+        info, state,
+        current_position=-1.0, current_leverage=1,
+        current_unrealized_pnl=5.0, current_markprice=100.0
+    )
+    assert a == 0  # Not stopped!
+    assert router.trend_locked_slope is None
+
+
+def test_trend_lock_resets_on_regime_shift():
+    router = _create_test_router(slope_index=2, trend_loss_threshold=0.015)
+    router.trend_locked_slope = 2
+    state = np.zeros(10)
+
+    # Regime shifts from Bull (2) to Shock (1)
+    router.calculate_axis_window_result = lambda axis: {
+        "volatility": [0.1, 0.8, 0.1],
+        "slope": [0.1, 0.8, 0.1],  # Shock
+    }[axis]
+
+    router.agent_act = MagicMock(return_value=0)  # Short
+    info = _make_info(current_action=1, markprice=100.0)
+    a = router.get_action(
+        info, state,
+        current_position=0.0, current_leverage=1,
+        current_unrealized_pnl=0.0, current_markprice=100.0
+    )
+    # Lock is released because regime shifted!
+    assert router.trend_locked_slope is None
+    assert a == 0
+
+
 def test_cli_parser_defaults_and_optuna_propagation():
     args_default = vru.parser.parse_args([])
     assert args_default.enable_trend_entry_lock is True
+    assert args_default.trend_loss_threshold == 0.015
     assert args_default.enable_trailing_stop is True
     assert args_default.trailing_stop_activation_threshold == 0.08
     assert args_default.trailing_stop_retracement_ratio == 0.25
@@ -295,5 +360,60 @@ def test_cli_parser_defaults_and_optuna_propagation():
 
     args_optuna = vro.parser_all.parse_args([])
     assert args_optuna.enable_trend_entry_lock is True
+    assert args_optuna.trend_loss_threshold == 0.015
     assert args_optuna.enable_trailing_stop is True
     assert args_optuna.trailing_stop_activation_threshold == 0.08
+
+
+def test_reset_routing_state_clears_all_trailing_stop_states():
+    router = _create_test_router()
+    router.trailing_stop_active = True
+    router.trailing_stop_remaining_steps = 24
+    router.trailing_stop_last_position = 1.0
+    router.trailing_stop_hurdle_price = 3300.0
+    router.trailing_stop_hurdle_slope = 2
+    router.trailing_stop_count = 5
+    router.trailing_stop_cooldown_intercept_count = 10
+    router.trend_locked_slope = 2
+    router.trend_entry_lock_count = 3
+
+    router.reset_routing_state()
+
+    assert router.trailing_stop_active is False
+    assert router.trailing_stop_remaining_steps == 0
+    assert router.trailing_stop_last_position == 0.0
+    assert router.trailing_stop_hurdle_price is None
+    assert router.trailing_stop_hurdle_slope is None
+    assert router.trailing_stop_count == 0
+    assert router.trailing_stop_cooldown_intercept_count == 0
+    assert router.trend_locked_slope is None
+    assert router.trend_entry_lock_count == 0
+
+
+def test_trailing_profit_stop_with_leverage_capital_basis():
+    router = _create_test_router(slope_index=2, trailing_stop_activation_threshold=0.08)
+    router.agent_act = MagicMock(return_value=2)
+    state = np.zeros(10)
+
+    # 1 lot at 3000.0 with 5x leverage: capital = 3000.0 / 5 = 600.0
+    # Unrealized pnl = 60.0 => 60.0 / 600.0 = 10% >= 8% activation threshold!
+    info = _make_info(current_action=2, markprice=3000.0, unrealized_pnl=60.0)
+    a1 = router.get_action(
+        info, state,
+        current_position=1.0, current_leverage=5,
+        current_unrealized_pnl=60.0, current_markprice=3000.0
+    )
+    assert a1 == 2
+    assert router.trailing_stop_active is True
+    assert pytest.approx(router.trailing_peak_return, rel=1e-3) == 60.0 / 600.0
+
+    # Unrealized pnl retraces from 60.0 to 40.0 => return drops from 10% to 6.67%
+    # Retracement ratio = (10% - 6.67%) / 10% = 33.3% >= 25% retracement ratio
+    info_retrace = _make_info(current_action=2, markprice=3000.0, unrealized_pnl=40.0)
+    a2 = router.get_action(
+        info_retrace, state,
+        current_position=1.0, current_leverage=5,
+        current_unrealized_pnl=40.0, current_markprice=3000.0
+    )
+    assert a2 == 1  # Intercepted to flat
+    assert router.action_decision_reason_history[-1] == ActionDecisionReasons.TRAILING_PROFIT_STOP
