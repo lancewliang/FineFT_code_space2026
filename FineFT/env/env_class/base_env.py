@@ -95,7 +95,6 @@ class Base_Env(gym.Env):
         initial_state=(1e5, 0, 0, 0, 1),
         buy_fee_rate=None,
         sell_fee_rate=None,
-        allow_reverse_position=False,
         holding_duration_norm_steps=180,
         is_limit_up_array=None,
         is_limit_down_array=None,
@@ -123,7 +122,6 @@ class Base_Env(gym.Env):
         self.commission_rate = commission_rate
         self.buy_fee_rate = buy_fee_rate
         self.sell_fee_rate = sell_fee_rate
-        self.allow_reverse_position = allow_reverse_position
         if holding_duration_norm_steps <= 0:
             raise ValueError(f"holding_duration_norm_steps must be positive, got {holding_duration_norm_steps}")
         self.holding_duration_norm_steps = float(holding_duration_norm_steps)
@@ -227,14 +225,12 @@ class Base_Env(gym.Env):
     def _zero_trading_info(self):
         return np.zeros(len(TRADING_INFO_KEYS), dtype=np.float32)
 
-    def _calculate_trading_info(self, old_position=0):
+    def _calculate_trading_info(self):
         max_abs_position = max(abs(p) for p in self.position_list)
         position_exposure = 0.0 if max_abs_position == 0 else float(self.position / max_abs_position)
         if self.position == 0:
             return self._zero_trading_info()
         duration_norm = min(float(self.current_holding_duration) / float(self.holding_duration_norm_steps), 1.0)
-        if self.allow_reverse_position and old_position * self.position < 0:
-            return np.array([position_exposure, 0.0, 0.0, duration_norm], dtype=np.float32)
         return np.array(
             [
                 position_exposure,
@@ -494,7 +490,6 @@ class Base_Env(gym.Env):
                 # action space setting
                 leverage_choices=self.leverage_choices,
                 position_choices=self.position_list,
-                allow_reverse_position=self.allow_reverse_position,
             )
         )
         avaiable_position_choices, avaiable_leverage_choices = (
@@ -554,7 +549,7 @@ class Base_Env(gym.Env):
                 "ask_qyts": self.ask_qtys,
                 "bid_qyts": self.bid_qtys,
                 "single_holding_max_drawdown": self.single_holding_max_drawdown,
-                "trading_info": self._calculate_trading_info(0),
+                "trading_info": self._calculate_trading_info(),
                 "regime_grid_id": self._get_current_regime_grid_id(),
             },
         )
@@ -593,8 +588,6 @@ class Base_Env(gym.Env):
             silent=False,
             buy_fee_rate=self.buy_fee_rate,
             sell_fee_rate=self.sell_fee_rate,
-            allow_reverse_position=self.allow_reverse_position,
-            position_list=self.position_list,
         )
         leverage = wallet_change.leverage
         position = wallet_change.position
@@ -943,7 +936,6 @@ class Base_Env(gym.Env):
                         # action space setting
                         leverage_choices=self.leverage_choices,
                         position_choices=self.position_list,
-                        allow_reverse_position=self.allow_reverse_position,
                     )
                 )
                 avaiable_position_choices, avaiable_leverage_choices = (
@@ -995,13 +987,13 @@ class Base_Env(gym.Env):
                 )
                 if self.position == 0:
                     self.current_holding_duration = 0
-                elif old_position == 0 or (self.allow_reverse_position and old_position * self.position < 0):
+                elif old_position == 0:
                     self.current_holding_duration = 1
                 else:
                     self.current_holding_duration += 1
-                trading_info = self._calculate_trading_info(old_position)
+                trading_info = self._calculate_trading_info()
                 # 在step之后才对single holding进行重置
-                if self.position == 0 or (self.allow_reverse_position and old_position * self.position < 0):
+                if self.position == 0:
                     self.single_holding_return = 0
                     self.single_holding_history = [0]
                     self.initial_margin_history = [self.initial_margin]

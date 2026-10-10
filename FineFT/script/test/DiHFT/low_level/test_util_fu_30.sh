@@ -32,7 +32,6 @@ function run_ddqn_context {
                 --dataset_name "${dataset_name}" --experiment_name "${experiment_name}" \
                 --max_holding_number "${max_holding_number}" --initial_wallet_balance 10000 --order_book_depth 5 \
                 --epoch_num "${epoch}" --position_choices 3 --N "${ensemble_number}" --transcation_cost 0.0004 --short_estimated_rate 0 --long_estimated_rate 0 \
-                --allow_reverse_position \
                 --label_type "${label_type}" \
                 >"${log_dir}/epoch_${epoch}.log" 2>&1 &
             pids+=($!) # 将每个后台进程的PID添加到数组中

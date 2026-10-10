@@ -1614,16 +1614,6 @@ def test_df_rollout_worker_runner_tracks_episodes_per_df(monkeypatch):
     assert [record.step_index for record in result_7.transitions] == [0, 1]
 
 
-def test_parallel_parser_allow_reverse_position_default_and_flag():
-    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
-
-    args_default = pwap.parser.parse_args([])
-    assert args_default.allow_reverse_position is False
-
-    args_flag = pwap.parser.parse_args(["--allow_reverse_position"])
-    assert args_flag.allow_reverse_position is True
-
-
 def test_parallel_parser_turnover_rates_default_and_flags():
     from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
 
@@ -2701,7 +2691,6 @@ def test_trainer_train_skips_warmup_when_load_pretrain_model_is_true(tmp_path, m
     trainer.long_estimated_rate = 0
     trainer.short_estimated_rate = 0
     trainer.transcation_cost = 0
-    trainer.allow_reverse_position = False
     trainer.turnover_penalty_rate = 0.0
     trainer.turnover_base_rate = 0.0
     trainer.turnover_adverse_ratio = 1.0

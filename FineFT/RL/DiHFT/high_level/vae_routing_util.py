@@ -59,180 +59,175 @@ parser.add_argument(
     "--base_path",
     type=str,
     default="dataset",
-    help="the number of action we have in the training and testing env",
+    help="数据存储的基础根目录路径",
 )
 parser.add_argument(
     "--dataset_name",
     type=str,
     default="BTCUSDT",
-    help="training data chunk",
+    help="交易品种或数据集名称（例如 BTCUSDT）",
 )
 parser.add_argument(
     "--experiment_name",
     type=str,
     default="default",
-    help="experiment name",
+    help="实验名称，用于定位模型、配置及输出结果的专属目录",
 )
 parser.add_argument(
     "--max_holding_number",
     type=float,
     default=8,
-    help="the transcation cost of not holding the same action as before",
+    help="最大允许持仓头寸上限，用于根据离散动作数划分单侧持仓档位",
 )
 parser.add_argument(
     "--position_choices",
     type=int,
     default=9,
-    help="the transcation cost of not holding the same action as before",
+    help="离散目标仓位选择数量（例如 9 档，包含空头档位、空仓及多头档位）",
 )
 parser.add_argument(
     "--leverage_choices",
     action="append",
     type=int,
     default=[5],
-    help="the transaction cost of not holding the same action as before",
+    help="交易可选的杠杆倍数列表",
 )
 parser.add_argument(
     "--long_estimated_rate",
     type=float,
     default=0.0005,
-    help="the transcation cost of not holding the same action as before",
+    help="多头开仓预估滑点与附加成本费率",
 )
 parser.add_argument(
     "--short_estimated_rate",
     type=float,
     default=0,
-    help="the transcation cost of not holding the same action as before",
+    help="空头开仓预估滑点与附加成本费率",
 )
 parser.add_argument(
     "--transcation_cost",
     type=float,
     default=0.0002,
-    help="the transcation cost of not holding the same action as before",
+    help="单次调仓交易手续费率 / 交易成本",
 )
 
 parser.add_argument(
     "--early_stop",
     type=int,
     default=0,
-    help="the transcation cost of not holding the same action as before",
+    help="单轮测试交互的最大早停步数（设为 0 表示不启用早停）",
 )
 parser.add_argument(
     "--initial_wallet_balance",
     type=float,
     default=1e5,
-    help="wallet balance",
+    help="交易环境初始化的账户钱包初始余额",
 )
 parser.add_argument(
     "--initial_margin",
     type=float,
     default=0,
-    help="initial margin",
+    help="交易环境初始化的初始保证金金额",
 )
 parser.add_argument(
     "--initial_unrealized_pnL",
     type=float,
     default=0,
-    help="unrealized pnL",
+    help="交易环境初始化的初始未实现盈亏",
 )
 parser.add_argument(
     "--initial_position",
     type=float,
     default=0,
-    help="unrealized pnL",
+    help="交易环境初始化的初始持仓量",
 )
 parser.add_argument(
     "--initial_leverage",
     type=float,
     default=5,
-    help="initial leverage",
+    help="交易环境初始化的初始杠杆倍数",
 )
 parser.add_argument(
     "--order_book_depth",
     type=int,
     default=25,
-    help="number of bid/ask price levels available in the order book",
-)
-parser.add_argument(
-    "--allow_reverse_position",
-    action="store_true",
-    help="allow reverse position in single step",
+    help="订单簿（LOB）买卖盘的深度档位数（例如 25 档买卖价量信息）",
 )
 parser.add_argument(
     "--action_persistence",
     type=int,
     default=3,
-    help="number of consecutive steps a non-flat action persists before re-evaluating policy",
+    help="非平仓动作在重新评估策略前持续保持的连续步数（动作持久化机制）",
 )
 parser.add_argument(
     "--stop_loss_return_threshold",
     type=float,
     default=0.015,
-    help="position return rate hard stop-loss threshold, e.g. 0.015 for 1.5% adverse price move (0.0 to disable)",
+    help="仓位收益率硬止损阈值，例如 0.015 表示价格不利变动达 1.5%% 时触发止损（设为 0.0 则禁用）",
 )
 parser.add_argument(
     "--stop_loss_cooldown_steps",
     type=int,
     default=12,
-    help="directional lockout cooldown steps after stop-loss trigger (0 to disable)",
+    help="触发止损后的同向开仓冷却锁进步数（设为 0 则禁用）",
 )
 parser.add_argument(
     "--circuit_breaker_consecutive_stops",
     type=int,
     default=2,
-    help="consecutive stop-loss trigger count to trip contract-level circuit breaker (0 to disable)",
+    help="触发合约级别熔断机制所需的连续止损次数阈值（设为 0 则禁用）",
 )
 parser.add_argument(
     "--circuit_breaker_cooling_steps",
     type=int,
     default=72,
-    help="steps to suspend trading on circuit breaker (-1 for permanent suspension)",
+    help="触发熔断后暂停交易的步数冷却时间（-1 表示永久熔断暂停交易）",
 )
 # low level network setting
 parser.add_argument(
     "--hidden_nodes",
     type=int,
     default=128,
-    help="the number of the hidden nodes",
+    help="低层策略网络隐藏层的神经元节点数量",
 )
 
 parser.add_argument(
     "--time_info_dim",
     type=int,
     default=2,
-    help="context number",
+    help="时间特征向量的维度（包含日内时间周期与进度特征）",
 )
 # VAE network path
 parser.add_argument(
     "--vae_path",
     type=str,
     default="result/DiHFT/vae_results",
-    help="the path for storing the test result",
+    help="预训练 VAE 模型权重的读取路径",
 )
 # vae related
 parser.add_argument(
     "--z_dim",
     type=int,
     default=512,
-    help="the sequency length",
+    help="VAE 潜在空间（latent space）的潜在向量维度",
 )
 parser.add_argument(
     "--vae_hidden_dims",
     type=list,
     default=[4096, 2048, 1024, 1024],
-    help="the sequency length",
+    help="VAE 编码器与解码器隐藏层的各层神经元维度列表",
 )
 parser.add_argument(
     "--loss_type",
     type=str,
     default="NLL",
-    help="the sequency length",
+    help="VAE 重构损失的计算类型（如 NLL 负对数似然或 MSE 均方误差）",
 )
 parser.add_argument(
     "--vae_results",
     type=str,
     default="result/DiHFT/vae_results",
-    help="the sequency length",
+    help="VAE 训练与评估结果的输出存储目录",
 )
 
 # high level network setting
@@ -240,149 +235,149 @@ parser.add_argument(
     "--result_path",
     type=str,
     default="result/DiHFT/high_level",
-    help="the path for storing the test result",
+    help="高层路由策略测试结果与日志的存储路径",
 )
 parser.add_argument(
     "--window_length",
     type=int,
     default=64,
-    help="the path for storing the test result",
+    help="高层状态统计特征平滑计算的默认滚动时间窗口长度",
 )
 parser.add_argument(
     "--gamma",
     type=float,
     default=0.9,
-    help="the path for storing the test result",
+    help="高层状态平滑计算中的默认指数加权衰减系数",
 )
 # 判断是rule base，且之前的down deviation以及超过5% 切成rule based result 等五个step
 parser.add_argument(
     "--rule_base_threshold",
     type=float,
     default=0.2,
-    help="the sequency length",
+    help="切换为规则基底决策模式时的默认状态阈值（如超过该阈值时启用防御规则）",
 )
 parser.add_argument(
     "--selection_manifest",
     type=str,
     default=None,
-    help="two-dimensional low-level selection manifest",
+    help="二维低层子代理选择清单（manifest JSON）的文件路径",
 )
 parser.add_argument(
     "--enable_non_main_contract_defense",
     action="store_true",
     default=False,
-    help="enable defensive gating on non-main and non-sub-main contracts",
+    help="是否在非主力与非次主力合约上启用防御性门控机制",
 )
 parser.add_argument(
     "--eval_stage",
     type=str,
     default="valid",
     choices=["valid", "test"],
-    help="evaluation dataset stage (valid or test)",
+    help="评估所使用的数据集阶段划分，可选验证集（valid）或测试集（test）",
 )
 parser.add_argument(
     "--para_file",
     type=str,
     default=None,
-    help="path to high_level_agent_para.txt",
+    help="高层代理固定参数配置文件（high_level_agent_para.txt）的文件路径",
 )
 parser.add_argument(
     "--optuna_csv",
     type=str,
     default=None,
-    help="path to optuna_results.csv",
+    help="Optuna 超参数优化搜索结果文件（optuna_results.csv）的文件路径",
 )
 parser.add_argument(
     "--slope_window_length",
     type=int,
     default=None,
-    help="slope rolling window length",
+    help="斜率/趋势维度统计特征计算的滚动时间窗口长度",
 )
 parser.add_argument(
     "--volatility_window_length",
     type=int,
     default=None,
-    help="volatility rolling window length",
+    help="波动率维度统计特征计算的滚动时间窗口长度",
 )
 parser.add_argument(
     "--slope_gamma",
     type=float,
     default=None,
-    help="slope decay gamma",
+    help="斜率/趋势维度统计特征的指数加权衰减系数（gamma）",
 )
 parser.add_argument(
     "--volatility_gamma",
     type=float,
     default=None,
-    help="volatility decay gamma",
+    help="波动率维度统计特征的指数加权衰减系数（gamma）",
 )
 parser.add_argument(
     "--slope_rule_base_threshold",
     type=float,
     default=None,
-    help="slope rule base threshold",
+    help="斜率/趋势维度触发规则基底（防御）模式的判定阈值",
 )
 parser.add_argument(
     "--volatility_rule_base_threshold",
     type=float,
     default=None,
-    help="volatility rule base threshold",
+    help="波动率维度触发规则基底（防御）模式的判定阈值",
 )
 parser.add_argument(
     "--gating_strategy",
     type=str,
     default="absolute",
     choices=["absolute", "hierarchical"],
-    help="gating strategy type (absolute or hierarchical)",
+    help="门控路由策略类型，可选绝对阈值门控（absolute）或分层门控（hierarchical）",
 )
 parser.add_argument(
     "--ood_threshold",
     type=float,
     default=0.005,
-    help="OOD circuit breaker threshold for hierarchical gating",
+    help="分层门控策略中分布外（OOD）熔断保护的阈值",
 )
 parser.add_argument(
     "--slope_margin_threshold",
     type=float,
     default=0.12,
-    help="slope top-1 vs top-2 probability margin threshold for hierarchical gating",
+    help="分层门控策略中斜率维度 Top-1 与 Top-2 候选专家的概率裕度（margin）阈值",
 )
 parser.add_argument(
     "--volatility_margin_threshold",
     type=float,
     default=0.12,
-    help="volatility top-1 vs top-2 probability margin threshold for hierarchical gating",
+    help="分层门控策略中波动率维度 Top-1 与 Top-2 候选专家的概率裕度（margin）阈值",
 )
 parser.add_argument(
     "--hysteresis_exit_ratio",
     type=float,
     default=0.65,
-    help="hysteresis exit threshold ratio relative to entry threshold (0.0 to 1.0)",
+    help="迟滞退出阈值比例，退出阈值相对于入场阈值的比例（0.0 至 1.0，用于防止频繁抖动切换）",
 )
 parser.add_argument(
     "--trial_number",
     type=int,
     default=None,
-    help="Optuna trial number used to isolate result artifacts",
+    help="指定提取参数或隔离结果产物的 Optuna Trial 序号",
 )
 
 parser.add_argument(
     "--gpu_index",
     type=int,
     default=0,
-    help="the transcation cost of not holding the same action as before",
+    help="指定用于计算与推理的 GPU 设备索引号（例如 0 表示 cuda:0）",
 )
 parser.add_argument(
     "--precomputed_quantiles_dir",
     type=str,
     default=None,
-    help="directory containing precomputed VAE quantiles for contracts",
+    help="存储各合约预计算 VAE 分位数统计特征（quantiles）的目录路径",
 )
 parser.add_argument(
     "--save_artifacts",
     action=argparse.BooleanOptionalAction,
     default=True,
-    help="save simulation history arrays and contract results to disk",
+    help="是否将仿真历史轨迹数组及各合约回测指标结果保存至磁盘",
 )
 
 
@@ -854,7 +849,6 @@ class vae_risk_aware_routing:
         # trading environment setting
         self.base_path = args.base_path
         self.dataset_name = args.dataset_name
-        self.allow_reverse_position = args.allow_reverse_position
         self.eval_stage_dir = os.path.join(self.base_path, self.dataset_name, self.eval_stage)
         self.single_data_path = os.path.join(
             self.base_path, self.dataset_name, f"{self.eval_stage}.feather"
@@ -1495,7 +1489,6 @@ class vae_risk_aware_routing:
             # initial_personal_state
             initial_state=self.initial_state,
             order_book_depth=self.order_book_depth,
-            allow_reverse_position=self.allow_reverse_position,
         )
         logger.info(
             "Environment initialized. Resetting environment with %d rows of data...",

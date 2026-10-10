@@ -55,7 +55,6 @@ class Agg_Env(Base_Env):
         # the device for the low level model
         device="cpu",
         time_info_dim=2,
-        allow_reverse_position=False,
         holding_duration_norm_steps=180,
     ):
         super().__init__(
@@ -77,7 +76,6 @@ class Agg_Env(Base_Env):
             maintenance_margin_ratio_dict,
             early_stop,
             initial_state,
-            allow_reverse_position=allow_reverse_position,
             holding_duration_norm_steps=holding_duration_norm_steps,
         )
         self.adjust_freq = adjust_len

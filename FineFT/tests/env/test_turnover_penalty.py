@@ -165,7 +165,6 @@ def test_build_optimal_qtable_kwargs_includes_turnover_penalty():
         short_estimated_rate=0.0,
         commission_rate=0.002,
         gamma=0.99,
-        allow_reverse_position=False,
         turnover_penalty_rate=0.0002,
     )
     assert kwargs["turnover_penalty_rate"] == pytest.approx(0.0002)

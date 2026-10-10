@@ -168,172 +168,167 @@ parser.add_argument(
     "--buffer_size",
     type=int,
     default=2000000,
-    help="the number of transcation we store in one memory",
+    help="经验回放缓冲区（Replay Buffer）最大容量，即存储交易转移样本（transition）的最大数量",
 )
 parser.add_argument(
     "--n_step",
     type=int,
     default=1,
-    help="the number of step we have in the td error and replay buffer",
+    help="多步时序差分（n-step TD error）步数，用于多步累积奖励与经验回放计算",
 )
 # * Env setting
 parser.add_argument(
     "--base_path",
     type=str,
     default="dataset",
-    help="the number of action we have in the training and testing env",
+    help="数据存储的基础根目录路径",
 )
 parser.add_argument(
     "--dataset_name",
     type=str,
     default="BTCUSDT",
-    help="training data chunk",
+    help="训练使用的交易品种或数据集名称（例如 BTCUSDT）",
 )
 parser.add_argument(
     "--experiment_name",
     type=str,
     default="default",
-    help="experiment name used to namespace parallel training outputs",
+    help="实验名称，用于隔离并命名并行训练输出的模型及日志目录",
 )
 
 parser.add_argument(
     "--max_holding_number",
     type=float,
     default=8,
-    help="the transcation cost of not holding the same action as before",
+    help="最大允许持仓头寸上限，用于根据离散动作数划分单侧持仓档位",
 )
 parser.add_argument(
     "--order_book_depth",
     type=int,
     default=25,
-    help="number of bid/ask price levels available in the order book",
+    help="订单簿（LOB）买卖盘的深度档位数（例如 25 档买卖价量信息）",
 )
 parser.add_argument(
     "--position_choices",
     type=int,
     default=9,
-    help="the transcation cost of not holding the same action as before",
+    help="离散目标仓位选择数量（例如 9 档，包含空头档位、空仓及多头档位）",
 )
 parser.add_argument(
     "--leverage_choices",
     action="append",
     type=int,
     default=[1],
-    help="the transaction cost of not holding the same action as before",
+    help="交易可选的杠杆倍数列表",
 )
 parser.add_argument(
     "--long_estimated_rate",
     type=float,
     default=0.0005,
-    help="the transcation cost of not holding the same action as before",
+    help="多头开仓预估滑点与附加成本费率",
 )
 parser.add_argument(
     "--short_estimated_rate",
     type=float,
     default=0,
-    help="the transcation cost of not holding the same action as before",
+    help="空头开仓预估滑点与附加成本费率",
 )
 parser.add_argument(
     "--transcation_cost",
     type=float,
     default=0.0002,
-    help="the transcation cost of not holding the same action as before",
+    help="单次调仓交易手续费率 / 交易成本",
 )
 
 parser.add_argument(
     "--early_stop",
     type=int,
     default=2160,
-    help="the transcation cost of not holding the same action as before",
+    help="单轮环境交互的最大早停步数（设为 0 表示不启用早停）",
 )
 parser.add_argument(
     "--initial_wallet_balance",
     type=float,
     default=1e5,
-    help="wallet balance",
+    help="交易环境初始化的账户钱包初始余额",
 )
 parser.add_argument(
     "--initial_margin",
     type=float,
     default=0,
-    help="initial margin",
+    help="交易环境初始化的初始保证金金额",
 )
 parser.add_argument(
     "--initial_unrealized_pnL",
     type=float,
     default=0,
-    help="unrealized pnL",
+    help="交易环境初始化的初始未实现盈亏",
 )
 parser.add_argument(
     "--initial_position",
     type=float,
     default=0,
-    help="unrealized pnL",
+    help="交易环境初始化的初始持仓量",
 )
 parser.add_argument(
     "--initial_leverage",
     type=float,
     default=1,
-    help="initial leverage",
-)
-parser.add_argument(
-    "--allow_reverse_position",
-    action="store_true",
-    help="allow reverse position in single step",
+    help="交易环境初始化的初始杠杆倍数",
 )
 parser.add_argument(
     "--enable_limit_reward",
     action="store_true",
     default=True,
-    help="enable limit up/down reward shaping in DP teacher and environment",
+    help="在 DP 教师策略与交易环境中启用涨跌停奖励塑形机制",
 )
 parser.add_argument(
     "--no_enable_limit_reward",
     dest="enable_limit_reward",
     action="store_false",
-    help="disable limit up/down reward shaping",
+    help="禁用涨跌停奖励塑形机制",
 )
 parser.add_argument(
     "--limit_hold_bonus",
     type=float,
     default=1.0,
-    help="bonus for holding position in limit direction",
+    help="标的处于涨跌停状态时，顺应封板方向持仓的额外奖励权重",
 )
 parser.add_argument(
     "--limit_stay_bonus",
     type=float,
     default=0.5,
-    help="bonus for maintaining unchanged position during limit",
+    help="标的处于涨跌停状态期间，保持仓位不变的维持奖励权重",
 )
 parser.add_argument(
     "--limit_reverse_penalty",
     type=float,
     default=1.5,
-    help="penalty for taking position opposite to limit direction",
+    help="标的处于涨跌停状态时，逆势反向持仓的惩罚权重",
 )
 parser.add_argument(
     "--near_limit_threshold",
     type=float,
     default=0.003,
-    help="relative threshold for near-limit shaping",
+    help="判定临近涨跌停的相对价格偏离度阈值",
 )
 parser.add_argument(
     "--turnover_base_rate",
     type=float,
     default=0.0001,
-    help="proportional baseline turnover penalty rate for reward shaping",
+    help="奖励塑形中的基准换手惩罚率，用于抑制高频无效调仓",
 )
 parser.add_argument(
     "--turnover_adverse_ratio",
     type=float,
     default=6.0,
-    help="multiplier applied to turnover_base_rate for adverse / counter-trend / choppy transitions",
+    help="在逆势、震荡或不利市场转换下对基准换手惩罚施加的放大倍数",
 )
 parser.add_argument(
     "--turnover_penalty_rate",
     type=float,
     default=None,
-    help="proportional turnover penalty rate (legacy alias; overrides base_rate and sets adverse_ratio=1.0)",
+    help="比例换手惩罚率（旧版兼容别名；设置后将覆盖 turnover_base_rate 并将 adverse_ratio 固定为 1.0）",
 )
 
 # network setting
@@ -341,143 +336,143 @@ parser.add_argument(
     "--hidden_nodes",
     type=int,
     default=128,
-    help="the number of the hidden nodes",
+    help="策略网络隐藏层的神经元节点数量",
 )
 parser.add_argument(
     "--N",
     type=int,
     default=7,
-    help="context number",
+    help="上下文专家数量（Context/Expert 数量，即低层集成专家网络的规模）",
 )
 parser.add_argument(
     "--time_info_dim",
     type=int,
     default=2,
-    help="context number",
+    help="时间特征向量的维度（包含日内时间周期与进度特征）",
 )
 # * RL training coffient need to change if the dataset become larger
 parser.add_argument(
-    "--tau", type=float, default=0.005, help="soft update the target network"
+    "--tau", type=float, default=0.005, help="目标网络 Polyak 软更新系数"
 )
 parser.add_argument(
     "--batch_size",
     type=int,
     default=128,
-    help="the number of transcation we learn at a time",
+    help="网络参数更新时每次采样的批次样本量（batch size）",
 )
-parser.add_argument("--update_times", type=int, default=20, help="the update times")
+parser.add_argument("--update_times", type=int, default=20, help="每个更新周期内网络梯度的更新迭代次数")
 parser.add_argument(
-    "--gamma", type=float, default=0.9, help="the gamma for decay reward"
+    "--gamma", type=float, default=0.9, help="强化学习未来奖励的折现因子（discount factor）"
 )
 parser.add_argument(
     "--epsilon_init",
     type=float,
     default=1,
-    help="the coffient for decay",
+    help="Epsilon-greedy 探索策略的初始随机探索概率",
 )
 parser.add_argument(
     "--epsilon_min",
     type=float,
     default=0.1,
-    help="the coffient for decay",
+    help="Epsilon-greedy 探索策略衰减后的最小探索概率下界",
 )
 parser.add_argument(
     "--epsilon_step",
     type=float,
     default=1e5,
-    help="the coffient for decay",
+    help="Epsilon-greedy 探索率线性退火衰减所需的总步数",
 )
 parser.add_argument(
     "--rollout_steps",
     type=int,
     default=1024,
-    help="the number of sampling during one epoch",
+    help="单轮训练周期（epoch）中与环境交互采样的步数（rollout steps）",
 )
 # general learning setting
-parser.add_argument("--lr_init", type=float, default=5e-3, help="the learning rate")
-parser.add_argument("--lr_min", type=float, default=1e-4, help="the learning rate")
-parser.add_argument("--lr_step", type=float, default=2e4, help="the learning rate")
+parser.add_argument("--lr_init", type=float, default=5e-3, help="优化器的初始学习率")
+parser.add_argument("--lr_min", type=float, default=1e-4, help="学习率调度衰减后的最小学习率下界")
+parser.add_argument("--lr_step", type=float, default=2e4, help="学习率从初始值衰减至最小值所需的步数")
 parser.add_argument(
     "--num_sample",
     type=int,
     default=10,
-    help="the overall number of sampling",
+    help="并行训练预训练阶段的每个进程采样轮数",
 )
 parser.add_argument(
     "--num_epoch",
     type=int,
     default=None,
-    help="number of parallel diverse-training epochs; one epoch explores every effective df once",
+    help="并行多样性训练的总轮数（Epoch）；每个 Epoch 会对所有有效数据分块遍历探索一次",
 )
 parser.add_argument(
     "--curriculum_block_epochs",
     type=int,
     default=3,
-    help="number of consecutive epochs per directional curriculum phase (at least 3)",
+    help="方向性课程学习中每个阶段连续执行的 Epoch 轮数（至少为 3 轮）",
 )
 parser.add_argument(
     "--seed",
     type=int,
     default=12345,
-    help="the overall number of sampling",
+    help="随机种子，用于确保实验环境与模型初始化的可复现性",
 )
 # log setting
 parser.add_argument(
     "--result_path",
     type=str,
     default="result/DiHFT/low_level",
-    help="the path for storing the test result",
+    help="训练模型权重、评估指标及日志结果的输出保存路径",
 )
 # loss setting
 parser.add_argument(
     "--outer_bond",
     type=float,
     default=4,
-    help="the path for storing the test result",
+    help="局部损失计算中筛选有效 TD 误差分位数的外边界截断阈值",
 )
 parser.add_argument(
     "--reachout_index",
     type=int,
     default=1,
-    help="the path for storing the test result",
+    help="局部损失计算中分位数索引向外延伸扩展的范围参数",
 )
 parser.add_argument(
     "--if_use_hubber_loss",
     type=bool,
     default=True,
-    help="whether use hubber loss for td error",
+    help="计算 TD 误差时是否使用 Huber 损失（平滑 L1 损失）以提高对异常值的鲁棒性",
 )
 # supervisor
 parser.add_argument(
     "--ada_init",
     type=float,
     default=256,
-    help="the coffient for decay",
+    help="教师监督优势加权损失项权重的初始值",
 )
 parser.add_argument(
     "--ada_min",
     type=float,
     default=0,
-    help="the coffient for decay",
+    help="教师监督优势加权损失项权重的衰减下界（最小值）",
 )
 parser.add_argument(
     "--ada_step",
     type=float,
     default=5e5,
-    help="the coffient for decay",
+    help="教师监督优势加权项权重线性退火衰减的总步数",
 )
 # pretrain
 parser.add_argument(
     "--pretrain_epoch",
     type=int,
     default=0,
-    help="number of exhaustive-warmup training rounds over the collected pretrain buffer",
+    help="基于已收集的预训练经验回放缓冲区执行充分预热训练的轮数",
 )
 parser.add_argument(
     "--neighbor_size",
     type=int,
     default=1,
-    help="fixed learner neighbor count from FineFT Algorithm 2",
+    help="FineFT 算法 2 中学习者从邻近专家聚合经验的固定邻居专家数量",
 )
 parser.add_argument(    
     "--pretrain_num_workers",
@@ -485,14 +480,14 @@ parser.add_argument(
     dest="pretrain_num_workers",
     type=int,
     default=20,
-    help="number of parallel worker processes for pretrain exploration/collection",
+    help="预训练探索与数据采集阶段的并行工作进程数",
 )
 parser.add_argument(    
     "--diverse_num_workers",
     dest="diverse_num_workers",
     type=int,
     default=40,
-    help="number of parallel worker processes for diverse exploration task pool",
+    help="多样性探索任务池的并行工作进程数",
 )
 parser.add_argument(    
     "--eval_num_workers",
@@ -500,7 +495,7 @@ parser.add_argument(
     dest="eval_num_workers",
     type=int,
     default=20,
-    help="number of parallel worker processes for sub-agent evaluation process pool",
+    help="子代理评估进程池的并行工作进程数",
 )
 def _str2bool(v: str | bool) -> bool:
     if isinstance(v, bool):
@@ -520,37 +515,37 @@ parser.add_argument(
     nargs="?",
     const=True,
     default=True,
-    help="whether to read pre-trained model and skip pretraining",
+    help="是否加载已有的预训练模型权重并跳过预训练阶段",
 )
 parser.add_argument(
     "--no_load_pretrain_model",
     dest="load_pretrain_model",
     action="store_false",
-    help="do not read pre-trained model and run pretraining",
+    help="不加载预训练模型权重，重新执行预训练",
 )
 parser.add_argument(
     "--action_persistence",
     type=int,
     default=3,
-    help="number of consecutive steps to hold a non-flat action during exploration",
+    help="探索过程中非空仓动作持续保持的连续步数（动作持久化长度）",
 )
 parser.add_argument(
     "--smooth_curriculum_decay",
     type=_str2bool,
     default=True,
-    help="whether to damp exploration peaks across curriculum phases",
+    help="在课程学习阶段切换时是否对探索峰值进行平滑阻尼衰减",
 )
 parser.add_argument(
     "--eval_interval",
     type=int,
     default=2,
-    help="number of epochs between periodic greedy evaluation probes",
+    help="周期性贪婪策略评估的间隔轮数（每隔多少个 Epoch 执行一次评估）",
 )
 parser.add_argument(
     "--eval_dfs",
     type=str,
     default="0",
-    help="comma-separated df indices to evaluate periodically (e.g. 0,6,12 or 0 or all)",
+    help="周期性评估所使用的数据分块索引列表，以逗号分隔（例如 0,6,12、0 或 all）",
 )
 
 
@@ -898,7 +893,6 @@ class Weighted_Contexts_DQN:
         if self.eval_num_workers <= 0:
             raise ValueError("eval_num_workers must be positive")
         self.load_pretrain_model = args.load_pretrain_model
-        self.allow_reverse_position = args.allow_reverse_position
         self.enable_limit_reward = args.enable_limit_reward
         self.limit_hold_bonus = args.limit_hold_bonus
         self.limit_stay_bonus = args.limit_stay_bonus
@@ -996,7 +990,6 @@ class Weighted_Contexts_DQN:
             short_estimated_rate=self.short_estimated_rate,
             commission_rate=self.transcation_cost,
             gamma=self.gamma,
-            allow_reverse_position=self.allow_reverse_position,
             enable_limit_reward=self.enable_limit_reward,
             limit_hold_bonus=self.limit_hold_bonus,
             limit_stay_bonus=self.limit_stay_bonus,
@@ -1021,7 +1014,6 @@ class Weighted_Contexts_DQN:
             "gamma": self.gamma,
             "initial_wallet_balance": self.initial_wallet_balance,
             "initial_unrealized_pnl": self.initial_unrealized_pnL,
-            "allow_reverse_position": self.allow_reverse_position,
             "enable_limit_reward": self.enable_limit_reward,
             "limit_hold_bonus": self.limit_hold_bonus,
             "limit_stay_bonus": self.limit_stay_bonus,
@@ -1106,7 +1098,6 @@ class Weighted_Contexts_DQN:
             #     limit_stay_bonus=self.limit_stay_bonus,
             #     limit_reverse_penalty=self.limit_reverse_penalty,
             #     near_limit_threshold=self.near_limit_threshold,
-            #     allow_reverse_position=self.allow_reverse_position,
             # )
             # logger.info(eval_metrics)
             pass

@@ -49,7 +49,7 @@ def test_invalid_holding_duration_norm_steps_raises():
 
 def test_reset_returns_trading_info_zeros():
     df, features = _sample_data()
-    env = initiate_base_env(df, features, allow_reverse_position=True)
+    env = initiate_base_env(df, features, )
     state, info = env.reset()
     assert "trading_info" in info
     assert isinstance(info["trading_info"], np.ndarray)
@@ -69,7 +69,7 @@ def test_nonzero_reset_starts_duration_at_one_step():
 def test_holding_duration_lifecycle():
     df, features = _sample_data()
     norm_steps = 10
-    env = initiate_base_env(df, features, allow_reverse_position=True, holding_duration_norm_steps=norm_steps)
+    env = initiate_base_env(df, features, holding_duration_norm_steps=norm_steps)
     state, info = env.reset()
     assert info["trading_info"][3] == 0.0
 
@@ -91,13 +91,17 @@ def test_holding_duration_lifecycle():
     state, reward, done, info = env.step(pos4_action)
     assert abs(info["trading_info"][3] - (4.0 / norm_steps)) < 1e-6
 
-    # 5. Reverse position (+4.0 -> -8.0)
+    # 5. Close to flat (+4.0 -> 0)
+    flat_action = env.env_map_position_leverage_to_action(0, env.leverage_choices[0])
+    state, reward, done, info = env.step(flat_action)
+    assert info["trading_info"][3] == 0.0
+
+    # 6. Open opposite direction (0 -> -8.0)
     neg8_action = env.env_map_position_leverage_to_action(-8, env.leverage_choices[0])
     state, reward, done, info = env.step(neg8_action)
     assert abs(info["trading_info"][3] - (1.0 / norm_steps)) < 1e-6
 
-    # 6. Close to flat (-8.0 -> 0)
-    flat_action = env.env_map_position_leverage_to_action(0, env.leverage_choices[0])
+    # 7. Close to flat (-8.0 -> 0)
     state, reward, done, info = env.step(flat_action)
     assert info["trading_info"][3] == 0.0
 
@@ -123,7 +127,7 @@ def test_holding_duration_clipping():
 
 def test_single_holding_return_accumulates_across_same_direction_holds():
     df, features = _sample_data(rows=20)
-    env = initiate_base_env(df, features, allow_reverse_position=True)
+    env = initiate_base_env(df, features, )
     _, info = env.reset()
     long_action = env.env_map_position_leverage_to_action(4, env.leverage_choices[0])
 
@@ -141,7 +145,6 @@ def test_reset_restarts_holding_duration_for_a_new_episode():
     env = initiate_base_env(
         df,
         features,
-        allow_reverse_position=True,
         holding_duration_norm_steps=10,
         initial_state=(100000.0, 80.0, 0.0, 4.0, 5),
     )

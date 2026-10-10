@@ -22,5 +22,4 @@ numactl --cpunodebind=1 --membind=1 python -u FineFT/RL/DiHFT/low_level/weight_a
     --order_book_depth 5 --early_stop 2 --N 13 --rollout_steps 1024 \
     --num_sample 300 --pretrain_epoch 80 --lr_init 0.0001 --epsilon_min 0.05 \
     --ada_min 0.01 --ada_step 280000 --neighbor_size 2 \
-    --allow_reverse_position \
     >"log/fu/low_level/train/30min/${EXPERIMENT_NAME}/advantage-30min.log"

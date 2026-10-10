@@ -340,7 +340,6 @@ def test_weighted_contexts_dqn_validates_diverse_num_workers(monkeypatch):
     mock_args.ada_step = 1000
     mock_args.pretrain_epoch = 0
     mock_args.load_pretrain_model = True
-    mock_args.allow_reverse_position = True
     mock_args.enable_limit_reward = False
     mock_args.limit_hold_bonus = 0.0
     mock_args.limit_stay_bonus = 0.0

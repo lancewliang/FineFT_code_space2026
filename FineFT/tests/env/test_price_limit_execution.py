@@ -52,7 +52,6 @@ def _make_env(
         short_estimated_rate=0.0,
         commission_rate=0.01,
         initial_state=(100_000.0, initial_margin, 0.0, initial_position, 1),
-        allow_reverse_position=True,
     )
 
 

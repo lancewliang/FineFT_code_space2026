@@ -62,7 +62,6 @@ def test_optimal_qtable_kwargs_use_training_gamma():
         short_estimated_rate=0.0,
         commission_rate=0.0005,
         gamma=0.99,
-        allow_reverse_position=True,
     )
 
     assert kwargs["gamma"] == pytest.approx(0.99)

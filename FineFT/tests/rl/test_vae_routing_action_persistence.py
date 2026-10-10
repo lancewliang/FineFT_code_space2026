@@ -310,7 +310,6 @@ def test_diagnostic_artifacts_and_metrics_saved_to_disk(tmp_path, monkeypatch):
     router.early_stop = 0
     router.initial_state = (100.0, 0.0, 0.0, 0.0, 1.0)
     router.order_book_depth = 5
-    router.allow_reverse_position = False
     router.initial_rollout = types.MethodType(
         lambda self, env, s, info: (env, s, 0.0, False, info),
         router,

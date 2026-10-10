@@ -17,7 +17,6 @@ def _make_env(
     markprices=None,
     buy_fee_rate=0.01,
     sell_fee_rate=0.01,
-    allow_reverse_position=True,
 ):
     row_count = 7
     markprices = np.asarray(
@@ -59,7 +58,6 @@ def _make_env(
         buy_fee_rate=buy_fee_rate,
         sell_fee_rate=sell_fee_rate,
         initial_state=(100_000.0, initial_margin, 0.0, initial_position, 1),
-        allow_reverse_position=allow_reverse_position,
     )
 
 
@@ -170,7 +168,20 @@ def test_partial_open_uses_actual_filled_quantity_instead_of_target_quantity():
     assert cost_info["current_holding_average_price"] == pytest.approx(expected_price)
 
 
-def test_reverse_resets_cost_from_only_the_new_direction_opening_leg():
+def test_direct_reverse_step_is_rejected():
+    env = _make_env()
+    env.reset()
+    env.step(env.env_map_position_leverage_to_action(2.0, 1))
+    assert env.position == 2.0
+    cost_info_before = env._position_cost_info()
+
+    env.step(env.env_map_position_leverage_to_action(-2.0, 1))
+    assert env.position == 2.0
+    cost_info_after = env._position_cost_info()
+    assert cost_info_after == cost_info_before
+
+
+def test_close_to_flat_and_open_reverse_resets_cost():
     bid_prices = np.array(
         [[99.0, 97.0], [98.0, 96.0], *([[99.0, 97.0]] * 5)]
     )
@@ -178,12 +189,12 @@ def test_reverse_resets_cost_from_only_the_new_direction_opening_leg():
     env = _make_env(bid_prices=bid_prices, bid_qtys=bid_qtys)
     env.reset()
     env.step(env.env_map_position_leverage_to_action(2.0, 1))
-
+    env.step(env.env_map_position_leverage_to_action(0.0, 1))
     env.step(env.env_map_position_leverage_to_action(-2.0, 1))
     cost_info = env._position_cost_info()
 
     assert env.position == -2.0
-    expected_new_opening_price = (194.0 - 1.94) / 2.0
+    expected_new_opening_price = (196.0 - 1.96) / 2.0
     assert env.current_holding_opening_price == pytest.approx(
         expected_new_opening_price
     )
@@ -193,21 +204,6 @@ def test_reverse_resets_cost_from_only_the_new_direction_opening_leg():
     assert cost_info["current_holding_opening_price"] == pytest.approx(
         expected_new_opening_price
     )
-
-
-def test_reverse_that_only_closes_the_old_position_clears_cost_state():
-    env = _make_env(initial_position=2.0)
-    env.initial_state = (10.0, 200.0, 0.0, 2.0, 1)
-    env.reset()
-
-    env.step(env.env_map_position_leverage_to_action(-4.0, 1))
-    cost_info = env._position_cost_info()
-
-    assert env.position == 0.0
-    assert env.current_holding_opening_price == 0.0
-    assert env.current_holding_average_price == 0.0
-    assert cost_info["current_holding_opening_price"] == 0.0
-    assert cost_info["current_holding_average_price"] == 0.0
 
 
 def test_terminal_step_keeps_current_holding_cost_state():

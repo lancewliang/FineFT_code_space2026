@@ -376,7 +376,6 @@ def create_demo_env(
         initial_state=initial_state,
         gamma=env_kwargs["gamma"],
         max_punishment=1e10,
-        allow_reverse_position=env_kwargs.get("allow_reverse_position", False),
         enable_limit_reward=enable_limit,
         limit_hold_bonus=env_kwargs.get("limit_hold_bonus", 1.0),
         limit_stay_bonus=env_kwargs.get("limit_stay_bonus", 0.5),

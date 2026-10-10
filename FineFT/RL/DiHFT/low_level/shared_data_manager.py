@@ -347,7 +347,6 @@ class SharedMarketDataPack:
                     commission_rate=env_kwargs["commission_rate"],
                     max_punishment=1e10,
                     gamma=env_kwargs["gamma"],
-                    allow_reverse_position=env_kwargs.get("allow_reverse_position", False),
                     is_limit_up_array=(df["limit_up_single_sided_ratio"].values > 0)
                     if "limit_up_single_sided_ratio" in df.columns
                     else None,
@@ -451,7 +450,6 @@ def create_demo_env_from_pack(
         initial_state=effective_initial_state,
         gamma=env_kwargs["gamma"],
         max_punishment=1e10,
-        allow_reverse_position=env_kwargs.get("allow_reverse_position", False),
         holding_duration_norm_steps=env_kwargs.get("holding_duration_norm_steps", 180),
         is_limit_up_array=arrays["is_limit_up_array"],
         is_limit_down_array=arrays["is_limit_down_array"],

@@ -117,7 +117,6 @@ def test_demo_env_qtable_identical_to_inplace_computation():
         initial_state=(1e5, 0.0, 0.0, 0.0, 1.0),
         gamma=env_kwargs["gamma"],
         max_punishment=1e10,
-        allow_reverse_position=False,
     )
 
     np.testing.assert_allclose(env_with_shared.q_table, env_computed_inplace.q_table, rtol=1e-5, atol=1e-5)

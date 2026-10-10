@@ -90,7 +90,6 @@ class weighted_trader:
         limit_stay_bonus: float =0.5,
         limit_reverse_penalty: float =1.5,
         near_limit_threshold: float =0.05,
-        allow_reverse_position: bool = True,
         device: str = "cpu",
     ):
 
@@ -136,7 +135,6 @@ class weighted_trader:
         self.long_estimated_rate = 0
         self.short_estimated_rate = 0
         self.transcation_cost = transcation_cost
-        self.allow_reverse_position = allow_reverse_position
         self.enable_limit_reward = enable_limit_reward
         self.limit_hold_bonus = limit_hold_bonus
         self.limit_stay_bonus = limit_stay_bonus
@@ -256,7 +254,6 @@ class weighted_trader:
             early_stop=0,
             # initial_personal_state
             initial_state=initial_state,
-            allow_reverse_position=self.allow_reverse_position,
             enable_limit_reward=enable_limit,
             limit_hold_bonus=self.limit_hold_bonus,
             limit_stay_bonus=self.limit_stay_bonus,
@@ -357,7 +354,6 @@ def evaluates(
         limit_stay_bonus: float =0.5,
         limit_reverse_penalty: float =1.5,
         near_limit_threshold: float =0.05,
-        allow_reverse_position: bool = True,
         device: str = "cpu",
         **kwargs):
     """Evaluate the sub-agent across multiple data files using one subprocess per file."""
@@ -395,7 +391,6 @@ def evaluates(
         "limit_stay_bonus": limit_stay_bonus,
         "limit_reverse_penalty": limit_reverse_penalty,
         "near_limit_threshold": near_limit_threshold,
-        "allow_reverse_position": allow_reverse_position,
         "device": device,
         **kwargs,
     }

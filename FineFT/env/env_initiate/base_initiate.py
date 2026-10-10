@@ -31,7 +31,6 @@ def initiate_base_env(
     # initial_personal_state
     initial_state=(1e5, 0, 0, 0, 5),
     order_book_depth=25,
-    allow_reverse_position=False,
     holding_duration_norm_steps=180,
     enable_limit_reward=False,
     limit_hold_bonus=1.0,
@@ -109,7 +108,6 @@ def initiate_base_env(
         early_stop=early_stop,
         # initial_personal_state
         initial_state=initial_state,
-        allow_reverse_position=allow_reverse_position,
         holding_duration_norm_steps=holding_duration_norm_steps,
         is_limit_up_array=is_limit_up_array,
         is_limit_down_array=is_limit_down_array,

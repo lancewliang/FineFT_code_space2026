@@ -39,7 +39,6 @@ python -u FineFT/RL/DiHFT/high_level/vae_routing_final_result_macro_action.py \
     --transcation_cost "${TRANSACTION_COST}" \
     --short_estimated_rate 0 \
     --long_estimated_rate 0 \
-    --allow_reverse_position \
     >"${LOG_DIR}/final_result.log" 2>&1
 
 python -u FineFT/analysis/diagnostics/trading_diagnostics.py \

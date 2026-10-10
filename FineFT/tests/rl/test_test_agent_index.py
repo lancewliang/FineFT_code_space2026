@@ -166,7 +166,6 @@ def _make_test_trader(tai, tmp_path, save_trading_detail_csv=False, label_type="
     trader.transcation_cost = 0
     trader.maintenance_margin_ratio_dict = {}
     trader.tech_indicator_list = []
-    trader.allow_reverse_position = False
     trader.enable_limit_reward = True
     trader.limit_hold_bonus = 1.0
     trader.limit_stay_bonus = 0.5
@@ -452,37 +451,12 @@ def test_weighted_trader_handles_nested_contract_label_directories(
 
 
 
-def test_parser_allow_reverse_position_default_and_flag():
-    from RL.DiHFT.low_level import test_agent_index as tai
-
-    args_default = tai.parser.parse_args(["--label_type", "slope"])
-    assert args_default.allow_reverse_position is False
-
-    args_flag = tai.parser.parse_args(["--allow_reverse_position", "--label_type", "slope"])
-    assert args_flag.allow_reverse_position is True
-
-    args_explicit_false = tai.parser.parse_args(
-        ["--allow_reverse_position", "False", "--label_type", "slope"]
-    )
-    assert args_explicit_false.allow_reverse_position is False
-
-    args_explicit_true = tai.parser.parse_args(
-        ["--allow_reverse_position", "True", "--label_type", "slope"]
-    )
-    assert args_explicit_true.allow_reverse_position is True
-
-    args_no_flag = tai.parser.parse_args(
-        ["--no_allow_reverse_position", "--label_type", "slope"]
-    )
-    assert args_no_flag.allow_reverse_position is False
-
-
 def test_parser_label_type_required():
     from RL.DiHFT.low_level import test_agent_index as tai
     import pytest
 
     with pytest.raises(SystemExit):
-        tai.parser.parse_args(["--allow_reverse_position"])
+        tai.parser.parse_args([])
 
     args_slope = tai.parser.parse_args(["--label_type", "slope"])
     assert args_slope.label_type == "slope"

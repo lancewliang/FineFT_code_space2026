@@ -64,7 +64,6 @@ def test_limit_up_reward_and_penalty():
         limit_reverse_penalty=1.5,
         position_choices=5,
         max_holding_number=4,
-        allow_reverse_position=True,
     )
     env.reset()
 
@@ -73,7 +72,9 @@ def test_limit_up_reward_and_penalty():
     env.step(action_long)
     assert env.get_info_field("limit_reward") > 0.0
 
-    # Step to short position in limit up
+    # Close to flat then open short in limit up
+    action_flat = env.env_map_position_leverage_to_action(0, 5)
+    env.step(action_flat)
     action_short = env.env_map_position_leverage_to_action(-4, 5)
     env.step(action_short)
     assert env.get_info_field("limit_reward") < 0.0
@@ -92,7 +93,6 @@ def test_limit_down_reward_and_penalty():
         limit_reverse_penalty=1.5,
         position_choices=5,
         max_holding_number=4,
-        allow_reverse_position=True,
     )
     env.reset()
 
@@ -101,7 +101,9 @@ def test_limit_down_reward_and_penalty():
     env.step(action_short)
     assert env.get_info_field("limit_reward") > 0.0
 
-    # Action to take long position in limit down
+    # Close to flat then open long in limit down
+    action_flat = env.env_map_position_leverage_to_action(0, 5)
+    env.step(action_flat)
     action_long = env.env_map_position_leverage_to_action(4, 5)
     env.step(action_long)
     assert env.get_info_field("limit_reward") < 0.0
@@ -142,7 +144,6 @@ def test_demo_env_with_limit_reward():
         limit_reverse_penalty=1.5,
         position_choices=5,
         max_holding_number=4,
-        allow_reverse_position=True,
     )
     env.reset()
     action_long = env.env_map_position_leverage_to_action(4, 5)

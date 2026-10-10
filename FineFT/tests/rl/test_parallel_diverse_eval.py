@@ -195,7 +195,6 @@ def test_evaluate_parallel_diverse_model_calls_evaluates_with_expected_args(tmp_
     trainer.limit_stay_bonus = 1.0
     trainer.limit_reverse_penalty = 2.0
     trainer.near_limit_threshold = 0.01
-    trainer.allow_reverse_position = True
 
     called_kwargs = {}
 
@@ -215,7 +214,6 @@ def test_evaluate_parallel_diverse_model_calls_evaluates_with_expected_args(tmp_
     assert called_kwargs["N"] == 3
     assert called_kwargs["hidden_nodes"] == 64
     assert called_kwargs["leverage_choices"] == [1, 2]
-    assert called_kwargs["allow_reverse_position"] is True
     assert called_kwargs["logg_file_path"] == str(tmp_path / "diverse_evaluation.log")
 
 
@@ -295,7 +293,6 @@ def test_evaluate_parallel_diverse_model_passes_cpu_device_and_clears_cuda_cache
     trainer.limit_stay_bonus = 1.0
     trainer.limit_reverse_penalty = 2.0
     trainer.near_limit_threshold = 0.01
-    trainer.allow_reverse_position = True
 
     called_kwargs = {}
     cache_cleared = []

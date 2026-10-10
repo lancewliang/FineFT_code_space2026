@@ -28,5 +28,4 @@ python -u FineFT/RL/DiHFT/high_level/vae_routing_optuna.py \
     --transcation_cost 0.0004 \
     --short_estimated_rate 0 \
     --long_estimated_rate 0 \
-    --allow_reverse_position \
     >"log/DiHFT/fu/high_level/optuna/${EXPERIMENT_NAME}/optuna.log" 2>&1

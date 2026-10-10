@@ -2068,7 +2068,6 @@ def evaluate_parallel_diverse_model(
         limit_stay_bonus=trainer.limit_stay_bonus,
         limit_reverse_penalty=trainer.limit_reverse_penalty,
         near_limit_threshold=trainer.near_limit_threshold,
-        allow_reverse_position=trainer.allow_reverse_position,
         device="cpu",
     )
     logger.info(

@@ -162,7 +162,6 @@ def test_eval_stage_test_loads_contracts_from_test_directory(tmp_path, monkeypat
     routing.early_stop = 0
     routing.initial_state = (10000.0, 0.0, 0.0, 0.0, 5.0)
     routing.initial_wallet_balance = 10000.0
-    routing.allow_reverse_position = True
     routing.order_book_depth = 5
     routing.num_labels = 3
     routing.slot_count = 9

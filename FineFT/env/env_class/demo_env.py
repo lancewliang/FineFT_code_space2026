@@ -45,7 +45,6 @@ class Demo_Env(Base_Env):
         # unique for demo_env
         max_punishment=1e10,
         gamma=1,
-        allow_reverse_position=False,
         holding_duration_norm_steps=180,
         is_limit_up_array=None,
         is_limit_down_array=None,
@@ -88,7 +87,6 @@ class Demo_Env(Base_Env):
             early_stop=early_stop,
             # initial_personal_state
             initial_state=initial_state,
-            allow_reverse_position=allow_reverse_position,
             holding_duration_norm_steps=holding_duration_norm_steps,
             is_limit_up_array=is_limit_up_array,
             is_limit_down_array=is_limit_down_array,
@@ -126,7 +124,6 @@ class Demo_Env(Base_Env):
                 commission_rate=commission_rate,
                 max_punishment=max_punishment,
                 gamma=gamma,
-                allow_reverse_position=allow_reverse_position,
                 is_limit_up_array=is_limit_up_array,
                 is_limit_down_array=is_limit_down_array,
                 limit_up_ask_depth_ratio_5_array=limit_up_ask_depth_ratio_5_array,

@@ -28,37 +28,37 @@ parser_all.add_argument(
     "--dataset_name",
     type=str,
     default="BTCUSDT",
-    help="training data chunk",
+    help="交易品种或数据集名称（例如 BTCUSDT），用于确定数据与参数存储路径",
 )
 parser_all.add_argument(
     "--experiment_name",
     type=str,
     default="default",
-    help="experiment name",
+    help="实验名称，用于命名超参数寻优结果目录与隔离实验产物",
 )
 parser_all.add_argument(
     "--max_holding_number",
     type=float,
     default=8,
-    help="the transcation cost of not holding the same action as before",
+    help="最大允许持仓头寸上限，用于根据离散动作数划分单侧持仓档位",
 )
 parser_all.add_argument(
     "--order_book_depth",
     type=int,
     default=25,
-    help="number of bid/ask price levels available in the order book",
+    help="订单簿（LOB）买卖盘的深度档位数（例如 25 档买卖价量信息）",
 )
 parser_all.add_argument(
     "--window_length_max",
     type=int,
     default=150,
-    help="the transcation cost of not holding the same action as before",
+    help="Optuna 搜索空间中滚动特征窗口长度（window_length）的上限",
 )
 parser_all.add_argument(
     "--window_length_min",
     type=int,
     default=50,
-    help="the transcation cost of not holding the same action as before",
+    help="Optuna 搜索空间中滚动特征窗口长度（window_length）的下限",
 )
 
 
@@ -66,134 +66,128 @@ parser_all.add_argument(
     "--gamma_max",
     type=float,
     default=0.98,
-    help="the transcation cost of not holding the same action as before",
+    help="Optuna 搜索空间中指数衰减因子（gamma）的上限",
 )
 parser_all.add_argument(
     "--gamma_min",
     type=float,
     default=0.92,
-    help="the transcation cost of not holding the same action as before",
+    help="Optuna 搜索空间中指数衰减因子（gamma）的下限",
 )
 parser_all.add_argument(
     "--rule_base_threshold_min",
     type=float,
     default=0.2,
-    help="the transcation cost of not holding the same action as before",
+    help="Optuna 搜索空间中规则基底阈值（rule_base_threshold）的下限",
 )
 parser_all.add_argument(
     "--rule_base_threshold_max",
     type=float,
     default=0.5,
-    help="the transcation cost of not holding the same action as before",
-)
-parser_all.add_argument(
-    "--allow_reverse_position",
-    action="store_true",
-    help="allow reverse position in single step",
+    help="Optuna 搜索空间中规则基底阈值（rule_base_threshold）的上限",
 )
 parser_all.add_argument(
     "--selection_manifest",
     type=str,
     default=None,
-    help="two-dimensional low-level selection manifest",
+    help="二维低层子代理选择清单（manifest JSON）的文件路径",
 )
 parser_all.add_argument(
     "--enable_non_main_contract_defense",
     action="store_true",
     default=False,
-    help="enable defensive gating on non-main and non-sub-main contracts",
+    help="是否在非主力与非次主力合约上启用防御性门控机制",
 )
 parser_all.add_argument(
     "--n_trials",
     type=int,
     default=128,
-    help="number of Optuna trials",
+    help="Optuna 超参数优化的总试验评估次数（trials 数量）",
 )
 parser_all.add_argument(
     "--n_workers",
     type=int,
     default=32,
-    help="number of parallel worker processes; each runs trials independently "
-    "on CPU with a single thread and shares the study via sqlite storage",
+    help="并行工作进程数；各进程在 CPU 上独立单线程运行 trial 并通过 SQLite 数据库共享 Study",
 )
 parser_all.add_argument(
     "--action_persistence",
     type=int,
     default=3,
-    help="number of consecutive steps a non-flat action persists before re-evaluating policy",
+    help="非平仓动作在重新评估策略前持续保持的连续步数（动作持久化机制）",
 )
 parser_all.add_argument(
     "--stop_loss_return_threshold",
     type=float,
     default=0.015,
-    help="position return rate hard stop-loss threshold, e.g. 0.015 for 1.5% adverse price move (0.0 to disable)",
+    help="仓位收益率硬止损阈值，例如 0.015 表示价格不利变动达 1.5%% 时触发止损（设为 0.0 则禁用）",
 )
 parser_all.add_argument(
     "--stop_loss_cooldown_steps",
     type=int,
     default=12,
-    help="directional lockout cooldown steps after stop-loss trigger (0 to disable)",
+    help="触发止损后的同向开仓冷却锁进步数（设为 0 则禁用）",
 )
 parser_all.add_argument(
     "--circuit_breaker_consecutive_stops",
     type=int,
     default=2,
-    help="consecutive stop-loss trigger count to trip contract-level circuit breaker (0 to disable)",
+    help="触发合约级别熔断机制所需的连续止损次数阈值（设为 0 则禁用）",
 )
 parser_all.add_argument(
     "--circuit_breaker_cooling_steps",
     type=int,
     default=72,
-    help="steps to suspend trading on circuit breaker (-1 for permanent suspension)",
+    help="触发熔断后暂停交易的步数冷却时间（-1 表示永久熔断暂停交易）",
 )
 parser_all.add_argument(
     "--gating_strategy",
     type=str,
     default="absolute",
     choices=["absolute", "hierarchical"],
-    help="gating strategy type (absolute or hierarchical)",
+    help="门控路由策略类型，可选绝对阈值门控（absolute）或分层门控（hierarchical）",
 )
 parser_all.add_argument(
     "--ood_threshold_min",
     type=float,
     default=0.001,
-    help="minimum OOD threshold for hierarchical gating",
+    help="分层门控策略中分布外（OOD）检测阈值的搜索下限",
 )
 parser_all.add_argument(
     "--ood_threshold_max",
     type=float,
     default=0.02,
-    help="maximum OOD threshold for hierarchical gating",
+    help="分层门控策略中分布外（OOD）检测阈值的搜索上限",
 )
 parser_all.add_argument(
     "--margin_threshold_min",
     type=float,
     default=0.05,
-    help="minimum margin threshold for hierarchical gating",
+    help="分层门控策略中 Top-1 与 Top-2 候选专家概率裕度（margin）阈值的搜索下限",
 )
 parser_all.add_argument(
     "--margin_threshold_max",
     type=float,
     default=0.30,
-    help="maximum margin threshold for hierarchical gating",
+    help="分层门控策略中 Top-1 与 Top-2 候选专家概率裕度（margin）阈值的搜索上限",
 )
 parser_all.add_argument(
     "--hysteresis_exit_ratio",
     type=float,
     default=0.65,
-    help="hysteresis exit ratio default for absolute gating",
+    help="绝对门控策略中迟滞退出比率的默认值（退出阈值相对入场阈值的比例）",
 )
 parser_all.add_argument(
     "--hysteresis_exit_ratio_min",
     type=float,
     default=0.50,
-    help="minimum hysteresis exit ratio for absolute gating",
+    help="绝对门控策略中迟滞退出比率（hysteresis exit ratio）的搜索下限",
 )
 parser_all.add_argument(
     "--hysteresis_exit_ratio_max",
     type=float,
     default=0.80,
-    help="maximum hysteresis exit ratio for absolute gating",
+    help="绝对门控策略中迟滞退出比率（hysteresis exit ratio）的搜索上限",
 )
 
 
@@ -218,9 +212,6 @@ def prepare_base_args(args_1, args_2):
     base_args.order_book_depth = args_2.order_book_depth
     base_args.experiment_name = (
         args_2.experiment_name or base_args.experiment_name
-    )
-    base_args.allow_reverse_position = (
-        args_2.allow_reverse_position or base_args.allow_reverse_position
     )
     base_args.enable_non_main_contract_defense = (
         args_2.enable_non_main_contract_defense

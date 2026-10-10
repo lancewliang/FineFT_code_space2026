@@ -247,13 +247,6 @@ def test_two_dimensional_routing_applies_axis_specific_thresholds(monkeypatch):
     assert routing.macro_action_history == [9]
 
 
-def test_vae_routing_util_parser_allow_reverse_position():
-    args_default = vru.parser.parse_args([])
-    assert args_default.allow_reverse_position is False
-
-    args_flag = vru.parser.parse_args(["--allow_reverse_position"])
-    assert args_flag.allow_reverse_position is True
-
 
 def test_vae_routing_util_parser_experiment_name():
     args_default = vru.parser.parse_args([])
@@ -262,13 +255,6 @@ def test_vae_routing_util_parser_experiment_name():
     args_exp = vru.parser.parse_args(["--experiment_name", "exp123"])
     assert args_exp.experiment_name == "exp123"
 
-
-def test_vae_routing_optuna_parser_allow_reverse_position():
-    args_default = vro.parser_all.parse_args([])
-    assert args_default.allow_reverse_position is False
-
-    args_flag = vro.parser_all.parse_args(["--allow_reverse_position"])
-    assert args_flag.allow_reverse_position is True
 
 
 def test_vae_routing_optuna_parser_experiment_name():
@@ -330,7 +316,6 @@ def test_prepare_base_args_loads_two_dimensional_model_from_manifest(tmp_path):
         experiment_name="old",
         max_holding_number=8,
         order_book_depth=25,
-        allow_reverse_position=False,
         enable_non_main_contract_defense=False,
     )
     args_2 = types.SimpleNamespace(
@@ -338,7 +323,6 @@ def test_prepare_base_args_loads_two_dimensional_model_from_manifest(tmp_path):
         experiment_name="30min_multi",
         max_holding_number=2,
         order_book_depth=5,
-        allow_reverse_position=True,
         enable_non_main_contract_defense=False,
         selection_manifest=str(manifest_path),
         gating_strategy="absolute",
@@ -353,7 +337,6 @@ def test_prepare_base_args_loads_two_dimensional_model_from_manifest(tmp_path):
     prepared = vro.prepare_base_args(args_1, args_2)
 
     assert prepared.selection_manifest == str(manifest_path)
-    assert prepared.allow_reverse_position is True
 
 
 def test_prepare_base_args_does_not_mutate_original_args(tmp_path):
@@ -374,7 +357,6 @@ def test_prepare_base_args_does_not_mutate_original_args(tmp_path):
         experiment_name="old_experiment",
         max_holding_number=8,
         order_book_depth=25,
-        allow_reverse_position=False,
         enable_non_main_contract_defense=False,
     )
     args_2 = types.SimpleNamespace(
@@ -382,7 +364,6 @@ def test_prepare_base_args_does_not_mutate_original_args(tmp_path):
         experiment_name="new_experiment",
         max_holding_number=2,
         order_book_depth=5,
-        allow_reverse_position=False,
         enable_non_main_contract_defense=False,
         selection_manifest=str(manifest_path),
         gating_strategy="absolute",
@@ -420,7 +401,6 @@ def test_prepare_base_args_rejects_missing_model_assembly(tmp_path):
         experiment_name="old",
         max_holding_number=8,
         order_book_depth=25,
-        allow_reverse_position=False,
         enable_non_main_contract_defense=False,
     )
     args_2 = types.SimpleNamespace(
@@ -428,7 +408,6 @@ def test_prepare_base_args_rejects_missing_model_assembly(tmp_path):
         experiment_name="30min_multi",
         max_holding_number=2,
         order_book_depth=5,
-        allow_reverse_position=True,
         enable_non_main_contract_defense=False,
         selection_manifest=str(manifest_path),
         gating_strategy="absolute",
@@ -454,7 +433,6 @@ def test_prepare_base_args_validates_manifest_contract(tmp_path):
         experiment_name="old",
         max_holding_number=8,
         order_book_depth=25,
-        allow_reverse_position=False,
         enable_non_main_contract_defense=False,
     )
     args_2 = types.SimpleNamespace(
@@ -462,7 +440,6 @@ def test_prepare_base_args_validates_manifest_contract(tmp_path):
         experiment_name="30min_multi",
         max_holding_number=2,
         order_book_depth=5,
-        allow_reverse_position=True,
         enable_non_main_contract_defense=False,
         selection_manifest=str(manifest_path),
         gating_strategy="absolute",
@@ -533,37 +510,6 @@ def test_suggest_trial_parameters_uses_independent_axis_parameters():
     assert trial_args.rule_base_threshold == 0.25
 
 
-def test_vae_routing_optuna_tune_propagates_allow_reverse_position_and_experiment_name():
-    args_1 = types.SimpleNamespace(dataset_name="BTCUSDT", max_holding_number=8)
-    args_2 = types.SimpleNamespace(
-        dataset_name="ETHUSDT",
-        max_holding_number=10,
-        allow_reverse_position=True,
-        experiment_name="exp123",
-    )
-    args_1.dataset_name = args_2.dataset_name
-    args_1.max_holding_number = args_2.max_holding_number
-    args_1.allow_reverse_position = getattr(
-        args_2, "allow_reverse_position", False
-    ) or getattr(args_1, "allow_reverse_position", False)
-    args_1.experiment_name = getattr(
-        args_2, "experiment_name", "default"
-    ) or getattr(args_1, "experiment_name", "default")
-
-    assert args_1.allow_reverse_position is True
-    assert args_1.experiment_name == "exp123"
-
-
-def test_vae_risk_aware_routing_init_stores_allow_reverse_position(monkeypatch):
-    monkeypatch.setattr("os.makedirs", lambda *a, **kw: None)
-    monkeypatch.setattr("os.path.exists", lambda *a, **kw: True)
-    monkeypatch.setattr("numpy.load", lambda *a, **kw: MagicMock(item=lambda: {}))
-
-    args = vru.parser.parse_args(
-        ["--allow_reverse_position", "--experiment_name", "exp123"]
-    )
-    assert args.allow_reverse_position is True
-    assert args.experiment_name == "exp123"
 
 
 def test_vae_routing_test_uses_contract_level_valid_features(tmp_path, monkeypatch):
@@ -635,7 +581,6 @@ def test_vae_routing_test_uses_contract_level_valid_features(tmp_path, monkeypat
     routing.early_stop = 0
     routing.initial_state = (100.0, 0.0, 0.0, 0.0, 5.0)
     routing.initial_wallet_balance = 100.0
-    routing.allow_reverse_position = False
     routing.order_book_depth = 25
     routing.num_labels = 3
     routing.window_length = 3
@@ -739,7 +684,6 @@ def test_vae_routing_test_passes_order_book_depth_to_base_env(tmp_path, monkeypa
     routing.early_stop = 0
     routing.initial_state = (100.0, 0.0, 0.0, 0.0, 5.0)
     routing.initial_wallet_balance = 100.0
-    routing.allow_reverse_position = False
     routing.order_book_depth = 5
     routing.num_labels = 3
     routing.window_length = 3

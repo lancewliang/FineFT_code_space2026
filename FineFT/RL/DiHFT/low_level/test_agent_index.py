@@ -72,205 +72,191 @@ parser.add_argument(
     "--base_path",
     type=str,
     default="dataset",
-    help="the number of action we have in the training and testing env",
+    help="数据存储的基础根目录路径",
 )
 parser.add_argument(
     "--dataset_name",
     type=str,
     default="BTCUSDT",
-    help="training data chunk",
+    help="测试使用的交易品种或数据集名称（例如 BTCUSDT）",
 )
 parser.add_argument(
     "--max_holding_number",
     type=float,
     default=8,
-    help="the transcation cost of not holding the same action as before",
+    help="最大允许持仓头寸上限，用于根据离散动作数划分单侧持仓档位",
 )
 parser.add_argument(
     "--position_choices",
     type=int,
     default=9,
-    help="the transcation cost of not holding the same action as before",
+    help="离散目标仓位选择数量（例如 9 档，包含空头档位、空仓及多头档位）",
 )
 parser.add_argument(
     "--leverage_choices",
     action="append",
     type=int,
     default=[1],
-    help="the transaction cost of not holding the same action as before",
+    help="测试可选的杠杆倍数列表",
 )
 parser.add_argument(
     "--long_estimated_rate",
     type=float,
     default=0.0005,
-    help="the transcation cost of not holding the same action as before",
+    help="多头开仓预估滑点与附加成本费率",
 )
 parser.add_argument(
     "--short_estimated_rate",
     type=float,
     default=0,
-    help="the transcation cost of not holding the same action as before",
+    help="空头开仓预估滑点与附加成本费率",
 )
 parser.add_argument(
     "--transcation_cost",
     type=float,
     default=0.0002,
-    help="the transcation cost of not holding the same action as before",
+    help="单次调仓交易手续费率 / 交易成本",
 )
 
 parser.add_argument(
     "--early_stop",
     type=int,
     default=2160,
-    help="the transcation cost of not holding the same action as before",
+    help="单轮测试交互的最大早停步数（设为 0 表示不启用早停）",
 )
 parser.add_argument(
     "--initial_wallet_balance",
     type=float,
     default=1e5,
-    help="wallet balance",
+    help="测试环境初始化的账户钱包初始余额",
 )
 parser.add_argument(
     "--initial_margin",
     type=float,
     default=0,
-    help="initial margin",
+    help="测试环境初始化的初始保证金金额",
 )
 parser.add_argument(
     "--initial_unrealized_pnL",
     type=float,
     default=0,
-    help="unrealized pnL",
+    help="测试环境初始化的初始未实现盈亏",
 )
 parser.add_argument(
     "--initial_position",
     type=float,
     default=0,
-    help="unrealized pnL",
+    help="测试环境初始化的初始持仓量",
 )
 parser.add_argument(
     "--initial_leverage",
     type=float,
     default=5,
-    help="initial leverage",
+    help="测试环境初始化的初始杠杆倍数",
 )
 parser.add_argument(
     "--order_book_depth",
     type=int,
     default=25,
-    help="number of bid/ask price levels available in the order book",
+    help="订单簿（LOB）买卖盘的深度档位数（例如 25 档买卖价量信息）",
 )
 # network setting
 parser.add_argument(
     "--hidden_nodes",
     type=int,
     default=128,
-    help="the number of the hidden nodes",
+    help="待测试低层策略网络隐藏层的神经元节点数量",
 )
 parser.add_argument(
     "--N",
     type=int,
     default=7,
-    help="context number",
+    help="上下文专家数量（Context/Expert 数量，对应集成网络的专家规模）",
 )
 parser.add_argument(
     "--time_info_dim",
     type=int,
     default=2,
-    help="context number",
+    help="时间特征向量的维度（包含日内时间周期与进度特征）",
 )
 # model setting
 parser.add_argument(
     "--epoch_num",
     type=int,
     default=1,
-    help="the path for storing the test result",
+    help="待测试评估的模型对应的检查点轮数（epoch 序号）",
 )
 parser.add_argument(
     "--result_path",
     type=str,
     default="result/DiHFT/low_level",
-    help="the path for storing the test result",
+    help="模型权重加载路径及测试评估结果的保存路径",
 )
 parser.add_argument(
     "--experiment_name",
     type=str,
     default="default",
-    help="experiment name used to namespace serial training outputs",
+    help="实验名称，用于定位模型权重所在目录并隔离测试结果",
 )
 parser.add_argument(
     "--save_trading_detail_csv",
     default=True,
     action="store_true",
-    help="write per-step trading detail CSV for the tested epoch",
-)
-parser.add_argument(
-    "--allow_reverse_position",
-    nargs="?",
-    const=True,
-    default=False,
-    type=str2bool,
-    help="allow direct position reversal from long to short or vice versa",
-)
-parser.add_argument(
-    "--no_allow_reverse_position",
-    dest="allow_reverse_position",
-    action="store_false",
-    help="disable direct position reversal from long to short or vice versa",
+    help="是否将测试轮次的每步交易明细指标导出保存为 CSV 文件",
 )
 parser.add_argument(
     "--enable_limit_reward",
     default=True,
     action="store_true",
-    help="enable limit up/down reward shaping during test environment evaluation",
+    help="在测试评估环境中启用涨跌停奖励塑形机制",
 )
 parser.add_argument(
     "--no_enable_limit_reward",
     dest="enable_limit_reward",
     action="store_false",
-    help="disable limit up/down reward shaping during test environment evaluation",
+    help="在测试评估环境中禁用涨跌停奖励塑形机制",
 )
 parser.add_argument(
     "--limit_hold_bonus",
     type=float,
     default=1.0,
-    help="bonus for holding position in limit direction",
+    help="标的处于涨跌停状态时，顺应封板方向持仓的额外奖励权重",
 )
 parser.add_argument(
     "--limit_stay_bonus",
     type=float,
     default=0.5,
-    help="bonus for maintaining unchanged position during limit",
+    help="标的处于涨跌停状态期间，保持仓位不变的维持奖励权重",
 )
 parser.add_argument(
     "--limit_reverse_penalty",
     type=float,
     default=1.5,
-    help="penalty for taking position opposite to limit direction",
+    help="标的处于涨跌停状态时，逆势反向持仓的惩罚权重",
 )
 parser.add_argument(
     "--near_limit_threshold",
     type=float,
     default=0.003,
-    help="relative threshold for near-limit shaping",
+    help="判定临近涨跌停的相对价格偏离度阈值",
 )
 parser.add_argument(
     "--label_type",
     type=str,
     required=True,
-    help="label type, e.g. slope or volatility",
+    help="市场状态标签类型，例如趋势斜率（slope）或波动率（volatility）",
 )
 parser.add_argument(
     "--device",
     type=str,
     default=None,
-    help="computation device for test evaluation (e.g. cpu, gpu, cuda, cuda:0)",
+    help="测试评估所使用的计算设备（例如 cpu、cuda、cuda:0 等）",
 )
 parser.add_argument(
     "--action_persistence",
     type=int,
     default=3,
-    help="number of consecutive steps a non-flat action persists before re-evaluating policy",
+    help="非平仓动作在重新评估策略前持续保持的连续步数（动作持久化机制）",
 )
 
 
@@ -683,7 +669,6 @@ class weighted_trader:
         self.long_estimated_rate = args.long_estimated_rate
         self.short_estimated_rate = args.short_estimated_rate
         self.transcation_cost = args.transcation_cost
-        self.allow_reverse_position = args.allow_reverse_position
         self.enable_limit_reward = args.enable_limit_reward
         self.limit_hold_bonus = args.limit_hold_bonus
         self.limit_stay_bonus = args.limit_stay_bonus
@@ -866,7 +851,6 @@ class weighted_trader:
                             early_stop=0,
                             # initial_personal_state
                             initial_state=self.initial_state,
-                            allow_reverse_position=self.allow_reverse_position,
                             enable_limit_reward=enable_limit,
                             limit_hold_bonus=self.limit_hold_bonus,
                             limit_stay_bonus=self.limit_stay_bonus,

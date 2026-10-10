@@ -22,5 +22,4 @@ numactl --cpunodebind=0 --preferred=0 python -u FineFT/RL/DiHFT/low_level/parall
     --order_book_depth 5 --early_stop 2  --N 13 \
     --pretrain_epoch 10 --num_epoch 18 --lr_init 0.0005 --ada_init 128.0 --epsilon_min 0.05 \
     --ada_min 0.5 --ada_step 80000 --neighbor_size 2 --load_pretrain_model True \
-    --allow_reverse_position \
     >"log/DiHFT/fu/low_level/train/30min/${EXPERIMENT_NAME}/advantage-30min-parallel.log"
