@@ -1,8 +1,8 @@
 """Batch Code Loader and AST Outline Extractor for Strategy Diagnosis.
 
-Extracts module outlines, class/method signatures, CLI arguments, and keyword-targeted
-code blocks across multiple Python strategy files in one operation to minimize token
-consumption and avoid sequential file-by-file inspection.
+Extracts module outlines, schema fields, class/method signatures, CLI arguments, and
+keyword-targeted code blocks across multiple Python strategy files in one operation
+to minimize token consumption and avoid sequential file-by-file inspection.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_DIHFT_PYTHON_FILES: list[str] = [
+STRATEGY_DIHFT_PYTHON_FILES: list[str] = [
     "FineFT/analysis/diagnostics/trading_diagnostics.py",
     "FineFT/analysis/pick_agent/DiHFT_high_level_heurstic.py",
     "FineFT/RL/DiHFT/high_level/vae_routing_final_result_macro_action.py",
@@ -25,6 +25,60 @@ DEFAULT_DIHFT_PYTHON_FILES: list[str] = [
     "FineFT/common/metric_columns.py",
     "FineFT/common/routing_params.py",
 ]
+
+AUDIT_DIHFT_PYTHON_FILES: list[str] = [
+    "FineFT/analysis/diagnostics/trading_diagnostics.py",
+    "FineFT/analysis/diagnostics/batch_diagnostics_loader.py",
+    "FineFT/RL/DiHFT/high_level/vae_routing_util.py",
+    "FineFT/env/env_class/base_env.py",
+    "FineFT/env/env_class/futures_util.py",
+    "FineFT/common/artifacts.py",
+]
+
+
+def _deduplicate_paths(paths: list[str]) -> list[str]:
+    return list(dict.fromkeys(paths))
+
+
+CODE_PROFILES: dict[str, list[str]] = {
+    "strategy": STRATEGY_DIHFT_PYTHON_FILES,
+    "audit": AUDIT_DIHFT_PYTHON_FILES,
+    "all": _deduplicate_paths(
+        STRATEGY_DIHFT_PYTHON_FILES + AUDIT_DIHFT_PYTHON_FILES
+    ),
+}
+
+# Backward-compatible import for callers that used the original constant.
+DEFAULT_DIHFT_PYTHON_FILES = STRATEGY_DIHFT_PYTHON_FILES
+
+DEFAULT_TARGET_KEYWORDS: list[str] = [
+    "stop_loss",
+    "persistence",
+    "friction",
+    "gating",
+    "routing",
+    "audit",
+    "prediction",
+    "action_value",
+    "trade_event",
+    "execution",
+    "account_snapshot",
+    "trading_day",
+    "reconciliation",
+    "commission",
+    "realized_pnl",
+    "slippage",
+]
+
+
+def resolve_profile_files(profile: str) -> list[str]:
+    try:
+        return list(CODE_PROFILES[profile])
+    except KeyError as exc:
+        choices = ", ".join(sorted(CODE_PROFILES))
+        raise ValueError(
+            f"Unknown code profile {profile!r}; choose one of: {choices}"
+        ) from exc
 
 
 @dataclass
@@ -46,12 +100,21 @@ class FunctionSignature:
 
 
 @dataclass
+class ClassField:
+    name: str
+    annotation: str
+    value: str
+    line_no: int
+
+
+@dataclass
 class ClassOutline:
     name: str
     bases: list[str]
     docstring: str
     line_start: int
     line_end: int
+    fields: list[ClassField]
     methods: list[FunctionSignature]
 
 
@@ -65,26 +128,13 @@ class FileCodeOutline:
     total_lines: int
 
 
-class BlockHeaderVisitor(ast.NodeVisitor):
-    def __init__(self) -> None:
-        self.label: str = "Block"
-
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        self.label = f"def {node.name}"
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self.label = f"async def {node.name}"
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        self.label = f"class {node.name}"
-
-
 class OutlineAstVisitor(ast.NodeVisitor):
     def __init__(self) -> None:
         self.classes: list[ClassOutline] = []
         self.functions: list[FunctionSignature] = []
         self.cli_arguments: list[ArgOption] = []
         self._current_class: ClassOutline | None = None
+        self._function_depth = 0
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         doc = ast.get_docstring(node)
@@ -97,6 +147,7 @@ class OutlineAstVisitor(ast.NodeVisitor):
             docstring=docstring,
             line_start=node.lineno,
             line_end=end_lineno,
+            fields=[],
             methods=[],
         )
         old_class = self._current_class
@@ -125,10 +176,53 @@ class OutlineAstVisitor(ast.NodeVisitor):
             line_start=node.lineno,
             line_end=end_lineno,
         )
-        if self._current_class is not None:
-            self._current_class.methods.append(sig)
-        else:
-            self.functions.append(sig)
+        if self._function_depth == 0:
+            if self._current_class is not None:
+                self._current_class.methods.append(sig)
+            else:
+                self.functions.append(sig)
+        self._function_depth += 1
+        try:
+            self.generic_visit(node)
+        finally:
+            self._function_depth -= 1
+
+    @staticmethod
+    def _expression_text(node: ast.AST | None) -> str:
+        if node is None:
+            return ""
+        text = ast.unparse(node)
+        return text if len(text) <= 160 else f"{text[:157]}..."
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if (
+            self._current_class is not None
+            and self._function_depth == 0
+            and isinstance(node.target, ast.Name)
+        ):
+            self._current_class.fields.append(
+                ClassField(
+                    name=node.target.id,
+                    annotation=self._expression_text(node.annotation),
+                    value=self._expression_text(node.value),
+                    line_no=node.lineno,
+                )
+            )
+        self.generic_visit(node)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        if self._current_class is not None and self._function_depth == 0:
+            value = self._expression_text(node.value)
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self._current_class.fields.append(
+                        ClassField(
+                            name=target.id,
+                            annotation="",
+                            value=value,
+                            line_no=node.lineno,
+                        )
+                    )
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
@@ -201,18 +295,65 @@ class BatchCodeLoader:
         tree = ast.parse(source, filename=str(resolved))
         source_lines = source.splitlines()
         kw_lower = [k.lower() for k in keywords]
-        matched_blocks: list[tuple[int, int, str, str]] = []
+        if not kw_lower:
+            return []
 
-        for node in tree.body:
+        parent_by_node: dict[ast.AST, ast.AST] = {}
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                parent_by_node[child] = parent
+
+        candidates = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+        matched_nodes: list[ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef] = []
+        code_by_node: dict[ast.AST, str] = {}
+        for node in candidates:
             end_lineno = node.end_lineno if node.end_lineno is not None else node.lineno
             block_code = "\n".join(source_lines[node.lineno - 1 : end_lineno])
-            block_lower = block_code.lower()
-            if any(k in block_lower for k in kw_lower):
-                header_visitor = BlockHeaderVisitor()
-                header_visitor.visit(node)
-                matched_blocks.append((node.lineno, end_lineno, header_visitor.label, block_code))
+            if any(keyword in block_code.lower() for keyword in kw_lower):
+                matched_nodes.append(node)
+                code_by_node[node] = block_code
 
-        return matched_blocks
+        # Prefer the smallest matching semantic block. If a method matches, returning
+        # its containing multi-thousand-line class would defeat targeted extraction.
+        leaf_matches = [
+            node
+            for node in matched_nodes
+            if not any(
+                other is not node
+                and node.lineno <= other.lineno
+                and (other.end_lineno or other.lineno) <= (node.end_lineno or node.lineno)
+                for other in matched_nodes
+            )
+        ]
+
+        def qualified_label(
+            node: ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef,
+        ) -> str:
+            names = [node.name]
+            parent = parent_by_node.get(node)
+            while parent is not None:
+                if isinstance(parent, ast.ClassDef):
+                    names.append(parent.name)
+                parent = parent_by_node.get(parent)
+            qualified_name = ".".join(reversed(names))
+            if isinstance(node, ast.ClassDef):
+                return f"class {qualified_name}"
+            prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
+            return f"{prefix} {qualified_name}"
+
+        return [
+            (
+                node.lineno,
+                node.end_lineno if node.end_lineno is not None else node.lineno,
+                qualified_label(node),
+                code_by_node[node],
+            )
+            for node in sorted(leaf_matches, key=lambda item: item.lineno)
+        ]
 
     def format_outline_report(self) -> str:
         lines: list[str] = [
@@ -243,6 +384,12 @@ class BatchCodeLoader:
                     lines.append(
                         f"  - `class {c.name}{base_str}` (L{c.line_start}~L{c.line_end}) {c.docstring}"
                     )
+                    for field in c.fields:
+                        annotation = f": {field.annotation}" if field.annotation else ""
+                        value = f" = {field.value}" if field.value else ""
+                        lines.append(
+                            f"    - `{field.name}{annotation}{value}` (L{field.line_no})"
+                        )
                     for m in c.methods:
                         lines.append(
                             f"    - `def {m.name}{m.signature} -> {m.return_type}` (L{m.line_start})"
@@ -312,10 +459,16 @@ def main() -> None:
         help="Workspace root directory (default: current directory).",
     )
     parser.add_argument(
+        "--profile",
+        choices=sorted(CODE_PROFILES),
+        default="strategy",
+        help="Built-in code inventory: strategy, audit, or their deduplicated union (all).",
+    )
+    parser.add_argument(
         "--files",
         nargs="*",
-        default=DEFAULT_DIHFT_PYTHON_FILES,
-        help="List of Python files to inspect. If omitted, uses default DiHFT strategy files.",
+        default=None,
+        help="Explicit Python files to inspect. When supplied, overrides --profile.",
     )
     parser.add_argument(
         "--mode",
@@ -326,7 +479,7 @@ def main() -> None:
     parser.add_argument(
         "--keywords",
         nargs="*",
-        default=["stop_loss", "persistence", "friction", "gating", "routing"],
+        default=DEFAULT_TARGET_KEYWORDS,
         help="Keywords to search when mode is 'targeted'.",
     )
     parser.add_argument(
@@ -337,7 +490,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    loader = BatchCodeLoader(root_dir=Path(args.root_dir), file_paths=args.files)
+    file_paths = args.files if args.files else resolve_profile_files(args.profile)
+    loader = BatchCodeLoader(root_dir=Path(args.root_dir), file_paths=file_paths)
 
     if args.mode == "outline":
         report = loader.format_outline_report()

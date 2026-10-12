@@ -1,7 +1,7 @@
 # DiHFT 高频交易策略全维度诊断与归因分析方法论
 
-- **方法论版本**：v1.1（2026-10-12）；诊断计算版本 v2.0。
-- **变更**：保留原净回报、毛回报、夏普等研究阈值；补齐毛回报 10%～15% 的未定义区间为 Warning，明确所有边界、数据审计与证据限制。没有为当前成绩降低通过标准。
+- **方法论版本**：v1.2（2026-10-12）；诊断计算版本 v2.0。
+- **变更**：在 v1.1 研究阈值不变的前提下，加入审计资格门禁、Prediction / Trade / Account Record 三类逐事件证据链，以及模型决策、执行、账户分层归因流程；同步扩展代码批量审查工具的 audit profile。没有为当前成绩降低通过标准。
 
 ## 1. 概述与核心目标
 
@@ -21,6 +21,18 @@
 训练、选模、超参数寻优、特征筛选、标准化及 VAE 拟合均属于模型开发。用于其中任一环节的数据，不能再作为独立泛化评价依据。400 轮寻优不自动证明严重过拟合，但最佳验证成绩也不能独立证明泛化能力；仅称“当前验证集与回测假设下表现较好的候选配置，等待冻结后的独立测试”。这一限制与 [scikit-learn 官方模型选择示例](https://scikit-learn.org/stable/auto_examples/model_selection/plot_nested_cross_validation_iris.html)一致；金融时间序列应采用时间顺序切分、标签边界净化，不能直接照搬随机交叉验证。
 
 独立测试前固定：代码提交、数据文件及哈希、特征清单、所有 checkpoint/变换、参数、手续费/成交/资金规则、评价版本。保存逐合约清单，字段至少包括：合约 ID、文件路径及哈希、数据起止时间、训练/选模/寻优/测试用途、前向标签成熟时间、每个模型/特征选择/变换的拟合截止时间。未知字段写“待核对”，不能据文件夹名称认定盲测。检查合约及时间交集、标签跨界、拟合截止晚于测试起点等情况；同一合约后续时段称“时间外测试”，完全未参与开发的合约才称“未见合约测试”。测试结果一旦用于调整方案，该测试数据转为开发数据，下一次独立验收另留数据。
+
+## 1.2 审计级逐事件证据链
+
+新回测应按 TradingDay 发布三类相互关联的逐事件记录，并以 `audit_manifest.json` 声明 schema、运行身份、模型与特征版本、账户范围、TradingDay 来源、分区行数和校验结果：
+
+- **Prediction Record**：只在真实模型推理发生时记录 Action Value、最优与次优 Action Value margin、路由证据、模型建议动作和版本信息。它是策略推理记录，不是“今天收盘/下一 TradingDay 收盘”的概率预测；Q 值及其差值不得解释为盈利概率或校准置信度。
+- **Trade Record**：按执行 leg 或执行尝试记录请求动作、实际仓位、数量、成交状态、参考价、成交价、费用、已实现盈亏、滑点证据、决策原因及交易前后账户快照关联。反手拆为平旧仓和开新仓两个 leg；拒绝与部分成交不得丢弃。
+- **Account Record**：保存初始账户快照及每个环境 step 后的独立合约账户快照，覆盖钱包、浮盈亏、权益、保证金、可用资金、仓位、敞口、杠杆、峰值权益及回撤。审计历史在平仓后不得重置。
+
+三类记录以稳定 ID 连接：Trade Record 的 `source_prediction_id` 可以引用真实 Prediction Record；warm-up、硬止损、冷静期、熔断等规则动作允许该字段为空，但必须记录决策原因。Trade Record 还应连接执行前后的 Account Record。账户范围固定声明为 `independent_contract_wallet` 时，不得把多合约独立账户求和称为共享资金组合。
+
+审计级资格要求主键唯一、非空外键有效、TradingDay 明确、账户恒等式成立、权益变化与冻结奖励口径可对账，且全部分区经过原子发布。任一条件失败，总体状态优先 `NEEDS_AUDIT`，并停止模型预测力、执行优势或盈利成因的因果归因。旧实验缺少这些原始事实时可继续做描述性复算，但不能被追认成审计级结果。
 
 ## 2. 策略好坏的量化评价标准 (Evaluation Standards)
 
@@ -192,7 +204,13 @@ Buy & Hold 的 1x/5x 涨跌率只是价格基准，未自动匹配策略资金�
 [执行与配置目录: result/DiHFT/final_result/<dataset>/<exp>/]
     │
     ├── high_level_agent_para.txt         (核心：当前正在运行的最优门控超参数配置)
-    └── contracts/<contract>/             (按需采样：底层单步历史时序，如 micro/macro_action.npy)
+    ├── contracts/<contract>/             (原始：模型、执行与账户审计工件)
+    └── daily_audit/
+        ├── audit_manifest.json           (核心：schema、运行身份、账户范围、TradingDay 来源与校验结果)
+        └── trading_day=<YYYY-MM-DD>/
+            ├── prediction_records.csv    (核心：真实模型推理、Action Value、路由与动作来源)
+            ├── trade_records.csv         (核心：请求、执行 leg、成交状态、费用与账户关联)
+            └── account_records.csv       (核心：独立合约账户初始及逐 step 快照)
     │
 [选模元数据清单: analysis_result/DiHFT/low_level/<dataset>/<exp>/two_dimensional_selection/]
     │
@@ -201,45 +219,65 @@ Buy & Hold 的 1x/5x 涨跌率只是价格基准，未自动匹配策略资金�
 [相关 Python 核心代码]
     ├── FineFT/analysis/diagnostics/trading_diagnostics.py        (诊断指标计算与解耦实现)
     ├── FineFT/analysis/diagnostics/batch_diagnostics_loader.py   (批处理提取与自动诊断脚本)
+    ├── FineFT/analysis/diagnostics/batch_code_loader.py          (strategy / audit 代码语义批量审查)
     ├── FineFT/analysis/pick_agent/DiHFT_high_level_heurstic.py   (高层选优与 best_result 生成)
     ├── FineFT/RL/DiHFT/high_level/vae_routing_final_result_macro_action.py (最终回测执行与风控逻辑)
-    └── FineFT/RL/DiHFT/high_level/vae_routing_util.py           (分级自适应门控与风控逻辑)
+    ├── FineFT/RL/DiHFT/high_level/vae_routing_util.py           (分级自适应门控与风控逻辑)
+    ├── FineFT/env/env_class/base_env.py                          (账户推进、逐 step 审计快照与执行结果)
+    └── FineFT/env/env_class/futures_util.py                      (钱包变化、成交数量、费用与盈亏语义)
 ```
 
 ---
 
-## 7. 结构化四阶段分析实施路径 (Analysis Pipeline)
+## 7. 结构化六阶段分析实施路径 (Analysis Pipeline)
 
-在面对一个新完成的实验结果时，应按如下四阶段流程执行：
+面对一个新完成的实验结果时，应按以下顺序执行。前一阶段的证据资格是后一阶段归因的前提；不能先看收益，再用不完整记录解释原因。
 
-### 阶段 1：宏观总览与总分定位 (Tier 1 Macro Health Check)
-- **目标**：按冻结版本生成研究等级，并标记审计缺口；不据验证集判定生产就绪。
+### 阶段 0：审计资格门禁 (Audit Eligibility Gate)
+- **目标**：确认本次实验是否具备逐事件归因资格。
+- **动作**：读取 `audit_manifest.json` 及三类日记录，检查 schema 和 run identity、模型/特征版本、TradingDay 来源、`independent_contract_wallet` 账户范围、分区完整性、主外键、账户恒等式、权益变化与原子发布状态。
+- **判定**：任一硬条件失败即标 `NEEDS_AUDIT`，仅允许描述性汇总；不得继续声称模型预测有效、真实滑点优势或某机制产生增量收益。旧产物不因能够估算部分字段而自动通过此门禁。
+
+### 阶段 1：宏观总览与研究等级 (Macro Health Check)
+- **目标**：按冻结版本生成研究等级；不据验证集判定生产就绪。
 - **动作**：通过批处理脚本读取 `diagnostics_summary.json`，检查：
-  - `portfolio_return_pct`（是否赚钱？）
-  - `portfolio_gross_return_pct`（择时毛利是否充足？）
-  - `friction_consumption_ratio_pct`（摩擦吞噬是否失控？）
-  - `win_rate_pct` 与 `mean_annual_sr`（稳健性与夏普是否达标？）
+  - `portfolio_return_pct`（在当前独立账户口径下是否赚钱？）
+  - `portfolio_gross_return_pct`（参考价择时毛利是否充足？）
+  - `friction_consumption_ratio_pct`（毛净差额是否失控？）
+  - `win_rate_pct`、`mean_annual_sr` 与路径回撤（稳健性是否达到研究阈值？）
 
-### 阶段 2：损耗解耦与微观行为排查 (Tier 2 Friction & Behavior Profiling)
-- **目标**：锁定收益损耗与风险累积的执行根因。
-- **动作**：通过批处理脚本读取 `contract_pnl_friction.csv` 与 `contract_behavior_risk.csv`：
-  - 检查多空平结构：是否存在过度偏向（如纯单边牛市中做空过多）？
-  - 检查持仓周期：`mean_holding_bars` 是否过短？
-  - 检查费用来源与未解释残差：先核对成交数量、费用、参考价时点和实际仓位；未对账前不能把残差归因盘口深度；
-  - 检查风控事件与期间回撤；用同环境消融比较机制的增量效果，触发次数不证明成功限制尾部损失。
+### 阶段 2：模型推理与决策来源 (Model Decision Attribution)
+- **目标**：区分真实策略推理、动作持续和规则风控，并检查模型输出与最终请求动作的关系。
+- **动作**：读取 Prediction Record 与 Trade Record：
+  - 统计真实推理覆盖率、short/flat/long Action Value 分布及最优—次优 margin；
+  - 按宏观 Slot、合约和 TradingDay 比较模型建议动作、请求动作及实际仓位；
+  - 检查动作持续是否引用启动持续性的 Prediction Record；
+  - 检查 warm-up、防御平仓、硬止损、冷静期和熔断是否保持空 `source_prediction_id` 并带明确决策原因。
+- **限制**：Action Value 与 margin 只描述当前奖励定义下的相对动作价值，不是盈利概率、方向命中率或未来 1—2 个 TradingDay 的校准预测。
 
-### 阶段 3：宏观路由与选模元数据溯源 (Tier 3 Routing & Manifest Trace)
-- **目标**：检查高层 VAE 路由与底层 Q-Net 槽位协作是否健康。
+### 阶段 3：预测—交易—账户证据链 (Decision, Execution & Account Reconciliation)
+- **目标**：把每个决策连接到真实模拟执行和账户后果，锁定毛净差额与风险累积来源。
+- **动作**：沿 `Prediction Record → Trade Record → Account Record` 核对：
+  - 请求仓位与实际仓位差异、拒绝、部分成交及反手的两个执行 leg；
+  - 参考价、成交价、数量、手续费、已实现盈亏和滑点证据；
+  - 每个执行 leg 的交易前后账户快照，以及权益、钱包、浮盈亏和保证金变化；
+  - 多空平结构、真实持仓回合、费用来源和未解释残差；
+  - 风控事件与期间回撤。触发次数仍不能单独证明机制有效，需同环境消融。
+
+### 阶段 4：宏观路由与选模元数据溯源 (Routing & Manifest Trace)
+- **目标**：检查高层 VAE 路由与底层 Q-Net 槽位协作是否健康，并用逐事件证据检验失效假设。
 - **动作**：
-  - 查看 `macro_routing_distribution.csv`：是否有槽位未被激活，或单一槽位过度垄断？Default / Reject 占比是否过高？
-  - 查看 `two_dimensional_selection_manifest.json`：各槽位对应的训练 Epoch 和候选得分，确认是否存在弱模型入选。
+  - 查看 `macro_routing_distribution.csv` 及 Prediction Record：是否有槽位未激活、单一槽位垄断、Default / Reject 过高，或某槽位持续输出低 margin 决策？
+  - 查看 `two_dimensional_selection_manifest.json`：各槽位对应训练 Epoch、候选得分和覆盖，确认是否存在弱模型入选；
+  - 将槽位、模型动作、实际成交与账户损益连起来。槽位激活与亏损共现只形成假设，不自动构成根因。
 
-### 阶段 4：超参回溯与调优落地 (Tier 4 Parameter & Source Code Audit)
-- **目标**：制定确切的调优修改清单并更新回测脚本。
+### 阶段 5：消融、超参回溯与冻结评价 (Ablation, Tuning & Freeze)
+- **目标**：制定可验证的调优修改，并在统一环境中确认增量效果。
 - **动作**：
-  - 复合目标明确为 `J = 汇总净回报率 × 盈利合约比例`，并记录分母、无交易合约处理及评分方向。有限搜索称“本轮已评估候选中的最优”；旧参数应在新版环境中重跑后比较，不能由净利上涨推断 J 改善。
-  - 对照 `best_result.csv` 与 `high_level_agent_para.txt`，分析指标权衡（例如以 TR 选优导致 MDD 恶化）；
-  - 根据第 5 节的调优指南，修改 `final_result_fu_*.sh` 或 `high_level_heurstic_fu_*.sh` 中的风控与执行参数。
+  - 复合目标明确为 `J = 汇总净回报率 × 盈利合约比例`，记录资金分母、无交易合约处理及评分方向。有限搜索只称“本轮已评估候选中的最优”；
+  - 对模型推理、路由、动作持续、执行和三级风控分别做同环境消融，不能由汇总数值变化完成因果归因；
+  - 对照 `best_result.csv` 与 `high_level_agent_para.txt` 分析指标权衡，旧参数须在新版审计级环境重跑；
+  - 冻结代码、模型、特征、参数、执行规则、审计 schema 和评价版本后再运行时间外测试。测试结果一旦用于调参，即转为开发数据。
 
 ---
 
@@ -279,7 +317,7 @@ conda run -n finetf python FineFT/analysis/diagnostics/batch_diagnostics_loader.
    - `[MACRO_SLOT_MONOPOLY]`：单一槽位垄断 $> 80\%$；
 4. **生成即时调优建议**：根据触发的标志自动输出具体的调优参数指令（如 `--action_persistence`、`--stop_loss_return_threshold` 等）。
 
-该批处理工具使得在分析任何策略实验结果时，仅需一次命令即可完成全方位体检，生成描述性研究汇总及审计缺口；其结论受数据、执行和评价口径限制。
+该批处理工具提供**汇总指标层**的描述性体检，不替代阶段 0 和阶段 2–3 的逐事件证据检查。每日审计记录实现后，数据批处理入口还应汇总：真实推理覆盖率、动作持续引用完整率、规则动作比例、请求/实际仓位差异、拒绝/部分成交/反手 leg 数量、Prediction→Trade 与 Trade→Account 外键完整率、账户对账通过率、TradingDay 覆盖及每日收益/费用/回撤。在此接入完成前，工具输出必须明确标记“逐事件审计未加载”，不能把现有汇总称为全方位审计。
 
 ---
 
@@ -290,37 +328,40 @@ conda run -n finetf python FineFT/analysis/diagnostics/batch_diagnostics_loader.
 为此，系统配套开发了基于 AST 的代码批量提取与压缩工具：
 `FineFT/analysis/diagnostics/batch_code_loader.py`。
 
-### 9.1 默认纳入批量提取的核心 Python 代码清单
-1. `FineFT/analysis/diagnostics/trading_diagnostics.py`：诊断指标计算与摩擦解耦算法
-2. `FineFT/analysis/pick_agent/DiHFT_high_level_heurstic.py`：高层最优超参选优与评价指标提取
-3. `FineFT/RL/DiHFT/high_level/vae_routing_final_result_macro_action.py`：回测撮合引擎与风控层实现
-4. `FineFT/RL/DiHFT/high_level/vae_routing_util.py`：分级自适应门控与动作持续性执行逻辑
-5. `FineFT/RL/DiHFT/high_level/gating/hierarchical_gating.py`：双阈值迟滞分级门控核心实现
-6. `FineFT/analysis/pick_agent/FineFT_two_dimensional_agent_selector.py`：底层模型两维选模算法
-7. `FineFT/common/artifacts.py`：工件文件名常量定义
-8. `FineFT/common/metric_columns.py`：金融与行为指标列名定义
-9. `FineFT/common/routing_params.py`：路由超参数键名定义
+### 9.1 内置代码清单 Profile
+
+工具提供三个内置 profile；显式 `--files` 仍可覆盖 profile：
+
+| Profile | 用途 | 主要覆盖 |
+| --- | --- | --- |
+| `strategy` | 路由、选模、门控和汇总诊断 | 原九个 DiHFT 策略核心文件 |
+| `audit` | 逐事件证据、执行和账户语义 | 交易诊断、数据汇总、高层运行器、账户环境、钱包/撮合工具及 artifact 契约 |
+| `all` | 联合审查 | `strategy` 与 `audit` 去重并集 |
+
+`audit` profile 特别纳入 `base_env.py` 与 `futures_util.py`。仅检查高层路由代码无法确认成交数量、账户推进、费用、已实现盈亏和审计快照的真实语义。每日审计生成器及 schema 模块实现后，应继续加入该 profile。
 
 ### 9.2 三种提取模式与运行指令
 
 在 `finetf` conda 环境下执行：
 
-#### 模式 1：AST 架构大纲与参数提取 (`outline` 模式，强烈推荐)
-- **特点**：通过 Python 原生 AST 语法树遍历，自动提取所有模块说明、类继承关系、方法完整输入输出类型签名、顶级函数以及 `argparse` 定义的所有 CLI 参数（含默认值与帮助文档）。
-- **Token 节约**：将 5,000+ 行源码压缩至 250 行精简大纲，**节省 95% 以上 Token 上下文**。
+#### 模式 1：AST 架构大纲、schema 字段与参数提取 (`outline` 模式，强烈推荐)
+- **特点**：通过 Python 原生 AST 遍历，提取模块说明、类继承、类字段（包括 dataclass / Enum / artifact 常量）、方法签名、顶级函数以及 `argparse` CLI 参数。类字段让审计记录契约可以在大纲中直接检查，不必打开全量源码。
+- **Token 节约**：用于快速定位接口和 schema；节省比例取决于所选 profile 和源码版本，不把固定 95% 当作保证。
 - **运行命令**：
 ```bash
 conda run -n finetf python FineFT/analysis/diagnostics/batch_code_loader.py \
+    --profile audit \
     --mode outline
 ```
 
 #### 模式 2：语义关键字定向抽取 (`targeted` 模式)
-- **特点**：无需通读全代码，仅针对诊断关键概念（如 `stop_loss`、`persistence`、`friction`、`gating`、`turnover`）抽取包含该逻辑的完整函数块或类定义，并带有准确的起止行号。
+- **特点**：递归检查类与函数，优先返回最小匹配方法，避免某个关键词位于 `Base_Env.step` 时输出整个大型环境类。默认关键词覆盖风控、摩擦、路由以及 `audit`、`prediction`、`action_value`、`trade_event`、`execution`、`account_snapshot`、`trading_day`、`reconciliation`、`commission`、`realized_pnl` 和 `slippage`。
 - **运行命令**：
 ```bash
 conda run -n finetf python FineFT/analysis/diagnostics/batch_code_loader.py \
+    --profile audit \
     --mode targeted \
-    --keywords stop_loss persistence friction turnover
+    --keywords prediction action_value trade_event account_snapshot trading_day reconciliation
 ```
 
 #### 模式 3：全量代码一键打包 (`full` 模式)
@@ -328,15 +369,21 @@ conda run -n finetf python FineFT/analysis/diagnostics/batch_code_loader.py \
 - **运行命令**：
 ```bash
 conda run -n finetf python FineFT/analysis/diagnostics/batch_code_loader.py \
+    --profile all \
     --mode full \
     --output analysis_result/code_bundle.md
 ```
 
+`full` 模式用于已定位问题后的完整复核，不应作为默认诊断入口；`audit` profile 中的环境与撮合文件较大，优先使用 `outline` 或 `targeted`。
+
 ---
 
-## 10. 实验数据与代码双引擎批处理协同
+## 10. 汇总、逐事件证据与代码语义三层协同
 
-至此，系统形成了完整的数据与代码“双引擎批处理”工作流：
-1. **数据与指标引擎**：`batch_diagnostics_loader.py` 一键汇聚实验数据、摩擦损耗、胜率、回撤及风控触发统计；
-2. **代码与逻辑引擎**：`batch_code_loader.py` 一键提取源码架构大纲、函数签名与关键风控算法；
-3. **协同优势**：在启动任何策略分析任务时，仅需**两次极速调用**，即可将实验全貌与代码细节以最紧凑的格式注入上下文，彻底告别盲目翻查文件与 Token 膨胀。
+完整诊断由三层证据共同构成，不能以固定“两次调用”代替证据资格判断：
+
+1. **汇总指标层**：`batch_diagnostics_loader.py` 汇聚净值、参考价毛利、毛净差额、换手、风险指标、路由分布与尾部合约，回答“结果表现如何”。
+2. **逐事件证据层**：`audit_manifest.json` 及按 TradingDay 分区的 Prediction / Trade / Account Records 回答“哪次推理驱动了什么动作、实际如何执行、账户为何变化”。这一层先执行资格校验，再提供阶段 2–3 的归因证据。
+3. **代码语义层**：`batch_code_loader.py --profile audit` 检查记录生成、动作来源、成交、账户和对账实现，回答“这些字段在代码中究竟如何产生”。
+
+推荐顺序是：先读 manifest 完成阶段 0，再加载汇总指标定位问题，然后按异常 TradingDay / 合约 / Decision ID 下钻三类记录，最后用 `targeted` 模式抽取对应方法。若逐事件记录或账户对账缺失，只能报告描述性现象和审计缺口，不能用源码设计意图补足缺失事实。

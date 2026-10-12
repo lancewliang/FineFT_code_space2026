@@ -6,6 +6,7 @@ import pytest
 from analysis.diagnostics.batch_code_loader import (
     BatchCodeLoader,
     OutlineAstVisitor,
+    resolve_profile_files,
 )
 
 
@@ -70,3 +71,75 @@ def main() -> None:
     rep_full = loader.format_full_bundle()
     assert "File: `mock_strategy.py`" in rep_full
     assert "class MockQNet:" in rep_full
+
+
+def test_outline_reports_class_schema_fields(tmp_path: Path):
+    schema_file = tmp_path / "audit_schema.py"
+    schema_file.write_text(
+        '''from dataclasses import dataclass
+from enum import IntEnum
+
+@dataclass
+class AccountRecord:
+    snapshot_id: str
+    equity: float = 0.0
+
+class DecisionReason(IntEnum):
+    POLICY_INFERENCE = 0
+    HARD_STOP_LOSS = 1
+'''
+    )
+
+    loader = BatchCodeLoader(root_dir=tmp_path, file_paths=[str(schema_file)])
+    outline = loader.extract_outline(schema_file)
+    fields_by_class = {
+        item.name: [field.name for field in item.fields] for item in outline.classes
+    }
+
+    assert fields_by_class["AccountRecord"] == ["snapshot_id", "equity"]
+    assert fields_by_class["DecisionReason"] == [
+        "POLICY_INFERENCE",
+        "HARD_STOP_LOSS",
+    ]
+    report = loader.format_outline_report()
+    assert "snapshot_id: str" in report
+    assert "POLICY_INFERENCE = 0" in report
+
+
+def test_targeted_mode_returns_matching_method_instead_of_whole_class(tmp_path: Path):
+    env_file = tmp_path / "large_env.py"
+    env_file.write_text(
+        '''class LargeEnvironment:
+    def unrelated_calculation(self) -> int:
+        return sum(range(100))
+
+    def record_account_snapshot(self, equity: float) -> dict[str, float]:
+        account_snapshot = {"equity": equity}
+        return account_snapshot
+'''
+    )
+
+    loader = BatchCodeLoader(root_dir=tmp_path, file_paths=[str(env_file)])
+    blocks = loader.extract_targeted(env_file, ["account_snapshot"])
+
+    assert len(blocks) == 1
+    assert blocks[0][2] == "def LargeEnvironment.record_account_snapshot"
+    assert "record_account_snapshot" in blocks[0][3]
+    assert "unrelated_calculation" not in blocks[0][3]
+
+
+def test_code_profiles_cover_strategy_and_audit_semantics_without_duplicates():
+    strategy_files = resolve_profile_files("strategy")
+    audit_files = resolve_profile_files("audit")
+    all_files = resolve_profile_files("all")
+
+    assert "FineFT/RL/DiHFT/high_level/gating/hierarchical_gating.py" in strategy_files
+    assert "FineFT/env/env_class/base_env.py" in audit_files
+    assert "FineFT/env/env_class/futures_util.py" in audit_files
+    assert len(all_files) == len(set(all_files))
+    assert set(strategy_files) | set(audit_files) == set(all_files)
+
+
+def test_unknown_code_profile_fails_with_available_choices():
+    with pytest.raises(ValueError, match="all, audit, strategy"):
+        resolve_profile_files("missing")
