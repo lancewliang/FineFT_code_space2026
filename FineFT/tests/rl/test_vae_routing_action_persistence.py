@@ -270,6 +270,9 @@ def test_diagnostic_artifacts_and_metrics_saved_to_disk(tmp_path, monkeypatch):
         leverage = 1
         margine_balance_history = [100.0, 100.5, 101.0, 101.5]
         micro_action_history = []
+        executed_position_history = []
+        commission_fee_history = []
+        market_index_history = [0]
         initial_margin_history = [0.0, 10.0, 10.0, 10.0]
         wallet_balance_history = [100.0, 100.0, 100.0, 100.0]
         unrealized_pnl_history = [0.0, 0.5, 1.0, 1.5]
@@ -279,6 +282,9 @@ def test_diagnostic_artifacts_and_metrics_saved_to_disk(tmp_path, monkeypatch):
         def __init__(self):
             self.step_idx = 0
             self.micro_action_history = []
+            self.executed_position_history = []
+            self.commission_fee_history = []
+            self.market_index_history = [0]
 
         def reset(self):
             self.step_idx = 0
@@ -287,6 +293,9 @@ def test_diagnostic_artifacts_and_metrics_saved_to_disk(tmp_path, monkeypatch):
         def step(self, action):
             self.step_idx += 1
             self.micro_action_history.append(action)
+            self.executed_position_history.append(float(self.position))
+            self.commission_fee_history.append(0.0)
+            self.market_index_history.append(len(self.micro_action_history))
             done = self.step_idx >= 3
             return np.array([0.0]), 0.5, done, {"previous_action": action, "avaliable_action": [1, 1, 1]}
 
@@ -333,6 +342,9 @@ def test_diagnostic_artifacts_and_metrics_saved_to_disk(tmp_path, monkeypatch):
     trading_info = np.load(trading_info_file, allow_pickle=True).item()
 
     assert len(reasons) == len(micro_actions) == 3
+    assert np.load(save_dir / HistoryArtifactNames.EXECUTED_POSITION_HISTORY_NPY).tolist() == [0.0] * 3
+    assert np.load(save_dir / HistoryArtifactNames.COMMISSION_FEE_HISTORY_NPY).tolist() == [0.0] * 3
+    assert np.load(save_dir / HistoryArtifactNames.MARKET_INDEX_HISTORY_NPY).tolist() == [0, 1, 2, 3]
     # Step 0: policy inference (0), Step 1: persisted (1), Step 2: persisted (1)
     assert reasons.tolist() == [0, 1, 1]
     assert trading_info["total_steps"] == 3

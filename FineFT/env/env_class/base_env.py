@@ -343,6 +343,9 @@ class Base_Env(gym.Env):
         return -1
 
     def _reset_execution_metrics(self):
+        self.executed_position_history = []
+        self.commission_fee_history = []
+        self.market_index_history = [0]
         self.commission_fee_step = 0
         self.realized_pnl_step = 0
         self.slippage_step = 0
@@ -614,6 +617,8 @@ class Base_Env(gym.Env):
                 )
 
         self._update_execution_metrics(wallet_change)
+        self.executed_position_history.append(float(position))
+        self.commission_fee_history.append(float(wallet_change.commission_fee_step))
         self._update_position_cost(old_position, wallet_change)
         self.slippage_sum += slippage
         ##history related
@@ -659,6 +664,7 @@ class Base_Env(gym.Env):
             hours = total_seconds // 3600
             minutes = (total_seconds % 3600) // 60
             self.margine_balance_history.append(wallet_balance + unrealized_pnL)
+            self.market_index_history.append(self.day)
             print(
                 "liquidation happened right after the change of position and leverage, there might be something wrong with the calculate_avaliable_action"
             )
@@ -736,6 +742,7 @@ class Base_Env(gym.Env):
 
             # 来到下一个timestmap
             if self.terminal or self.day >= len(self.state_array) - self.early_stop - 1:
+                self.market_index_history.append(self.day)
                 self.terminal = True
                 avaiable_position_choices, avaiable_leverage_choices = (
                     [0],
@@ -794,6 +801,7 @@ class Base_Env(gym.Env):
                     },
                 )
             self.day += 1
+            self.market_index_history.append(self.day)
             current_timestamp = self.timestamp_array[self.day]
             current_funding_rate = self.funding_rate_array[self.day]
             current_funding_timestamp = self.funding_timestamp_array[self.day]

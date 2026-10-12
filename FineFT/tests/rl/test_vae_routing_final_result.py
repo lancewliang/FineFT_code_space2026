@@ -122,6 +122,9 @@ def test_eval_stage_test_loads_contracts_from_test_directory(tmp_path, monkeypat
             self.leverage = 5
             self.margine_balance_history = [100.0, 100.0 + self.reward]
             self.micro_action_history = []
+            self.executed_position_history = []
+            self.commission_fee_history = []
+            self.market_index_history = [0]
             self.initial_margin_history = [self.required_money]
             self.wallet_balance_history = [100.0]
             self.unrealized_pnl_history = [0.0]
@@ -133,6 +136,9 @@ def test_eval_stage_test_loads_contracts_from_test_directory(tmp_path, monkeypat
 
         def step(self, action):
             self.micro_action_history.append(action)
+            self.executed_position_history.append(float(self.position))
+            self.commission_fee_history.append(0.0)
+            self.market_index_history.append(len(self.micro_action_history))
             return np.array([1.0]), self.reward, True, {"previous_action": action}
 
     monkeypatch.setattr(vru, "initiate_base_env", lambda **kwargs: FakeEnv(kwargs["df"]))
@@ -237,6 +243,9 @@ def test_vae_routing_final_result_macro_action_entrypoint(tmp_path, monkeypatch)
             self.leverage = 5
             self.margine_balance_history = [100.0, 100.0 + self.reward]
             self.micro_action_history = []
+            self.executed_position_history = []
+            self.commission_fee_history = []
+            self.market_index_history = [0]
             self.initial_margin_history = [self.required_money]
             self.wallet_balance_history = [100.0]
             self.unrealized_pnl_history = [0.0]
@@ -248,6 +257,9 @@ def test_vae_routing_final_result_macro_action_entrypoint(tmp_path, monkeypatch)
 
         def step(self, action):
             self.micro_action_history.append(action)
+            self.executed_position_history.append(float(self.position))
+            self.commission_fee_history.append(0.0)
+            self.market_index_history.append(len(self.micro_action_history))
             return np.array([1.0]), self.reward, True, {"previous_action": action}
 
     monkeypatch.setattr(vru, "initiate_base_env", lambda **kwargs: FakeEnv(kwargs["df"]))

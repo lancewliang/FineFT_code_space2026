@@ -79,6 +79,9 @@ def test_limit_down_blocks_long_reduction_in_mask_and_direct_step():
     _, _, _, step_info = env.step(_action(env, 0.0))
 
     assert env.position == 2.0
+    assert env.executed_position_history == [2.0]
+    assert env.commission_fee_history == [0.0]
+    assert env.market_index_history == [0, 1]
     _assert_no_execution(env)
     assert step_info["avaliable_action"][_action(env, 0.0)] == 0
 

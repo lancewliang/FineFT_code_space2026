@@ -106,7 +106,8 @@ def test_wallet_change_can_use_buy_and_sell_fee_rates():
     assert opened[4] == 1000.0 - 101.0 * 0.1
     assert opened.commission_fee_step == pytest.approx(101.0 * 0.1)
     assert opened.realized_pnl_step == 0
-    assert opened.slippage_step == pytest.approx(101.0 - 100.0 / 5)
+    # Slippage compares execution notional with reference notional, not margin.
+    assert opened.slippage_step == pytest.approx(101.0 - 100.0)
 
     closed = change_of_wallet(
         markprice=100.0,

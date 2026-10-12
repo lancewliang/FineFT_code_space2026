@@ -1,5 +1,8 @@
 # DiHFT 高频交易策略全维度诊断与归因分析方法论
 
+- **方法论版本**：v1.1（2026-10-12）；诊断计算版本 v2.0。
+- **变更**：保留原净回报、毛回报、夏普等研究阈值；补齐毛回报 10%～15% 的未定义区间为 Warning，明确所有边界、数据审计与证据限制。没有为当前成绩降低通过标准。
+
 ## 1. 概述与核心目标
 
 本方法论旨在为 FineFT 框架下的 DiHFT（分层深度强化学习高频交易系统，涵盖 VAE 宏观体制路由、低层微观 Q-Net、三级风控及执行层）提供一套系统化、严密且高效的量化策略诊断体系。
@@ -13,49 +16,67 @@
 
 ---
 
+## 1.1 数据用途、冻结与独立测试
+
+训练、选模、超参数寻优、特征筛选、标准化及 VAE 拟合均属于模型开发。用于其中任一环节的数据，不能再作为独立泛化评价依据。400 轮寻优不自动证明严重过拟合，但最佳验证成绩也不能独立证明泛化能力；仅称“当前验证集与回测假设下表现较好的候选配置，等待冻结后的独立测试”。这一限制与 [scikit-learn 官方模型选择示例](https://scikit-learn.org/stable/auto_examples/model_selection/plot_nested_cross_validation_iris.html)一致；金融时间序列应采用时间顺序切分、标签边界净化，不能直接照搬随机交叉验证。
+
+独立测试前固定：代码提交、数据文件及哈希、特征清单、所有 checkpoint/变换、参数、手续费/成交/资金规则、评价版本。保存逐合约清单，字段至少包括：合约 ID、文件路径及哈希、数据起止时间、训练/选模/寻优/测试用途、前向标签成熟时间、每个模型/特征选择/变换的拟合截止时间。未知字段写“待核对”，不能据文件夹名称认定盲测。检查合约及时间交集、标签跨界、拟合截止晚于测试起点等情况；同一合约后续时段称“时间外测试”，完全未参与开发的合约才称“未见合约测试”。测试结果一旦用于调整方案，该测试数据转为开发数据，下一次独立验收另留数据。
+
 ## 2. 策略好坏的量化评价标准 (Evaluation Standards)
 
-评判一个高频策略的优劣不能仅看单一的回测总收益率（Total Return, TR），必须从**收益能力、基准相对优势、风险调整表现、截面稳健性**四个维度综合打分：
+以下是本项目的**研究描述性阈值**，尚未校准为生产验收标准；收益水平受回测跨度、风险预算和资金口径影响。阈值须在看独立测试成绩前冻结，修改时单列版本和理由，并按同一新口径重算所有对比版本。实现以 `FineFT/analysis/diagnostics/evaluation_standards.py` 为统一来源，批处理不得另设 HEALTHY 条件。
 
-| 评价维度 | 核心量化指标 | 优秀 (Pass/Strong) | 亚健康 (Warning) | 不合格 (Fail) | 对应数据字段 |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **净盈利能力** | 组合净回报率 (`portfolio_return_pct`) | $> +20\%$ | $0\% \sim +20\%$ | $\le 0\%$ | `portfolio.portfolio_return_pct` |
-| **盘面择时能力** | 盘面毛回报率 (`portfolio_gross_return_pct`) | $> +40\%$ | $+15\% \sim +40\%$ | $< +10\%$ 或 $\le 0\%$ | `portfolio.portfolio_gross_return_pct` |
-| **摩擦控制** | 摩擦损耗吞噬率 (`friction_consumption_ratio_pct`) | $< 50\%$ | $50\% \sim 75\%$ | $> 75\%$ | `portfolio.friction_consumption_ratio_pct` |
-| **换手乘数** | 组合本金换手倍数 (`portfolio_turnover_multiple`) | $< 30\text{x}$ | $30\text{x} \sim 80\text{x}$ | $> 80\text{x}$ | `portfolio.portfolio_turnover_multiple` |
-| **风险调整收益** | 平均年化夏普比率 (`mean_annual_sr`) | $> 2.0$ | $1.0 \sim 2.0$ | $< 1.0$ | `portfolio.mean_annual_sr` |
-| **下行风险控制** | 平均最大回撤 (`mean_mdd_pct`) | $< 8\%$ | $8\% \sim 15\%$ | $> 15\%$ | `portfolio.mean_mdd_pct` |
-| **卡尔玛比率** | 日频卡尔玛比率 (`mean_daily_cr`) | $> 2.5$ | $1.0 \sim 2.5$ | $< 1.0$ | `portfolio.mean_daily_cr` |
-| **横截面一致性** | 多合约胜率 (`win_rate_pct`) | $\ge 85\%$ | $70\% \sim 85\%$ | $< 70\%$ | `portfolio.win_rate_pct` |
-| **尾部单点风险** | 最差单合约亏损占比 (`worst_loss / capital`) | $< 5\%$ | $5\% \sim 12\%$ | $> 12\%$ | `min(df_pnl['net_pnl']) / capital` |
+| 指标 | Strong | Warning | Fail | 字段 |
+| :--- | :--- | :--- | :--- | :--- |
+| 独立账户汇总净回报率 | >20% | (0%,20%] | ≤0% | `portfolio_return_pct` |
+| 独立账户参考价毛回报率 | >40% | [10%,40%] | <10% | `portfolio_gross_return_pct` |
+| 毛净差额 / 正毛利 | [0%,50%) | [50%,75%] | >75% | `friction_consumption_ratio_pct` |
+| 本金换手倍数 | <30x | [30x,80x] | >80x | `portfolio_turnover_multiple` |
+| 逐合约平均分组年化夏普 | >2.0 | [1.0,2.0] | <1.0 | `mean_annual_sr` |
+| 逐合约平均最大回撤 | <8% | [8%,15%] | >15% | `mean_mdd_pct` |
+| 逐合约平均分组卡尔玛 | >2.5 | [1.0,2.5] | <1.0 | `mean_daily_cr` |
+| 盈利合约比例 | ≥85% | [70%,85%) | <70% | `win_rate_pct` |
+| 最差合约期末亏损比例 | <5% | [5%,12%] | >12% | `worst_contract_loss_pct` |
+
+毛利非正时吞噬率为 `null/Unavailable`，不能用 0% 表示无成本；负毛净差额或负费用残差标 `NeedsAudit`，不能凭低吞噬率验收摩擦控制。缺少数据或成交审计时，总体状态优先 `NEEDS_AUDIT`，逐指标等级仍保留；否则任何 Fail → `RESEARCH_FAIL`，任何 Warning → `RESEARCH_WARNING`，全部 Strong → `RESEARCH_STRONG`。这些状态均不代表生产就绪。
+
+`portfolio_*` 为兼容保留的独立合约账户汇总字段，回报率为总净值变化 / 各合约初始资金之和，不是共享资金账户收益。`mean_*` 是逐合约算术平均，不是组合最大回撤或组合夏普；`portfolio_mdd_pct`、`portfolio_annual_sr` 在无共同时间轴与共享资金净值时置空。另报最差单合约路径回撤 `worst_contract_mdd_pct`；期末亏损率使用该合约自身初始资金作分母，不能除以全体资金稀释风险。
+
+当前 `annual_sr/daily_cr/daily_sor` 沿用 `calculate_metric` 的固定 bars 分组（默认12）与365年化，属于旧计算约定，并非按交易日聚合的日频指标，也不能解释为明日收益预测。生产评价需另行冻结 TradingDay 聚合、交易年天数及风险预算后重算；本版不追溯更改选优目标。
 
 ---
 
 ## 3. 盈利能力的成因与解耦框架 (Profitability Decomposition)
 
-基于 ADR 0048 的损耗解耦理论，DiHFT 策略实现的最终净利润公式严格满足：
-$$\text{Net PnL} = \text{Gross Market Timing PnL} - \text{Friction}$$
-$$\text{Friction} = \text{Commission} + \text{Order Book Slippage}$$
+ADR 0048 要求逐步成本归因，但早期实现实际只有请求动作、奖励及资产历史，不能据此测量真实手续费和盘口滑点。本版修正其“精准解耦真实费用”的解释；历史 ADR 的研究数字不追溯改写，复算以新诊断版本为准。
 
-### 3.1 盘面择时毛能力 (Alpha Timing Power)
-- **概念**：假定无交易手续费且挂单即时在当前标记价（Mark Price）以零滑点撮合成交时，策略根据多空方向和价格变动捕捉到的理论毛利（Gross PnL）。
-- **来源**：底层 Q-Net 智能体在微观价差/深度特征下的动作选择，以及高层 VAE 路由对当前市场体制（动量与波动率）的准确划分。
-- **验证依据**：若毛利润显著高于 1x/5x Buy & Hold，说明模型具备强大的市场择时预测 Alpha。
+### 3.1 参考价毛盈亏与实际净值变化
 
-### 3.2 摩擦成本吞噬机制 (Friction Breakdown)
-- **手续费 (Commission)**：每笔交易按合约乘数与名义成交额计提（国内期货常用 0.0001~0.0005）。
-- **订单簿滑点 (Slippage)**：由撮合引擎深度吃单产生（越过盘口价差造成的买卖损耗）。
-- **摩擦吞噬率 (Friction Ratio)**：
-  $$\text{Friction Ratio} = \frac{\text{Commission} + \text{Slippage}}{\text{Gross PnL}} \times 100\%$$
-- **实证规律**：在多数高频策略中，模型预测方向正确率达标（毛收益率往往超过 50%~80%），但因为调仓频次过高，产生数千万元虚假换手，导致手续费与滑点将 $90\%+$ 的毛利吞噬殆尽（见 ADR 0048 实证）。
+环境 N 个 step 对应 N 个动作/净值增量和 N+1 个行情/初始及后续净值观察。第 i 步在参考价 p[i] 执行后持有 q[i] 至 p[i+1]：
+
+$$G=\sum_{i=0}^{N-1}q_i(p_{i+1}-p_i)u,\qquad N=(E_N-E_0)u.$$
+
+优先读取 `market_index_history.npy` 对齐每步起止行情；即时强平未推进行情时使用重复索引，不能虚构后续价格区间。旧产物缺少索引时标为顺序步假设，不能自动认证时间对齐。优先读取 `executed_position_history.npy`；旧产物只含 `micro_action_history.npy` 时按 0/1/2 → -1/0/+1 重建**请求仓位代理**，仅支持初始空仓、单位三动作环境。涨跌停或成交约束可能使请求与实际仓位不同，必须标记此限制。净盈亏含期末浮动盈亏，不自动称已实现利润。合约单位 u 同时缩放毛利、净利与初始资金，避免把收益率放大 u 倍。
+
+参考价与盘口应使用同一 bar 末端事件时点。2026-10-12 审查发现旧下采样参考价取 `.first()`、盘口取 `.last()`；本次修复统一到末端。旧 Feather 和模型并未自动重建，旧成绩不能证明修复后数据上的表现。
+
+### 3.2 毛净差额与费用核对
+
+$$R=G-N,\qquad U=R-C.$$
+
+R 是毛净差额；C 优先读 `commission_fee_history.npy`，缺失时按初始空仓及逐步仓位变化的参考价名义额估算手续费；U 是**未解释执行残差**。兼容字段 `friction`/`total_friction` 表示 R，`est_slippage`/`total_slippage` 表示 U，不能直接称真实订单簿滑点。实际成交、估算手续费、参考价时点差异、仓位代理误差、资金费用或记账差异均可能影响 U。只有逐笔成交价、数量、方向、费用及同一时点参考价对账后，才能测量执行滑点；已计入净值的费用不能再扣一次。
+
+每个合约输出 `<contract>_step_pnl_audit.csv`，检查首尾价格区间、首次开仓、净值增量、仓位来源、手续费来源及负残差步骤。负残差不能被截零，也不能自动归为执行优势。毛利非正时比率不可定义。
+
+Buy & Hold 的 1x/5x 涨跌率只是价格基准，未自动匹配策略资金、杠杆、持仓规模、保证金及强平规则。相对基准少亏或毛利更高是描述性差异；真实 Alpha 需要同资金/风险/时间口径对照、冻结后的时间外结果及不确定性评价。
 
 ### 3.3 微观持仓姿态与执行机制 (Micro Posture & Execution)
 - **多空平比例 (`long_pct`, `short_pct`, `flat_pct`)**：
   - 优秀策略在强趋势中坚定持仓（多头或空头占比鲜明），在横盘震荡或高不确定性时果断平仓观望（`flat_pct` 上升）。
-  - 若 `flat_pct` 长期高达 80%+，属于不作为；若多空 50/50 且每隔 1~2 步反复反手，属于噪声震荡。
+  - `flat_pct` 高于80%或1~2步频繁反手可作为排查假设；是否错失机会或受到噪声影响，应结合风险预算、行情与对照实验判断。
 - **持仓平均周期 (`mean_holding_bars`, `median_holding_bars`)**：
-  - 若平均持仓仅 2~3 个 bars（20~30分钟），不足以走完一个微观波段，往往无法覆盖双向进出场摩擦；
-  - 优秀的 10min 策略应具备一定的持仓惯性（平均持仓 $\ge 8 \sim 15$ bars）。
+  - 旧字段实际统计同方向仓位状态连续段，包含空仓；不等于成交持仓回合。较短状态段可能伴随较高换手，但是否覆盖费用须逐笔核对；
+  - 8～15 bars仅是待检验的经验启发式，不是验收阈值或择时能力证明。
 - **动作持续性 (`action_persistence_steps`) 与推理跳过率**：
   - 依据 ADR 0045，非 Flat 持仓应物理锁定固定步数，跳过微观噪声推理，强行降低无效换手。
 
@@ -63,16 +84,18 @@ $$\text{Friction} = \text{Commission} + \text{Order Book Slippage}$$
 - **体制九宫格覆盖度**：
   - 考察宏观路由在 9 个动力学槽位（Slot 0~8，由 `slope_bin` 0~2 与 `volatility_bin` 0~2 笛卡尔积构成）以及保底槽位（Slot 9 / Default）的步数分布。
   - **健康状态**：各槽位有合理的激活比例，顺应行情的动态迁移；
-  - **退化状态**：单一 Slot 垄断超过 80% 步数（说明 VAE 分辨率失效或门控边界设错），或者大量步数跌入 Default/OOD Reject（说明特征严重分布外漂移）。
+  - **退化状态**：单一 Slot 垄断超过 80% 步数（需排查 VAE 分辨率、门控边界及样本体制集中），或者大量步数跌入 Default/OOD Reject（需结合门控变化与独立校准检验漂移）。拒识比例下降只说明行为变化，不能直接证明置信度提高。宏观记录可能不含初始热身步数，分母应明确为有记录步数，同时报告覆盖率。
 
 ### 3.5 三级风控干预质量 (Risk Control Safeguards)
-- **硬止损 (`hard_stop_losses`)**：标的价格相对持仓成本反向波动突破阈值（如 1.5%）时立即平仓，截断长尾损失。
+- **硬止损 (`hard_stop_losses`)**：标的价格相对持仓成本反向波动突破阈值（如 1.5%）时请求平仓；涨跌停、盘口、跳空和离散检查时点可能延迟成交或越过阈值。最终亏损率、持仓止损阈值与期间最大回撤不同，事件次数不能证明损失被锁定在某个比例内。
 - **单向冷静期 (`stop_loss_cooldown_steps`)**：被止损后短时间内禁止同向开仓，防止在瀑布行情中逆势抄底接飞刀。
 - **断路器熔断 (`circuit_breaker_suspension_steps`)**：单合约连续止损达到设定次数（如 2 次）后进入强制休眠（如 72 步），保护账户本金。
 
 ---
 
-## 4. 盈利不佳的根因诊断决策树 (Root Cause Diagnosis Tree)
+## 4. 盈利不佳的候选原因排查树 (Hypothesis Diagnosis Tree)
+
+以下分支用于提出假设，描述性统计不能单独完成根因确认。先核对执行及时间账，再用同数据、同环境的消融/对照实验验证风控、路由、迟滞等机制的增量效果。
 
 当策略表现不佳时，按照如下决策树自顶向下分级诊断：
 
@@ -190,7 +213,7 @@ $$\text{Friction} = \text{Commission} + \text{Order Book Slippage}$$
 在面对一个新完成的实验结果时，应按如下四阶段流程执行：
 
 ### 阶段 1：宏观总览与总分定位 (Tier 1 Macro Health Check)
-- **目标**：在 30 秒内明确策略的生死状态（Pass / Warning / Fail）。
+- **目标**：按冻结版本生成研究等级，并标记审计缺口；不据验证集判定生产就绪。
 - **动作**：通过批处理脚本读取 `diagnostics_summary.json`，检查：
   - `portfolio_return_pct`（是否赚钱？）
   - `portfolio_gross_return_pct`（择时毛利是否充足？）
@@ -202,8 +225,8 @@ $$\text{Friction} = \text{Commission} + \text{Order Book Slippage}$$
 - **动作**：通过批处理脚本读取 `contract_pnl_friction.csv` 与 `contract_behavior_risk.csv`：
   - 检查多空平结构：是否存在过度偏向（如纯单边牛市中做空过多）？
   - 检查持仓周期：`mean_holding_bars` 是否过短？
-  - 检查摩擦结构：手续费与滑点的比例（滑点过大说明订单簿深度浅，需要降低单次撮合规模或调整执行机制）；
-  - 检查风控事件：硬止损与断路器熔断是否触发，是否成功截断了长尾亏损。
+  - 检查费用来源与未解释残差：先核对成交数量、费用、参考价时点和实际仓位；未对账前不能把残差归因盘口深度；
+  - 检查风控事件与期间回撤；用同环境消融比较机制的增量效果，触发次数不证明成功限制尾部损失。
 
 ### 阶段 3：宏观路由与选模元数据溯源 (Tier 3 Routing & Manifest Trace)
 - **目标**：检查高层 VAE 路由与底层 Q-Net 槽位协作是否健康。
@@ -214,6 +237,7 @@ $$\text{Friction} = \text{Commission} + \text{Order Book Slippage}$$
 ### 阶段 4：超参回溯与调优落地 (Tier 4 Parameter & Source Code Audit)
 - **目标**：制定确切的调优修改清单并更新回测脚本。
 - **动作**：
+  - 复合目标明确为 `J = 汇总净回报率 × 盈利合约比例`，并记录分母、无交易合约处理及评分方向。有限搜索称“本轮已评估候选中的最优”；旧参数应在新版环境中重跑后比较，不能由净利上涨推断 J 改善。
   - 对照 `best_result.csv` 与 `high_level_agent_para.txt`，分析指标权衡（例如以 TR 选优导致 MDD 恶化）；
   - 根据第 5 节的调优指南，修改 `final_result_fu_*.sh` 或 `high_level_heurstic_fu_*.sh` 中的风控与执行参数。
 
@@ -255,7 +279,7 @@ conda run -n finetf python FineFT/analysis/diagnostics/batch_diagnostics_loader.
    - `[MACRO_SLOT_MONOPOLY]`：单一槽位垄断 $> 80\%$；
 4. **生成即时调优建议**：根据触发的标志自动输出具体的调优参数指令（如 `--action_persistence`、`--stop_loss_return_threshold` 等）。
 
-该批处理工具使得在分析任何策略实验结果时，仅需一次命令即可完成全方位体检，为后续决策提供完全自洽的量化支撑。
+该批处理工具使得在分析任何策略实验结果时，仅需一次命令即可完成全方位体检，生成描述性研究汇总及审计缺口；其结论受数据、执行和评价口径限制。
 
 ---
 

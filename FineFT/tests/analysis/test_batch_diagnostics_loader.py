@@ -181,7 +181,9 @@ def test_batch_diagnostics_loader_end_to_end(tmp_path: Path):
     assert digest.top_winners[0].contract == "fu2501"
 
     # Verdict flags check
-    assert "EXCESSIVE_FRICTION_CONSUMPTION" in digest.verdict.flags
+    assert "friction_consumption_ratio_pct:Fail" in digest.verdict.flags
+    assert digest.verdict.status == "NEEDS_AUDIT"  # Legacy metadata cannot establish provenance.
+    assert "portfolio_return_pct:Warning" in digest.verdict.flags
     assert "ULTRA_SHORT_HOLDING" in digest.verdict.flags
 
     # Serialization test
@@ -192,3 +194,11 @@ def test_batch_diagnostics_loader_end_to_end(tmp_path: Path):
     assert "DIHFT EXPERIMENT DIAGNOSTIC DIGEST" in text_rep
     assert "FRICTION OVERVIEW" in text_rep
     assert "ACTIONABLE ADJUSTMENT ADVICE" in text_rep
+
+    # The worst percentage loss must not depend on money-ranked display top_k.
+    df_pnl["net_pnl"] = [-100.0, -10.0]
+    df_pnl["dihft_tr_pct"] = [-1.0, -20.0]
+    df_pnl.to_csv(diag_dir / "contract_pnl_friction.csv", index=False)
+    for top_k in (1, 2):
+        digest = BatchDiagnosticsLoader(analysis_path=analysis_dir, top_k=top_k).load()
+        assert "worst_contract_loss_pct:Fail" in digest.verdict.flags

@@ -1572,6 +1572,9 @@ class vae_risk_aware_routing:
             if not os.path.exists(save_path):
                 os.makedirs(save_path, exist_ok=True)
             np.save(os.path.join(save_path, HistoryArtifactNames.REWARD_HISTORY_NPY), reward_history)
+            np.save(os.path.join(save_path, HistoryArtifactNames.EXECUTED_POSITION_HISTORY_NPY), env.executed_position_history)
+            np.save(os.path.join(save_path, HistoryArtifactNames.COMMISSION_FEE_HISTORY_NPY), env.commission_fee_history)
+            np.save(os.path.join(save_path, HistoryArtifactNames.MARKET_INDEX_HISTORY_NPY), env.market_index_history)
             np.save(
                 os.path.join(save_path, HistoryArtifactNames.TOTAL_ASSET_HISTORY_NPY), total_asset_history
             )

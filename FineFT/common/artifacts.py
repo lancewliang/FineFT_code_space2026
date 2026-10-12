@@ -40,6 +40,9 @@ class ArtifactNames:
 
 
 class HistoryArtifactNames:
+    EXECUTED_POSITION_HISTORY_NPY: str = "executed_position_history.npy"
+    COMMISSION_FEE_HISTORY_NPY: str = "commission_fee_history.npy"
+    MARKET_INDEX_HISTORY_NPY: str = "market_index_history.npy"
     REWARD_HISTORY_NPY: str = "reward_history.npy"
     TOTAL_ASSET_HISTORY_NPY: str = "total_asset_history.npy"
     WALLET_BALANCE_HISTORY_NPY: str = "wallet_balance_history.npy"

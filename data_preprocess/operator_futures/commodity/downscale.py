@@ -472,10 +472,12 @@ def downscale_derivative_reference(
         target_freq,
         [
             pl.col("symbol").first(),
-            pl.col("funding_timestamp").first(),
+            pl.col("funding_timestamp").last(),
             pl.col("funding_rate").first(),
-            pl.col("index_price").first(),
-            pl.col("mark_price").first(),
+            # Reference valuation and executable orderbook must describe the
+            # same bar-end snapshot under right-closed/right-labeled resampling.
+            pl.col("index_price").last(),
+            pl.col("mark_price").last(),
         ],
     ).drop_nulls("mark_price")
 

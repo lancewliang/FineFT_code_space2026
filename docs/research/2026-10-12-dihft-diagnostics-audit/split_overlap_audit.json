@@ -1,0 +1,79 @@
+{
+  "files": 39,
+  "overlaps": [
+    {
+      "contract": "fu2409",
+      "left_stage": "train",
+      "right_stage": "valid",
+      "left_end": "2024-07-22 23:00:00",
+      "right_start": "2024-07-23 09:00:00",
+      "shared_timestamps": 0,
+      "strictly_later": true
+    },
+    {
+      "contract": "fu2411",
+      "left_stage": "train",
+      "right_stage": "valid",
+      "left_end": "2024-07-22 23:00:00",
+      "right_start": "2024-07-23 09:00:00",
+      "shared_timestamps": 0,
+      "strictly_later": true
+    },
+    {
+      "contract": "fu2501",
+      "left_stage": "train",
+      "right_stage": "valid",
+      "left_end": "2024-07-22 23:00:00",
+      "right_start": "2024-07-23 09:00:00",
+      "shared_timestamps": 0,
+      "strictly_later": true
+    },
+    {
+      "contract": "fu2508",
+      "left_stage": "valid",
+      "right_stage": "test",
+      "left_end": "2025-06-27 23:00:00",
+      "right_start": "2025-06-30 09:00:00",
+      "shared_timestamps": 0,
+      "strictly_later": true
+    },
+    {
+      "contract": "fu2509",
+      "left_stage": "valid",
+      "right_stage": "test",
+      "left_end": "2025-06-27 23:00:00",
+      "right_start": "2025-06-30 09:00:00",
+      "shared_timestamps": 0,
+      "strictly_later": true
+    },
+    {
+      "contract": "fu2510",
+      "left_stage": "valid",
+      "right_stage": "test",
+      "left_end": "2025-06-27 23:00:00",
+      "right_start": "2025-06-30 09:00:00",
+      "shared_timestamps": 0,
+      "strictly_later": true
+    },
+    {
+      "contract": "fu2511",
+      "left_stage": "valid",
+      "right_stage": "test",
+      "left_end": "2025-06-27 23:00:00",
+      "right_start": "2025-06-30 09:00:00",
+      "shared_timestamps": 0,
+      "strictly_later": true
+    },
+    {
+      "contract": "fu2601",
+      "left_stage": "valid",
+      "right_stage": "test",
+      "left_end": "2025-06-27 23:00:00",
+      "right_start": "2025-06-30 09:00:00",
+      "shared_timestamps": 0,
+      "strictly_later": true
+    }
+  ],
+  "independent_test_verified": false,
+  "limitation": "File timestamps alone do not establish label maturity or fit cutoffs."
+}

@@ -1348,6 +1348,8 @@ def test_second_level_uses_last_snapshot_per_second():
 def test_derivative_reference_falls_back_to_midprice_for_invalid_lastprice():
     raw = pl.read_csv(SAMPLE_PATH).head(3)
     second = create_second_level_snapshots(raw)
+    # Exercise per-snapshot fallback independently of bar aggregation order.
+    second = second.head(1)
     first_timestamp = second.item(0, "timestamp")
     second = second.with_columns(
         pl.when(pl.col("timestamp") == first_timestamp)
@@ -1361,6 +1363,23 @@ def test_derivative_reference_falls_back_to_midprice_for_invalid_lastprice():
     expected_mid = (second.item(0, "BidPrice1") + second.item(0, "AskPrice1")) / 2
     assert derivative.item(0, "mark_price") == expected_mid
     assert derivative.item(0, "funding_rate") == 0
+
+
+def test_reference_and_orderbook_use_same_bar_end_snapshot():
+    second = _five_depth_quote_frame([
+        {"LastPrice": 100.0},
+        {"LastPrice": 200.0, "BidPrice1": 199.0, "AskPrice1": 201.0},
+    ]).with_columns(pl.Series("timestamp", [
+        datetime(2026, 2, 2, 9, 0, 1), datetime(2026, 2, 2, 9, 0, 2)
+    ]))
+    reference = downscale_derivative_reference(second, "5min", "fu")
+    book = downscale_orderbook(second, "5min")
+    assert reference.item(0, "timestamp") == book.item(0, "timestamp")
+    assert reference.item(0, "mark_price") == 200
+    assert reference.item(0, "index_price") == 200
+    assert reference.item(0, "funding_timestamp") == datetime(2026, 2, 2, 9, 0, 2)
+    assert book.item(0, "bid1_price") == 199
+    assert book.item(0, "ask1_price") == 201
 
 
 def test_base_features_use_contract_unit_for_prices_but_keep_raw_tradeval():

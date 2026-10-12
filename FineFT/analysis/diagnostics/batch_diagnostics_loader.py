@@ -22,6 +22,15 @@ sys.path.append(".")
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from common import ArtifactNames, MetricColumns, RoutingParamColumns
+from analysis.diagnostics.evaluation_standards import METHODOLOGY_VERSION, grade_research_metrics, research_status
+
+
+def _optional_metric(value: Any) -> float | None:
+    return float(value) if value is not None and pd.notna(value) else None
+
+
+def _metric_text(value: float | None) -> str:
+    return f"{value:.2f}" if value is not None else "Unavailable"
 
 
 @dataclass
@@ -34,17 +43,17 @@ class PortfolioSnapshot:
     portfolio_gross_return_pct: float
     portfolio_return_pct: float
     win_rate_pct: float
-    mean_annual_sr: float
+    mean_annual_sr: float | None
     mean_mdd_pct: float
-    mean_daily_cr: float
-    mean_daily_sor: float
+    mean_daily_cr: float | None
+    mean_daily_sor: float | None
     total_turnover_volume: float
     portfolio_turnover_multiple: float
     total_trades: int
     total_commission: float
     total_slippage: float
     total_friction: float
-    friction_consumption_ratio_pct: float
+    friction_consumption_ratio_pct: float | None
 
 
 @dataclass
@@ -79,7 +88,7 @@ class ContractExtreme:
     gross_pnl: float
     friction: float
     dihft_tr_pct: float
-    annual_sr: float
+    annual_sr: float | None
     mdd_pct: float
 
 
@@ -132,12 +141,13 @@ class BatchExperimentDigest:
             f"  Capital & Returns : Total Capital: {p.total_capital:,.2f} | Net Return: {p.portfolio_return_pct:+.2f}%",
             f"  Gross Market PnL  : {p.total_gross_pnl:+,.2f} ({p.portfolio_gross_return_pct:+.2f}%)",
             f"  Net Realized PnL  : {p.total_net_pnl:+,.2f} ({p.portfolio_return_pct:+.2f}%)",
-            f"  Friction Breakdown: Total: {p.total_friction:,.2f} (Commission: {p.total_commission:,.2f} + Slippage: {p.total_slippage:,.2f})",
-            f"  Friction Consumed : {p.friction_consumption_ratio_pct:.1f}% of Gross PnL",
+            f"  Gross/Net Residual: Total: {p.total_friction:,.2f} (Estimated Commission: {p.total_commission:,.2f} + Unexplained Residual: {p.total_slippage:,.2f})",
+            f"  Residual / Gross  : {p.friction_consumption_ratio_pct}% (undefined if gross <= 0)",
             f"  Turnover Multiple : {p.portfolio_turnover_multiple:.1f}x capital ({p.total_trades:,} trades)",
-            f"  Risk Profile      : Mean SR: {p.mean_annual_sr:.2f} | Mean MDD: {p.mean_mdd_pct:.2f}% | Daily CR: {p.mean_daily_cr:.2f}",
+            f"  Risk Profile      : Mean grouped SR: {_metric_text(p.mean_annual_sr)} | Mean contract MDD: {p.mean_mdd_pct:.2f}% | Mean grouped CR: {_metric_text(p.mean_daily_cr)}",
             "-" * 78,
             "2. MICRO BEHAVIOR & RISK EXECUTION",
+            "  Scope             : Contract arithmetic means; no shared-wallet portfolio risk curve; no production certification.",
             f"  Posture Allocation: Long: {b.long_pct_mean:.1f}% | Short: {b.short_pct_mean:.1f}% | Flat: {b.flat_pct_mean:.1f}%",
             f"  Holding Duration  : Mean: {b.mean_holding_bars:.1f} bars | Median: {b.median_holding_bars:.1f} bars",
             f"  Trading Frequency : {b.trades_per_1k_steps:.1f} trades / 1,000 bars",
@@ -155,7 +165,7 @@ class BatchExperimentDigest:
         for w in self.top_winners:
             lines.append(
                 f"    + {w.contract:<8} Net: {w.net_pnl:+8.2f} | Gross: {w.gross_pnl:+8.2f} | "
-                f"Friction: {w.friction:7.2f} | Ret: {w.dihft_tr_pct:+6.2f}% | SR: {w.annual_sr:5.2f}"
+                f"Residual: {w.friction:7.2f} | Ret: {w.dihft_tr_pct:+6.2f}% | SR: {_metric_text(w.annual_sr)}"
             )
 
         lines.append("  Top Losers:")
@@ -228,17 +238,17 @@ class BatchDiagnosticsLoader:
             portfolio_gross_return_pct=float(port_data["portfolio_gross_return_pct"]),
             portfolio_return_pct=float(port_data["portfolio_return_pct"]),
             win_rate_pct=float(port_data["win_rate_pct"]),
-            mean_annual_sr=float(port_data["mean_annual_sr"]),
+            mean_annual_sr=_optional_metric(port_data["mean_annual_sr"]),
             mean_mdd_pct=float(port_data["mean_mdd_pct"]),
-            mean_daily_cr=float(port_data["mean_daily_cr"]),
-            mean_daily_sor=float(port_data["mean_daily_sor"]),
+            mean_daily_cr=_optional_metric(port_data["mean_daily_cr"]),
+            mean_daily_sor=_optional_metric(port_data["mean_daily_sor"]),
             total_turnover_volume=float(port_data["total_turnover_volume"]),
             portfolio_turnover_multiple=float(port_data["portfolio_turnover_multiple"]),
             total_trades=int(port_data["total_trades"]),
             total_commission=float(port_data["total_commission"]),
             total_slippage=float(port_data["total_slippage"]),
             total_friction=float(port_data["total_friction"]),
-            friction_consumption_ratio_pct=float(port_data["friction_consumption_ratio_pct"]),
+            friction_consumption_ratio_pct=(float(port_data["friction_consumption_ratio_pct"]) if port_data["friction_consumption_ratio_pct"] is not None else None),
         )
 
         # 2. Behavior CSV
@@ -266,7 +276,7 @@ class BatchDiagnosticsLoader:
         # 3. Macro Routing CSV
         csv_mac_path = diag_dir / "macro_routing_distribution.csv"
         df_mac = pd.read_csv(csv_mac_path)
-        slot_cols = [c for c in df_mac.columns if c not in ("contract", "steps")]
+        slot_cols = [c for c in df_mac.columns if c not in ("contract", "steps", "recorded_steps")]
         slot_totals = df_mac[slot_cols].sum()
         total_slot_steps = slot_totals.sum()
         slot_pcts: dict[str, float] = {}
@@ -301,7 +311,7 @@ class BatchDiagnosticsLoader:
                     gross_pnl=float(row["gross_pnl"]),
                     friction=float(row["friction"]),
                     dihft_tr_pct=float(row["dihft_tr_pct"]),
-                    annual_sr=float(row["annual_sr"]),
+                    annual_sr=_optional_metric(row["annual_sr"]),
                     mdd_pct=float(row["mdd_pct"]),
                 )
             )
@@ -315,7 +325,7 @@ class BatchDiagnosticsLoader:
                     gross_pnl=float(row["gross_pnl"]),
                     friction=float(row["friction"]),
                     dihft_tr_pct=float(row["dihft_tr_pct"]),
-                    annual_sr=float(row["annual_sr"]),
+                    annual_sr=_optional_metric(row["annual_sr"]),
                     mdd_pct=float(row["mdd_pct"]),
                 )
             )
@@ -330,12 +340,24 @@ class BatchDiagnosticsLoader:
                 best_results_summary[ind] = r.to_dict()
 
         # 6. Synthesize Verdict & Advice
-        verdict = self._synthesize_verdict(portfolio, behavior, macro_routing, top_losers)
+        verdict = self._synthesize_verdict(portfolio, behavior, macro_routing, top_losers,
+            worst_contract_loss_pct=max(0.0, -float(df_pnl["dihft_tr_pct"].min())))
+        audit_meta = summary_raw.get("metadata", {})
+        audit_fields = ("negative_friction_steps", "negative_execution_residual_steps", "missing_macro_histories", "missing_reason_histories", "proxy_position_contracts", "estimated_commission_contracts", "assumed_market_alignment_contracts")
+        provenance_missing = (audit_meta.get("methodology_version") != METHODOLOGY_VERSION
+            or audit_meta.get("diagnostics_version") != "2.0"
+            or any(name not in audit_meta or audit_meta[name] is None for name in audit_fields))
+        if provenance_missing or any(audit_meta.get(name) for name in audit_fields):
+            verdict.flags.append("EXECUTION_OR_HISTORY_AUDIT_REQUIRED")
+            verdict.status = "NEEDS_AUDIT"
+            verdict.advice.append("Review per-step residuals and missing histories before accepting a research grade.")
 
         meta = {
             "analysis_path": str(self.analysis_path),
             "experiment_path": str(base_dir),
             "diagnostics_dir": str(diag_dir),
+            "methodology_version": METHODOLOGY_VERSION,
+            "production_readiness": "not_assessed",
         }
 
         return BatchExperimentDigest(
@@ -355,90 +377,34 @@ class BatchDiagnosticsLoader:
         b: BehaviorSnapshot,
         m: MacroRoutingSnapshot,
         top_losers: list[ContractExtreme],
+        worst_contract_loss_pct: float | None = None,
     ) -> DiagnosticVerdict:
         flags: list[str] = []
         advice: list[str] = []
 
-        # Check Directional Timing Alpha
-        directional_ok = p.total_gross_pnl > 0 and p.portfolio_gross_return_pct > 5.0
-        if not directional_ok:
-            flags.append("DIRECTIONAL_ALPHA_WEAK")
-            advice.append(
-                "Gross market timing PnL is weak or negative. Low-level Q-networks or VAE regime "
-                "classification failed to predict price direction. Check if test period has strong "
-                "regime shift or consider switching selection_metric from TR to annual_sr/daily_cr."
-            )
-
-        # Check Friction Ratio
-        if p.friction_consumption_ratio_pct > 80.0:
-            flags.append("EXCESSIVE_FRICTION_CONSUMPTION")
-            advice.append(
-                f"Friction consumes {p.friction_consumption_ratio_pct:.1f}% of gross profits. "
-                "Turnover multiple is excessive. Increase --action_persistence (e.g., from 3 to 6/12), "
-                "tighten hysteresis thresholds, or activate asymmetric turnover penalty (ADR 0050)."
-            )
-        elif p.portfolio_turnover_multiple > 50.0:
-            flags.append("HIGH_TURNOVER_CHURN")
-            advice.append(
-                f"Portfolio turnover multiple is {p.portfolio_turnover_multiple:.1f}x. "
-                "Short holding durations indicate micro-scalping churn. Enforce minimum holding bars."
-            )
-
-        # Check Holding Bars
-        if b.mean_holding_bars < 5.0:
+        metrics = asdict(p)
+        metrics["worst_contract_loss_pct"] = worst_contract_loss_pct
+        grades = grade_research_metrics(metrics)
+        for name, grade in grades.items():
+            if grade != "Strong":
+                flags.append(f"{name}:{grade}")
+        status = research_status(grades)
+        bottleneck = ", ".join(flags) or "All versioned descriptive thresholds met"
+        advice.append(
+            f"Methodology v{METHODOLOGY_VERSION}: these are descriptive research grades. "
+            "Freeze configuration and audit independent test provenance before judging generalization. "
+            "Contract mean drawdown/Sharpe are not portfolio risk metrics."
+        )
+        if p.total_slippage < 0 or p.total_friction < 0:
+            status = "NEEDS_AUDIT"
+            flags.append("NEGATIVE_EXECUTION_RESIDUAL")
+            advice.append("Reconcile fills, reference prices, fees and actual positions; negative residual is not proof of execution advantage.")
+        if b.mean_holding_bars < 5:
             flags.append("ULTRA_SHORT_HOLDING")
-            advice.append(
-                f"Mean holding duration is only {b.mean_holding_bars:.1f} bars. Strategy exits too quickly, "
-                "paying spreads without capturing trend moves. Increase action persistence."
-            )
-
-        # Check Inaction / Extreme Flat
-        if b.flat_pct_mean > 75.0:
-            flags.append("CHRONIC_INACATION_FLAT")
-            advice.append(
-                f"Average flat stance is {b.flat_pct_mean:.1f}%. Strategy is excessively passive. "
-                "Check if ood_threshold is too strict or circuit breakers are overly sensitive."
-            )
-
-        # Check Tail Risk Loss
-        worst_loss = top_losers[0].net_pnl if top_losers else 0.0
-        if worst_loss < -0.15 * p.total_capital:
-            flags.append("FAT_TAIL_CONTRACT_RISK")
-            advice.append(
-                f"Single worst contract {top_losers[0].contract} lost {worst_loss:,.2f} "
-                f"({worst_loss / p.total_capital * 100.0:.1f}% of capital). "
-                "Check stop-loss mechanism. Tighten --stop_loss_return_threshold (e.g. to 0.012) "
-                "and extend --circuit_breaker_cooling_steps."
-            )
-
-        # Macro Slot Collapse
-        if m.dominant_slot_pct > 80.0:
-            flags.append("MACRO_SLOT_MONOPOLY")
-            advice.append(
-                f"Dominant slot {m.dominant_slot} took {m.dominant_slot_pct:.1f}% of all steps. "
-                "High-level VAE routing failed to diversify across market regimes. "
-                "Tune slope/volatility margin thresholds or calibrate VAE regime bounds."
-            )
-
-        # Determine overall Status & Primary Bottleneck
-        if p.total_net_pnl > 0 and p.win_rate_pct >= 80.0 and p.friction_consumption_ratio_pct < 60.0:
-            status = "HEALTHY"
-            bottleneck = "None (Profitable, well-controlled friction)"
-        elif p.total_gross_pnl > 0 and p.total_net_pnl <= 0:
-            status = "FRICTION_BOUND"
-            bottleneck = "Friction Overkill (Strategy predicts well but fees/slippage destroy profits)"
-        elif p.total_gross_pnl <= 0:
-            status = "DIRECTIONAL_FAILURE"
-            bottleneck = "Alpha Signal Invalidation (Low-level agents trade against market trend)"
-        elif p.mean_mdd_pct > 25.0:
-            status = "TAIL_RISK_BREACH"
-            bottleneck = "Excessive Drawdown / Tail Risk (Needs strict stop-loss / circuit breakers)"
-        else:
-            status = "SUBOPTIMAL"
-            bottleneck = "Mixed Inefficiencies (Moderate alpha, elevated friction or tail drag)"
-
-        if not advice:
-            advice.append("Performance metrics meet all baseline health criteria. Keep monitoring.")
+            advice.append("Compare holding-duration and execution-cost controls on validation data; event counts alone do not establish cause.")
+        if m.dominant_slot_pct > 80:
+            flags.append("MACRO_SLOT_CONCENTRATION")
+            advice.append("Check routing boundaries and observed regimes with controls; concentration alone does not prove VAE failure.")
 
         return DiagnosticVerdict(
             status=status,

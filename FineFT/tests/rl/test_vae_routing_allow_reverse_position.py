@@ -535,6 +535,9 @@ def test_vae_routing_test_uses_contract_level_valid_features(tmp_path, monkeypat
             self.leverage = 5
             self.margine_balance_history = [100.0, 100.0 + self.reward]
             self.micro_action_history = []
+            self.executed_position_history = []
+            self.commission_fee_history = []
+            self.market_index_history = [0]
             self.initial_margin_history = [self.required_money]
             self.wallet_balance_history = [100.0]
             self.unrealized_pnl_history = [0.0]
@@ -546,6 +549,9 @@ def test_vae_routing_test_uses_contract_level_valid_features(tmp_path, monkeypat
 
         def step(self, action):
             self.micro_action_history.append(action)
+            self.executed_position_history.append(float(self.position))
+            self.commission_fee_history.append(0.0)
+            self.market_index_history.append(len(self.micro_action_history))
             return np.array([1.0]), self.reward, True, {"previous_action": action}
 
     def fake_initiate_base_env(**kwargs):
@@ -644,6 +650,9 @@ def test_vae_routing_test_passes_order_book_depth_to_base_env(tmp_path, monkeypa
         leverage = 5
         margine_balance_history = [100.0, 102.0]
         micro_action_history = []
+        executed_position_history = []
+        commission_fee_history = []
+        market_index_history = [0]
         initial_margin_history = [10.0]
         wallet_balance_history = [100.0]
         unrealized_pnl_history = [0.0]

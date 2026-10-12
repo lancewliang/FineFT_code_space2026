@@ -663,7 +663,7 @@ def open_long_position(
         opening_pnL = openinig_margine * current_leverage - open_value
         current_unrealized_pnL = previous_unrealized_pnL + opening_pnL
         current_initial_margine = current_position * markprice / current_leverage
-        slippage = open_value - openinig_margine
+        slippage = open_value - openinig_margine * current_leverage
     return WalletChangeResult(
         leverage=current_leverage,
         position=current_position,
