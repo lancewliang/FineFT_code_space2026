@@ -1,6 +1,7 @@
 from common.artifacts import (
     ActionDecisionReasons,
     ArtifactNames,
+    AuditArtifactNames,
     HistoryArtifactNames,
     get_df_chunk_filename,
     get_heuristic_plot_filename,
@@ -21,6 +22,7 @@ from common.trade_columns import (
 __all__ = [
     "ActionDecisionReasons",
     "ArtifactNames",
+    "AuditArtifactNames",
     "HistoryArtifactNames",
     "MetricColumns",
     "RoutingParamColumns",

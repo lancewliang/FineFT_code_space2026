@@ -69,6 +69,19 @@ class ActionDecisionReasons(IntEnum):
     HARD_STOP_LOSS = 5
     STOP_LOSS_COOLDOWN = 6
     CIRCUIT_BREAKER_SUSPENSION = 7
+    WARM_UP = 8
+
+
+class AuditArtifactNames:
+    PREDICTION_RECORDS_CSV: str = "prediction_records.csv"
+    TRADE_RECORDS_CSV: str = "trade_records.csv"
+    ACCOUNT_RECORDS_CSV: str = "account_records.csv"
+    AUDIT_MANIFEST_JSON: str = "audit_manifest.json"
+    AUDIT_PREDICTIONS_JSON: str = "audit_predictions.json"
+    AUDIT_TRADES_JSON: str = "audit_trades.json"
+    AUDIT_ACCOUNT_SNAPSHOTS_JSON: str = "audit_account_snapshots.json"
+    AUDIT_METADATA_JSON: str = "audit_metadata.json"
+
 
 
 def get_df_chunk_filename(index: int) -> str:

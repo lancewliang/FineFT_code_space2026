@@ -117,9 +117,16 @@ class TradingDiagnosticsCalculator:
     def _resolve_contract_dirs(self) -> list[tuple[str, Path]]:
         contracts_root = self.result_dir / "contracts"
         if contracts_root.is_dir():
-            subdirs = [d for d in sorted(contracts_root.iterdir()) if d.is_dir()]
-            if subdirs:
-                return [(d.name, d) for d in subdirs]
+            all_subdirs = [d for d in sorted(contracts_root.iterdir()) if d.is_dir()]
+            matched = [
+                d for d in all_subdirs
+                if (self.data_dir / f"{d.name}.feather").is_file()
+                or (self.data_dir / f"{d.name}.csv").is_file()
+            ]
+            if matched:
+                return [(d.name, d) for d in matched]
+            if all_subdirs:
+                return [(d.name, d) for d in all_subdirs]
         return [(self.result_dir.name, self.result_dir)]
 
     def _calculate_holding_durations(self, micro_actions: np.ndarray) -> tuple[float, float]:

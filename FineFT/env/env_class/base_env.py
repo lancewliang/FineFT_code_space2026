@@ -118,6 +118,12 @@ class Base_Env(gym.Env):
         self.leverage_choices = leverage_choice
         self.long_estimated_rate = long_estimated_rate
         self.short_estimated_rate = short_estimated_rate
+        if not maintenance_margin_ratio_dict:
+            maintenance_margin_ratio_dict = {
+                "50000": [0.004, 0],
+                "500000": [0.005, 50],
+                "10000000": [0.01, 2550],
+            }
         self.maintenance_margin_ratio_dict = maintenance_margin_ratio_dict
         self.commission_rate = commission_rate
         self.buy_fee_rate = buy_fee_rate
@@ -344,6 +350,7 @@ class Base_Env(gym.Env):
 
     def _reset_execution_metrics(self):
         self.executed_position_history = []
+        self.account_audit_history = []
         self.commission_fee_history = []
         self.market_index_history = [0]
         self.commission_fee_step = 0
@@ -539,6 +546,28 @@ class Base_Env(gym.Env):
         # the history track the cash flow for a single holding
         self.single_holding_history = [0]
         self.current_holding_duration = 0 if self.position == 0 else 1
+
+        initial_equity = float(self.wallet_balance + self.unrealized_pnl)
+        ts_init = str(self.timestamp_array[self.day]) if hasattr(self, "timestamp_array") and len(self.timestamp_array) > self.day else ""
+        self.account_audit_history = [
+            {
+                "step_index": 0,
+                "snapshot_type": "initial",
+                "timestamp": ts_init,
+                "wallet_balance": float(self.wallet_balance),
+                "unrealized_pnl": float(self.unrealized_pnl),
+                "equity": initial_equity,
+                "margin": float(self.initial_margin),
+                "maintain_margin": float(calculate_maintenance_margin(np.abs(self.current_markprice * self.position))),
+                "available_balance": float(self.wallet_balance - self.initial_margin),
+                "position": float(self.position),
+                "exposure": float(abs(self.position) * self.current_markprice),
+                "leverage": float(self.leverage),
+                "peak_equity": initial_equity,
+                "drawdown": 0.0,
+                "reward": 0.0,
+            }
+        ]
         return (
             state,
             {
@@ -556,6 +585,39 @@ class Base_Env(gym.Env):
                 "regime_grid_id": self._get_current_regime_grid_id(),
             },
         )
+
+    def _record_account_audit_step(self, reward: float) -> None:
+        current_equity = float(self.wallet_balance + self.unrealized_pnl)
+        prev_peak = (
+            self.account_audit_history[-1]["peak_equity"]
+            if self.account_audit_history
+            else current_equity
+        )
+        peak_equity = max(prev_peak, current_equity)
+        drawdown = peak_equity - current_equity
+        step_idx = len(self.account_audit_history)
+        ts_str = (
+            str(self.timestamp_array[self.day])
+            if hasattr(self, "timestamp_array") and len(self.timestamp_array) > self.day
+            else ""
+        )
+        self.account_audit_history.append({
+            "step_index": step_idx,
+            "snapshot_type": "post_step",
+            "timestamp": ts_str,
+            "wallet_balance": float(self.wallet_balance),
+            "unrealized_pnl": float(self.unrealized_pnl),
+            "equity": current_equity,
+            "margin": float(self.initial_margin),
+            "maintain_margin": float(calculate_maintenance_margin(np.abs(self.current_markprice * self.position))),
+            "available_balance": float(self.wallet_balance - self.initial_margin),
+            "position": float(self.position),
+            "exposure": float(abs(self.position) * self.current_markprice),
+            "leverage": float(self.leverage),
+            "peak_equity": peak_equity,
+            "drawdown": drawdown,
+            "reward": float(reward),
+        })
 
     def step(self, action):
         old_position = self.position
@@ -719,6 +781,7 @@ class Base_Env(gym.Env):
             )
             self._clear_position_cost()
             self.last_limit_reward = 0.0
+            self._record_account_audit_step(reward)
             return (
                 state,
                 reward,
@@ -781,9 +844,11 @@ class Base_Env(gym.Env):
                     self.wallet_balance_history,
                 )
                 self.last_limit_reward = 0.0
+                step_reward = float(self.wallet_balance + self.unrealized_pnl - previous_margine_balance - turnover_penalty)
+                self._record_account_audit_step(step_reward)
                 return (
                     self.state_array[self.day],
-                    self.wallet_balance + self.unrealized_pnl - previous_margine_balance - turnover_penalty,
+                    step_reward,
                     self.terminal,
                     {
                         "avaiable_action_list": avaiable_actions,
@@ -896,6 +961,7 @@ class Base_Env(gym.Env):
                 )
                 self._clear_position_cost()
                 self.last_limit_reward = 0.0
+                self._record_account_audit_step(reward)
                 return (
                     state,
                     reward,
@@ -1000,6 +1066,7 @@ class Base_Env(gym.Env):
                 else:
                     self.current_holding_duration += 1
                 trading_info = self._calculate_trading_info()
+                self._record_account_audit_step(reward)
                 # 在step之后才对single holding进行重置
                 if self.position == 0:
                     self.single_holding_return = 0

@@ -925,6 +925,12 @@ def get_maintenance_margin(
         "10000000": [0.01, 2550],
     },
 ):
+    if not maintenance_margin_ratio_dict:
+        maintenance_margin_ratio_dict = {
+            "50000": [0.004, 0],
+            "500000": [0.005, 50],
+            "10000000": [0.01, 2550],
+        }
     # 转换给定的字典键为整型以便比较
     keys_as_int = sorted([int(key) for key in maintenance_margin_ratio_dict.keys()])
     level_maintenance = keys_as_int

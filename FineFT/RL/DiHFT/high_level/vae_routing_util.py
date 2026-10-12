@@ -37,9 +37,20 @@ from analysis.pick_agent.FineFT_two_dimensional_agent_selector import (
 from common import (
     ActionDecisionReasons,
     ArtifactNames,
+    AuditArtifactNames,
     HistoryArtifactNames,
     MetricColumns,
     RoutingParamColumns,
+)
+from common.audit_records import (
+    AccountRecord,
+    PredictionRecord,
+    TradeRecord,
+    build_account_snapshot_id,
+    build_decision_id,
+    build_prediction_id,
+    build_trade_id,
+    calculate_action_value_margin,
 )
 from model.low_level import ensemble_Qnet
 from model.high_level import RankBasedQNetwork
@@ -836,6 +847,8 @@ class vae_risk_aware_routing:
             volatility_margin_threshold=args.volatility_margin_threshold,
         )
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
+        self.base_path = args.base_path
+        self.dataset_name = args.dataset_name
         self.experiment_name = args.experiment_name
         self.eval_stage = args.eval_stage
         self.save_artifacts = args.save_artifacts
@@ -847,8 +860,6 @@ class vae_risk_aware_routing:
             os.makedirs(self.test_path, exist_ok=True)
 
         # trading environment setting
-        self.base_path = args.base_path
-        self.dataset_name = args.dataset_name
         self.eval_stage_dir = os.path.join(self.base_path, self.dataset_name, self.eval_stage)
         self.single_data_path = os.path.join(
             self.base_path, self.dataset_name, f"{self.eval_stage}.feather"
@@ -1054,6 +1065,24 @@ class vae_risk_aware_routing:
         self.circuit_breaker_suspension_count = 0
         self.previous_step_position = 0.0
         self.active_trade_stopped = False
+        self.step_idx = 0
+        self.audit_predictions = []
+        self.audit_trades = []
+        self.last_prediction_id = ""
+        self.latest_action_values = [0.0, 0.0, 0.0]
+
+    @property
+    def position_list(self):
+        if not hasattr(self, "_position_list") or self._position_list is None:
+            max_h = getattr(self, "max_holding_number", 1)
+            choices = getattr(self, "position_choices", 3)
+            self._position_list = np.linspace(-max_h, max_h, choices).tolist()
+            self._position_list.sort()
+        return self._position_list
+
+    @position_list.setter
+    def position_list(self, value):
+        self._position_list = value
 
     def _resolve_precomputed_quantiles_dir(self, args) -> str | None:
         target_dir = args.precomputed_quantiles_dir
@@ -1420,6 +1449,72 @@ class vae_risk_aware_routing:
         self.action_decision_reason_history.append(candidate_reason)
         self.action = candidate_action
         self.previous_step_position = current_pos_float
+
+        if not hasattr(self, "audit_predictions"):
+            self.audit_predictions = []
+        if not hasattr(self, "last_prediction_id"):
+            self.last_prediction_id = ""
+
+        if candidate_reason in (
+            ActionDecisionReasons.POLICY_INFERENCE,
+            ActionDecisionReasons.ACTION_UNAVAILABLE_BREAK,
+        ):
+            step_i = int(getattr(self, "step_idx", 0))
+            run_id = str(getattr(self, "run_id", "unspecified_run"))
+            contract = str(getattr(self, "current_contract_name", "default_contract"))
+            pred_id = build_prediction_id(run_id, contract, step_i)
+            dec_id = build_decision_id(run_id, contract, step_i)
+            row_idx = (
+                min(step_i, len(self.df) - 1)
+                if hasattr(self, "df") and self.df is not None
+                else 0
+            )
+            event_time = (
+                str(self.df["timestamp"].iloc[row_idx])
+                if hasattr(self, "df") and self.df is not None and "timestamp" in self.df.columns
+                else ""
+            )
+            trading_day = (
+                str(self.df["trading_day"].iloc[row_idx])
+                if hasattr(self, "df") and self.df is not None and "trading_day" in self.df.columns
+                else ""
+            )
+            actions_vals = getattr(self, "latest_action_values", [0.0, 0.0, 0.0])
+            q_short = float(actions_vals[0]) if len(actions_vals) > 0 else 0.0
+            q_flat = float(actions_vals[1]) if len(actions_vals) > 1 else 0.0
+            q_long = float(actions_vals[2]) if len(actions_vals) > 2 else 0.0
+            q_margin = calculate_action_value_margin(actions_vals)
+            vol_w = [float(x) for x in volatility_weights]
+            slope_w = [float(x) for x in slope_weights]
+            avail_actions = (
+                str([int(x) for x in info["avaliable_action"]])
+                if "avaliable_action" in info
+                else "[]"
+            )
+            pred = PredictionRecord(
+                prediction_id=pred_id,
+                decision_id=dec_id,
+                run_id=run_id,
+                model_id=str(getattr(self, "model_id", "unknown_model")),
+                feature_version=str(getattr(self, "feature_version", "unknown_features")),
+                parameter_version=str(getattr(self, "parameter_version", "unknown_params")),
+                contract=contract,
+                step_index=step_i,
+                event_time=event_time,
+                trading_day=trading_day,
+                market_index=int(step_i),
+                routing_slot=int(self.selected_agent_index),
+                routing_evidence=json.dumps({"volatility": vol_w, "slope": slope_w}),
+                action_value_short=q_short,
+                action_value_flat=q_flat,
+                action_value_long=q_long,
+                action_value_margin=q_margin,
+                available_actions=avail_actions,
+                selected_action=int(candidate_action),
+            )
+            self.audit_predictions.append(pred.to_dict())
+            self.last_prediction_id = pred_id
+
         return candidate_action
 
     def agent_act(self, state, info):
@@ -1453,13 +1548,21 @@ class vae_risk_aware_routing:
             trading_info=trading_info,
         )
         action_value_chosen_index = actions_value[:, self.selected_agent_index, :]
+        self.latest_action_values = [
+            float(x) for x in action_value_chosen_index[0].detach().cpu().numpy()
+        ]
         action = torch.max(action_value_chosen_index, 1)[1].data.cpu().numpy()
-        action = action[0]
+        action = int(action[0])
 
         return action
 
     def run_single_valid_df(self, df, save_path, contract_name: str | None = None):
         self.df = df
+        self.current_contract_name = contract_name or "default_contract"
+        self.audit_predictions = []
+        self.audit_trades = []
+        self.last_prediction_id = ""
+        self.latest_action_values = [0.0, 0.0, 0.0]
         self.vae_slope_array = self.df[self.vae_slope_indicators].values
         self.vae_vol_array = self.df[self.vae_volatility_indicators].values
         if self.precomputed_quantiles_dir is not None and contract_name is not None:
@@ -1504,6 +1607,8 @@ class vae_risk_aware_routing:
         self.step_idx = 0
         env, s, r, done, info = self.initial_rollout(env, s, info)
         while not done:
+            step_idx = self.step_idx
+            old_position = float(env.position)
             action = self.get_action(
                 info,
                 s,
@@ -1512,7 +1617,33 @@ class vae_risk_aware_routing:
                 current_unrealized_pnl=float(env.unrealized_pnl),
                 current_markprice=float(env.current_markprice),
             )
+            target_position, _ = map_action_to_position_leverage(
+                action, self.leverage_choices, self.position_list
+            )
             s_, r, done, info = env.step(action)
+            reason = (
+                self.action_decision_reason_history[-1]
+                if getattr(self, "action_decision_reason_history", None)
+                else ActionDecisionReasons.POLICY_INFERENCE
+            )
+            pred_id = (
+                self.last_prediction_id
+                if reason in (
+                    ActionDecisionReasons.POLICY_INFERENCE,
+                    ActionDecisionReasons.ACTION_UNAVAILABLE_BREAK,
+                    ActionDecisionReasons.ACTION_PERSISTENCE,
+                )
+                else ""
+            )
+            self._record_trade_audit(
+                env=env,
+                step_index=step_idx,
+                action=action,
+                old_position=old_position,
+                target_position=target_position,
+                decision_reason=reason,
+                prediction_id=pred_id,
+            )
             self.step_idx += 1
             vae_idx = min(self.step_idx, len(self.vae_slope_array) - 1)
             vae_s_slope = self.vae_slope_array[vae_idx]
@@ -1616,6 +1747,120 @@ class vae_risk_aware_routing:
                 self.macro_action_history,
             )
 
+        run_id = str(getattr(self, "run_id", "unspecified_run"))
+        contract = str(getattr(self, "current_contract_name", "default_contract"))
+        audit_accounts: list[dict[str, Any]] = []
+
+        acc_history = getattr(env, "account_audit_history", [])
+        if not acc_history:
+            init_eq = float(getattr(self, "initial_wallet_balance", 10000.0))
+            acc_history = [
+                {
+                    "step_index": 0,
+                    "snapshot_type": "initial",
+                    "wallet_balance": init_eq,
+                    "unrealized_pnl": 0.0,
+                    "equity": init_eq,
+                    "margin": 0.0,
+                    "available_balance": init_eq,
+                    "position": 0.0,
+                    "exposure": 0.0,
+                    "leverage": 1.0,
+                    "peak_equity": init_eq,
+                    "drawdown": 0.0,
+                    "reward": 0.0,
+                }
+            ]
+        for k, snap in enumerate(acc_history):
+            if k == 0:
+                snap_id = build_account_snapshot_id(run_id, contract, 0, "initial")
+                snap_type = "initial"
+                step_i = 0
+                r_val = 0.0
+            else:
+                snap_id = build_account_snapshot_id(run_id, contract, k - 1, "post")
+                snap_type = "post_step"
+                step_i = k
+                prev_eq = acc_history[k - 1]["equity"]
+                curr_eq = snap["equity"]
+                r_val = float(curr_eq - prev_eq)
+
+            row_i = (
+                min(k, len(self.df) - 1)
+                if hasattr(self, "df") and self.df is not None
+                else 0
+            )
+            e_time = (
+                str(self.df["timestamp"].iloc[row_i])
+                if hasattr(self, "df") and self.df is not None and "timestamp" in self.df.columns
+                else ""
+            )
+            t_day = (
+                str(self.df["trading_day"].iloc[row_i])
+                if hasattr(self, "df") and self.df is not None and "trading_day" in self.df.columns
+                else ""
+            )
+
+            acc_rec = AccountRecord(
+                snapshot_id=snap_id,
+                run_id=run_id,
+                contract=contract,
+                account_id=f"acct_{contract}",
+                account_scope="independent_contract_wallet",
+                step_index=step_i,
+                snapshot_type=snap_type,
+                event_time=e_time,
+                trading_day=t_day,
+                wallet_balance=float(snap["wallet_balance"]),
+                unrealized_pnl=float(snap["unrealized_pnl"]),
+                equity=float(snap["equity"]),
+                margin=float(snap["margin"]),
+                available_balance=float(snap["available_balance"]),
+                position=float(snap["position"]),
+                exposure=float(snap["exposure"]),
+                leverage=float(snap["leverage"]),
+                peak_equity=float(snap["peak_equity"]),
+                drawdown=float(snap["drawdown"]),
+                reward=r_val,
+            )
+            audit_accounts.append(acc_rec.to_dict())
+
+        if self.save_artifacts:
+            with open(
+                os.path.join(save_path, AuditArtifactNames.AUDIT_PREDICTIONS_JSON),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                json.dump(self.audit_predictions, f, indent=2)
+            with open(
+                os.path.join(save_path, AuditArtifactNames.AUDIT_TRADES_JSON),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                json.dump(self.audit_trades, f, indent=2)
+            with open(
+                os.path.join(save_path, AuditArtifactNames.AUDIT_ACCOUNT_SNAPSHOTS_JSON),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                json.dump(audit_accounts, f, indent=2)
+            with open(
+                os.path.join(save_path, AuditArtifactNames.AUDIT_METADATA_JSON),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                json.dump(
+                    {
+                        "run_id": run_id,
+                        "model_id": str(getattr(self, "model_id", "unknown_model")),
+                        "feature_version": str(getattr(self, "feature_version", "unknown_features")),
+                        "parameter_version": str(getattr(self, "parameter_version", "unknown_params")),
+                        "contract": contract,
+                    },
+                    f,
+                    indent=2,
+                )
+
         self.current_contract_quantiles = None
         require_money = calculate_required_money(
             np.array(env.initial_margin_history),
@@ -1671,6 +1916,10 @@ class vae_risk_aware_routing:
             len(contract_files),
             self.eval_stage,
         )
+        target_contracts_dir = os.path.join(self.test_path, "contracts")
+        if os.path.exists(target_contracts_dir):
+            shutil.rmtree(target_contracts_dir)
+        os.makedirs(target_contracts_dir, exist_ok=True)
         contract_results = []
         for idx, (contract, path) in enumerate(contract_files, start=1):
             logger.info(
@@ -1765,6 +2014,8 @@ class vae_risk_aware_routing:
         r = 0
         rollout_window_length = self.initial_rollout_window_length
         for i in range(rollout_window_length):
+            step_idx = self.step_idx
+            old_position = float(env.position)
             action = rule_based_close(
                 info,
                 self.zero_position_action,
@@ -1773,10 +2024,22 @@ class vae_risk_aware_routing:
                 env.position,
                 env.leverage,
             )
+            target_position, _ = map_action_to_position_leverage(
+                action, self.leverage_choices, self.position_list
+            )
             self.action_decision_reason_history.append(
-                ActionDecisionReasons.DEFENSIVE_RULE_CLOSE
+                ActionDecisionReasons.WARM_UP
             )
             s, r, done, info = env.step(action)
+            self._record_trade_audit(
+                env=env,
+                step_index=step_idx,
+                action=action,
+                old_position=old_position,
+                target_position=target_position,
+                decision_reason=ActionDecisionReasons.WARM_UP,
+                prediction_id="",
+            )
             self.step_idx += 1
             vae_idx = min(self.step_idx, len(self.vae_slope_array) - 1)
             vae_s_slope = self.vae_slope_array[vae_idx]
@@ -1785,6 +2048,219 @@ class vae_risk_aware_routing:
             if done:
                 break
         return env, s, r, done, info
+
+    def _record_trade_audit(
+        self,
+        env: Base_Env,
+        step_index: int,
+        action: int,
+        old_position: float,
+        target_position: float,
+        decision_reason: int,
+        prediction_id: str,
+    ) -> None:
+        if not hasattr(self, "audit_trades"):
+            self.audit_trades = []
+
+        run_id = str(getattr(self, "run_id", "unspecified_run"))
+        contract = str(getattr(self, "current_contract_name", "default_contract"))
+        decision_id = build_decision_id(run_id, contract, step_index)
+        row_idx = (
+            min(step_index, len(self.df) - 1)
+            if hasattr(self, "df") and self.df is not None
+            else 0
+        )
+        event_time = (
+            str(self.df["timestamp"].iloc[row_idx])
+            if hasattr(self, "df") and self.df is not None and "timestamp" in self.df.columns
+            else ""
+        )
+        trading_day = (
+            str(self.df["trading_day"].iloc[row_idx])
+            if hasattr(self, "df") and self.df is not None and "trading_day" in self.df.columns
+            else ""
+        )
+        decision_reason_str = ActionDecisionReasons(decision_reason).name
+        reference_price = float(getattr(env, "current_markprice", 0.0))
+        executed_position = float(getattr(env, "position", 0.0))
+        commission = float(getattr(env, "commission_fee_step", 0.0))
+        realized_pnl = float(getattr(env, "realized_pnl_step", 0.0))
+        slippage = float(getattr(env, "slippage_step", 0.0))
+
+        if step_index == 0:
+            pre_snapshot_id = build_account_snapshot_id(run_id, contract, 0, "initial")
+        else:
+            pre_snapshot_id = build_account_snapshot_id(run_id, contract, step_index - 1, "post")
+        post_snapshot_id = build_account_snapshot_id(run_id, contract, step_index, "post")
+
+        # 1. Reversal: old_position * target_position < 0 and executed_position != old_position
+        if old_position * target_position < 0 and executed_position != old_position:
+            trade_close = TradeRecord(
+                trade_id=build_trade_id(run_id, contract, step_index, leg=0),
+                decision_id=decision_id,
+                prediction_id=prediction_id,
+                run_id=run_id,
+                contract=contract,
+                step_index=step_index,
+                event_time=event_time,
+                trading_day=trading_day,
+                leg_index=0,
+                event_type="reversal_close",
+                execution_status="filled",
+                decision_reason=decision_reason_str,
+                requested_position=0.0,
+                executed_position=0.0,
+                requested_quantity=float(abs(old_position)),
+                executed_quantity=float(abs(old_position)),
+                remaining_quantity=0.0,
+                reference_price=reference_price,
+                fill_price=reference_price,
+                commission=commission / 2.0,
+                realized_pnl=realized_pnl,
+                slippage=slippage / 2.0,
+                pre_snapshot_id=pre_snapshot_id,
+                post_snapshot_id=post_snapshot_id,
+            )
+            trade_open = TradeRecord(
+                trade_id=build_trade_id(run_id, contract, step_index, leg=1),
+                decision_id=decision_id,
+                prediction_id=prediction_id,
+                run_id=run_id,
+                contract=contract,
+                step_index=step_index,
+                event_time=event_time,
+                trading_day=trading_day,
+                leg_index=1,
+                event_type="reversal_open",
+                execution_status="filled",
+                decision_reason=decision_reason_str,
+                requested_position=float(target_position),
+                executed_position=float(executed_position),
+                requested_quantity=float(abs(target_position)),
+                executed_quantity=float(abs(executed_position)),
+                remaining_quantity=float(max(0.0, abs(target_position) - abs(executed_position))),
+                reference_price=reference_price,
+                fill_price=reference_price,
+                commission=commission / 2.0,
+                realized_pnl=0.0,
+                slippage=slippage / 2.0,
+                pre_snapshot_id=pre_snapshot_id,
+                post_snapshot_id=post_snapshot_id,
+            )
+            self.audit_trades.append(trade_close.to_dict())
+            self.audit_trades.append(trade_open.to_dict())
+            return
+
+        # 2. Rejection / price limit blocked
+        if target_position != old_position and executed_position == old_position:
+            req_qty = float(abs(target_position - old_position))
+            trade = TradeRecord(
+                trade_id=build_trade_id(run_id, contract, step_index, leg=0),
+                decision_id=decision_id,
+                prediction_id=prediction_id,
+                run_id=run_id,
+                contract=contract,
+                step_index=step_index,
+                event_time=event_time,
+                trading_day=trading_day,
+                leg_index=0,
+                event_type="rejection",
+                execution_status="rejected",
+                decision_reason=decision_reason_str,
+                requested_position=float(target_position),
+                executed_position=float(executed_position),
+                requested_quantity=req_qty,
+                executed_quantity=0.0,
+                remaining_quantity=req_qty,
+                reference_price=reference_price,
+                fill_price=0.0,
+                commission=0.0,
+                realized_pnl=0.0,
+                slippage=0.0,
+                pre_snapshot_id=pre_snapshot_id,
+                post_snapshot_id=post_snapshot_id,
+            )
+            self.audit_trades.append(trade.to_dict())
+            return
+
+        # 3. Hold
+        if old_position == executed_position and old_position == target_position:
+            trade = TradeRecord(
+                trade_id=build_trade_id(run_id, contract, step_index, leg=0),
+                decision_id=decision_id,
+                prediction_id=prediction_id,
+                run_id=run_id,
+                contract=contract,
+                step_index=step_index,
+                event_time=event_time,
+                trading_day=trading_day,
+                leg_index=0,
+                event_type="hold",
+                execution_status="filled",
+                decision_reason=decision_reason_str,
+                requested_position=float(target_position),
+                executed_position=float(executed_position),
+                requested_quantity=0.0,
+                executed_quantity=0.0,
+                remaining_quantity=0.0,
+                reference_price=reference_price,
+                fill_price=reference_price,
+                commission=commission,
+                realized_pnl=realized_pnl,
+                slippage=slippage,
+                pre_snapshot_id=pre_snapshot_id,
+                post_snapshot_id=post_snapshot_id,
+            )
+            self.audit_trades.append(trade.to_dict())
+            return
+
+        # 4. Partial fill or full fill
+        req_qty = float(abs(target_position - old_position))
+        exec_qty = float(abs(executed_position - old_position))
+        rem_qty = float(max(0.0, req_qty - exec_qty))
+        is_partial = rem_qty > 1e-6 and exec_qty > 0
+
+        if old_position == 0:
+            ev_type = "open"
+        elif target_position == 0:
+            ev_type = "close"
+        elif abs(target_position) > abs(old_position):
+            ev_type = "open"
+        else:
+            ev_type = "close"
+
+        if executed_position > old_position:
+            fill_p = reference_price + (slippage / exec_qty if exec_qty > 0 and slippage > 0 else 0.0)
+        else:
+            fill_p = reference_price - (slippage / exec_qty if exec_qty > 0 and slippage > 0 else 0.0)
+
+        trade = TradeRecord(
+            trade_id=build_trade_id(run_id, contract, step_index, leg=0),
+            decision_id=decision_id,
+            prediction_id=prediction_id,
+            run_id=run_id,
+            contract=contract,
+            step_index=step_index,
+            event_time=event_time,
+            trading_day=trading_day,
+            leg_index=0,
+            event_type=ev_type,
+            execution_status="partial_fill" if is_partial else "filled",
+            decision_reason=decision_reason_str,
+            requested_position=float(target_position),
+            executed_position=float(executed_position),
+            requested_quantity=req_qty,
+            executed_quantity=exec_qty,
+            remaining_quantity=rem_qty,
+            reference_price=reference_price,
+            fill_price=fill_p,
+            commission=commission,
+            realized_pnl=realized_pnl,
+            slippage=slippage,
+            pre_snapshot_id=pre_snapshot_id,
+            post_snapshot_id=post_snapshot_id,
+        )
+        self.audit_trades.append(trade.to_dict())
 
 
 if __name__ == "__main__":

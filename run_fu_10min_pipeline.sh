@@ -30,6 +30,7 @@ elif [ -f "${HOME}/miniconda3/etc/profile.d/conda.sh" ]; then
 fi
 
 export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT:${ROOTPATH}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}"
+export FOREGROUND="${FOREGROUND:-1}"
 
 # 9 个核心脚本定义 (格式: 步骤名称|脚本相对路径|主要日志路径)
 declare -a PIPELINE_STEPS=(

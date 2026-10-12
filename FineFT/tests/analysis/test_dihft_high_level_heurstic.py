@@ -264,6 +264,7 @@ def test_selection_metric_prioritizes_metric_and_picks_best_agent(tmp_path: Path
 
     # Trial 0: higher tr (4.83), lower portfolio_tr (0.15)
     _create_custom_contract_dir(trial_0 / "contracts" / "fu_a", reward_val=10.0, req_val=10.0)
+    (trial_0 / "contracts" / "fu_a" / "audit_trades.json").write_text("[]", encoding="utf-8")
     _create_custom_contract_dir(trial_0 / "contracts" / "fu_b", reward_val=0.0, req_val=1000.0)
 
     # Trial 1: lower tr (1.12), higher portfolio_tr (1.20)
@@ -311,6 +312,7 @@ def test_selection_metric_prioritizes_metric_and_picks_best_agent(tmp_path: Path
 
     assert "trial_0" in para_file.read_text(encoding="utf-8")
     assert picker_tr.best_result_df.iloc[0]["indicator"] == "tr"
+    assert (result_root / "final_result" / dataset_name / exp_name / "contracts" / "fu_a" / "audit_trades.json").exists()
 
 
 def test_high_level_heurstic_fu_10_script_configuration():
@@ -327,6 +329,9 @@ def test_high_level_heurstic_fu_10_script_configuration():
     assert "FOREGROUND=${FOREGROUND:-0}" in content
     assert "--selection_metric" in content
     assert "FineFT/analysis/pick_agent/DiHFT_high_level_heurstic.py" in content
+    assert "FineFT/analysis/diagnostics/daily_trading_audit.py" in content
+    assert "AUDIT_OUTPUT_DIR=" in content
+    assert "ENABLE_AUDIT=${ENABLE_AUDIT:-1}" in content
 
 
 def test_calculate_metric_zero_activity_returns_finite_zeros():

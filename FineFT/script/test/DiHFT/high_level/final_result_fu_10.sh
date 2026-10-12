@@ -60,3 +60,31 @@ python -u FineFT/analysis/diagnostics/trading_diagnostics.py \
     --commission_rate "${TRANSACTION_COST}" \
     --contract_unit 10.0 \
     >>"${LOG_DIR}/final_result.log" 2>&1
+
+ENABLE_AUDIT=${ENABLE_AUDIT:-1}
+AUDIT_OUTPUT_DIR=${AUDIT_OUTPUT_DIR:-analysis_result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/daily_trading_audit}
+TRADING_DAY_MAPPING=${TRADING_DAY_MAPPING:-}
+if [ -z "${TRADING_DAY_MAPPING}" ] && [ -f "${BASE_PATH}/${DATASET_NAME}/trading_day_mapping.json" ]; then
+    TRADING_DAY_MAPPING="${BASE_PATH}/${DATASET_NAME}/trading_day_mapping.json"
+fi
+RUN_ID=${RUN_ID:-}
+
+if [ "${ENABLE_AUDIT}" = "1" ]; then
+    AUDIT_CMD_ARGS=(
+        --result_dir "result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}"
+        --market_data_dir "${BASE_PATH}/${DATASET_NAME}/test"
+        --output_dir "${AUDIT_OUTPUT_DIR}"
+    )
+    if [ -n "${TRADING_DAY_MAPPING}" ]; then
+        AUDIT_CMD_ARGS+=(--trading_day_mapping "${TRADING_DAY_MAPPING}")
+    fi
+    if [ -n "${RUN_ID}" ]; then
+        AUDIT_CMD_ARGS+=(--run_id "${RUN_ID}")
+    fi
+    if [ -f "result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/audit_metadata.json" ] || \
+       ls result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/contracts/*/audit_metadata.json >/dev/null 2>&1; then
+        python -u FineFT/analysis/diagnostics/daily_trading_audit.py \
+            "${AUDIT_CMD_ARGS[@]}" \
+            >>"${LOG_DIR}/final_result.log" 2>&1
+    fi
+fi

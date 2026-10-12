@@ -925,3 +925,24 @@ _Avoid_: 换手率、交易周转量、总成交量
 **全维度诊断三件套 (Diagnostic Triad Artifacts)**:
 标准化自动化诊断工具产出的一组评估文件集合，包含机器可读高精度 JSON (`diagnostics_summary.json`)、人眼/Pandas 分析表格 CSV (`contract_pnl_friction.csv`, `contract_behavior_risk.csv`, `macro_routing_distribution.csv`) 以及自动排版的 Markdown 简报 (`diagnostics_summary.md`)。
 _Avoid_: 回测报告、分析附件、诊断日志
+### Trading Audit Records & Traceable Evidence Chain
+
+**Prediction Record (预测记录)**:
+在策略神经网络真实推断时记录的不可变条目，包含运行与模型标识、合约、事件时间、行情索引、路由门控证据、空头/空仓/多头 Action Value、Action Value margin（最优对比次优差值）、可用动作状态及所选动作；非真实推断（如动作持续、warm-up 或规则风控）不产生 Prediction Record，Action Value 为动作价值而非盈利概率。
+_Avoid_: 预测概率、Q值置信度、推断缓存
+
+**Trade Record (交易记录)**:
+模拟执行的离散执行事件或尝试记录，包含请求与实际仓位档位、数量变动、事件类型、执行状态、参考价、成交价、手续费、已实现盈亏、滑点证据、决策原因以及关联的前后账户快照标识；反手操作被拆分为平旧仓和开新仓两个有序执行 leg 并共享同一 Decision ID。
+_Avoid_: 成交单、委托单、交易撮合记录
+
+**Account Record (账户记录)**:
+每个独立合约钱包在运行期间的不可变账户状态快照，包含 step 0 初始快照及每个环境 step 后的快照；具备 append-only 特性，在仓位平仓归零时永不重置；记录钱包余额、未实现盈亏、动态权益、保证金、可用资金、持仓、风险暴露、杠杆、历史权益峰值及回撤。
+_Avoid_: 仓位账户、重置账户快照、组合总账
+
+**Decision ID (决策标识)**:
+每个决策时刻由运行标识、合约与 step 生成的确定性唯一键；单步内的真实推断或规则决策与该 step 产生的一个或多个 Trade Record（如反手的平仓和开仓两 leg）通过 Decision ID 严格对齐。
+_Avoid_: 订单号、动作编号、时间序列 ID
+
+**审计级回测 (Audit-grade Backtest)**:
+具备全量真实推断保存、全量执行事件跟踪、不重置独立合约账户快照以及确定性证据链的严格回测运行；通过离线校验后按显式 TradingDay 原子发布三份日度记录 CSV 与根级清单，杜绝缺失事实脑补或推测。
+_Avoid_: 普通回测、无审计回测、历史重构回测

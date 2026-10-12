@@ -492,18 +492,18 @@ class Picker:
                 target_dir = os.path.join(target_contracts_dir, c_name)
                 os.makedirs(target_dir, exist_ok=True)
                 for f_name in os.listdir(c_dir):
-                    if f_name.endswith(".npy") or f_name.endswith(".csv"):
+                    if f_name.endswith((".npy", ".csv", ".json")):
                         shutil.copy2(os.path.join(c_dir, f_name), os.path.join(target_dir, f_name))
 
             first_dir = contract_dirs[0]
             for f_name in os.listdir(first_dir):
-                if f_name.endswith(".npy") or f_name.endswith(".csv"):
+                if f_name.endswith((".npy", ".csv", ".json")):
                     shutil.copy2(os.path.join(first_dir, f_name), os.path.join(high_level_path, f_name))
 
         else:
             first_dir = contract_dirs[0]
             for f_name in os.listdir(first_dir):
-                if f_name.endswith(".npy") or f_name.endswith(".csv"):
+                if f_name.endswith((".npy", ".csv", ".json")):
                     shutil.copy2(os.path.join(first_dir, f_name), os.path.join(high_level_path, f_name))
 
         # Generate comprehensive trading diagnostics when market data exists
