@@ -188,13 +188,20 @@ class Picker:
                 os.path.join(contracts_dir, d)
                 for d in sorted(os.listdir(contracts_dir))
                 if os.path.isdir(os.path.join(contracts_dir, d))
+                and os.path.exists(
+                    os.path.join(contracts_dir, d, HistoryArtifactNames.INITIAL_MARGIN_HISTORY_NPY)
+                )
             ]
             if subdirs:
                 return subdirs
-        return [epoch_path]
+        if os.path.exists(os.path.join(epoch_path, HistoryArtifactNames.INITIAL_MARGIN_HISTORY_NPY)):
+            return [epoch_path]
+        return []
 
     def analysis_single_epoch(self, epoch_path):
         contract_dirs = self._get_contract_dirs(epoch_path)
+        if not contract_dirs:
+            raise FileNotFoundError(f"No valid contract or epoch artifacts found in {epoch_path}")
         
         per_contract_metrics = []
         total_rewards = []
@@ -304,7 +311,8 @@ class Picker:
             epoch_path = os.path.join(model_root_path, parameter)
             if not os.path.isdir(epoch_path):
                 continue
-            if not os.listdir(epoch_path):
+            contract_dirs = self._get_contract_dirs(epoch_path)
+            if not contract_dirs:
                 continue
             result = self.analysis_single_epoch(epoch_path)
 

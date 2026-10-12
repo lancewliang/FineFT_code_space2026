@@ -402,3 +402,49 @@ def test_defensive_skipped_contract_requires_zero_capital_and_traded_counts_init
     assert result["required_money"] == pytest.approx(6000.0)
     # Total reward = 20 * 30 = 600.0. Portfolio return = 600.0 / 6000.0 = 0.10 (10%)
     assert result["portfolio_tr"] == pytest.approx(0.10)
+
+
+def test_analysis_all_epoch_skips_empty_and_artifact_free_directories(tmp_path: Path):
+    dataset_name = "fu"
+    exp_name = "10min_empty_test"
+
+    model_root = (
+        tmp_path / "result" / "DiHFT" / "high_level" / dataset_name / exp_name / "vae_risk_aware_routing"
+    )
+    model_root.mkdir(parents=True, exist_ok=True)
+
+    # 1. Valid trial directory with artifacts
+    valid_trial = model_root / "gamma_0.95_window_60_threshold_0.3_trial_0"
+    _create_fake_trial_dir(valid_trial)
+
+    # 2. Empty trial directory
+    empty_trial = model_root / "gamma_0.90_window_50_threshold_0.2_trial_1"
+    empty_trial.mkdir(parents=True, exist_ok=True)
+
+    # 3. Trial directory with empty contracts folder
+    contracts_empty_trial = model_root / "gamma_0.92_window_55_threshold_0.25_trial_2"
+    (contracts_empty_trial / "contracts").mkdir(parents=True, exist_ok=True)
+
+    # 4. Trial directory with contract folder but missing initial_margin_history.npy
+    missing_art_trial = model_root / "gamma_0.93_window_65_threshold_0.28_trial_3"
+    (missing_art_trial / "contracts" / "fu2409").mkdir(parents=True, exist_ok=True)
+
+    save_path = tmp_path / "analysis_result" / "high_level_heurstic"
+
+    args = types.SimpleNamespace(
+        base_path=str(tmp_path / "dataset"),
+        dataset_name=dataset_name,
+        experiment_name=exp_name,
+        save_path=str(save_path),
+        optuna_csv=None,
+        early_stop=0,
+        selection_metric="tr",
+        result_path=str(tmp_path / "result" / "DiHFT" / "high_level"),
+    )
+
+    picker = Picker(args)
+    picker.analysis_all_epoch()
+
+    assert hasattr(picker, "result_df")
+    assert len(picker.result_df) == 1
+    assert picker.result_df.iloc[0]["trial_id"] == 0

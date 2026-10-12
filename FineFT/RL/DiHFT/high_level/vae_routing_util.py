@@ -1916,10 +1916,11 @@ class vae_risk_aware_routing:
             len(contract_files),
             self.eval_stage,
         )
-        target_contracts_dir = os.path.join(self.test_path, "contracts")
-        if os.path.exists(target_contracts_dir):
-            shutil.rmtree(target_contracts_dir)
-        os.makedirs(target_contracts_dir, exist_ok=True)
+        if self.save_artifacts:
+            target_contracts_dir = os.path.join(self.test_path, "contracts")
+            if os.path.exists(target_contracts_dir):
+                shutil.rmtree(target_contracts_dir)
+            os.makedirs(target_contracts_dir, exist_ok=True)
         contract_results = []
         for idx, (contract, path) in enumerate(contract_files, start=1):
             logger.info(
