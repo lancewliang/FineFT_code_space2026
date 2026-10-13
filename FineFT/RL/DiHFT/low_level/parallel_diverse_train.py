@@ -35,7 +35,7 @@ import pickle
 import queue
 import tempfile
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -79,7 +79,10 @@ from RL.util.regime_stratified_replay_buffer import (
     DIRECTIONAL_REGIME_PHASES,
     RegimeStratifiedReplayBuffer,
     accumulate_trajectory_n_step,
+    accumulate_compact_trajectory_n_step,
     build_semantic_transition_key,
+    build_spatio_temporal_semantic_key,
+    CompactTrajectoryRecord,
     get_active_grid_ids_for_epoch,
 )
 from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import (
@@ -226,7 +229,7 @@ class WorkerTransitionRecord:
     td_error: float = 0.0
 
 
-@dataclass(frozen=True)
+@dataclass
 class WorkerRoundResult:
     df_index: int
     epoch_index: int
@@ -234,9 +237,57 @@ class WorkerRoundResult:
     initial_action: int
     round_counter: int
     worker_steps: int
-    transitions: list[WorkerTransitionRecord]
-    rollout_metrics: list[RolloutMetrics]
-    done: bool
+    rollout_metrics: list[RolloutMetrics] = field(default_factory=list)
+    done: bool = True
+    compact_trajectory: CompactTrajectoryRecord | None = None
+    _transitions: list[WorkerTransitionRecord] | None = field(default=None, repr=False)
+
+    def __init__(
+        self,
+        df_index: int,
+        epoch_index: int,
+        context_index: int,
+        initial_action: int,
+        round_counter: int,
+        worker_steps: int,
+        transitions: list[WorkerTransitionRecord] | None = None,
+        rollout_metrics: list[RolloutMetrics] | None = None,
+        done: bool = True,
+        compact_trajectory: CompactTrajectoryRecord | None = None,
+        _transitions: list[WorkerTransitionRecord] | None = None,
+    ):
+        self.df_index = df_index
+        self.epoch_index = epoch_index
+        self.context_index = context_index
+        self.initial_action = initial_action
+        self.round_counter = round_counter
+        self.worker_steps = worker_steps
+        self.rollout_metrics = rollout_metrics if rollout_metrics is not None else []
+        self.done = done
+        self.compact_trajectory = compact_trajectory
+        self._transitions = transitions if transitions is not None else _transitions
+
+    @property
+    def transitions(self) -> list[WorkerTransitionRecord]:
+        if self._transitions is not None:
+            return self._transitions
+        if self.compact_trajectory is not None and hasattr(self.compact_trajectory, "to_worker_transitions"):
+            return self.compact_trajectory.to_worker_transitions()
+        return []
+
+    @transitions.setter
+    def transitions(self, value: list[WorkerTransitionRecord]) -> None:
+        self._transitions = value
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        # 极简时空切片索引回传：若已有 compact_trajectory，序列化过 IPC 队列时彻底剔除重型 transitions
+        if self.compact_trajectory is not None:
+            state["_transitions"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
 
 
 @dataclass(frozen=True)
@@ -833,8 +884,9 @@ def run_diverse_training_phase(
     buffer_size = len(buffer_diverse)
 
     last_losses = None
+    LOG_INTERVAL = 10
 
-    for _ in range(update_count):
+    for step_idx in range(update_count):
         (
             states,
             infos,
@@ -855,9 +907,11 @@ def run_diverse_training_phase(
             dones,
         )
         total_loss, KL_loss, td_loss = last_losses
-        trainer.writer.add_scalar("total_loss", total_loss, trainer.update_counter)
-        trainer.writer.add_scalar("KL_loss", KL_loss, trainer.update_counter)
-        trainer.writer.add_scalar("td_loss", td_loss, trainer.update_counter)
+        if (step_idx + 1) % LOG_INTERVAL == 0 or (step_idx + 1) == update_count:
+            if getattr(trainer, "writer", None) is not None:
+                trainer.writer.add_scalar("total_loss", total_loss, trainer.update_counter)
+                trainer.writer.add_scalar("KL_loss", KL_loss, trainer.update_counter)
+                trainer.writer.add_scalar("td_loss", td_loss, trainer.update_counter)
     logger.info(
         "diverse training phase complete | epoch_index=%d | update_count=%d | "
         "total_loss=%.6f | KL_loss=%.6f | td_loss=%.6f",
@@ -975,6 +1029,7 @@ class DfRolloutWorkerRunner:
             if 0 in self.position_list
             else (len(self.position_list) - 1) // 2
         )
+        self.action_dim = int(worker_config.get("action_count", len(self.position_list)))
         if "shared_model" in worker_config and worker_config["shared_model"] is not None:
             self.model = worker_config["shared_model"]
         else:
@@ -1037,10 +1092,33 @@ class DfRolloutWorkerRunner:
         episode = _WorkerEpisode(env=env, state=state, info=info, done=False)
 
         self.model.eval()
-        transitions = []
         remaining_persist = 0
         current_action = self.flat_action
         current_q = 0.0
+
+        step_indices = []
+        actions = []
+        rewards = []
+        dones = []
+        td_errors = []
+
+        previous_actions = []
+        trading_infos = []
+        avaliable_actions = []
+        hours = []
+        minutes = []
+        q_values = []
+        regime_grid_ids = []
+
+        next_previous_actions = []
+        next_trading_infos = []
+        next_avaliable_actions = []
+        next_hours = []
+        next_minutes = []
+
+        raw_states = [] if self.shared_market_data is None else None
+        raw_next_states = [] if self.shared_market_data is None else None
+
         while not episode.done:
             if remaining_persist > 0 and current_action in episode.info["avaiable_action_list"]:
                 action = current_action
@@ -1067,48 +1145,71 @@ class DfRolloutWorkerRunner:
             else:
                 td_error = abs(float(reward) - chosen_q)
 
-            transitions.append(
-                WorkerTransitionRecord(
-                    step_index=episode.transition_count,
-                    transition=(
-                        episode.state,
-                        episode.info,
-                        action,
-                        reward,
-                        next_state,
-                        next_info,
-                        done,
-                    ),
-                    td_error=float(td_error),
-                )
-            )
+            step_indices.append(episode.transition_count)
+            actions.append(action)
+            rewards.append(reward)
+            dones.append(done)
+            td_errors.append(float(td_error))
+
+            previous_actions.append(float(episode.info.get("previous_action", 0)))
+            trading_infos.append(np.asarray(episode.info.get("trading_info", np.zeros(4, dtype=np.float32)), dtype=np.float32))
+            avaliable_actions.append(np.asarray(episode.info.get("avaliable_action", np.ones(getattr(self, "action_dim", 9), dtype=np.float32)), dtype=np.float32))
+            hours.append(float(episode.info.get("funding_count_down_hour", 0.0)))
+            minutes.append(float(episode.info.get("funding_count_down_minute", 0.0)))
+            if "q_value" in episode.info:
+                q_values.append(np.asarray(episode.info["q_value"], dtype=np.float32))
+            else:
+                q_values.append(np.zeros(getattr(self, "action_dim", 9), dtype=np.float32))
+            regime_grid_ids.append(int(episode.info.get("regime_grid_id", 0)))
+
+            next_previous_actions.append(float(next_info.get("previous_action", 0)))
+            next_trading_infos.append(np.asarray(next_info.get("trading_info", np.zeros(4, dtype=np.float32)), dtype=np.float32))
+            next_avaliable_actions.append(np.asarray(next_info.get("avaliable_action", np.ones(getattr(self, "action_dim", 9), dtype=np.float32)), dtype=np.float32))
+            next_hours.append(float(next_info.get("funding_count_down_hour", 0.0)))
+            next_minutes.append(float(next_info.get("funding_count_down_minute", 0.0)))
+
+            if raw_states is not None:
+                raw_states.append(episode.state)
+                raw_next_states.append(next_state)
+
             episode.reward_sum += reward
             episode.transition_count += 1
             episode.state, episode.info, episode.done = next_state, next_info, done
 
         final_balance = episode.env.unrealized_pnl + episode.env.wallet_balance
-        raw_tuples = [r.transition for r in transitions]
-        acc_tuples = accumulate_trajectory_n_step(
-            raw_tuples,
+        compact_trajectory = accumulate_compact_trajectory_n_step(
+            raw_step_indices=step_indices,
+            raw_actions=actions,
+            raw_rewards=rewards,
+            raw_dones=dones,
+            raw_td_errors=td_errors,
+            raw_previous_actions=previous_actions,
+            raw_trading_infos=trading_infos,
+            raw_avaliable_actions=avaliable_actions,
+            raw_hours=hours,
+            raw_minutes=minutes,
+            raw_next_previous_actions=next_previous_actions,
+            raw_next_trading_infos=next_trading_infos,
+            raw_next_avaliable_actions=next_avaliable_actions,
+            raw_next_hours=next_hours,
+            raw_next_minutes=next_minutes,
+            raw_q_values=q_values,
+            raw_regime_grid_ids=regime_grid_ids,
+            raw_states=raw_states,
+            raw_next_states=raw_next_states,
             gamma=self.gamma,
             n_step=self.n_step,
+            df_index=task.df_index,
         )
-        accumulated_transitions = [
-            WorkerTransitionRecord(
-                step_index=r.step_index,
-                transition=acc_t,
-                td_error=r.td_error,
-            )
-            for r, acc_t in zip(transitions, acc_tuples)
-        ]
+
         return WorkerRoundResult(
             df_index=task.df_index,
             epoch_index=task.epoch_index,
             context_index=task.context_index,
             initial_action=task.initial_action,
             round_counter=task.round_counter,
-            worker_steps=len(accumulated_transitions),
-            transitions=accumulated_transitions,
+            worker_steps=len(step_indices),
+            compact_trajectory=compact_trajectory,
             rollout_metrics=[
                 RolloutMetrics(
                     epoch_index=task.epoch_index,
@@ -1695,7 +1796,21 @@ def run_epoch_exploration(
         context_metrics_by_context: dict[int, list[RolloutMetrics]] = {
             c: [] for c in range(trainer.N)
         }
+        if shared_market_data is not None and getattr(buffer_diverse, "shared_market_data", None) is None:
+            buffer_diverse.shared_market_data = shared_market_data
+        elif getattr(trainer, "shared_market_data", None) is not None and getattr(buffer_diverse, "shared_market_data", None) is None:
+            buffer_diverse.shared_market_data = trainer.shared_market_data
+
         collected_count = 0
+        micro_batch: list[WorkerRoundResult] = []
+        MICRO_BATCH_SIZE = 16
+
+        def _flush_micro_batch():
+            nonlocal micro_batch
+            if not micro_batch:
+                return
+            write_round_transitions_to_buffer(buffer_diverse, micro_batch)
+            micro_batch = []
 
         while collected_count < total_tasks:
             result = trainer.worker_result_queue.get()
@@ -1708,7 +1823,16 @@ def run_epoch_exploration(
                     f"worker round finished without done | df_index={result.df_index}"
                 )
 
-            write_round_transitions_to_buffer(buffer_diverse, [result])
+            micro_batch.append(result)
+            pending_steps = sum(r.worker_steps for r in micro_batch)
+            if (
+                len(micro_batch) >= MICRO_BATCH_SIZE
+                or (len(buffer_diverse) + pending_steps >= trainer.buffer_size)
+                or trainer.worker_result_queue.empty()
+                or collected_count == total_tasks
+            ):
+                _flush_micro_batch()
+
             if result.rollout_metrics:
                 metric = result.rollout_metrics[0]
                 logger.info(
@@ -1741,6 +1865,7 @@ def run_epoch_exploration(
                 epoch_metrics.append(metrics)
 
             if is_buffer_full(buffer_diverse, trainer):
+                _flush_micro_batch()
                 logger.info(
                     "buffer full reached during exploration | buffer_size=%d | "
                     "collected=%d/%d tasks",
@@ -1754,6 +1879,7 @@ def run_epoch_exploration(
                     except Exception:
                         break
                 break
+        _flush_micro_batch()
 
         for c in range(trainer.N):
             if context_metrics_by_context[c]:
@@ -1828,6 +1954,8 @@ def run_parallel_diverse_training(
         shared_market_data = SharedMarketDataPack.from_dataframes(
             train_df_cache, env_kwargs, q_table_cache=q_table_cache
         )
+        trainer.shared_market_data = shared_market_data
+        buffer_diverse.shared_market_data = shared_market_data
         pool = PersistentRolloutPool(
             trainer=trainer,
             train_df_cache=None,
@@ -1889,6 +2017,7 @@ def run_parallel_diverse_training(
                     step_counter_diverse,
                     round_counter,
                     diverse_rollout_latest_metrics_by_df,
+                    shared_market_data=shared_market_data,
                 )
                 # 阶段二：保存经验池 —— 探索完成且经验已全部写入后，落盘最新快照
                 save_diverse_buffer(buffer_diverse, trainer.model_path)
@@ -2088,88 +2217,128 @@ def update(
     info_: dict[str, Any],
     dones: torch.Tensor,
 ):
+    device_type = (
+        trainer.device.type
+        if isinstance(trainer.device, torch.device)
+        else str(trainer.device)
+    )
+    is_cuda = device_type == "cuda"
+    use_amp = getattr(trainer, "use_amp", is_cuda) and is_cuda
+    amp_dtype = getattr(
+        trainer,
+        "amp_dtype",
+        (
+            torch.bfloat16
+            if (is_cuda and torch.cuda.is_bf16_supported())
+            else torch.float16
+        ),
+    )
+    scaler = getattr(trainer, "scaler", None)
+
     # current input
     bs = states.shape[0]
     states = states.reshape(bs, -1)
     previous_action = info["previous_action"].float().unsqueeze(1)
     avaliable_action = info["avaliable_action"]
-    hour_count_down = info["funding_count_down_hour"].float().unsqueeze(1)
-    minute_count_down = info["funding_count_down_minute"].float().unsqueeze(1)
-    time_input = torch.cat([hour_count_down, minute_count_down], dim=1).to(
-        trainer.device
-    )
-    trading_info = info["trading_info"].float().to(trainer.device)
+    hour_count_down = info["funding_count_down_hour"].float()
+    minute_count_down = info["funding_count_down_minute"].float()
+    if hour_count_down.ndim == 1:
+        time_input = torch.stack([hour_count_down, minute_count_down], dim=1).to(
+            trainer.device, non_blocking=True
+        )
+    else:
+        time_input = torch.cat([hour_count_down, minute_count_down], dim=-1).to(
+            trainer.device, non_blocking=True
+        )
+    trading_info = info["trading_info"].float().to(trainer.device, non_blocking=True)
+
     # next input
     states_ = next_states.reshape(bs, -1)
     previous_action_ = info_["previous_action"].float().unsqueeze(1)
     avaliable_action_ = info_["avaliable_action"]
-    hour_count_down_ = info_["funding_count_down_hour"].float().unsqueeze(1)
-    minute_count_down_ = info_["funding_count_down_minute"].float().unsqueeze(1)
-    time_input_ = torch.cat([hour_count_down_, minute_count_down_], dim=1).to(
-        trainer.device
-    )
-    trading_info_ = info_["trading_info"].float().to(trainer.device)
-
-    predict_action_distrbution = trainer.eval_net(
-        state=states,
-        time=time_input,
-        previous_action=previous_action,
-        avaliable_action=avaliable_action,
-        trading_info=trading_info,
-    )
-    current_sa_quantiles = evaluate_quantile_at_action(
-        predict_action_distrbution,
-        actions,
-    )
-    assert current_sa_quantiles.shape == (bs, trainer.N, 1)
-    with torch.no_grad():
-        next_q = trainer.target_net.get_best_q(
-            state=states_,
-            time=time_input_,
-            previous_action=previous_action_,
-            avaliable_action=avaliable_action_,
-            trading_info=trading_info_,
+    hour_count_down_ = info_["funding_count_down_hour"].float()
+    minute_count_down_ = info_["funding_count_down_minute"].float()
+    if hour_count_down_.ndim == 1:
+        time_input_ = torch.stack([hour_count_down_, minute_count_down_], dim=1).to(
+            trainer.device, non_blocking=True
         )
-        next_sa_quantiles = next_q.unsqueeze(1)
-        assert next_sa_quantiles.shape == (trainer.batch_size, 1, trainer.N)
-        target_sa_quantiles = (
-            rewards[..., None]
-            + (1.0 - dones[..., None]) * trainer.gamma * next_sa_quantiles
+    else:
+        time_input_ = torch.cat([hour_count_down_, minute_count_down_], dim=-1).to(
+            trainer.device, non_blocking=True
         )
-        assert target_sa_quantiles.shape == (trainer.batch_size, 1, trainer.N)
-    td_errors = target_sa_quantiles - current_sa_quantiles
-    # logger.info("td_errors %s", td_errors)
-    assert td_errors.shape == (trainer.batch_size, trainer.N, trainer.N)
-    if trainer.if_use_hubber_loss:
-        td_errors = calculate_huber_loss(td_errors)
-    batch_weights, partial_td_error_loss = calculate_paper_partial_loss(
-        td_errors,
-        trainer.neighbor_size,
-    )
-    assert predict_action_distrbution.shape == (
-        trainer.batch_size,
-        trainer.N,
-        trainer.N_ACTIONS,
-    )
-    assert batch_weights.shape == (trainer.batch_size, trainer.N)
+    trading_info_ = info_["trading_info"].float().to(trainer.device, non_blocking=True)
 
-    q_value = recalculate_q_demonstration(
-        info["q_value"],
-        info["avaliable_action"],
-    )
-    KL_div = calculate_paper_supervisor_kl_loss(
-        predict_action_distrbution,
-        q_value,
-        batch_weights,
-    )
-    loss = partial_td_error_loss + KL_div * trainer.ada
-    update_params(
-        trainer.optimizer,
-        loss,
-        trainer.eval_net,
-        retain_graph=False,
-        grad_cliping=trainer.grad_clip,
-    )
+    with torch.amp.autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
+        predict_action_distrbution = trainer.eval_net(
+            state=states,
+            time=time_input,
+            previous_action=previous_action,
+            avaliable_action=avaliable_action,
+            trading_info=trading_info,
+        )
+        current_sa_quantiles = evaluate_quantile_at_action(
+            predict_action_distrbution,
+            actions,
+        )
+        assert current_sa_quantiles.shape == (bs, trainer.N, 1)
+        with torch.no_grad():
+            next_q = trainer.target_net.get_best_q(
+                state=states_,
+                time=time_input_,
+                previous_action=previous_action_,
+                avaliable_action=avaliable_action_,
+                trading_info=trading_info_,
+            )
+            next_sa_quantiles = next_q.unsqueeze(1)
+            assert next_sa_quantiles.shape == (trainer.batch_size, 1, trainer.N)
+            target_sa_quantiles = (
+                rewards[..., None]
+                + (1.0 - dones[..., None]) * trainer.gamma * next_sa_quantiles
+            )
+            assert target_sa_quantiles.shape == (trainer.batch_size, 1, trainer.N)
+        td_errors = target_sa_quantiles - current_sa_quantiles
+        # logger.info("td_errors %s", td_errors)
+        assert td_errors.shape == (trainer.batch_size, trainer.N, trainer.N)
+        if trainer.if_use_hubber_loss:
+            td_errors = calculate_huber_loss(td_errors)
+        batch_weights, partial_td_error_loss = calculate_paper_partial_loss(
+            td_errors,
+            trainer.neighbor_size,
+        )
+        assert predict_action_distrbution.shape == (
+            trainer.batch_size,
+            trainer.N,
+            trainer.N_ACTIONS,
+        )
+        assert batch_weights.shape == (trainer.batch_size, trainer.N)
+
+        q_value = recalculate_q_demonstration(
+            info["q_value"],
+            info["avaliable_action"],
+        )
+        KL_div = calculate_paper_supervisor_kl_loss(
+            predict_action_distrbution,
+            q_value,
+            batch_weights,
+        )
+        loss = partial_td_error_loss + KL_div * trainer.ada
+
+    if scaler is not None and use_amp:
+        trainer.optimizer.zero_grad()
+        scaler.scale(loss).backward()
+        if trainer.grad_clip:
+            scaler.unscale_(trainer.optimizer)
+            torch.nn.utils.clip_grad_norm_(trainer.eval_net.parameters(), trainer.grad_clip)
+        scaler.step(trainer.optimizer)
+        scaler.update()
+    else:
+        update_params(
+            trainer.optimizer,
+            loss,
+            trainer.eval_net,
+            retain_graph=False,
+            grad_cliping=trainer.grad_clip,
+        )
     soft_copy_params(trainer.eval_net, trainer.target_net, trainer.tau)
     trainer.update_counter += 1
     return loss.item(), KL_div.item(), partial_td_error_loss.item()

@@ -913,6 +913,23 @@ class Weighted_Contexts_DQN:
         if self.eval_interval <= 0:
             raise ValueError("eval_interval must be positive")
         self.eval_dfs = str(args.eval_dfs)
+        # AMP 自动混合精度训练配置
+        is_cuda = (
+            self.device == "cuda"
+            or (isinstance(self.device, torch.device) and self.device.type == "cuda")
+        )
+        if is_cuda and torch.cuda.is_available():
+            self.use_amp = True
+            self.amp_dtype = (
+                torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+            )
+            self.scaler = (
+                torch.amp.GradScaler("cuda") if self.amp_dtype == torch.float16 else None
+            )
+        else:
+            self.use_amp = False
+            self.amp_dtype = torch.float32
+            self.scaler = None
         self._log_internal_parameters("init_end")
 
     def _format_internal_parameter_value(self, value):

@@ -13,3 +13,8 @@ Default label vocabulary (needs-triage, needs-info, ready-for-agent, ready-for-h
 ### Domain docs
 
 Single-context layout. See `docs/agents/domain.md`.
+
+
+### code standard
+
+`.codex/python_commodity_futures_rl_engineering_standard_v1.0.md`

@@ -6,6 +6,7 @@ from typing import Any
 import numpy as np
 import torch
 
+from dataclasses import dataclass, field
 from RL.DiHFT.low_level.parallel_pretrain import extract_stacked_tensor_dict
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,283 @@ def accumulate_trajectory_n_step(
         )
 
     return accumulated
+
+
+@dataclass
+class CompactTrajectoryRecord:
+    """低层探索轨迹的紧凑时空切片纯数值流。
+
+    彻底剔除 148 维静态市场状态向量及冗余嵌套 info 字典的 IPC 传输，
+    仅通过 Queue 回传由动作、收益、TD-Error、完成标志及时间步切片索引组成的轻量数值连续数组。
+    """
+    df_index: int
+    step_indices: np.ndarray          # (T,) int32
+    actions: np.ndarray               # (T,) int64
+    rewards: np.ndarray               # (T,) float32 (discounted N-step rewards)
+    next_step_indices: np.ndarray     # (T,) int32
+    dones: np.ndarray                 # (T,) bool
+    td_errors: np.ndarray             # (T,) float32
+    previous_actions: np.ndarray      # (T,) float32
+    next_previous_actions: np.ndarray # (T,) float32
+    trading_infos: np.ndarray         # (T, 4) float32
+    next_trading_infos: np.ndarray    # (T, 4) float32
+    avaliable_actions: np.ndarray     # (T, action_dim) float32
+    next_avaliable_actions: np.ndarray# (T, action_dim) float32
+    hours: np.ndarray                 # (T,) float32
+    minutes: np.ndarray               # (T,) float32
+    next_hours: np.ndarray            # (T,) float32
+    next_minutes: np.ndarray          # (T,) float32
+    q_values: np.ndarray | None = None          # (T, action_dim) float32
+    regime_grid_ids: np.ndarray | None = None   # (T,) int32
+    states: np.ndarray | None = None            # (T, state_dim) float32, optional fallback
+    next_states: np.ndarray | None = None       # (T, state_dim) float32, optional fallback
+
+    def to_worker_transitions(
+        self,
+        shared_market_data: Any | None = None,
+    ) -> list[Any]:
+        """在需要兼容旧版接口时，按需懒加载反序列化生成 WorkerTransitionRecord 列表。"""
+        from RL.DiHFT.low_level.parallel_diverse_train import WorkerTransitionRecord
+        total_steps = len(self.step_indices)
+        records = []
+        pack = (
+            shared_market_data[self.df_index]
+            if shared_market_data is not None and self.df_index in shared_market_data
+            else None
+        )
+        for i in range(total_steps):
+            step_idx = int(self.step_indices[i])
+            next_step_idx = int(self.next_step_indices[i])
+            if self.states is not None and i < len(self.states):
+                s = self.states[i]
+                s_next = self.next_states[i] if self.next_states is not None and i < len(self.next_states) else s
+            elif pack is not None:
+                s = pack.state_array[step_idx]
+                s_next = pack.state_array[next_step_idx]
+            else:
+                s = np.zeros(2, dtype=np.float32)
+                s_next = np.zeros(2, dtype=np.float32)
+
+            if pack is not None and pack.regime_grid_ids_tensor is not None:
+                regime_grid_id = int(pack.regime_grid_ids_array[step_idx])
+            elif self.regime_grid_ids is not None and i < len(self.regime_grid_ids):
+                regime_grid_id = int(self.regime_grid_ids[i])
+            else:
+                regime_grid_id = 0
+
+            prev_act = int(self.previous_actions[i])
+            if self.q_values is not None and i < len(self.q_values):
+                q_val = self.q_values[i]
+            elif pack is not None and pack.q_table_tensor is not None:
+                q_val = pack.q_table_array[step_idx][prev_act]
+            else:
+                act_dim = int(self.avaliable_actions.shape[1]) if self.avaliable_actions.ndim > 1 else 9
+                q_val = np.zeros(act_dim, dtype=np.float32)
+
+            info = {
+                "previous_action": prev_act,
+                "avaliable_action": self.avaliable_actions[i],
+                "funding_count_down_hour": float(self.hours[i]),
+                "funding_count_down_minute": float(self.minutes[i]),
+                "trading_info": self.trading_infos[i],
+                "q_value": q_val,
+                "regime_grid_id": regime_grid_id,
+            }
+            next_prev_act = int(self.next_previous_actions[i])
+            next_info = {
+                "previous_action": next_prev_act,
+                "avaliable_action": self.next_avaliable_actions[i],
+                "funding_count_down_hour": float(self.next_hours[i]),
+                "funding_count_down_minute": float(self.next_minutes[i]),
+                "trading_info": self.next_trading_infos[i],
+                "regime_grid_id": regime_grid_id,
+            }
+            transition = (
+                s,
+                info,
+                int(self.actions[i]),
+                float(self.rewards[i]),
+                s_next,
+                next_info,
+                bool(self.dones[i]),
+            )
+            records.append(
+                WorkerTransitionRecord(
+                    step_index=step_idx,
+                    transition=transition,
+                    td_error=float(self.td_errors[i]),
+                )
+            )
+        return records
+
+
+def accumulate_compact_trajectory_n_step(
+    raw_step_indices: list[int] | np.ndarray,
+    raw_actions: list[int] | np.ndarray,
+    raw_rewards: list[float] | np.ndarray,
+    raw_dones: list[bool] | np.ndarray,
+    raw_td_errors: list[float] | np.ndarray,
+    raw_previous_actions: list[float] | np.ndarray,
+    raw_trading_infos: list[np.ndarray] | np.ndarray,
+    raw_avaliable_actions: list[np.ndarray] | np.ndarray,
+    raw_hours: list[float] | np.ndarray,
+    raw_minutes: list[float] | np.ndarray,
+    raw_next_previous_actions: list[float] | np.ndarray,
+    raw_next_trading_infos: list[np.ndarray] | np.ndarray,
+    raw_next_avaliable_actions: list[np.ndarray] | np.ndarray,
+    raw_next_hours: list[float] | np.ndarray,
+    raw_next_minutes: list[float] | np.ndarray,
+    raw_q_values: list[np.ndarray] | np.ndarray | None = None,
+    raw_regime_grid_ids: list[int] | np.ndarray | None = None,
+    raw_states: list[np.ndarray] | np.ndarray | None = None,
+    raw_next_states: list[np.ndarray] | np.ndarray | None = None,
+    gamma: float = 0.99,
+    n_step: int = 12,
+    df_index: int = 0,
+) -> CompactTrajectoryRecord:
+    """在紧凑纯数值流上直接完成 N 步贴现回报与截断目标步索引计算。"""
+    total_steps = len(raw_actions)
+    if total_steps == 0:
+        return CompactTrajectoryRecord(
+            df_index=df_index,
+            step_indices=np.empty(0, dtype=np.int32),
+            actions=np.empty(0, dtype=np.int64),
+            rewards=np.empty(0, dtype=np.float32),
+            next_step_indices=np.empty(0, dtype=np.int32),
+            dones=np.empty(0, dtype=bool),
+            td_errors=np.empty(0, dtype=np.float32),
+            previous_actions=np.empty(0, dtype=np.float32),
+            next_previous_actions=np.empty(0, dtype=np.float32),
+            trading_infos=np.empty((0, 4), dtype=np.float32),
+            next_trading_infos=np.empty((0, 4), dtype=np.float32),
+            avaliable_actions=np.empty((0, 0), dtype=np.float32),
+            next_avaliable_actions=np.empty((0, 0), dtype=np.float32),
+            hours=np.empty(0, dtype=np.float32),
+            minutes=np.empty(0, dtype=np.float32),
+            next_hours=np.empty(0, dtype=np.float32),
+            next_minutes=np.empty(0, dtype=np.float32),
+        )
+
+    gammas = np.array([gamma ** i for i in range(n_step)], dtype=np.float32)
+    acc_rewards = np.zeros(total_steps, dtype=np.float32)
+    next_step_indices = np.zeros(total_steps, dtype=np.int32)
+    acc_dones = np.zeros(total_steps, dtype=bool)
+
+    acc_next_prev_actions = np.zeros(total_steps, dtype=np.float32)
+    acc_next_hours = np.zeros(total_steps, dtype=np.float32)
+    acc_next_minutes = np.zeros(total_steps, dtype=np.float32)
+
+    acc_next_trading_infos = []
+    acc_next_avail_actions = []
+    acc_next_states = [] if raw_next_states is not None else None
+
+    for t in range(total_steps):
+        lookahead_len = min(n_step, total_steps - t)
+        discounted_r = 0.0
+        terminal_idx = -1
+        for k in range(lookahead_len):
+            step_k = t + k
+            discounted_r += gammas[k] * float(raw_rewards[step_k])
+            if raw_dones[step_k]:
+                terminal_idx = step_k
+                break
+
+        acc_rewards[t] = discounted_r
+        if terminal_idx != -1:
+            next_step_indices[t] = raw_step_indices[terminal_idx]
+            acc_dones[t] = True
+            acc_next_prev_actions[t] = raw_next_previous_actions[terminal_idx]
+            acc_next_trading_infos.append(raw_next_trading_infos[terminal_idx])
+            acc_next_avail_actions.append(raw_next_avaliable_actions[terminal_idx])
+            acc_next_hours[t] = raw_next_hours[terminal_idx]
+            acc_next_minutes[t] = raw_next_minutes[terminal_idx]
+            if acc_next_states is not None:
+                acc_next_states.append(raw_next_states[terminal_idx])
+        elif t + n_step < total_steps:
+            target_step = t + n_step
+            next_step_indices[t] = raw_step_indices[target_step]
+            acc_dones[t] = False
+            acc_next_prev_actions[t] = raw_previous_actions[target_step]
+            acc_next_trading_infos.append(raw_trading_infos[target_step])
+            acc_next_avail_actions.append(raw_avaliable_actions[target_step])
+            acc_next_hours[t] = raw_hours[target_step]
+            acc_next_minutes[t] = raw_minutes[target_step]
+            if acc_next_states is not None:
+                acc_next_states.append(raw_states[target_step])
+        else:
+            next_step_indices[t] = raw_step_indices[-1]
+            acc_dones[t] = True
+            acc_next_prev_actions[t] = raw_next_previous_actions[-1]
+            acc_next_trading_infos.append(raw_next_trading_infos[-1])
+            acc_next_avail_actions.append(raw_next_avaliable_actions[-1])
+            acc_next_hours[t] = raw_next_hours[-1]
+            acc_next_minutes[t] = raw_next_minutes[-1]
+            if acc_next_states is not None:
+                acc_next_states.append(raw_next_states[-1])
+
+    q_vals_arr = (
+        np.ascontiguousarray(np.stack(raw_q_values), dtype=np.float32)
+        if raw_q_values is not None and len(raw_q_values) > 0
+        else None
+    )
+    regime_ids_arr = (
+        np.ascontiguousarray(raw_regime_grid_ids, dtype=np.int32)
+        if raw_regime_grid_ids is not None and len(raw_regime_grid_ids) > 0
+        else None
+    )
+    states_arr = (
+        np.ascontiguousarray(np.stack(raw_states), dtype=np.float32)
+        if raw_states is not None and len(raw_states) > 0
+        else None
+    )
+    next_states_arr = (
+        np.ascontiguousarray(np.stack(acc_next_states), dtype=np.float32)
+        if acc_next_states is not None and len(acc_next_states) > 0
+        else None
+    )
+
+    return CompactTrajectoryRecord(
+        df_index=df_index,
+        step_indices=np.ascontiguousarray(raw_step_indices, dtype=np.int32),
+        actions=np.ascontiguousarray(raw_actions, dtype=np.int64),
+        rewards=acc_rewards,
+        next_step_indices=next_step_indices,
+        dones=acc_dones,
+        td_errors=np.ascontiguousarray(raw_td_errors, dtype=np.float32),
+        previous_actions=np.ascontiguousarray(raw_previous_actions, dtype=np.float32),
+        next_previous_actions=acc_next_prev_actions,
+        trading_infos=np.ascontiguousarray(np.stack(raw_trading_infos), dtype=np.float32),
+        next_trading_infos=np.ascontiguousarray(np.stack(acc_next_trading_infos), dtype=np.float32),
+        avaliable_actions=np.ascontiguousarray(np.stack(raw_avaliable_actions), dtype=np.float32),
+        next_avaliable_actions=np.ascontiguousarray(np.stack(acc_next_avail_actions), dtype=np.float32),
+        hours=np.ascontiguousarray(raw_hours, dtype=np.float32),
+        minutes=np.ascontiguousarray(raw_minutes, dtype=np.float32),
+        next_hours=acc_next_hours,
+        next_minutes=acc_next_minutes,
+        q_values=q_vals_arr,
+        regime_grid_ids=regime_ids_arr,
+        states=states_arr,
+        next_states=next_states_arr,
+    )
+
+
+def build_spatio_temporal_semantic_key(
+    df_index: int,
+    step_index: int,
+    previous_action: int,
+    action: int,
+    pos_dir: int,
+    dur_bucket: int,
+) -> tuple[int, int, int, int, int, int]:
+    """提取经验的时空决策去重键：(df_index, step_index, previous_action, action, pos_dir, dur_bucket)。"""
+    return (
+        int(df_index),
+        int(step_index),
+        int(previous_action),
+        int(action),
+        int(pos_dir),
+        int(dur_bucket),
+    )
 
 
 def build_semantic_transition_key(
@@ -159,9 +437,11 @@ class RegimeStratifiedReplayBuffer:
         num_grids: int = 9,
         state_dim: int | None = None,
         action_dim: int | None = None,
+        shared_market_data: Any | None = None,
     ) -> None:
         self.num_grids = num_grids
         self.grid_capacity = total_buffer_size // num_grids
+        self.shared_market_data = shared_market_data
         self.batch_size = batch_size
         self.device = torch.device(device) if isinstance(device, str) else device
         self.seed = seed
@@ -316,9 +596,175 @@ class RegimeStratifiedReplayBuffer:
         return grid_id
 
     def add_round_records_bulk(self, round_records: list[Any]) -> int:
-        """批量聚合写入一轮探索记录，在 CPU 端去重后单次 DMA 拷贝写入目标张量。"""
+        """批量聚合写入探索记录，优先使用紧凑时空去重与批量 GPU 张量写入。"""
         if not round_records:
             return 0
+
+        has_compact = (
+            self.shared_market_data is not None
+            and any(getattr(r, "compact_trajectory", None) is not None for r in round_records)
+        )
+        if has_compact:
+            return self._add_compact_records_bulk(round_records)
+        return self._add_legacy_records_bulk(round_records)
+
+    def _add_compact_records_bulk(self, round_records: list[Any]) -> int:
+        """基于紧凑时空数值流与 SharedMarketDataPack 的纳秒级去重与显存直写快速流水线。"""
+        duplicate_count = 0
+        pending_by_grid: dict[int, dict[int, tuple[Any, int, Any, int]]] = {
+            g: {} for g in range(self.num_grids)
+        }
+
+        sorted_results = sorted(round_records, key=lambda r: getattr(r, "df_index", 0))
+
+        for result in sorted_results:
+            ct = getattr(result, "compact_trajectory", None)
+            if ct is None:
+                continue
+            df_index = result.df_index
+            if self.shared_market_data is None or df_index not in self.shared_market_data:
+                continue
+            pack = self.shared_market_data[df_index]
+            total_steps = len(ct.step_indices)
+            if total_steps == 0:
+                continue
+
+            if not self._initialized:
+                s_dim = int(pack.state_tensor.shape[1])
+                a_dim = int(ct.avaliable_actions.shape[1])
+                self._init_tensors(s_dim, a_dim)
+
+            for i in range(total_steps):
+                step_idx = int(ct.step_indices[i])
+                grid_id = (
+                    int(ct.regime_grid_ids[i])
+                    if ct.regime_grid_ids is not None
+                    else int(pack.regime_grid_ids_array[step_idx])
+                )
+                if grid_id < 0 or grid_id >= self.num_grids:
+                    duplicate_count += 1
+                    continue
+
+                action = int(ct.actions[i])
+                prev_action = int(ct.previous_actions[i])
+                pos_dir = int(np.round(float(ct.trading_infos[i, 0])))
+                raw_steps = int(float(ct.trading_infos[i, 3]) * 180)
+                if raw_steps <= 2:
+                    dur_bucket = 0
+                elif raw_steps <= 12:
+                    dur_bucket = 1
+                elif raw_steps <= 36:
+                    dur_bucket = 2
+                else:
+                    dur_bucket = 3
+
+                semantic_key = build_spatio_temporal_semantic_key(
+                    df_index=df_index,
+                    step_index=step_idx,
+                    previous_action=prev_action,
+                    action=action,
+                    pos_dir=pos_dir,
+                    dur_bucket=dur_bucket,
+                )
+                td_error = float(ct.td_errors[i])
+                tracker = self.seen_fingerprints[grid_id]
+
+                if semantic_key in tracker:
+                    old_idx, old_td_error = tracker[semantic_key]
+                    if td_error > old_td_error:
+                        tracker[semantic_key] = (old_idx, td_error)
+                        pending_by_grid[grid_id][old_idx] = (pack, df_index, ct, i)
+                        self.total_added_count += 1
+                    else:
+                        duplicate_count += 1
+                    continue
+
+                if self.grid_sizes[grid_id] < self.grid_capacity:
+                    idx = self.grid_sizes[grid_id]
+                    self.grid_sizes[grid_id] += 1
+                    tracker[semantic_key] = (idx, td_error)
+                    self.keys_by_idx[grid_id][idx] = semantic_key
+                    pending_by_grid[grid_id][idx] = (pack, df_index, ct, i)
+                else:
+                    idx = self.write_ptrs[grid_id]
+                    old_key = self.keys_by_idx[grid_id][idx]
+                    if old_key in tracker:
+                        del tracker[old_key]
+                    tracker[semantic_key] = (idx, td_error)
+                    self.keys_by_idx[grid_id][idx] = semantic_key
+                    pending_by_grid[grid_id][idx] = (pack, df_index, ct, i)
+                    self.write_ptrs[grid_id] = (idx + 1) % self.grid_capacity
+
+                self.total_added_count += 1
+
+        device = self.device
+        for g, pending in pending_by_grid.items():
+            if not pending:
+                continue
+            indices = list(pending.keys())
+            items = [pending[idx] for idx in indices]
+            idx_tensor = torch.tensor(indices, dtype=torch.long, device=device)
+
+            states_list = []
+            next_states_list = []
+            q_values_list = []
+
+            for pack, df_idx, ct, i in items:
+                step_i = int(ct.step_indices[i])
+                next_step_i = int(ct.next_step_indices[i])
+                states_list.append(pack.state_array[step_i])
+                next_states_list.append(pack.state_array[next_step_i])
+                if ct.q_values is not None:
+                    q_values_list.append(ct.q_values[i])
+                elif pack.q_table_tensor is not None:
+                    prev_act = int(ct.previous_actions[i])
+                    q_values_list.append(pack.q_table_array[step_i][prev_act])
+                else:
+                    q_values_list.append(np.zeros(self.action_dim, dtype=np.float32))
+
+            states_np = np.ascontiguousarray(np.stack(states_list), dtype=np.float32)
+            next_states_np = np.ascontiguousarray(np.stack(next_states_list), dtype=np.float32)
+            q_values_np = np.ascontiguousarray(np.stack(q_values_list), dtype=np.float32)
+
+            actions_np = np.ascontiguousarray([[ct.actions[i]] for _, _, ct, i in items], dtype=np.int64)
+            rewards_np = np.ascontiguousarray([[ct.rewards[i]] for _, _, ct, i in items], dtype=np.float32)
+            dones_np = np.ascontiguousarray([[1.0 if ct.dones[i] else 0.0] for _, _, ct, i in items], dtype=np.float32)
+
+            prev_actions_np = np.ascontiguousarray([ct.previous_actions[i] for _, _, ct, i in items], dtype=np.float32)
+            avail_actions_np = np.ascontiguousarray(np.stack([ct.avaliable_actions[i] for _, _, ct, i in items]), dtype=np.float32)
+            hours_np = np.ascontiguousarray([ct.hours[i] for _, _, ct, i in items], dtype=np.float32)
+            minutes_np = np.ascontiguousarray([ct.minutes[i] for _, _, ct, i in items], dtype=np.float32)
+            trading_infos_np = np.ascontiguousarray(np.stack([ct.trading_infos[i] for _, _, ct, i in items]), dtype=np.float32)
+
+            next_prev_actions_np = np.ascontiguousarray([ct.next_previous_actions[i] for _, _, ct, i in items], dtype=np.float32)
+            next_avail_actions_np = np.ascontiguousarray(np.stack([ct.next_avaliable_actions[i] for _, _, ct, i in items]), dtype=np.float32)
+            next_hours_np = np.ascontiguousarray([ct.next_hours[i] for _, _, ct, i in items], dtype=np.float32)
+            next_minutes_np = np.ascontiguousarray([ct.next_minutes[i] for _, _, ct, i in items], dtype=np.float32)
+            next_trading_infos_np = np.ascontiguousarray(np.stack([ct.next_trading_infos[i] for _, _, ct, i in items]), dtype=np.float32)
+
+            self.states[g][idx_tensor] = torch.from_numpy(states_np).to(device, non_blocking=True)
+            self.actions[g][idx_tensor] = torch.from_numpy(actions_np).to(device, non_blocking=True)
+            self.rewards[g][idx_tensor] = torch.from_numpy(rewards_np).to(device, non_blocking=True)
+            self.next_states[g][idx_tensor] = torch.from_numpy(next_states_np).to(device, non_blocking=True)
+            self.dones[g][idx_tensor] = torch.from_numpy(dones_np).to(device, non_blocking=True)
+
+            self.previous_actions[g][idx_tensor] = torch.from_numpy(prev_actions_np).to(device, non_blocking=True)
+            self.avaliable_actions[g][idx_tensor] = torch.from_numpy(avail_actions_np).to(device, non_blocking=True)
+            self.hours[g][idx_tensor] = torch.from_numpy(hours_np).to(device, non_blocking=True)
+            self.minutes[g][idx_tensor] = torch.from_numpy(minutes_np).to(device, non_blocking=True)
+            self.trading_infos[g][idx_tensor] = torch.from_numpy(trading_infos_np).to(device, non_blocking=True)
+            self.q_values[g][idx_tensor] = torch.from_numpy(q_values_np).to(device, non_blocking=True)
+
+            self.next_previous_actions[g][idx_tensor] = torch.from_numpy(next_prev_actions_np).to(device, non_blocking=True)
+            self.next_avaliable_actions[g][idx_tensor] = torch.from_numpy(next_avail_actions_np).to(device, non_blocking=True)
+            self.next_hours[g][idx_tensor] = torch.from_numpy(next_hours_np).to(device, non_blocking=True)
+            self.next_minutes[g][idx_tensor] = torch.from_numpy(next_minutes_np).to(device, non_blocking=True)
+            self.next_trading_infos[g][idx_tensor] = torch.from_numpy(next_trading_infos_np).to(device, non_blocking=True)
+
+        return duplicate_count
+
+    def _add_legacy_records_bulk(self, round_records: list[Any]) -> int:
+        """传统基于元组与字典记录的入池链路（保留完整兼容性）。"""
         from RL.DiHFT.low_level.parallel_diverse_train import sort_round_records
         records = sort_round_records(round_records)
 
