@@ -35,11 +35,11 @@ write_selection_outputs: false
 result_root: analysis_result/DiHFT/feature_horizon_audit/fu/10min
 
 reference_price_protocol:
-  field: LastPrice
+  field: close
   observation: latest_valid_snapshot_at_or_before_target
   same_contract: true
   same_session: true
-  max_quote_age_seconds: 60
+  max_quote_age_seconds: 600
   fallback: none
 
 evidence_protocol:

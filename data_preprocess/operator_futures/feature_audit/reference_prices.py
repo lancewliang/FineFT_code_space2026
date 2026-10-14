@@ -47,15 +47,28 @@ class ReferencePriceProvider:
             data = json.load(f)
 
         price_file = Path(data["price_file"])
-        if price_file.suffix == ".feather":
+        price_field = data.get("price_field", "LastPrice")
+        max_age = int(data.get("max_quote_age_seconds", 60))
+
+        if price_file.is_dir():
+            feather_files = sorted(list(price_file.glob("*.feather")))
+            if feather_files:
+                frames = [pl.read_ipc(ff).select(["contract", "timestamp", price_field]) for ff in feather_files]
+                df = pl.concat(frames)
+            else:
+                parquet_files = sorted(list(price_file.glob("*.parquet")))
+                if parquet_files:
+                    frames = [pl.read_parquet(pf).select(["contract", "timestamp", price_field]) for pf in parquet_files]
+                    df = pl.concat(frames)
+                else:
+                    raise FileNotFoundError(f"No feather or parquet files found in price directory: {price_file}")
+        elif price_file.suffix == ".feather":
             df = pl.read_ipc(price_file)
         elif price_file.suffix == ".parquet":
             df = pl.read_parquet(price_file)
         else:
             df = pl.read_csv(price_file)
 
-        price_field = data.get("price_field", "LastPrice")
-        max_age = int(data.get("max_quote_age_seconds", 60))
         return cls(df, price_field=price_field, max_quote_age_seconds=max_age)
 
     def lookup_as_of(self, contract: str, target_dt: datetime) -> PriceLookupResult:

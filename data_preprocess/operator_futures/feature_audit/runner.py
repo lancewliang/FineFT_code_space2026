@@ -36,7 +36,16 @@ class AuditRunner:
         # 2. Split manifest & Test Sealing
         with open(self.config.split_manifest, "r", encoding="utf-8") as f:
             split_manifest = json.load(f)
-        test_contracts = set(split_manifest.get("test_contracts", split_manifest.get("sets", {}).get("test", [])))
+        raw_test = split_manifest.get("test_contracts")
+        if raw_test is None:
+            test_val = split_manifest.get("sets", {}).get("test", [])
+            if isinstance(test_val, dict):
+                raw_test = [c.get("contract") if isinstance(c, dict) else c for c in test_val.get("contracts", [])]
+            elif isinstance(test_val, list):
+                raw_test = [c.get("contract") if isinstance(c, dict) else c for c in test_val]
+            else:
+                raw_test = []
+        test_contracts = set(raw_test)
 
         # 3. Adapters
         calendar = CalendarAdapter.from_manifest(self.config.calendar_manifest)

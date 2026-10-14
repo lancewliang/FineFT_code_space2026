@@ -38,6 +38,14 @@ _Avoid_: 乘数、合约乘数
 商品期货的有效交易时段，用于判断 quote gap 是否属于跨 session 缺口。
 _Avoid_: 交易时段、session
 
+**分集交易日历 (Per-Set Trading Calendar)**:
+按 Train、Valid、Test 子集生命周期独立生成的交易日历清单，仅界定对应数据分区内的有效交易小节。
+_Avoid_: 全局日历、静态硬编码日历
+
+**动态 Session 激活 (Dynamic Session Activation)**:
+以品种法定交易时段为模板、依据真实特征数据时间戳存在性动态决定是否开启夜盘的生成机制。
+_Avoid_: 数据聚类时段、时间推算日历
+
 **下采样 (Downscale)**:
 从秒级原始快照聚合到目标频率（如 5min）的过程，使用右闭右标窗口语义。
 _Avoid_: 降采样、聚合

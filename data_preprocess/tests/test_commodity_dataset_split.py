@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from pathlib import Path
 
 import polars as pl
@@ -6,8 +7,13 @@ import pytest
 
 from operator_futures.dataset_split.dataset_split import (
     calculate_split_boundaries,
+    generate_trading_calendar,
     run_dataset_split,
 )
+try:
+    from operator_futures.feature_audit.calendar_adapter import CalendarAdapter
+except ImportError:
+    from data_preprocess.operator_futures.feature_audit.calendar_adapter import CalendarAdapter
 
 
 def _contract(name, dates):
@@ -291,3 +297,108 @@ def test_run_dataset_split_requires_non_empty_train_valid_test_sets(tmp_path):
             start_date="2026-01-01",
             end_date="2026-04-01",
         )
+
+
+def test_generate_trading_calendar_dynamic_activation_day_only_and_night():
+    trading_days = ["2023-01-03", "2023-01-04", "2023-01-05"]
+    # 2023-01-03 has NO preceding night (holiday / early period)
+    # 2023-01-04 has preceding night on 2023-01-03 21:00
+    # 2023-01-05 has NO preceding night (holiday eve)
+    timestamps = {
+        datetime(2023, 1, 3, 9, 10),
+        datetime(2023, 1, 3, 15, 0),
+        datetime(2023, 1, 3, 21, 0),  # Night session for 2023-01-04
+        datetime(2023, 1, 3, 22, 50),
+        datetime(2023, 1, 4, 9, 10),
+        datetime(2023, 1, 4, 15, 0),
+        datetime(2023, 1, 5, 9, 10),
+        datetime(2023, 1, 5, 15, 0),
+    }
+    cal = generate_trading_calendar("fu", trading_days, timestamps)
+    assert cal["symbol"] == "fu"
+    days = cal["trading_days"]
+    assert len(days) == 3
+
+    # 2023-01-03: day only
+    assert days[0]["trading_day"] == "20230103"
+    assert [s["name"] for s in days[0]["sessions"]] == ["m1", "m2", "aft"]
+    assert days[0]["sessions"][0]["start"] == "2023-01-03 09:00:00"
+    assert days[0]["sessions"][-1]["end"] == "2023-01-03 15:00:00"
+
+    # 2023-01-04: night + day
+    assert days[1]["trading_day"] == "20230104"
+    assert [s["name"] for s in days[1]["sessions"]] == ["night", "m1", "m2", "aft"]
+    assert days[1]["sessions"][0]["start"] == "2023-01-03 21:00:00"
+    assert days[1]["sessions"][0]["end"] == "2023-01-03 23:00:00"
+    assert days[1]["sessions"][-1]["end"] == "2023-01-04 15:00:00"
+
+    # 2023-01-05: day only
+    assert days[2]["trading_day"] == "20230105"
+    assert [s["name"] for s in days[2]["sessions"]] == ["m1", "m2", "aft"]
+
+
+def test_generate_trading_calendar_monday_with_friday_night():
+    # 2023-01-06 is Friday, 2023-01-09 is Monday
+    trading_days = ["2023-01-06", "2023-01-09"]
+    timestamps = {
+        datetime(2023, 1, 6, 9, 10),
+        datetime(2023, 1, 6, 15, 0),
+        datetime(2023, 1, 6, 21, 0),  # Friday night -> belongs to Monday 2023-01-09
+        datetime(2023, 1, 6, 22, 50),
+        datetime(2023, 1, 9, 9, 10),
+        datetime(2023, 1, 9, 15, 0),
+    }
+    cal = generate_trading_calendar("fu", trading_days, timestamps)
+    monday_cal = cal["trading_days"][1]
+    assert monday_cal["trading_day"] == "20230109"
+    assert monday_cal["sessions"][0]["name"] == "night"
+    assert monday_cal["sessions"][0]["start"] == "2023-01-06 21:00:00"
+    assert monday_cal["sessions"][0]["end"] == "2023-01-06 23:00:00"
+    assert monday_cal["sessions"][-1]["end"] == "2023-01-09 15:00:00"
+
+
+def test_run_dataset_split_creates_per_set_calendar_manifests(tmp_path):
+    summary_path = (
+        tmp_path
+        / "PREPROCESS_DATASET"
+        / "commodity-futures"
+        / "CONTINUOUS_RAW"
+        / "fu"
+        / "main_contract_summary.json"
+    )
+    days = ["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04", "2026-01-05", "2026-01-06"]
+    _write_summary(summary_path, [_contract("fu2601", days)])
+    _write_scale_file(tmp_path, "fu2601", days)
+
+    manifest = run_dataset_split(
+        summary_path=summary_path,
+        input_root=tmp_path / "PREPROCESS_DATASET/commodity-futures/SCALE_SAVE",
+        output_root=tmp_path / "dataset/5min",
+        symbol="fu",
+        target_freq="5min",
+        start_date="2026-01-01",
+        end_date="2026-04-01",
+    )
+
+    dataset_root = tmp_path / "dataset" / "5min" / "fu"
+    # Verify per-set calendar manifests exist
+    train_cal_file = dataset_root / "train" / "calendar_manifest.json"
+    valid_cal_file = dataset_root / "valid" / "calendar_manifest.json"
+    test_cal_file = dataset_root / "test" / "calendar_manifest.json"
+
+    assert train_cal_file.exists()
+    assert valid_cal_file.exists()
+    assert test_cal_file.exists()
+
+    # Verify registered in manifest
+    assert manifest["sets"]["train"]["calendar_manifest_path"] == str(train_cal_file)
+    assert manifest["sets"]["valid"]["calendar_manifest_path"] == str(valid_cal_file)
+    assert manifest["sets"]["test"]["calendar_manifest_path"] == str(test_cal_file)
+
+    # Verify calendar file can be cleanly parsed by CalendarAdapter
+    adapter = CalendarAdapter.from_manifest(train_cal_file)
+    assert len(adapter.trading_days) > 0
+    for td in adapter.trading_days:
+        close_dt, ret_td = adapter.get_trading_day_close(td)
+        assert close_dt is not None
+        assert close_dt.strftime("%H:%M:%S") == "15:00:00"

@@ -1,10 +1,25 @@
 import argparse
 import json
 import math
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from pathlib import Path
 
 import polars as pl
+
+try:
+    from operator_futures.commodity.config import get_commodity_config, TradingSession
+except ImportError:
+    try:
+        from data_preprocess.operator_futures.commodity.config import (
+            get_commodity_config,
+            TradingSession,
+        )
+    except ImportError:
+        get_commodity_config = None
+        TradingSession = None
+
+from collections import namedtuple
+_FallbackSession = namedtuple("_FallbackSession", ["start", "end"])
 
 
 def _parse_date(value):
@@ -21,6 +36,98 @@ def _collect_union_dates(summary):
         for day in contract.get("trading_days", []):
             dates.add(str(day["date"]))
     return sorted(dates)
+
+
+def generate_trading_calendar(symbol, trading_days, timestamps):
+    """Generate trading calendar manifest with dynamic session activation from actual timestamps."""
+    ts_set = set()
+    if timestamps:
+        for ts in timestamps:
+            if isinstance(ts, datetime):
+                ts_set.add(ts.replace(tzinfo=None) if ts.tzinfo is not None else ts)
+
+    raw_sessions = None
+    if get_commodity_config is not None:
+        try:
+            cfg = get_commodity_config(symbol)
+            raw_sessions = cfg.trading_sessions
+        except Exception:
+            raw_sessions = None
+
+    if not raw_sessions:
+        raw_sessions = (
+            _FallbackSession(time(9, 0), time(10, 15)),
+            _FallbackSession(time(10, 30), time(11, 30)),
+            _FallbackSession(time(13, 30), time(15, 0)),
+            _FallbackSession(time(21, 0), time(23, 0)),
+        )
+
+    day_sessions = []
+    night_session = None
+    for s in raw_sessions:
+        if s.start >= time(20, 0) or s.start < time(4, 0):
+            night_session = s
+        else:
+            day_sessions.append(s)
+    day_sessions.sort(key=lambda s: s.start)
+
+    parsed_dates = []
+    for td in trading_days:
+        td_str = str(td)
+        try:
+            d = datetime.strptime(td_str, "%Y-%m-%d").date()
+        except ValueError:
+            d = datetime.strptime(td_str, "%Y%m%d").date()
+        parsed_dates.append(d)
+    parsed_dates = sorted(list(set(parsed_dates)))
+
+    calendar_days = []
+    prev_date = None
+    for cur_date in parsed_dates:
+        td_key = cur_date.strftime("%Y%m%d")
+        date_str = cur_date.strftime("%Y-%m-%d")
+
+        day_entries = []
+        for idx, s in enumerate(day_sessions):
+            name = "aft" if s.start >= time(13, 0) else f"m{idx + 1}"
+            day_entries.append({
+                "name": name,
+                "start": f"{date_str} {s.start.strftime('%H:%M:%S')}",
+                "end": f"{date_str} {s.end.strftime('%H:%M:%S')}",
+            })
+
+        night_entry = None
+        if night_session is not None and ts_set:
+            open_dt = datetime.combine(cur_date, time(9, 0))
+            lower_bound = (
+                datetime.combine(prev_date, time(15, 0))
+                if prev_date is not None
+                else open_dt - timedelta(days=4)
+            )
+            matching_night_dates = {
+                ts.date()
+                for ts in ts_set
+                if lower_bound < ts < open_dt and (ts.hour >= 20 or ts.hour < 4)
+            }
+            if matching_night_dates:
+                night_date = max(matching_night_dates)
+                night_entry = {
+                    "name": "night",
+                    "start": f"{night_date.strftime('%Y-%m-%d')} {night_session.start.strftime('%H:%M:%S')}",
+                    "end": f"{night_date.strftime('%Y-%m-%d')} {night_session.end.strftime('%H:%M:%S')}",
+                }
+
+        sessions = [night_entry] + day_entries if night_entry is not None else day_entries
+        calendar_days.append({
+            "trading_day": td_key,
+            "sessions": sessions,
+        })
+        prev_date = cur_date
+
+    return {
+        "symbol": symbol,
+        "trading_days": calendar_days,
+    }
 
 
 def calculate_split_boundaries(summary, train_ratio=5, valid_ratio=3, test_ratio=2):
@@ -193,6 +300,7 @@ def write_split_outputs(manifest):
     for set_name, set_info in manifest["sets"].items():
         frames = []
         total_count = 0
+        set_timestamps = set()
         for contract_info in set_info["contracts"]:
             input_path = Path(contract_info["input_path"])
             if not input_path.exists():
@@ -213,6 +321,13 @@ def write_split_outputs(manifest):
             contract_info["output_row_count"] = output_df.height
             total_count += output_df.height
             frames.append(output_df)
+            if "timestamp" in output_df.columns:
+                ts_series = output_df["timestamp"]
+                if ts_series.dtype in (pl.Utf8, pl.String):
+                    ts_series = ts_series.str.strptime(
+                        pl.Datetime, "%Y-%m-%d %H:%M:%S", strict=False
+                    )
+                set_timestamps.update(ts_series.unique().drop_nulls().to_list())
 
         if not frames:
             raise ValueError(f"cannot write {set_name}.feather without contract outputs")
@@ -222,6 +337,24 @@ def write_split_outputs(manifest):
         merged.write_ipc(merged_output_path)
         set_info["contracts_total_count"] = total_count
         set_info["merged_output_row_count"] = merged.height
+
+        # Generate trading calendar for this set
+        set_trading_days = sorted(
+            list({day for c in set_info["contracts"] for day in c["trading_days"]})
+        )
+        set_dir = Path(set_info["merged_output_path"]).parent / set_name
+        set_dir.mkdir(parents=True, exist_ok=True)
+        calendar_path = set_dir / "calendar_manifest.json"
+        calendar_data = generate_trading_calendar(
+            symbol=manifest.get("symbol", "fu"),
+            trading_days=set_trading_days,
+            timestamps=set_timestamps,
+        )
+        calendar_path.write_text(
+            json.dumps(calendar_data, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        set_info["calendar_manifest_path"] = str(calendar_path)
 
 
 def run_dataset_split(
