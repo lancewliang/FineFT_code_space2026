@@ -1,0 +1,10 @@
+schema_version: multi_horizon_audit.comparison.v1
+protocol_version: multi_horizon_audit.research.v1
+comparison_type: matched_frequency
+
+# 待比对的已完成审计运行输出目录
+run_a: analysis_result/DiHFT/feature_horizon_audit/fu/10min
+run_b: analysis_result/DiHFT/feature_horizon_audit/fu/30min
+
+# 比较结果输出目录
+output_dir: analysis_result/DiHFT/feature_horizon_audit/fu/comparison_10min_vs_30min
