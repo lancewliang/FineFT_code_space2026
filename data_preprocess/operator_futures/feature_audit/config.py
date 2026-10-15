@@ -156,4 +156,7 @@ class AuditConfig:
         if self.write_selection_outputs:
             errors.append("write_selection_outputs must be False to preserve audit independence")
 
+        if self.legacy_selection_manifest and not Path(self.legacy_selection_manifest).is_file():
+            errors.append(f"Legacy selection manifest not found: {self.legacy_selection_manifest}")
+
         return errors

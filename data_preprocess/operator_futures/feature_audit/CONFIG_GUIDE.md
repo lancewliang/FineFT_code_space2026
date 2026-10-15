@@ -46,6 +46,17 @@
 | `result_root` | string | 是 | `analysis_result/DiHFT/feature_horizon_audit/fu/10min` | 审计结果产物持久化根目录。 |
 | `legacy_selection_manifest` | string | 否 | `null` | 可选的历史三流特征选择结果路径，仅作为对比注释使用，不参与特征过滤。 |
 
+`legacy_selection_manifest` 支持原选择器的嵌套三流结构：
+`vae_slope_stream.selected_features`、`vae_volatility_stream.selected_features`、
+`rl_stream.selected_features`，以及旧的顶层 `*_features` 格式。
+显式配置的文件缺失或格式不受支持时会报错；省略该配置仍可独立运行审计。
+同一特征的多流归属用逗号连接，原始清单不被修改。
+
+运行同时输出 `legacy_selection_comparison.csv`，记录入选状态、多流归属、
+按流保留的明确 `* Dropped` 原因及源文件 SHA-256；`Hard Filter` 和
+`Composite Score` 是阶段保留名单，不作为剔除原因。没有明确记录的原因标为
+`unknown`，不能由“未入选”推断“短期限 IC 不合格”。这项配置不控制 CI 或共同样本比较。
+
 ### 2.4 参考价协议（`reference_price_protocol`）
 
 | 参数名 | 类型 | 必填 | 默认值 | 说明 |

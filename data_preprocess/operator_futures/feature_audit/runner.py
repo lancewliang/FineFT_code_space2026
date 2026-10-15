@@ -11,6 +11,7 @@ from .calendar_adapter import CalendarAdapter
 from .config import AuditConfig
 from .contracts import FeatureMetricResult, InvalidReason
 from .eligibility import qualify_candidates
+from .legacy_selection import load_legacy_selection
 from .metrics import compute_spearman_correlation, compute_spearman_matrix
 from .reference_prices import ReferencePriceProvider
 from .report import generate_audit_report, generate_matrices
@@ -29,6 +30,11 @@ class AuditRunner:
         errors = self.config.validate()
         if errors:
             raise ValueError(f"Configuration validation failed: {'; '.join(errors)}")
+
+        legacy_selection = (
+            load_legacy_selection(self.config.legacy_selection_manifest)
+            if self.config.legacy_selection_manifest else None
+        )
 
         result_dir = Path(self.config.result_root)
         result_dir.mkdir(parents=True, exist_ok=True)
@@ -85,18 +91,14 @@ class AuditRunner:
         X_full = all_data.select(qualified_features).to_numpy()
 
         # 6. Parse legacy selection annotations if provided
-        legacy_stream_map: Dict[str, str] = {}
-        if self.config.legacy_selection_manifest and Path(self.config.legacy_selection_manifest).exists():
-            with open(self.config.legacy_selection_manifest, "r", encoding="utf-8") as f:
-                leg_data = json.load(f)
-            for feat in leg_data.get("slope_vae_features", []):
-                legacy_stream_map[feat] = "slope_vae"
-            for feat in leg_data.get("volatility_vae_features", []):
-                legacy_stream_map[feat] = "vol_vae"
-            for feat in leg_data.get("rl_decision_features", []):
-                legacy_stream_map[feat] = "rl_decision"
-            for feat in leg_data.get("rejected_features", {}):
-                legacy_stream_map[feat] = "rejected"
+        legacy_stream_map = (
+            {feature: legacy_selection.membership(feature) for feature in qualified_features}
+            if legacy_selection else {}
+        )
+        if legacy_selection:
+            pl.DataFrame(legacy_selection.comparison_rows(qualified_features)).write_csv(
+                result_dir / "legacy_selection_comparison.csv"
+            )
 
         # 7. Build timestamps & Evaluation Windows
         if all_data.schema["timestamp"] == pl.Utf8:
@@ -574,6 +576,11 @@ class AuditRunner:
             "total_rows_evaluated": len(all_data),
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }
+        if legacy_selection:
+            manifest["legacy_selection_source"] = {
+                "path": legacy_selection.source_path,
+                "sha256": legacy_selection.sha256,
+            }
 
         generate_audit_report(manifest, metrics_df, invalid_summary, result_dir / "audit_report.md")
 

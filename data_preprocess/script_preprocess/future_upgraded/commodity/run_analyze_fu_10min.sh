@@ -6,7 +6,7 @@ set -euo pipefail
 #
 # 该脚本执行以下步骤：
 #   1. 检查并激活 conda finetf 环境，设置 PYTHONPATH
-#   2. 解析审计产物目录（默认 analysis_result/DiHFT/feature_horizon_audit/fu/10min）
+#   2. 解析审计产物目录及目标分析期限 (超短 1h, 短 2h, 次日 next_td, 中 next_5td, 长 next_15td)
 #   3. 调用 analyze_audit_results.py 运行全量洞察分析与稳健特征筛选
 #   4. 输出汇总统计与洞察报告文件清单
 # ==============================================================================
@@ -33,6 +33,9 @@ AUDIT_DIR="${1:-${DEFAULT_AUDIT_DIR}}"
 DEFAULT_OUTPUT_DIR="${AUDIT_DIR}/insights"
 OUTPUT_DIR="${2:-${DEFAULT_OUTPUT_DIR}}"
 
+DEFAULT_HORIZONS="1h,2h,next_td,next_5td,next_15td"
+HORIZONS="${3:-${DEFAULT_HORIZONS}}"
+
 if [[ ! -d "${AUDIT_DIR}" ]]; then
     echo "❌ 错误: 审计产物目录不存在: ${AUDIT_DIR}" >&2
     echo "请确认该目录已完成特征审计运行并生成了相关 CSV/JSON 产物。" >&2
@@ -47,9 +50,10 @@ LOG_FILE="${LOG_DIR}/analyze_fu_10min_${TIMESTAMP}.log"
 
 echo "================================================================================"
 echo "🚀 启动 fu 10min 特征审计结果分析与洞察提取"
-echo "  工程根目录: ${REPO_ROOT}"
+echo "  工程根目录:   ${REPO_ROOT}"
 echo "  审计产物目录: ${AUDIT_DIR}"
 echo "  分析产物目录: ${OUTPUT_DIR}"
+echo "  目标分析周期: ${HORIZONS}"
 echo "  运行环境:     $(which python 2>/dev/null || echo '未检测到 python')"
 echo "  执行时间:     $(date '+%Y-%m-%d %H:%M:%S')"
 echo "  执行日志:     ${LOG_FILE}"
@@ -61,6 +65,7 @@ start_time=$(date +%s)
 if ! python -m data_preprocess.operator_futures.feature_audit.analyze_audit_results \
     --audit-dir "${AUDIT_DIR}" \
     --output-dir "${OUTPUT_DIR}" \
+    --horizons "${HORIZONS}" \
     --top-k 15 \
     --min-sign-consistency 0.80 \
     --min-coverage 0.50 2>&1 | tee -a "${LOG_FILE}"; then

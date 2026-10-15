@@ -72,7 +72,8 @@ def test_joint_moving_block_bootstrap_unit():
     assert np.isclose(res_calc.ci_upper, res_calc_repeat.ci_upper)
 
 
-def test_audit_report_and_legacy_annotation(tmp_path):
+@pytest.mark.parametrize("manifest_format", ["flat", "native"])
+def test_audit_report_and_legacy_annotation(tmp_path, manifest_format):
     """Integration test verifying report rendering, heatmaps, and legacy annotations."""
     work_dir = tmp_path / "report_work"
     work_dir.mkdir(parents=True)
@@ -140,6 +141,16 @@ def test_audit_report_and_legacy_annotation(tmp_path):
         "rl_decision_features": ["gamma_rl"],
         "rejected_features": {}
     }
+    if manifest_format == "native":
+        legacy_manifest = {
+            "stream_mode": "triple",
+            "vae_slope_stream": {"selected_features": ["alpha_slope"]},
+            "vae_volatility_stream": {"selected_features": ["beta_vol"]},
+            "rl_stream": {
+                "selected_features": ["gamma_rl", "alpha_slope"],
+                "filter_results": {"Hard Filter Dropped": ["beta_vol"]},
+            },
+        }
     legacy_file = work_dir / "legacy_selection.json"
     legacy_file.write_text(json.dumps(legacy_manifest))
 
@@ -188,7 +199,18 @@ def test_audit_report_and_legacy_annotation(tmp_path):
 
     # Verify alpha_slope has legacy membership 'slope_vae'
     slope_row = metrics_df.filter(pl.col("feature") == "alpha_slope").head(1)
-    assert slope_row["legacy_stream_membership"][0] == "slope_vae"
+    expected = "slope_vae,rl_decision" if manifest_format == "native" else "slope_vae"
+    assert slope_row["legacy_stream_membership"][0] == expected
+    comparison = pl.read_csv(out_dir / "legacy_selection_comparison.csv")
+    beta = comparison.filter(pl.col("feature") == "beta_vol").row(0, named=True)
+    assert beta["is_selected"] is True
+    assert beta["legacy_stream_membership"] == "vol_vae"
+    if manifest_format == "native":
+        assert json.loads(beta["drop_reasons"]) == [
+            {"scope": "rl_decision", "reason": "Hard Filter Dropped"}
+        ]
+    run_manifest = json.loads((out_dir / "audit_run_manifest.json").read_text())
+    assert run_manifest["legacy_selection_source"]["path"] == str(legacy_file.resolve())
 
     # Check report file exists and has exploratory disclaimers
     report_file = out_dir / "audit_report.md"
