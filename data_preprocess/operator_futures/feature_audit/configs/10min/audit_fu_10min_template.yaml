@@ -33,7 +33,7 @@ read_final_test: false
 purge_by_label_available_at: true
 write_selection_outputs: false
 result_root: analysis_result/DiHFT/feature_horizon_audit/fu/10min
-
+legacy_selection_manifest: PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION/10min/fu/train/feature_selection_manifest.json
 reference_price_protocol:
   field: close
   observation: latest_valid_snapshot_at_or_before_target

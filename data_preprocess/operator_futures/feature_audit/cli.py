@@ -1,6 +1,7 @@
 """Public CLI interface for Multi-Horizon Feature Audit."""
 
 import argparse
+import traceback
 import sys
 from pathlib import Path
 
@@ -44,6 +45,7 @@ def main(argv=None) -> int:
             print("Input validation passed successfully.")
             return 0
         except Exception as e:
+            traceback.print_exc()
             print(f"Error during input validation: {e}", file=sys.stderr)
             return 1
 
@@ -55,6 +57,7 @@ def main(argv=None) -> int:
             print(f"Audit run completed successfully. Status: {manifest.get('status')}")
             return 0
         except Exception as e:
+            traceback.print_exc()
             print(f"Error during audit run: {e}", file=sys.stderr)
             return 1
 
@@ -66,6 +69,7 @@ def main(argv=None) -> int:
             print(f"Comparison completed successfully. Status: {manifest.get('status')}")
             return 0
         except Exception as e:
+            traceback.print_exc()
             print(f"Error during comparison: {e}", file=sys.stderr)
             return 1
 

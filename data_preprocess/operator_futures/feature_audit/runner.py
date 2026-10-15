@@ -263,21 +263,35 @@ class AuditRunner:
                     else:
                         ret = (end_res.price / start_res.price) - 1.0
                         row_label_records.append({
-                            "contract": contract,
-                            "timestamp": dt,
-                            "trading_day": td,
-                            "horizon": horizon,
-                            "window_id": cur_win.window_id,
-                            "is_historical_reference": cur_win.is_historical_reference,
-                            "start_price": start_res.price,
-                            "end_price": end_res.price,
-                            "target_return": ret,
-                            "abs_target_return": abs(ret),
-                            "valid_mask": True,
-                            "invalid_reason": InvalidReason.NONE.value,
-                        })
+                           "contract": contract,
+                           "timestamp": dt,
+                           "trading_day": td,
+                           "horizon": horizon,
+                           "window_id": cur_win.window_id,
+                           "is_historical_reference": cur_win.is_historical_reference,
+                           "start_price": start_res.price,
+                           "end_price": end_res.price,
+                           "target_return": ret,
+                           "abs_target_return": abs(ret),
+                           "valid_mask": True,
+                           "invalid_reason": InvalidReason.NONE.value,
+                       })
 
-        labels_df = pl.DataFrame(row_label_records)
+        labels_schema = {
+            "contract": pl.String,
+            "timestamp": all_data["timestamp"].dtype,
+            "trading_day": pl.String,
+            "horizon": pl.String,
+            "window_id": pl.String,
+            "is_historical_reference": pl.Boolean,
+            "start_price": pl.Float64,
+            "end_price": pl.Float64,
+            "target_return": pl.Float64,
+            "abs_target_return": pl.Float64,
+            "valid_mask": pl.Boolean,
+            "invalid_reason": pl.String,
+        }
+        labels_df = pl.DataFrame(row_label_records, schema=labels_schema)
         labels_df.write_parquet(result_dir / "row_labels.parquet")
 
         # Summarize invalid reasons
@@ -401,12 +415,24 @@ class AuditRunner:
                 num_eligible_c = len(contract_corrs_list)
                 if num_eligible_c > 0:
                     c_corrs_mat = np.array(contract_corrs_list)  # (C, D)
-                    contract_equal_arr = np.nanmean(c_corrs_mat, axis=0)  # (D,)
                     weights_arr = np.array(contract_weights_list)
-                    sample_weighted_arr = np.average(
-                        np.nan_to_num(c_corrs_mat, nan=0.0),
-                        weights=weights_arr,
-                        axis=0
+
+                    valid_mask = ~np.isnan(c_corrs_mat)
+                    valid_cnt = np.sum(valid_mask, axis=0)
+                    contract_equal_arr = np.where(
+                        valid_cnt > 0,
+                        np.sum(np.where(valid_mask, c_corrs_mat, 0.0), axis=0) / np.maximum(valid_cnt, 1),
+                        np.nan,
+                    )
+
+                    w = weights_arr[:, None]
+                    masked_w = np.where(valid_mask, w, 0.0)
+                    w_sum = np.sum(masked_w, axis=0)
+                    weighted_val_sum = np.sum(np.where(valid_mask, c_corrs_mat * w, 0.0), axis=0)
+                    sample_weighted_arr = np.where(
+                        w_sum > 0,
+                        weighted_val_sum / np.maximum(w_sum, 1.0),
+                        np.nan,
                     )
                 else:
                     c_corrs_mat = np.empty((0, D))
@@ -415,13 +441,23 @@ class AuditRunner:
 
                 sign_consistency_arr = [None] * D
                 sign_null_reasons = [None] * D
-                if num_eligible_c < 3:
+                min_c_for_sign = ev_proto.minimum_contracts_for_sign_consistency
+                if num_eligible_c < min_c_for_sign:
                     sign_null_reasons = ["INSUFFICIENT_CONTRACTS_FOR_SIGN_CONSISTENCY"] * D
                 else:
                     for f_idx in range(D):
-                        prim_sign = np.sign(contract_equal_arr[f_idx])
-                        same_cnt = sum(1 for c_c in c_corrs_mat[:, f_idx] if np.sign(c_c) == prim_sign)
-                        sign_consistency_arr[f_idx] = float(same_cnt / num_eligible_c)
+                        if np.isnan(contract_equal_arr[f_idx]):
+                            sign_consistency_arr[f_idx] = None
+                            sign_null_reasons[f_idx] = "UNDEFINED"
+                        else:
+                            prim_sign = np.sign(contract_equal_arr[f_idx])
+                            valid_contracts_for_feat = c_corrs_mat[~np.isnan(c_corrs_mat[:, f_idx]), f_idx]
+                            if len(valid_contracts_for_feat) >= min_c_for_sign:
+                                same_cnt = sum(1 for c_c in valid_contracts_for_feat if np.sign(c_c) == prim_sign)
+                                sign_consistency_arr[f_idx] = float(same_cnt / len(valid_contracts_for_feat))
+                            else:
+                                sign_consistency_arr[f_idx] = None
+                                sign_null_reasons[f_idx] = "INSUFFICIENT_CONTRACTS_FOR_SIGN_CONSISTENCY"
 
                 # Vectorized joint moving-block bootstrap
                 valid_tds = valid_h["trading_day"].to_numpy()
@@ -463,6 +499,10 @@ class AuditRunner:
                     l_2x = float(ci_l_2x[f_idx]) if not np.isnan(ci_l_2x[f_idx]) else None
                     u_2x = float(ci_u_2x[f_idx]) if not np.isnan(ci_u_2x[f_idx]) else None
 
+                    null_reason = sign_null_reasons[f_idx]
+                    if c_eq is None and null_reason is None:
+                        null_reason = "UNDEFINED"
+
                     metric_results.append({
                         "feature": feat_name,
                         "horizon": horizon,
@@ -480,13 +520,43 @@ class AuditRunner:
                         "valid_pairs": valid_p,
                         "total_pairs": total_p,
                         "coverage_ratio": coverage,
-                        "null_reason": sign_null_reasons[f_idx],
+                        "null_reason": null_reason,
                     })
 
-        strata_df = pl.DataFrame(strata_records)
+        strata_schema = {
+            "feature": pl.String,
+            "horizon": pl.String,
+            "target_kind": pl.String,
+            "contract": pl.String,
+            "window_id": pl.String,
+            "is_historical_reference": pl.Boolean,
+            "spearman_corr": pl.Float64,
+            "valid_pairs": pl.Int64,
+            "null_reason": pl.String,
+        }
+        strata_df = pl.DataFrame(strata_records, schema=strata_schema)
         strata_df.write_csv(result_dir / "window_strata_metrics.csv")
 
-        metrics_df = pl.DataFrame(metric_results)
+        metric_schema = {
+            "feature": pl.String,
+            "horizon": pl.String,
+            "target_kind": pl.String,
+            "legacy_stream_membership": pl.String,
+            "spearman_corr": pl.Float64,
+            "contract_equal_spearman": pl.Float64,
+            "sample_weighted_spearman": pl.Float64,
+            "ci_lower": pl.Float64,
+            "ci_upper": pl.Float64,
+            "ci_lower_2x": pl.Float64,
+            "ci_upper_2x": pl.Float64,
+            "sign_consistency": pl.Float64,
+            "eligible_contracts_count": pl.Int64,
+            "valid_pairs": pl.Int64,
+            "total_pairs": pl.Int64,
+            "coverage_ratio": pl.Float64,
+            "null_reason": pl.String,
+        }
+        metrics_df = pl.DataFrame(metric_results, schema=metric_schema)
         metrics_df.write_csv(result_dir / "feature_metrics.csv")
 
         # 9. Generate Matrices and Markdown Report

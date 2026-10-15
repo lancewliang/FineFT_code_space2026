@@ -367,19 +367,36 @@
 
 ---
 
-## 6. CLI 命令调用指引
+## 6. 运行脚本与 CLI 调用指引
 
-审计引擎通过 `data_preprocess.operator_futures.feature_audit.cli` 执行：
+### 6.1 一键执行脚本（推荐）
+
+工程提供了封装好的端到端执行脚本，包含环境自适应激活、前置静态校验、全量多合约审计、日志自动留存以及最终产物完整性校验：
+
+```bash
+# 一键运行 fu 10min 特征审计（默认使用 configs/10min/audit_fu_10min_template.yaml）
+bash data_preprocess/operator_futures/feature_audit/run_audit_fu_10min.sh
+
+# 也可显式传入自定义配置文件
+bash data_preprocess/operator_futures/feature_audit/run_audit_fu_10min.sh path/to/custom_config.yaml
+```
+
+- 执行日志自动保存至：`log/feature_audit/fu/10min/audit_fu_10min_<timestamp>.log`
+- 产物自动物化至：`analysis_result/DiHFT/feature_horizon_audit/fu/10min/`
+
+### 6.2 Python 原生 CLI 调用
+
+如果需要分步执行或集成到外部流水线中，可通过原生 Python 模块执行：
 
 ```bash
 # 激活工程环境
 conda activate finetf
 
 # 1. 静态前置校验（检查配置与 Manifest 文件有效性）
-python -m data_preprocess.operator_futures.feature_audit.cli validate-inputs --config data_preprocess/operator_futures/feature_audit/configs/audit_fu_10min_template.yaml
+python -m data_preprocess.operator_futures.feature_audit.cli validate-inputs --config data_preprocess/operator_futures/feature_audit/configs/10min/audit_fu_10min_template.yaml
 
 # 2. 运行特征审计
-python -m data_preprocess.operator_futures.feature_audit.cli run --config data_preprocess/operator_futures/feature_audit/configs/audit_fu_10min_template.yaml
+python -m data_preprocess.operator_futures.feature_audit.cli run --config data_preprocess/operator_futures/feature_audit/configs/10min/audit_fu_10min_template.yaml
 
 # 3. 运行配对比较
 python -m data_preprocess.operator_futures.feature_audit.cli compare --manifest data_preprocess/operator_futures/feature_audit/configs/comparison_fu_10min_vs_30min_template.yaml

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
+import warnings
 import numpy as np
 
 from .metrics import compute_spearman_correlation, compute_spearman_matrix
@@ -160,7 +161,9 @@ def joint_moving_block_bootstrap_matrix(
         return "UNDEFINED", np.full(D, np.nan), np.full(D, np.nan), effective_blocks
 
     reps_arr = np.array(reps_list)  # (replicates, D)
-    ci_lower = np.nanpercentile(reps_arr, 100.0 * alpha, axis=0)
-    ci_upper = np.nanpercentile(reps_arr, 100.0 * (1.0 - alpha), axis=0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        ci_lower = np.nanpercentile(reps_arr, 100.0 * alpha, axis=0)
+        ci_upper = np.nanpercentile(reps_arr, 100.0 * (1.0 - alpha), axis=0)
 
     return "OK", ci_lower, ci_upper, effective_blocks

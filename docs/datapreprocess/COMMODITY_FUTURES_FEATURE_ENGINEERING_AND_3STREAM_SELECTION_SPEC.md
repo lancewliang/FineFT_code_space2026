@@ -81,6 +81,33 @@ FineFT 商品期货数据处理流水线将底层高频 L2 Tick / 1 秒级快照
 
 本节系统罗列特征工程流水线中生成的全部特征类别、详细语义、精确数学公式与涉及的时间窗口。
 
+当前预处理生成的目标数据集单合约数据（如 `PREPROCESS_DATASET/.../10min/fu/train/fu2311.feather`）总计包含 **1,324 列**：
+- **元数据列 (2 列)**：`timestamp`（时间戳索引）、`contract`（合约代码标识符）。
+- **合并伴生重复列 (245 列)**：以 `_right` 为后缀的特征（如 `ask1_price_right`、`prev_day_return_right`），系跨日与跨周期多表对齐合并时产生的伴生重复列。依据 `data_preprocess/operator_futures/feature_audit/eligibility.py` 的架构规范，该类列被前置硬性排除规则（`EXCLUDED_SUFFIXES = ("_right", "_y", "_duplicate")`）安全过滤，不参与特征门禁与模型训练。
+- **有效特征候选集 (1,077 列)**：由以下 10 大核心数学与物理特征家族完整构成，本全景目录对其逐一核对、完备归纳并完成全量技术更新。
+
+---
+
+### “是否相对化与无量纲化”判定准则与“分布漂移问题”形式化定义
+
+在商品期货多周期建模中，不同年份的价格绝对水平（例如燃料油在 2022~2023 年高位达 3500~4000 元/吨，而在下行周期跌破 2500 元/吨）与成交量绝对规模（活跃期单日成交上百万手 vs 沉寂期数万手）存在巨大断层。为了从源头上预防模型泛化失效，本规范为所有特征显式标注**“是否相对化与无量纲化”**并对其**“分布漂移风险”**进行形式化定义：
+
+1. **物理量纲与绝对水平问题（Dimensionality & Level Variables）**：
+   - 特征若以货币金额（元）、绝对报价（元/吨）、物理成交手数（手）或未除以价格基准的绝对价差点数（Ticks）为度量单位，则称为**有量纲变量**。
+   - 这类变量在时间序列上天生是非平稳的（Non-Stationary），其期望 $\mathbb{E}[X_t]$ 和方差 $\text{Var}[X_t]$ 会随宏观周期和市场整体体量产生长期时变漂移。
+
+2. **分布漂移的数学定义与危害（Distribution Shift / Covariate Shift）**：
+   - 设历史训练期为 $D_{\text{train}}$，未来验证/测试或实盘期为 $D_{\text{test}}$。
+   - **协变量漂移 (Covariate Shift)**：$P_{\text{train}}(X) \ne P_{\text{test}}(X)$。当测试期遇到训练集从未出现过的特征绝对数值区间时，神经网络激活函数进入未拟合或饱和区域，决策树分裂阈值越界失效。
+   - **概念漂移与伪相关 (Concept Drift & Spurious Correlation)**：$P_{\text{train}}(Y \mid X) \ne P_{\text{test}}(Y \mid X)$。在全样本统计中，有量纲特征会因为偶然契合了样本区间的单边宏观走势而产生虚假的高预测相关性（例如绝对价格越低未来收益越高，本质只是样本期恰处于长期下跌周期），但在样本外完全崩溃。
+
+3. **相对化与无量纲化评级标准**：
+   - **`是 (无漂移风险)`**：特征通过对数收益率、价格相对百分比、截面份额比例、时间小节进度、或局部滚动 Z-Score/分位数排名等数学变换彻底消除了物理量纲。跨年份价格中枢与市场总成交量改变不影响其数值分布与经济学解释。
+   - **`否 (高漂移风险)`**：特征保留原始绝对价格、绝对成交手数、绝对成交金额或未除以价格基准的绝对价差。此类特征禁止直接进入预测网络与 RL State 向量，必须在特征提取层被剔除或完成差分/无量纲化转换。
+   - **`部分/条件 (中漂移风险)`**：公式进行了比率化或局部平滑，但分子分母中仍直接混杂绝对金额（如 tradeval）或绝对手数（如 volume），跨周期仍受全市场流动性总规模漂移的影响，必须依赖严格的多合约跨期分布门禁（PSI $\le 0.10$）与因果自适应缩放（Causal Rolling Scaler）。
+
+---
+
 ### 统一数学记号
 
 - 目标周期时间桶记为 $I_t = (T_{t-1}, T_t]$（默认 10 分钟，左开右闭）。
@@ -102,233 +129,311 @@ FineFT 商品期货数据处理流水线将底层高频 L2 Tick / 1 秒级快照
 
 ### 1. 基础成交与盘口下采样特征 (Downscale Base Trades & Quotes Features)
 
-源码：`data_preprocess/operator_futures/commodity/downscale.py`
+源码：`data_preprocess/operator_futures/commodity/downscale.py`，数据集实际包含 **39 列**：
 
-| # | 特征名称 | 语义解释 | 精确数学公式 | 时间窗口 |
-|---|---------|---------|-------------|---------|
-| 1 | `open` | 桶内首笔成交价 | $P_{\text{first} \in I_t}$ | 单 Bar (10m) |
-| 2 | `high` | 桶内最高成交价 | $\max_{i \in I_t} P_i$ | 单 Bar (10m) |
-| 3 | `low` | 桶内最低成交价 | $\min_{i \in I_t} P_i$ | 单 Bar (10m) |
-| 4 | `close` | 桶内末笔成交价 | $P_{\text{last} \in I_t}$ | 单 Bar (10m) |
-| 5 | `volume` | 桶内累计成交量 | $\sum_{i \in I_t} V_i$ | 单 Bar (10m) |
-| 6 | `tradeval` | 桶内累计成交金额 | $\sum_{i \in I_t} P_i \cdot V_i \cdot \text{Unit}$ | 单 Bar (10m) |
-| 7 | `open_interest` | 期末持仓总量 | $\text{Last}(OI_i \in I_t)$ | 单 Bar (10m) |
-| 8 | `vwap` | 成交量加权平均价 | $\frac{\text{tradeval}}{\text{volume} \cdot \text{Unit}}$（若 volume=0 回退为 close） | 单 Bar (10m) |
-| 9 | `awap` / `twap` | 时间算术平均价 | $\frac{1}{N} \sum_{i \in I_t} P_i$ | 单 Bar (10m) |
-| 10 | `ntrade_estimated` | 估计成交笔数 | 桶内有成交秒数或有效价格跳动次数 | 单 Bar (10m) |
-| 11 | `ntrade_up_estimated` | 主买驱动估计笔数 | $\sum_{i \in I_t} \mathbb{I}\{\Delta P_i > 0\}$ | 单 Bar (10m) |
-| 12 | `ntrade_down_estimated` | 主卖驱动估计笔数 | $\sum_{i \in I_t} \mathbb{I}\{\Delta P_i < 0\}$ | 单 Bar (10m) |
-| 13 | `ntrade_flat_estimated` | 平价变动估计笔数 | $\sum_{i \in I_t} \mathbb{I}\{\Delta P_i = 0\}$ | 单 Bar (10m) |
-| 14-23 | `bid1_price` ~ `bid5_price` | 1~5 档买价 | $BP_l, \quad l \in \{1, \dots, 5\}$ | 快照 (Bar 末) |
-| 24-33 | `bid1_size` ~ `bid5_size` | 1~5 档买量 | $BS_l, \quad l \in \{1, \dots, 5\}$ | 快照 (Bar 末) |
-| 34-43 | `ask1_price` ~ `ask5_price` | 1~5 档卖价 | $AP_l, \quad l \in \{1, \dots, 5\}$ | 快照 (Bar 末) |
-| 44-53 | `ask1_size` ~ `ask5_size` | 1~5 档卖量 | $AS_l, \quad l \in \{1, \dots, 5\}$ | 快照 (Bar 末) |
+| # | 特征名称/模板 | 语义解释 | 精确数学公式 | 参数与时间窗口 | 是否相对化与无量纲化 |
+|---|-------------|---------|-------------|--------------|---------------------|
+| 1 | `open` | 桶内首笔成交价 | $P_{\text{first} \in I_t}$ | 单 Bar (10m) | **否 (高漂移风险)**：原始绝对价格，随年份价格中枢大幅漂移 |
+| 2 | `high` | 桶内最高成交价 | $\max_{i \in I_t} P_i$ | 单 Bar (10m) | **否 (高漂移风险)**：原始绝对价格，随年份价格中枢大幅漂移 |
+| 3 | `low` | 桶内最低成交价 | $\min_{i \in I_t} P_i$ | 单 Bar (10m) | **否 (高漂移风险)**：原始绝对价格，随年份价格中枢大幅漂移 |
+| 4 | `close` | 桶内末笔成交价 | $P_{\text{last} \in I_t}$ | 单 Bar (10m) | **否 (高漂移风险)**：原始绝对价格，随年份价格中枢大幅漂移 |
+| 5 | `volume` | 桶内累计成交量 | $\sum_{i \in I_t} V_i$ | 单 Bar (10m) | **否 (高漂移风险)**：绝对成交手数，受跨期市场活跃度与规模漂移影响 |
+| 6 | `tradeval` | 桶内累计成交金额 | $\sum_{i \in I_t} P_i \cdot V_i \cdot \text{Unit}$ | 单 Bar (10m) | **否 (高漂移风险)**：绝对成交金额，受价格与成交量双重绝对漂移影响 |
+| 7 | `open_interest` | 期末持仓总量 | $\text{Last}(OI_i \in I_t)$ | 单 Bar (10m) | **否 (高漂移风险)**：绝对持仓手数，随合约生命周期与年份规模剧烈漂移 |
+| 8 | `index_price` | 指数标的基准价格 | $P_{\text{index}, t}$ | 单 Bar 快照 | **否 (高漂移风险)**：现货/综合指数绝对水平，随宏观周期大幅漂移 |
+| 9 | `mark_price` | 衍生品标记价格 | $P_{\text{mark}, t}$ | 单 Bar 快照 | **否 (高漂移风险)**：绝对标记价格，具有货币量纲 |
+| 10 | `funding_rate` | 综合资金费率/基差贴水率 | $F_t = \frac{P_{\text{futures}} - P_{\text{spot}}}{P_{\text{spot}}}$ | 单 Bar 快照 | **是 (无漂移风险)**：无量纲相对基差/费率比例，消除了绝对价格量纲 |
+| 11 | `funding_timestamp` | 资金费率更新时间戳 | $T_{\text{funding}}$ | 毫秒时间戳 | **否 (高漂移风险)**：绝对单调递增时间戳，仅作为对齐索引，不可直接作为特征 |
+| 12 | `ntrade_estimated` | 估计成交笔数 | 桶内有成交秒数或有效价格跳动次数 | 单 Bar (10m) | **否 (高漂移风险)**：绝对笔数计数，受跨年行情推送频率与活跃度影响 |
+| 13 | `ntrade_up_estimated` | 主买驱动估计笔数 | $\sum_{i \in I_t} \mathbb{I}\{\Delta P_i > 0\}$ | 单 Bar (10m) | **否 (高漂移风险)**：绝对笔数计数，未按总成交笔数做无量纲归一化 |
+| 14 | `ntrade_down_estimated` | 主卖驱动估计笔数 | $\sum_{i \in I_t} \mathbb{I}\{\Delta P_i < 0\}$ | 单 Bar (10m) | **否 (高漂移风险)**：绝对笔数计数，未按总成交笔数做无量纲归一化 |
+| 15 | `ntrade_flat_estimated` | 平价变动估计笔数 | $\sum_{i \in I_t} \mathbb{I}\{\Delta P_i = 0\}$ | 单 Bar (10m) | **否 (高漂移风险)**：绝对笔数计数，未按总成交笔数做无量纲归一化 |
+| 16 | `ntrade_estimated_up_udnorm` | 估计买方成交笔数归一化 | $\frac{\text{ntrade\_up\_estimated}}{\text{ntrade\_estimated} + \epsilon_1}$ | 单 Bar (10m) | **是 (无漂移风险)**：主买笔数占总笔数百分比 $[0.0, 1.0]$，消除绝对笔数漂移 |
+| 17 | `ntrade_estimated_down_udnorm` | 估计卖方成交笔数归一化 | $\frac{\text{ntrade\_down\_estimated}}{\text{ntrade\_estimated} + \epsilon_1}$ | 单 Bar (10m) | **是 (无漂移风险)**：主卖笔数占总笔数百分比 $[0.0, 1.0]$，消除绝对笔数漂移 |
+| 18 | `ntrade_estimated_flat_udnorm` | 估计平价成交笔数归一化 | $\frac{\text{ntrade\_flat\_estimated}}{\text{ntrade\_estimated} + \epsilon_1}$ | 单 Bar (10m) | **是 (无漂移风险)**：平价笔数占总笔数百分比 $[0.0, 1.0]$，消除绝对笔数漂移 |
+| 19 | `ntrade_estimated_updownflat_vol_udnorm` | 每手成交笔数密度归一化 | $\frac{\text{ntrade\_estimated}}{\text{volume} + \epsilon_1}$ | 单 Bar (10m) | **是 (无漂移风险)**：单笔成交平均手数的倒数，纯强度比率，消除绝对规模漂移 |
+| 20-24 | `bid1_price` ~ `bid5_price` | 1~5 档买价 | $BP_l, \quad l \in \{1, \dots, 5\}$ | 快照 (Bar 末) | **否 (高漂移风险)**：原始买方挂单绝对价格，随年份大幅漂移 |
+| 25-29 | `bid1_size` ~ `bid5_size` | 1~5 档买量 | $BS_l, \quad l \in \{1, \dots, 5\}$ | 快照 (Bar 末) | **否 (高漂移风险)**：绝对挂单手数，受年份做市深度与流动性规模影响 |
+| 30-34 | `ask1_price` ~ `ask5_price` | 1~5 档卖价 | $AP_l, \quad l \in \{1, \dots, 5\}$ | 快照 (Bar 末) | **否 (高漂移风险)**：原始卖方挂单绝对价格，随年份大幅漂移 |
+| 35-39 | `ask1_size` ~ `ask5_size` | 1~5 档卖量 | $AS_l, \quad l \in \{1, \dots, 5\}$ | 快照 (Bar 末) | **否 (高漂移风险)**：绝对挂单手数，受年份做市深度与流动性规模影响 |
+
+> **注**：基础均价 `vwap`、`twap`、`awap` 详见第 3 节与第 4 节，其在订单簿微观结构与 K 线几何形态中被全面相对化并派生高级特征。
 
 ---
 
 ### 2. 涨跌停板与非对称深度限制特征 (Price Limit & Asymmetric Liquidity)
 
-源码：`data_preprocess/operator_futures/commodity/downscale.py`
+源码：`data_preprocess/operator_futures/commodity/downscale.py`，数据集实际包含 **9 列**：
 
-| # | 特征名称 | 语义解释 | 精确数学公式 | 时间窗口 |
-|---|---------|---------|-------------|---------|
-| 1 | `limit_up_single_sided_ratio` | 涨停单边挂单比例 | $\frac{1}{T} \sum_{t=1}^T \mathbb{I}\{AP_1 \text{ 为空} \land P_t = P_{\text{limit\_up}} \land BP_1 > 0 \land BS_1 > 0\}$ | 单 Bar 内部采样 |
-| 2 | `limit_down_single_sided_ratio`| 跌停单边挂单比例 | $\frac{1}{T} \sum_{t=1}^T \mathbb{I}\{BP_1 \text{ 为空} \land P_t = P_{\text{limit\_down}} \land AP_1 > 0 \land AS_1 > 0\}$ | 单 Bar 内部采样 |
-| 3 | `limit_up_ask_depth_ratio_5` | 卖盘深度触及涨停比 | $\frac{1}{5} \sum_{l=1}^5 \mathbb{I}\{AP_l \ge P_{\text{limit\_up}} \lor AP_l \le 0 \lor AS_l = 0\}$ | 5 档截面平均 |
-| 4 | `limit_down_bid_depth_ratio_5` | 买盘深度触及跌停比 | $\frac{1}{5} \sum_{l=1}^5 \mathbb{I}\{BP_l \le P_{\text{limit\_down}} \lor BP_l \le 0 \lor BS_l = 0\}$ | 5 档截面平均 |
-| 5 | `limit_depth_imbalance_ratio_5`| 涨跌停深度不平衡比 | $\text{limit\_up\_ask\_depth\_ratio\_5} - \text{limit\_down\_bid\_depth\_ratio\_5}$ | 5 档截面差值 |
+| # | 特征名称/模板 | 语义解释 | 精确数学公式 | 参数与时间窗口 | 是否相对化与无量纲化 |
+|---|-------------|---------|-------------|--------------|---------------------|
+| 1 | `UpperLimitPrice` | 交易所涨停板绝对价格 | $P_{\text{limit\_up}}$ | 交易日静态快照 | **否 (高漂移风险)**：交易所公布的每日静态价格绝对上限 |
+| 2 | `LowerLimitPrice` | 交易所跌停板绝对价格 | $P_{\text{limit\_down}}$ | 交易日静态快照 | **否 (高漂移风险)**：交易所公布的每日静态价格绝对下限 |
+| 3 | `ask_side_empty` | 卖一盘口无挂单标志 (涨停空盘) | $\mathbb{I}\{AS_1 == 0 \lor AP_1 \text{ 为 NaN}\}$ | 单 Bar 快照 | **是 (无漂移风险)**：布尔/离散 0/1 标志，表征涨停封死无卖单状态 |
+| 4 | `bid_side_empty` | 买一盘口无挂单标志 (跌停空盘) | $\mathbb{I}\{BS_1 == 0 \lor BP_1 \text{ 为 NaN}\}$ | 单 Bar 快照 | **是 (无漂移风险)**：布尔/离散 0/1 标志，表征跌停封死无买单状态 |
+| 5 | `limit_up_single_sided_ratio` | 涨停单边挂单比例 | $\frac{1}{T} \sum_{t=1}^T \mathbb{I}\{AP_1 \text{ 为空} \land P_t = P_{\text{limit\_up}}\}$ | 单 Bar (10m) 统计 | **是 (无漂移风险)**：时间占比 $[0.0, 1.0]$，无物理量纲 |
+| 6 | `limit_down_single_sided_ratio` | 跌停单边挂单比例 | $\frac{1}{T} \sum_{t=1}^T \mathbb{I}\{BP_1 \text{ 为空} \land P_t = P_{\text{limit\_down}}\}$ | 单 Bar (10m) 统计 | **是 (无漂移风险)**：时间占比 $[0.0, 1.0]$，无物理量纲 |
+| 7 | `limit_up_ask_depth_ratio_5` | 卖盘深度触及涨停比 | $\frac{1}{5} \sum_{l=1}^5 \mathbb{I}\{AP_l \ge P_{\text{limit\_up}} \lor AP_l \text{ 为空}\}$ | 5 档快照 (Bar 末) | **是 (无漂移风险)**：档位深度比例 $[0.0, 1.0]$，无物理量纲 |
+| 8 | `limit_down_bid_depth_ratio_5` | 买盘深度触及跌停比 | $\frac{1}{5} \sum_{l=1}^5 \mathbb{I}\{BP_l \le P_{\text{limit\_down}} \lor BP_l \text{ 为空}\}$ | 5 档快照 (Bar 末) | **是 (无漂移风险)**：档位深度比例 $[0.0, 1.0]$，无物理量纲 |
+| 9 | `limit_depth_imbalance_ratio_5` | 涨跌停深度不平衡比 | $\text{limit\_up\_ask\_depth\_ratio\_5} - \text{limit\_down\_bid\_depth\_ratio\_5}$ | 5 档快照 (Bar 末) | **是 (无漂移风险)**：深度差值 $[-1.0, 1.0]$，无物理量纲 |
 
 ---
 
 ### 3. 截面微观结构与订单簿不平衡特征 (Orderbook Microstructure & Imbalance)
 
-源码：`data_preprocess/operator_futures/cross_section/base_feature_util.py`, `downscale.py`
+源码：`data_preprocess/operator_futures/cross_section/base_feature_util.py`，数据集实际包含 **60 列**：
 
-| # | 特征名称 | 语义解释 | 精确数学公式 | 时间窗口 |
-|---|---------|---------|-------------|---------|
-| 1 | `midprice` | 盘口中间价 | $\frac{AP_1 + BP_1}{2}$ | 瞬时截面 |
-| 2 | `wap_1` | 1 档订单簿加权均价 | $\frac{AS_1 \cdot BP_1 + BS_1 \cdot AP_1}{AS_1 + BS_1}$ | 瞬时截面 |
-| 3 | `wap_2` | 2 档订单簿加权均价 | $\frac{AS_2 \cdot BP_2 + BS_2 \cdot AP_2}{AS_2 + BS_2}$ | 瞬时截面 |
-| 4 | `wap_balance` | 1、2 档 WAP 价差 | $\text{wap\_1} - \text{wap\_2}$ | 瞬时截面 |
-| 5 | `sell_wap` | 卖方全档位加权平均价 | $\sum_{l=1}^5 \frac{AS_l}{\sum AS} \cdot AP_l$ | 5 档截面 |
-| 6 | `buy_wap` | 买方全档位加权平均价 | $\sum_{l=1}^5 \frac{BS_l}{\sum BS} \cdot BP_l$ | 5 档截面 |
-| 7 | `buy_sell_wap_spread` | 全档位买卖 WAP 价差 | $\text{buy\_wap} - \text{sell\_wap}$ | 5 档截面 |
-| 8 | `buy_spread_oe_max` | 买盘最深最浅价差 | $|BP_1 - BP_5|$ | 5 档截面 |
-| 9 | `sell_spread_oe_max` | 卖盘最深最浅价差 | $|AP_1 - AP_5|$ | 5 档截面 |
-| 10 | `imbalance_volume` / `imbalance_1` | 1 档挂单量失衡比率 | $\frac{BS_1 - AS_1}{BS_1 + AS_1 + \epsilon_1}$ | 瞬时截面 |
-| 11 | `imbalance_3` | 1~3 档累计深度失衡比 | $\frac{\sum_{l=1}^3 BS_l - \sum_{l=1}^3 AS_l}{\sum_{l=1}^3 BS_l + \sum_{l=1}^3 AS_l + \epsilon_1}$ | 3 档截面 |
-| 12 | `imbalance_5` | 1~5 档全深度失衡比 | $\frac{\sum_{l=1}^5 BS_l - \sum_{l=1}^5 AS_l}{\sum_{l=1}^5 BS_l + \sum_{l=1}^5 AS_l + \epsilon_1}$ | 5 档截面 |
-| 13-17 | `ask_price_topk_size_{k}_increments` | Top-k 大挂单价差增量 | $|AP_{\text{top}_k} - AP_1|$ | 截面排序 (k=1..5) |
-| 18-22 | `bid_price_topk_size_{k}_increments` | Top-k 大挂单价差增量 | $|BP_{\text{top}_k} - BP_1|$ | 截面排序 (k=1..5) |
-| 23-27 | `ask_size_topk_size_{k}_share` | Top-k 档位挂单量占比 | $\frac{AS_{\text{top}_k}}{\sum_{l=1}^5 AS_l + \epsilon_1}$ | 截面排序 (k=1..5) |
-| 28-32 | `bid_size_topk_size_{k}_share` | Top-k 档位挂单量占比 | $\frac{BS_{\text{top}_k}}{\sum_{l=1}^5 BS_l + \epsilon_1}$ | 截面排序 (k=1..5) |
+| # | 特征名称/模板 | 语义解释 | 精确数学公式 | 参数与时间窗口 | 是否相对化与无量纲化 |
+|---|-------------|---------|-------------|--------------|---------------------|
+| 1 | `midprice` | 盘口中间价 | $\frac{AP_1 + BP_1}{2}$ | 瞬时截面 | **否 (高漂移风险)**：绝对价格中枢，随年份宏观周期大幅漂移 |
+| 2 | `vwap` | 桶内成交量加权平均价 | $\frac{\sum_{i} P_i V_i}{\sum_i V_i}$（若 volume=0 回退为 close） | 单 Bar (10m) | **否 (高漂移风险)**：绝对价格，具有货币物理量纲 |
+| 3 | `twap` | 桶内时间算术加权平均价 | $\frac{1}{N} \sum_{i=1}^N P_i$ | 单 Bar (10m) | **否 (高漂移风险)**：绝对价格，具有货币物理量纲 |
+| 4 | `awap` | 桶内算术平均价 (快照均值) | $\frac{\text{open} + \text{high} + \text{low} + \text{close}}{4}$ | 单 Bar (10m) | **否 (高漂移风险)**：绝对价格，具有货币物理量纲 |
+| 5 | `wap_1` | 1 档订单簿加权均价 | $\frac{AS_1 \cdot BP_1 + BS_1 \cdot AP_1}{AS_1 + BS_1}$ | 瞬时截面 | **否 (高漂移风险)**：加权绝对价格，具有价格物理量纲 |
+| 6 | `wap_2` | 2 档订单簿加权均价 | $\frac{AS_2 \cdot BP_2 + BS_2 \cdot AP_2}{AS_2 + BS_2}$ | 瞬时截面 | **否 (高漂移风险)**：加权绝对价格，具有价格物理量纲 |
+| 7 | `wap_balance` | 1、2 档 WAP 价差 | $\text{wap\_1} - \text{wap\_2}$ | 瞬时截面 | **部分 (中漂移风险)**：绝对点差点数，高价格时期绝对价差点数自然放大 |
+| 8 | `sell_wap` | 卖方全档位加权平均价 | $\sum_{l=1}^5 \frac{AS_l}{\sum AS} \cdot AP_l$ | 5 档截面 | **否 (高漂移风险)**：绝对报价，具有货币物理量纲 |
+| 9 | `buy_wap` | 买方全档位加权平均价 | $\sum_{l=1}^5 \frac{BS_l}{\sum BS} \cdot BP_l$ | 5 档截面 | **否 (高漂移风险)**：绝对报价，具有货币物理量纲 |
+| 10 | `buy_sell_wap_spread` | 深度加权买卖价差 | $\text{sell\_wap} - \text{buy\_wap}$ | 5 档截面 | **部分 (中漂移风险)**：全档深度绝对价差，高油价时期绝对价差增大 |
+| 11 | `buy_spread_oe_max` | 买一相对最优买盘价差 | $\max(BP_1 - BP_2, \dots)$ | 瞬时截面 | **部分 (中漂移风险)**：微观买盘价差阶跃点数，受价格尺度影响 |
+| 12 | `sell_spread_oe_max` | 卖一相对最优卖盘价差 | $\max(AP_2 - AP_1, \dots)$ | 瞬时截面 | **部分 (中漂移风险)**：微观卖盘价差阶跃点数，受价格尺度影响 |
+| 13 | `buy_volume_oe` | 买方驱动订单执行量 | $\sum_{i \in I_t} V_i \mathbb{I}\{\Delta P_i > 0\}$ | 单 Bar (10m) | **否 (高漂移风险)**：绝对手数，受年份做市活跃度漂移影响 |
+| 14 | `sell_volume_oe` | 卖方驱动订单执行量 | $\sum_{i \in I_t} V_i \mathbb{I}\{\Delta P_i < 0\}$ | 单 Bar (10m) | **否 (高漂移风险)**：绝对手数，受年份做市活跃度漂移影响 |
+| 15 | `imblance_volume_oe` | 买卖驱动执行量失衡 | $\text{buy\_volume\_oe} - \text{sell\_volume\_oe}$ | 单 Bar (10m) | **否 (高漂移风险)**：绝对买卖量净差额（在时序算子中被转化为 trend 与 log_return） |
+| 16-20 | `ask1_size_n` ~ `ask5_size_n` | 卖方各档挂单归一化占比 | $\frac{AS_l}{\sum_{j=1}^5 AS_j + \epsilon_1}, \quad l \in \{1, \dots, 5\}$ | 5 档截面 | **是 (无漂移风险)**：各档量占前5档挂单总量比例 $[0.0, 1.0]$，纯无量纲比例 |
+| 21-25 | `bid1_size_n` ~ `bid5_size_n` | 买方各档挂单归一化占比 | $\frac{BS_l}{\sum_{j=1}^5 BS_j + \epsilon_1}, \quad l \in \{1, \dots, 5\}$ | 5 档截面 | **是 (无漂移风险)**：各档量占前5档挂单总量比例 $[0.0, 1.0]$，纯无量纲比例 |
+| 26-30 | `ask_price_topk_size_{k}_increments` | 卖盘价格累计递增跨度 | $AP_k - AP_1, \quad k \in \{1, \dots, 5\}$ | 5 档截面 | **部分 (中漂移风险)**：绝对价差阶跃点数，随基础报价大小轻微漂移 |
+| 31-35 | `bid_price_topk_size_{k}_increments` | 买盘价格累计递减跨度 | $BP_1 - BP_k, \quad k \in \{1, \dots, 5\}$ | 5 档截面 | **部分 (中漂移风险)**：绝对价差阶跃点数，随基础报价大小轻微漂移 |
+| 36-40 | `ask_size_topk_size_{k}_increments` | 卖盘前 $k$ 档累计挂单量增量 | $\sum_{l=1}^k AS_l - AS_1, \quad k \in \{1, \dots, 5\}$ | 5 档截面 | **部分 (中漂移风险)**：绝对手数增量，受市场总挂单量级影响 |
+| 41-45 | `bid_size_topk_size_{k}_increments` | 买盘前 $k$ 档累计挂单量增量 | $\sum_{l=1}^k BS_l - BS_1, \quad k \in \{1, \dots, 5\}$ | 5 档截面 | **部分 (中漂移风险)**：绝对手数增量，受市场总挂单量级影响 |
+| 46-50 | `ask_size_topk_size_{k}_share` | 卖盘前 $k$ 档挂单深度占比 | $\frac{\sum_{l=1}^k AS_l}{\sum_{l=1}^5 AS_l + \epsilon_1}, \quad k \in \{1, \dots, 5\}$ | 5 档截面 | **是 (无漂移风险)**：前 $k$ 档挂单量相对前 5 档总量的占比 $[0.0, 1.0]$ |
+| 51-55 | `bid_size_topk_size_{k}_share` | 买盘前 $k$ 档挂单深度占比 | $\frac{\sum_{l=1}^k BS_l}{\sum_{l=1}^5 BS_l + \epsilon_1}, \quad k \in \{1, \dots, 5\}$ | 5 档截面 | **是 (无漂移风险)**：前 $k$ 档挂单量相对前 5 档总量的占比 $[0.0, 1.0]$ |
+| 56 | `ntrade_estimated_updown_imbalance_udnorm` | 估计买卖笔数归一化净失衡 | $\frac{N_{\text{up}} - N_{\text{down}}}{N_{\text{up}} + N_{\text{down}} + \epsilon_1}$ | 单 Bar (10m) | **是 (无漂移风险)**：笔数归一化净失衡率 $[-1.0, 1.0]$，彻底消除绝对笔数 |
+| 57-58 | `price_to_vwap_zscore_{w}` | 现价相对 VWAP 偏离 Z-Score | $\frac{\text{Dev}_t - \text{Mean}_w(\text{Dev})}{\text{Std}_w(\text{Dev}) + \epsilon_3}, \quad \text{Dev} = \frac{C - \text{VWAP}}{C}$ | $w \in \{48, 96\}$ | **是 (无漂移风险)**：相对价格偏离百分比经局部滚动 Z-Score 平稳化 |
+| 59-60 | `macro_trade_imbalance_continuous_{w}` | 宏观平滑主动买卖失衡率 | $\frac{\sum_w N_{\text{up}} - \sum_w N_{\text{down}}}{\sum_w N_{\text{up}} + \sum_w N_{\text{down}} + 10w}$ | $w \in \{48, 240\}$ | **是 (无漂移风险)**：宏观主动买卖笔数归一化失衡率 $[-1.0, 1.0]$ |
 
 ---
 
 ### 4. 截面 K 线形态特征 (Cross-Section K-Line Morphology)
 
-源码：`data_preprocess/operator_futures/cross_section/base_feature_util.py` (`process_k_line_feature`)
+源码：`data_preprocess/operator_futures/cross_section/base_feature_util.py`，数据集实际包含 **21 列**：
 
-针对包含 $O, H, L, C$ 的列组（包括 trades 全量、buy 子集、sell 子集以及盘口 spread 等），生成标准化形态特征：
+| # | 特征名称/模板 | 语义解释 | 精确数学公式 | 参数与时间窗口 | 是否相对化与无量纲化 |
+|---|-------------|---------|-------------|--------------|---------------------|
+| 1 | `klen` | K 线全振幅比率 | $\frac{H - L}{O + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：振幅除以开盘价，纯相对百分比收益率 |
+| 2 | `kmid` | 实体相对开盘价比例 | $\frac{\vert C - O \vert}{O + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：K 线绝对实体高度百分比 |
+| 3 | `kmid2` | 实体相对振幅归一化 | $\frac{C - O}{H - L + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：有符号实体占比 $[-1.0, 1.0]$，无物理量纲 |
+| 4 | `kup` | 上影线相对开盘价比例 | $\frac{H - \max(O, C)}{O + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：上影线高度百分比 |
+| 5 | `kup2` | 上影线相对振幅归一化 | $\frac{H - \max(O, C)}{H - L + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：上影线占总振幅比率 $[0.0, 1.0]$ |
+| 6 | `klow` | 下影线相对开盘价比例 | $\frac{\min(O, C) - L}{O + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：下影线高度百分比 |
+| 7 | `klow2` | 下影线相对振幅归一化 | $\frac{\min(O, C) - L}{H - L + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：下影线占总振幅比率 $[0.0, 1.0]$ |
+| 8 | `ksft` | 收盘价偏移中心 (开盘归一化) | $\frac{2C - H - L}{O + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：收盘价在最高最低区间内的偏置度，除以开盘价 |
+| 9 | `ksft2` | 收盘价偏移中心 (振幅归一化) | $\frac{2C - H - L}{H - L + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：收盘价在最高最低区间内的相对位置 $[-1.0, 1.0]$ |
+| 10 | `kotwap` | 开盘价偏离 TWAP (开盘归一化) | $\frac{O - \text{TWAP}}{O + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：开盘价相对桶内时间均价偏离率 |
+| 11 | `kotwap2` | 开盘价偏离 TWAP (振幅归一化) | $\frac{O - \text{TWAP}}{H - L + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：开盘偏离占 Bar 振幅的比率 |
+| 12 | `kctwap` | 收盘价偏离 TWAP (开盘归一化) | $\frac{C - \text{TWAP}}{O + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：收盘价相对桶内时间均价偏离率 |
+| 13 | `kctwap2` | 收盘价偏离 TWAP (振幅归一化) | $\frac{C - \text{TWAP}}{H - L + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：收盘偏离占 Bar 振幅的比率 |
+| 14 | `koawap` | 开盘价偏离 AWAP (开盘归一化) | $\frac{O - \text{AWAP}}{O + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：开盘价相对算术均价偏离率 |
+| 15 | `koawap2` | 开盘价偏离 AWAP (振幅归一化) | $\frac{O - \text{AWAP}}{H - L + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：开盘偏离占 Bar 振幅的比率 |
+| 16 | `kcawap` | 收盘价偏离 AWAP (开盘归一化) | $\frac{C - \text{AWAP}}{O + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：收盘价相对算术均价偏离率 |
+| 17 | `kcawap2` | 收盘价偏离 AWAP (振幅归一化) | $\frac{C - \text{AWAP}}{H - L + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：收盘偏离占 Bar 振幅的比率 |
+| 18 | `kovwap` | 开盘价偏离 VWAP (开盘归一化) | $\frac{O - \text{VWAP}}{O + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：开盘价相对量加权均价偏离率 |
+| 19 | `kovwap2` | 开盘价偏离 VWAP (振幅归一化) | $\frac{O - \text{VWAP}}{H - L + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：开盘偏离占 Bar 振幅的比率 |
+| 20 | `kcvwap` | 收盘价偏离 VWAP (开盘归一化) | $\frac{C - \text{VWAP}}{O + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：收盘价相对量加权均价偏离率 |
+| 21 | `kcvwap2` | 收盘价偏离 VWAP (振幅归一化) | $\frac{C - \text{VWAP}}{H - L + \epsilon_1}$ | 单 Bar 截面 | **是 (无漂移风险)**：收盘偏离占 Bar 振幅的比率 |
 
-| # | 特征后缀 | 语义解释 | 精确数学公式 | 物理内涵 |
-|---|---------|---------|-------------|---------|
-| 1 | `klen` | K 线全振幅率 | $\frac{H - L}{O + \epsilon_1}$ | 衡量单 Bar 价格波动极差大小 |
-| 2 | `kmid` | 实体相对收益率 | $\frac{C - O}{O + \epsilon_1}$ | 衡量单 Bar 实体方向与相对涨跌幅度 |
-| 3 | `kmid2` | 实体占振幅比例 | $\frac{C - O}{H - L + \epsilon_1}$ | 衡量多空博弈净胜程度（范围 [-1, 1]） |
-| 4 | `kup` | 上影线相对长度 | $\frac{H - \max(O, C)}{O + \epsilon_1}$ | 衡量上方空头反压抛压强度 |
-| 5 | `kup2` | 上影线占振幅比 | $\frac{H - \max(O, C)}{H - L + \epsilon_1}$ | 衡量冲高回落的相对受阻程度 |
-| 6 | `klow` | 下影线相对长度 | $\frac{\min(O, C) - L}{O + \epsilon_1}$ | 衡量下方多头下买托盘强度 |
-| 7 | `klow2` | 下影线占振幅比 | $\frac{\min(O, C) - L}{H - L + \epsilon_1}$ | 衡量探底回升的下影支撑力度 |
-| 8 | `kskew` | 上下影线不对称度 | $\frac{\text{kup} - \text{klow}}{H - L + \epsilon_1}$ | 刻画 K 线重心与上下影线的不对称偏度 |
-| 9 | `kamt` | 实体金额密度 | $\frac{\text{tradeval} \cdot \text{kmid2}}{\text{klen} + \epsilon_1}$ | 结合成交金额的实体推升动能密度 |
-| 10 | `kvld` | 波动换手密度 | $\frac{\text{volume}}{\text{klen} + \epsilon_1}$ | 衡量每单位价格振幅所消耗的成交量 |
+> **说明**：初期技术预研中规划的 `kskew`、`kamt`、`kvld` 等有量纲形态特征，已在工程实现中被上述通过开盘价与极值振幅严格归一化的 21 个纯无量纲微观几何特征全面替代，彻底消除了绝对价格中枢对 K 线形态的干扰。
 
 ---
 
 ### 5. 日历与交易时间上下文特征 (Base Time Features)
 
-源码：`data_preprocess/operator_futures/commodity/base_time_feature.py`
+源码：`data_preprocess/operator_futures/calendar/base_time.py`，数据集实际包含 **11 列**（另有 1 列 `prev_day_contract_role_tier` 归入混频特征）：
 
-| # | 特征名称 | 语义解释 | 精确数学公式 | 取值范围 |
-|---|---------|---------|-------------|---------|
-| 1 | `trading_minute_progress` | 交易小节时间进度 | $\frac{t_{\text{elapsed\_in\_session}}}{t_{\text{session\_duration}}}$ | $[0.0, 1.0]$ 严格线性递增 |
-| 2 | `morning_session` | 早盘交易小节标识 | $\mathbb{I}\{\text{Session Start Hour} \in [6, 12)\}$ | $\{0.0, 1.0\}$ One-Hot |
-| 3 | `afternoon_session` | 午盘交易小节标识 | $\mathbb{I}\{\text{Session Start Hour} \in [12, 18)\}$ | $\{0.0, 1.0\}$ One-Hot |
-| 4 | `night_session` | 夜盘交易小节标识 | $\mathbb{I}\{\text{Session Start Hour} \ge 18 \lor < 6\}$ | $\{0.0, 1.0\}$ One-Hot |
-| 5 | `is_opening_30m` | 开盘前 30 分钟窗口 | $\mathbb{I}\{t_{\text{elapsed\_in\_session}} \le 1800\,\text{s}\}$ | $\{0.0, 1.0\}$ |
-| 6 | `is_closing_30m` | 收盘前 30 分钟窗口 | $\mathbb{I}\{(t_{\text{duration}} - t_{\text{elapsed}}) \le 1800\,\text{s}\}$ | $\{0.0, 1.0\}$ |
-| 7 | `is_session_first_bar` | 小节前 2 根 Bar 脉冲 | $\mathbb{I}\{\text{Bar Index in Session} \in \{0, 1\}\}$ | $\{0.0, 1.0\}$ |
-| 8 | `is_session_last_bar` | 小节最后 2 根 Bar 脉冲 | $\mathbb{I}\{\text{Bar Index from Session End} \in \{0, 1\}\}$ | $\{0.0, 1.0\}$ |
-| 9 | `contract_month_sin` | 交割月份正弦编码 | $\sin\left(\frac{2\pi \cdot \text{DeliveryMonth}}{12}\right)$ | $[-1.0, 1.0]$ 周期编码 |
-| 10 | `contract_month_cos` | 交割月份余弦编码 | $\cos\left(\frac{2\pi \cdot \text{DeliveryMonth}}{12}\right)$ | $[-1.0, 1.0]$ 周期编码 |
-| 11 | `contract_life_remaining_ratio` | 合约生命剩余天数比 | $\frac{\max(\text{BusDays}(t, T_{\text{last}}), 1)}{\text{TotalTradingDays}}$ | $(0.0, 1.0]$ |
-| 12 | `prev_day_contract_role_tier` | 前一交易日角色等级 | 1.0 (主力), 2.0 (次主力), 3.0 (其他合约) | 阶梯离散值 |
+| # | 特征名称/模板 | 语义解释 | 精确数学公式 | 参数与时间窗口 | 是否相对化与无量纲化 |
+|---|-------------|---------|-------------|--------------|---------------------|
+| 1 | `trading_minute_progress` | 交易小节内分钟进度 | $\frac{t - T_{\text{session\_start}}}{T_{\text{session\_end}} - T_{\text{session\_start}}}$ | 当前交易小节 | **是 (无漂移风险)**：日内时间流进度 $[0.0, 1.0]$，消除日历绝对时间漂移 |
+| 2 | `morning_session` | 早盘交易时段虚拟变量 | $\mathbb{I}\{\text{Session} == \text{Morning}\}$ | 09:00~11:30 | **是 (无漂移风险)**：二值 One-Hot 编码 $\{0, 1\}$ |
+| 3 | `afternoon_session` | 午盘交易时段虚拟变量 | $\mathbb{I}\{\text{Session} == \text{Afternoon}\}$ | 13:30~15:00 | **是 (无漂移风险)**：二值 One-Hot 编码 $\{0, 1\}$ |
+| 4 | `night_session` | 夜盘交易时段虚拟变量 | $\mathbb{I}\{\text{Session} == \text{Night}\}$ | 21:00~23:00/02:30 | **是 (无漂移风险)**：二值 One-Hot 编码 $\{0, 1\}$ |
+| 5 | `is_opening_30m` | 开盘前 30 分钟强冲击标志 | $\mathbb{I}\{t - T_{\text{open}} \le 30\text{min}\}$ | 开盘前 3 个 Bar | **是 (无漂移风险)**：二值状态标志 $\{0, 1\}$ |
+| 6 | `is_closing_30m` | 收盘前 30 分钟平仓潮标志 | $\mathbb{I}\{T_{\text{close}} - t \le 30\text{min}\}$ | 尾盘后 3 个 Bar | **是 (无漂移风险)**：二值状态标志 $\{0, 1\}$ |
+| 7 | `is_session_first_bar` | 交易小节首个 Bar 标志 | $\mathbb{I}\{t == T_{\text{session\_first}}\}$ | 单 Bar 瞬时 | **是 (无漂移风险)**：二值脉冲标志 $\{0, 1\}$，识别集合竞价后开盘效应 |
+| 8 | `is_session_last_bar` | 交易小节末尾 Bar 标志 | $\mathbb{I}\{t == T_{\text{session\_last}}\}$ | 单 Bar 瞬时 | **是 (无漂移风险)**：二值脉冲标志 $\{0, 1\}$，识别小节收盘效应 |
+| 9 | `contract_month_sin` | 交割合约月份周期正弦编码 | $\sin\left(\frac{2\pi \cdot M}{12}\right), \quad M \in \{1, \dots, 12\}$ | 静态属性 | **是 (无漂移风险)**：连续周期编码 $[-1.0, 1.0]$，消除季节月份阶跃非连续性 |
+| 10 | `contract_month_cos` | 交割合约月份周期余弦编码 | $\cos\left(\frac{2\pi \cdot M}{12}\right), \quad M \in \{1, \dots, 12\}$ | 静态属性 | **是 (无漂移风险)**：连续周期编码 $[-1.0, 1.0]$，消除季节月份阶跃非连续性 |
+| 11 | `contract_life_remaining_ratio` | 合约剩余生命周期比例 | $\frac{T_{\text{expire}} - t}{T_{\text{expire}} - T_{\text{listed}}}$ | 动态计算 | **是 (无漂移风险)**：生命周期进度 $[0.0, 1.0]$，跨所有年份合约具备相同物理尺度 |
+| 12 | `prev_day_contract_role_tier` | 前一日合约角色分层 (交叉列) | 1 (主力), 2 (次主力), 3 (非主力/远月) | 跨日更新 | **是 (无漂移风险)**：离散序数编码 $\{1, 2, 3\}$，在第 7 节混频特征中统一对齐 |
 
 ---
 
 ### 6. 跨期期限结构与合约轮动特征 (Cross-Month Term Structure Features)
 
-源码：`data_preprocess/operator_futures/commodity/cross_month_feature.py`
+源码：`data_preprocess/operator_futures/calendar/cross_month.py`，数据集实际包含 **32 列**：
 
-针对主力（Main）、次主力（Sub）、当前合约（Current）以及近月交割序列（M1, M2, M3），提取无绝对价格违规的纯比率、价差和动态转移速度：
-
-| # | 特征名称 | 语义解释 | 精确数学公式 | 时间窗口 |
-|---|---------|---------|-------------|---------|
-| 1-3 | `cm_contract_role_{main/sub/other}` | 合约角色 One-Hot | $\mathbb{I}\{\text{Role} == \text{target}\}$ | 瞬时 (每日更新) |
-| 4 | `cm_current_main_log_price_ratio` | 当前合约相对主力对数价比 | $\ln\left(\frac{P_{\text{current}}}{P_{\text{main}}}\right)$ | 瞬时截面 |
-| 5 | `cm_current_main_relative_price_spread` | 当前合约相对主力相对价差 | $\frac{2(P_{\text{current}} - P_{\text{main}})}{P_{\text{current}} + P_{\text{main}}}$ | 瞬时截面 |
-| 6 | `cm_current_main_volume_share_current` | 当前合约占成交量份额 | $\frac{V_{\text{current}}}{V_{\text{current}} + V_{\text{main}} + \epsilon_1}$ | 瞬时截面 |
-| 7 | `cm_current_main_open_interest_share_current` | 当前合约占持仓量份额 | $\frac{OI_{\text{current}}}{OI_{\text{current}} + OI_{\text{main}} + \epsilon_1}$ | 瞬时截面 |
-| 8-11 | `cm_current_sub_*` | 当前合约与次主力配对特征 | 对应计算公式同上 | 瞬时截面 |
-| 12-15 | `cm_main_sub_*` | 主力与次主力基差配对特征 | 对应计算公式同上 | 瞬时截面 |
-| 16 | `cm_main_sub_log_price_spread_velocity_10m` | 主次主力价差变动速度 | $0.05 \cdot \tanh\left(\frac{\Delta_{10} \ln(P_{\text{main}} / P_{\text{sub}})}{0.02}\right)$ | 10 Bar (100m) 差分 |
-| 17 | `cm_open_interest_shift_speed_10m` | 换月持仓量迁移速度 | $\Delta_{10}(\text{share}_{\text{sub}}) = \text{share}_{\text{sub}, t} - \text{share}_{\text{sub}, t-10}$ | 10 Bar (100m) 差分 |
-| 18 | `cm_m1_m2_log_price_spread_velocity_10m` | M1 与 M2 价差变动速度 | $0.05 \cdot \tanh\left(\frac{\Delta_{10} \ln(P_{M1} / P_{M2})}{0.02}\right)$ | 10 Bar (100m) 差分 |
-| 19 | `cm_m2_m3_log_price_spread_velocity_10m` | M2 与 M3 价差变动速度 | $0.05 \cdot \tanh\left(\frac{\Delta_{10} \ln(P_{M2} / P_{M3})}{0.02}\right)$ | 10 Bar (100m) 差分 |
-| 20 | `cm_m1_m2_m3_butterfly_spread_velocity_10m`| 期限结构蝶式价差速度 | $0.05 \cdot \tanh\left(\frac{\Delta_{10} (\ln P_{M1} - 2\ln P_{M2} + \ln P_{M3})}{0.02}\right)$ | 10 Bar (100m) 差分 |
-| 21-23 | `cm_{pair}_spread_rolling_zscore_{w}` | 相对价差滚动平稳 Z-Score | $\frac{\text{Spread}_t - \text{Mean}_w(\text{Spread})_t}{\text{Std}_w(\text{Spread})_t + \epsilon_3}$ | $w \in \{48, 192\}$ |
+| # | 特征名称/模板 | 语义解释 | 精确数学公式 | 参数与时间窗口 | 是否相对化与无量纲化 |
+|---|-------------|---------|-------------|--------------|---------------------|
+| 1-3 | `cm_contract_role_{main/sub/other}` | 合约角色 One-Hot 编码 | $\mathbb{I}\{\text{Role} == r\}, \quad r \in \{\text{main}, \text{sub}, \text{other}\}$ | 动态截面判断 | **是 (无漂移风险)**：离散 $\{0, 1\}$ 分类标志 |
+| 4 | `cm_current_main_log_price_ratio` | 当前合约与主力对数比率 | $\ln(P_{\text{current}} / P_{\text{main}})$ | 截面对齐 | **是 (无漂移风险)**：对数价格差，代表相对主力溢折价率，无物理量纲 |
+| 5 | `cm_current_main_relative_price_spread`| 当前合约相对主力相对价差 | $\frac{P_{\text{current}} - P_{\text{main}}}{P_{\text{main}}}$ | 截面对齐 | **是 (无漂移风险)**：相对价差百分比，无物理量纲 |
+| 6 | `cm_current_main_volume_share_current` | 当前合约相对主力成交量占比 | $\frac{V_{\text{current}}}{V_{\text{current}} + V_{\text{main}} + \epsilon_1}$ | 单 Bar (10m) | **是 (无漂移风险)**：成交活跃度相对份额 $[0.0, 1.0]$ |
+| 7 | `cm_current_main_open_interest_share_current`| 当前合约相对主力持仓占比 | $\frac{OI_{\text{current}}}{OI_{\text{current}} + OI_{\text{main}} + \epsilon_1}$ | 单 Bar (10m) | **是 (无漂移风险)**：持仓沉淀相对份额 $[0.0, 1.0]$ |
+| 8 | `cm_current_main_log_price_spread_velocity_10m` | 当前与主力价差变动速度 | $\Delta_1(\ln(P_{\text{current}} / P_{\text{main}}))$ | 跨 1 Bar (10m) | **是 (无漂移风险)**：基差斜率变动速度，无物理量纲 |
+| 9-10 | `cm_current_main_spread_rolling_zscore_{w}` | 当前与主力价差滚动 Z-Score | $\frac{\text{Spread}_t - \text{Mean}_w(\text{Spread})}{\text{Std}_w(\text{Spread}) + \epsilon_3}$ | $w \in \{48, 192\}$ | **是 (无漂移风险)**：局部滚动 Z-Score 标准化，零均值单位方差 |
+| 11-15 | `cm_current_sub_*` | 当前合约与次主力跨期特征 | 对应当前合约与次主力合约的对数比率、相对价差、成交量占比、持仓占比、价差速度 | 截面对齐 | **是 (无漂移风险)**：完全相对化无量纲特征 (5 列) |
+| 16-17 | `cm_current_sub_spread_rolling_zscore_{w}` | 当前与次主力价差滚动 Z-Score | $\frac{\text{Spread}_t - \text{Mean}_w(\text{Spread})}{\text{Std}_w(\text{Spread}) + \epsilon_3}$ | $w \in \{48, 192\}$ | **是 (无漂移风险)**：局部滚动 Z-Score 标准化 (2 列) |
+| 18-22 | `cm_main_sub_*` | 主力合约与次主力跨期基差组 | 对应主次合约对数比率、相对价差、次主力成交占比、次主力持仓占比、主次价差速度 | 截面对齐 | **是 (无漂移风险)**：核心期限结构指标 (5 列) |
+| 23-24 | `cm_main_sub_spread_rolling_zscore_{w}` | 主力与次主力价差滚动 Z-Score | $\frac{\text{Spread}_t - \text{Mean}_w(\text{Spread})}{\text{Std}_w(\text{Spread}) + \epsilon_3}$ | $w \in \{48, 192\}$ | **是 (无漂移风险)**：局部滚动 Z-Score 标准化 (2 列) |
+| 25 | `cm_open_interest_shift_speed_10m` | 换月主力资金移仓速度 | $\Delta_1\left(\frac{OI_{\text{sub}}}{OI_{\text{main}} + OI_{\text{sub}} + \epsilon_1}\right)$ | 跨 1 Bar (10m) | **是 (无漂移风险)**：持仓迁移速率，衡量资金换月速度，纯比例增量 |
+| 26-27 | `cm_m1_m2_log_price_spread_velocity_10m`, `cm_m1_m2_open_interest_share_m2` | 近月与次近月跨期动力学 | 近月 M1 与次近月 M2 的对数价差速度及持仓份额占比 | 截面对齐 | **是 (无漂移风险)**：无量纲跨期流动性与期限曲线倾斜度 (2 列) |
+| 28-29 | `cm_m2_m3_log_price_spread_velocity_10m`, `cm_m2_m3_open_interest_share_m3` | 次近月与远月跨期动力学 | 次近月 M2 与远月 M3 的对数价差速度及持仓份额占比 | 截面对齐 | **是 (无漂移风险)**：无量纲远端期限曲线倾斜度 (2 列) |
+| 30 | `cm_m1_m2_m3_butterfly_spread_velocity_10m` | 跨期蝶式价差变动速度 | $\Delta_1(\ln(P_{M1}) - 2\ln(P_{M2}) + \ln(P_{M3}))$ | 跨 1 Bar (10m) | **是 (无漂移风险)**：二阶曲率变化速度，纯无量纲曲率变动 |
+| 31-32 | `cm_spread_rolling_zscore_{w}` | 综合跨期价差滚动 Z-Score | $\frac{S_t - \text{Mean}_w(S)}{\text{Std}_w(S) + \epsilon_3}, \quad S = \ln(P_t / P_{\text{main}})$ | $w \in \{48, 192\}$ | **是 (无漂移风险)**：通用基差局部 Z-Score 标准化 (2 列) |
 
 ---
 
 ### 7. 混频跨日与跨周宏观状态特征 (Mixed-Frequency Daily & Weekly Features)
 
-源码：`data_preprocess/operator_futures/commodity/daily_mixed_frequency_feature.py`, `weekly_mixed_frequency_feature.py`
+源码：`data_preprocess/operator_futures/commodity/macro_indicator.py`，数据集实际包含 **165 列**（含 1 列 `prev_day_contract_role_tier` 与 164 列日/周频及对应分位数特征）：
 
-混频特征捕捉上一交易日（Prev Day）与上一自然周（Prev Week）以及滚动多日/多周的高级别宏观锚点：
-
-| # | 特征名称模板 | 语义解释 | 精确数学公式 | 滚动窗口集 |
-|---|-------------|---------|-------------|-----------|
-| 1 | `prev_{d}_day_return` | 历史前 d 日累计收益率 | $\frac{C_{\text{prev}} - C_{\text{prev}-d}}{C_{\text{prev}-d}}$ | $d \in \{1, 2, 5, 10, 15, 30\}$ 日 |
-| 2 | `prev_{d}_day_range_pct` | 历史前 d 日振幅比例 | $\frac{\max(H) - \min(L)}{C_{\text{prev}-d}}$ | $d \in \{1, 2, 5, 10, 15, 30\}$ 日 |
-| 3 | `prev_{d}_day_body_pct` | 历史前 d 日实体比例 | $\frac{|C - O|}{C_{\text{prev}-d}}$ | $d \in \{1, 2, 5, 10, 15, 30\}$ 日 |
-| 4 | `prev_day_close_position` | 前日收盘在振幅中相对位置 | $\frac{C - L}{H - L + \epsilon_1}$ | 前 1 交易日 |
-| 5 | `prev_day_vwap_deviation_pct`| 前日 VWAP 与收盘偏离度 | $\frac{\text{VWAP}_{\text{day}} - C}{C}$ | 前 1 交易日 |
-| 6 | `prev_{d}_day_trade_imbalance` | 历史 d 日主动买卖失衡率 | $\frac{V_{\text{up}} - V_{\text{down}}}{V_{\text{up}} + V_{\text{down}} + \epsilon_1}$ | $d \in \{1, 2, 5, 10, 15, 30\}$ 日 |
-| 7 | `prev_{d}_day_open_interest_change` | 历史 d 日持仓变动率 | $\frac{OI_t - OI_{t-d}}{OI_{t-d} + \epsilon_1}$ | $d \in \{1, 2, 5, 10, 15, 30\}$ 日 |
-| 8 | `prev_{d}_day_turnover_rate` | 历史 d 日年化换手率 | $\frac{\sum V}{OI + \epsilon_1}$ | $d \in \{1, 2, 5, 10, 15, 30\}$ 日 |
-| 9-16 | `prev_{w}_week_*` | 历史前 w 周对应指标 | 包含 return, range, body, vwap/twap deviation, imbalance 等 | $w \in \{1, 2, 4, 6\}$ 自然周 |
-| 17 | `prev_*_quantile_rank` | 宏观状态滚动历史分位数排名 | $\text{RankPct}_{192}(\text{Feature}) = \frac{\text{Rank}(\text{Feature}_t \text{ in } W=192)}{192}$ | 滚动 192 Bar (约 4 天) |
+| # | 特征名称/模板 | 语义解释 | 精确数学公式 | 参数与时间窗口 | 是否相对化与无量纲化 |
+|---|-------------|---------|-------------|--------------|---------------------|
+| 1 | `prev_day_contract_role_tier` | 前一日合约角色分层 | 1 (主力), 2 (次主力), 3 (其他) | 跨日更新 | **是 (无漂移风险)**：离散序数编码 $\{1, 2, 3\}$ |
+| 2 | `prev_day_return` | 前 1 日收益率 | $\frac{C_{d-1} - C_{d-2}}{C_{d-2}}$ | $d=1$ 天 | **是 (无漂移风险)**：百分比收益率，无物理量纲 |
+| 3 | `prev_day_range_pct` | 前 1 日相对振幅 | $\frac{H_{d-1} - L_{d-1}}{C_{d-2}}$ | $d=1$ 天 | **是 (无漂移风险)**：归一化日波动幅度 |
+| 4 | `prev_day_body_pct` | 前 1 日实体相对幅度 | $\frac{\vert C_{d-1} - O_{d-1} \vert}{C_{d-2}}$ | $d=1$ 天 | **是 (无漂移风险)**：日 K 线实体相对比例 |
+| 5 | `prev_day_close_position` | 前 1 日收盘在日内极值相对位置 | $\frac{C_{d-1} - L_{d-1}}{H_{d-1} - L_{d-1} + \epsilon_1}$ | $d=1$ 天 | **是 (无漂移风险)**：日内分位数 $[0.0, 1.0]$ |
+| 6 | `prev_day_vwap_deviation_pct` | 前 1 日收盘相对 VWAP 偏离度 | $\frac{C_{d-1} - \text{VWAP}_{d-1}}{\text{VWAP}_{d-1}}$ | $d=1$ 天 | **是 (无漂移风险)**：相对偏离百分比 |
+| 7 | `prev_day_twap_deviation_pct` | 前 1 日收盘相对 TWAP 偏离度 | $\frac{C_{d-1} - \text{TWAP}_{d-1}}{\text{TWAP}_{d-1}}$ | $d=1$ 天 | **是 (无漂移风险)**：相对偏离百分比 |
+| 8-9 | `prev_day_upper/lower_shadow_pct` | 前 1 日上下影线相对幅度 | $\frac{H - \max(O, C)}{C_{\text{prev}}}, \frac{\min(O, C) - L}{C_{\text{prev}}}$ | $d=1$ 天 | **是 (无漂移风险)**：影线高度百分比 (2 列) |
+| 10-12 | `prev_day_upper/lower_shadow_to_range`, `prev_day_body_to_range` | 前 1 日影线/实体与振幅比 | $\frac{\text{Shadow}}{H - L + \epsilon_1}, \frac{\vert C - O \vert}{H - L + \epsilon_1}$ | $d=1$ 天 | **是 (无漂移风险)**：K 线形态无量纲比例 $[0.0, 1.0]$ (3 列) |
+| 13 | `prev_day_trade_imbalance` | 前 1 日主动买卖笔数失衡率 | $\frac{N_{\text{up}} - N_{\text{down}}}{N_{\text{up}} + N_{\text{down}} + \epsilon_1}$ | $d=1$ 天 | **是 (无漂移风险)**：主动买卖笔数相对失衡比率 $[-1.0, 1.0]$ |
+| 14 | `prev_day_open_interest_change` | 前 1 日持仓变动率 | $\frac{OI_{d-1} - OI_{d-2}}{OI_{d-2} + \epsilon_1}$ | $d=1$ 天 | **是 (无漂移风险)**：持仓相对增长率 |
+| 15 | `prev_day_turnover_rate` | 前 1 日持仓换手率 | $\frac{V_{d-1}}{OI_{d-1} + \epsilon_1}$ | $d=1$ 天 | **是 (无漂移风险)**：成交量与持仓量之比，纯无量纲周转倍数 |
+| 16-17 | `prev_day_trade_up/down_ratio` | 前 1 日主动买/卖成交笔数占比 | $\frac{N_{\text{up}}}{N_{\text{total}}}, \frac{N_{\text{down}}}{N_{\text{total}}}$ | $d=1$ 天 | **是 (无漂移风险)**：成交方向占比 $[0.0, 1.0]$ (2 列) |
+| 18-19 | `prev_day_limit_up/down_single_sided_ratio` | 前 1 日单边涨/跌停封板时间占比 | 交易所逐笔挂单涨跌停封死时长比率 | $d=1$ 天 | **是 (无漂移风险)**：单边封停时间占比 $[0.0, 1.0]$ (2 列) |
+| 20-37 | `prev_day_*_quantile_rank` | 前 1 日指标全市场分位数秩 | $\text{Rank}_{\text{cross-section}}(X) / N_{\text{contracts}}$ | $d=1$ 天截面 | **是 (无漂移风险)**：截面经验分位数 $[0.0, 1.0]$，对应上述 18 个指标 (18 列) |
+| 38-72 | `prev_{d}_day_{metric}` | 多日复合宏观状态特征 | 针对 7 大核心指标计算 $d$ 日复合状态 | $d \in \{2, 5, 10, 15, 30\}$ | **是 (无漂移风险)**：涵盖 `trade_imbalance`、`open_interest_change`、`turnover_rate`、`trade_up/down_ratio`、`limit_up/down_ratio` (5 窗口 $\times$ 7 指标 = 35 列) |
+| 73-107 | `prev_{d}_day_{metric}_quantile_rank` | 多日指标全市场分位数秩 | 对应上述 35 个多日复合指标的截面分位数 | $d \in \{2, 5, 10, 15, 30\}$ | **是 (无漂移风险)**：截面经验分位数 $[0.0, 1.0]$ (35 列) |
+| 108-121 | `prev_week_{metric}` | 前 1 周宏观状态特征 | 涵盖周频收益率、振幅比、实体比、极值位置、VWAP/TWAP 偏离、影线振幅比、买卖失衡、持仓变动、换手率、方向占比 | $w=1$ 周 (5 交易日) | **是 (无漂移风险)**：完全相对化周频状态 (14 列) |
+| 122-135 | `prev_week_{metric}_quantile_rank` | 前 1 周指标全市场分位数秩 | 对应上述 14 个周频特征的截面分位数排名 | $w=1$ 周截面 | **是 (无漂移风险)**：截面经验分位数 $[0.0, 1.0]$ (14 列) |
+| 136-150 | `prev_{w}_week_{metric}` | 多周复合宏观状态特征 | 针对 5 大核心指标计算 $w$ 周复合状态 | $w \in \{2, 4, 6\}$ 周 | **是 (无漂移风险)**：涵盖 `trade_imbalance`、`open_interest_change`、`turnover_rate`、`trade_up/down_ratio` (3 窗口 $\times$ 5 指标 = 15 列) |
+| 151-165 | `prev_{w}_week_{metric}_quantile_rank` | 多周指标全市场分位数秩 | 对应上述 15 个多周复合指标的截面分位数排名 | $w \in \{2, 4, 6\}$ 周截面 | **是 (无漂移风险)**：截面经验分位数 $[0.0, 1.0]$ (15 列) |
 
 ---
 
 ### 8. 单列价格与成交量滚动时序特征 (Time Rolling Price & Volume Features)
 
-源码：`data_preprocess/operator_futures/time_operator/multi_processing_util.py`
+源码：`data_preprocess/operator_futures/time_operator/time_operator_util.py`，数据集实际包含 **623 列**：
 
-对输入的价格序列（`bid1~5_price`, `ask1~5_price`, `wap_1`, `wap_2`, `buy_wap`, `sell_wap`, `midprice`, `mark_price` 等）和挂单量序列（`bid1~5_size`, `ask1~5_size`, `buy_volume_oe`, `sell_volume_oe` 等），在时间窗口集合 $W = \{1, 2, 6, 12, 16, 24, 48, 96, 192\}$ 上生成标准时序特征：
+滚动算子的基础参数窗口集合为 $W = \{2, 6, 12, 16, 24, 48, 96, 192\}$（8 个尺度，覆盖 20 分钟至 32 小时交易跨度）。
 
-| # | 特征名称后缀 | 语义解释 | 精确数学公式 | 时间窗口 $w$ |
-|---|-------------|---------|-------------|-------------|
-| 1 | `_log_return_{w}` | 对数收益率 (放大千倍) | $1000 \cdot \ln\left(\frac{X_t}{X_{t-w} + \epsilon_2}\right)$ | $w \in \{1, 2, 6, 12, 16, 24, 48\}$ |
-| 2 | `_trend_{w}` | 均值偏离标准化趋势 (Z-Trend) | $\frac{X_t - \text{Mean}_w(X)_t}{\text{Std}_w(X)_t + \epsilon_2}$ | $w \in \{2, 6, 12, 16, 24, 48, 96, 192\}$ |
-| 3 | `roc_{w}` | 变动速率 (Price Ratio) | $\frac{C_{t-w}}{C_t + \epsilon_2}$ | $w \in W$ |
-| 4 | `ma_{w}` | 滚动均值与现价比率 | $\frac{\text{Mean}_w(C)_t}{C_t + \epsilon_2}$ | $w \in W$ |
-| 5 | `std_{w}` | 滚动无偏标准差与现价比 | $\frac{\text{Std}_w(C)_t}{C_t + \epsilon_2}$ | $w \in W$ |
-| 6 | `bollinger_bandwidth_{w}` | 布林带相对带宽对数 | $\ln\left(\frac{4 \cdot \text{Std}_w(C)_t}{\text{Mean}_w(C)_t + \epsilon_2} + 10^{-6}\right)$ | $w \in W$ |
-| 7 | `bollinger_upper_{w}` | 布林带上轨与现价比 | $\frac{\text{Mean}_w(C)_t + 2 \cdot \text{Std}_w(C)_t}{C_t + \epsilon_2}$ | $w \in W$ |
-| 8 | `bollinger_lower_{w}` | 布林带下轨与现价比 | $\frac{\text{Mean}_w(C)_t - 2 \cdot \text{Std}_w(C)_t}{C_t + \epsilon_2}$ | $w \in W$ |
-| 9-13 | `pivot_{pp/r1/s1/r2/s2}_{w}` | 经典枢轴点支撑阻力系统与现价比 | $PP = \frac{\max_w(H) + \min_w(L) + C}{3}, R_1 = 2PP - L, S_1 = 2PP - H$ 等除以 $C$ | $w \in W$ |
-| 14 | `beta_{w}` | 线性动量斜率比率 | $\frac{C_t - C_{t-w}}{w \cdot (C_t + \epsilon_2)}$ | $w \in W$ |
-| 15-16 | `max_{w}`, `min_{w}` | 窗口内极值与现价比率 | $\frac{\max_w(C)}{C_t + \epsilon_2}, \quad \frac{\min_w(C)}{C_t + \epsilon_2}$ | $w \in W$ |
-| 17-18 | `qtlu_{w}`, `qtld_{w}` | 80% / 20% 分位数与现价比率 | $\frac{\text{Quantile}_{0.8, w}(C)}{C_t + \epsilon_2}, \quad \frac{\text{Quantile}_{0.2, w}(C)}{C_t + \epsilon_2}$ | $w \in W$ |
-| 19 | `rank_{w}` | 现价在窗口内的百分比排名 | $\frac{\text{Rank}(C_t \text{ in } W_t)}{w}$ | $w \in W$ |
-| 20-22 | `imax_{w}`, `imin_{w}`, `imxd_{w}` | 极值发生位置与位置差 | $\frac{\text{argmax}(H)}{w}, \frac{\text{argmin}(L)}{w}, \text{imax} - \text{imin}$ | $w \in W$ |
-| 23 | `rsv_{w}` | 未成熟随机值 (Stochastic RSV) | $\frac{C_t - \min_w(L)}{\max_w(H) - \min_w(L) + \epsilon_2}$ | $w \in W$ |
-| 24-26 | `cntp_{w}`, `cntn_{w}`, `cntd_{w}` | 上涨/下跌 Bar 计数占比与差比 | $\frac{N_{\text{up}}}{w}, \frac{N_{\text{down}}}{w}, \frac{N_{\text{up}} - N_{\text{down}}}{N_{\text{up}} + N_{\text{down}} + 10^{-6}}$ | $w \in W$ |
-| 27-29 | `sump_{w}`, `sumn_{w}`, `sumd_{w}` | 正负对数收益率累计绝对值占比 | $\frac{\sum |r^+|}{\sum |r|}, \frac{\sum |r^-|}{\sum |r|}, \frac{\sum |r^+| - \sum |r^-|}{\sum |r|}$ | $w \in W$ |
-| 30 | `vma_{w}` | 成交量滚动均值与现量比 | $\frac{\text{Mean}_w(V)_t}{V_t + \epsilon_2}$ | $w \in W$ |
-| 31 | `vstd_{w}` | 成交量相对波动率 | $\text{clip}\left(\frac{\text{Std}_w(V)_t}{\max(V_t, 1.0)}, 0.0, 10.0\right)$ | $w \in W$ |
-| 32-34 | `vsump_{w}`, `vsumn_{w}`, `vsumd_{w}` | 成交量变动增减累计占比 | 量差分正增量、负增量的相对累计比例 | $w \in W$ |
-| 35-42 | `*_std_norm` | 标准差归一化变体 | $\frac{C_t - C_{t-w}}{\text{Std}_w(C)}, \frac{C_t - \text{Mean}_w(C)}{\text{Std}_w(C)}, \frac{C_t - \text{Min}_w(C)}{\text{Std}_w(C)}$ 等 | $w \in W$ |
+| # | 特征名称/模板 | 语义解释 | 精确数学公式 | 参数与时间窗口 | 是否相对化与无量纲化 |
+|---|-------------|---------|-------------|--------------|---------------------|
+| 1-30 | `{base}_log_return_2` | 30 个基础序列的 2 步对数差分 | $\ln(X_t / X_{t-2})$ | 窗口 2 Bar (20m) | **是 (无漂移风险)**：对数收益率/变动率，覆盖 10 档挂单价、10 档挂单量占比、4 个微观 WAP、2 个买卖价差、3 个执行成交量、1 个标记价格 (30 列) |
+| 31-270 | `{base}_trend_{w}` | 30 个基础序列的归一化线性斜率 | $\frac{X_t - X_{t-w}}{w \cdot (X_{t-w} + \epsilon_2)}$ | $w \in W, 30$ 个基础序列 | **是 (无漂移风险)**：消除基数影响的无量纲相对线性趋势速度 ($30 \times 8 = 240$ 列) |
+| 271-342 | `{op}_{w}_std_norm_origin` | 9 组核心算子的标准差归一化变体 | $\frac{X_t - \text{Mean}_w(X)}{\text{Std}_w(X) + \epsilon_3}$ | 9 算子 $\times 8$ 窗口 | **是 (无漂移风险)**：局部滚动 Z-Score 平稳化，涵盖 `beta`, `ma`, `max`, `min`, `qtld`, `qtlu`, `roc`, `rsv`, `vma` ($9 \times 8 = 72$ 列) |
+| 343-582 | `{price_op}_{w}_origin` | 30 组价格滚动统计算子 | 详见下方价格算子公式定义 | 30 算子 $\times 8$ 窗口 | **是 (无漂移风险)**：均除以现价 $C_t$ 或窗口极值极差，实现百分比相对化 ($30 \times 8 = 240$ 列) |
+| 583-622 | `{volume_op}_{w}_origin` | 5 组成交量滚动统计算子 | 详见下方成交量算子公式定义 | 5 算子 $\times 8$ 窗口 | **是 (无漂移风险)**：均除以当前成交量 $V_t$ 或总成交量，实现倍数相对化 ($5 \times 8 = 40$ 列) |
+| 623 | `log_volume_origin` | 单 Bar 对数成交量 | $\ln(V_t + 1.0)$ | 单 Bar 瞬时 | **否 (高漂移风险)**：单 Bar 绝对成交量对数变换，未做局部滚动均值或跨期总量归一化，受不同年份市场活跃度规模漂移影响 |
+
+#### 价格与成交量滚动时序算子精确数学公式清单 ($w \in W$)
+
+- **变动与动量**：
+  - `roc_{w}`: $\frac{C_{t-w}}{C_t}$ (无量纲比值)
+  - `beta_{w}`: $\frac{C_{t-w} - C_t}{w \cdot C_t}$ (相对变化速率)
+- **极值与分位数**：
+  - `ma_{w}`: $\frac{\text{Mean}_w(C)_t}{C_t}$ (均价现价比)
+  - `std_{w}`: $\frac{\text{Std}_w(C)_t}{C_t}$ (相对波动率)
+  - `max_{w}`, `min_{w}`: $\frac{\max_w(C)}{C_t}, \frac{\min_w(C)}{C_t}$ (极值现价比)
+  - `qtlu_{w}`, `qtld_{w}`: $\frac{\text{Quantile}_{0.8}(C)}{C_t}, \frac{\text{Quantile}_{0.2}(C)}{C_t}$ (分位数现价比)
+  - `rank_{w}`: $\frac{\text{Rank}_w(C_t)}{w}$ (窗口内时间分位数 $[0, 1]$)
+  - `imax_{w}`, `imin_{w}`, `imxd_{w}`: $\frac{\text{argmax}_w(H)}{w}, \frac{\text{argmin}_w(L)}{w}, \text{imax} - \text{imin}$ (极值时间距离比)
+  - `rsv_{w}`: $\frac{C_t - \min_w(L)}{\max_w(H) - \min_w(L) + \epsilon_2}$ (威廉/KD RSV指标 $[0, 1]$)
+- **通道与布林带**：
+  - `bollinger_bandwidth_{w}`: $\frac{2 \cdot 2\text{Std}_w(C)}{\text{Mean}_w(C)}$ (布林带相对带宽)
+  - `bollinger_upper_{w}`, `bollinger_lower_{w}`: $\frac{\text{Mean}_w(C) \pm 2\text{Std}_w(C)}{C_t}$ (上下轨相对现价比)
+- **枢轴点 (Pivot Points)**：
+  - `pivot_pp_{w}`: $\frac{\max(H) + \min(L) + C}{3 \cdot C_t}$
+  - `pivot_r1_{w}`, `pivot_s1_{w}`: $\frac{2 \cdot PP - \min(L)}{C_t}, \frac{2 \cdot PP - \max(H)}{C_t}$
+  - `pivot_r2_{w}`, `pivot_s2_{w}`: $\frac{PP + (\max(H) - \min(L))}{C_t}, \frac{PP - (\max(H) - \min(L))}{C_t}$
+- **方向计数与正负积累**：
+  - `cntp_{w}`, `cntn_{w}`: $\frac{1}{w} \sum_{k=0}^{w-1} \mathbb{I}\{r_{t-k} > 0\}, \frac{1}{w} \sum_{k=0}^{w-1} \mathbb{I}\{r_{t-k} < 0\}$ (涨跌 Bar 比例)
+  - `cntd_{w}`: $\frac{\text{cntp} - \text{cntn}}{\text{cntp} + \text{cntn} + 10^{-6}}$ (涨跌 Bar 净差占比)
+  - `sump_{w}`, `sumn_{w}`, `sumd_{w}`: 过去 $w$ 期内收益率正向增量占绝对增量之和的比率 ($[0, 1]$ 与 $[-1, 1]$)
+- **价量协同**：
+  - `corr_{w}`: 价格与成交量滚动对数相关系数 $\text{Corr}_w(C, \ln(V+1)) \in [-1, 1]$ (无量纲)
+  - `cord_{w}`: 收益率变动与成交量变动滚动相关系数 $\text{Corr}_w(\Delta C / C, \Delta V / V) \in [-1, 1]$ (无量纲)
+  - `wvma_{w}`: 加权成交量均值比率 $\frac{\text{Std}_w(\vert \Delta C / C \vert \cdot V)}{\text{Mean}_w(\vert \Delta C / C \vert \cdot V) + \epsilon_2}$ (无量纲离散系数)
+- **成交量动力学算子**：
+  - `vma_{w}`: $\frac{\text{Mean}_w(V)_t}{V_t + \epsilon_2}$ (滚动均量与现量比)
+  - `vstd_{w}`: $\text{clip}\left(\frac{\text{Std}_w(V)_t}{\max(V_t, 1.0)}, 0.0, 10.0\right)$ (成交量相对离散度)
+  - `vsump_{w}`, `vsumn_{w}`, `vsumd_{w}`: 成交量正向增量占总绝对增量的相对累计比例 ($[0, 1]$ 与 $[-1, 1]$)
 
 ---
 
 ### 9. 物理风险与流动性状态特征 (Physical Risk & Liquidity State Features)
 
-源码：`data_preprocess/operator_futures/time_operator/multi_processing_util.py` (`get_risk_and_liquidity_state_features`)
+源码：`data_preprocess/operator_futures/time_operator/time_operator_util.py` (`process_volatility_features` 等)，数据集实际包含 **80 列**（10 个物理指标 $\times$ 8 个时间窗口 $W = \{2, 6, 12, 16, 24, 48, 96, 192\}$）：
 
-| # | 特征名称模板 | 语义解释 | 精确数学公式 | 时间窗口 $w$ |
-|---|-------------|---------|-------------|-------------|
-| 1 | `atr_pct_{w}` | 真实波幅百分比 | $\frac{\text{Mean}_w(\text{TR})_t}{C_t} \cdot 100\%, \quad \text{TR} = \max(H - L, |H - C_{-1}|, |L - C_{-1}|)$ | $w \in \{1, 2, 6, 12, 16, 24, 48, 96\}$ |
-| 2 | `historical_volatility_{w}`| 历史年化波动率 | $\text{Std}_w(r)_t \cdot \sqrt{\text{BarsPerDay}}$ | $w \in \{1, 2, 6, 12, 16, 24, 48, 96\}$ |
-| 3 | `rolling_volatility_{w}` | 指数加权移动波动率 | $\text{EWM\_Std}_w(r)_t$ | $w \in \{1, 2, 6, 12, 16, 24, 48, 96\}$ |
-| 4 | `parkinson_volatility_{w}` | 帕金森极值方差波动率 | $\sqrt{\frac{1}{4 \ln 2 \cdot w} \sum_{k=0}^{w-1} \ln\left(\frac{H_{t-k}}{L_{t-k}}\right)^2}$ | $w \in \{1, 2, 6, 12, 16, 24, 48, 96\}$ |
-| 5 | `garman_klass_volatility_{w}`| 加曼-克拉斯开高低收波动率 | $\sqrt{\frac{1}{w} \sum_{k=0}^{w-1} \left[0.5 \ln\left(\frac{H}{L}\right)^2 - (2\ln 2 - 1) \ln\left(\frac{C}{O}\right)^2\right]}$ | $w \in \{1, 2, 6, 12, 16, 24, 48, 96\}$ |
-| 6 | `realized_volatility_{w}` | 滚动已实现波动率 | $\sqrt{\sum_{k=0}^{w-1} r_{t-k}^2}$ | $w \in \{1, 2, 6, 12, 16, 24, 48, 96\}$ |
-| 7 | `relative_volume_{w}` | 相对成交量倍数 | $\frac{V_t}{\text{Mean}_w(V)_t + \epsilon_2}$ | $w \in \{1, 2, 6, 12, 16, 24, 48, 96\}$ |
-| 8 | `relative_amount_{w}` | 相对成交金额倍数 | $\frac{\text{tradeval}_t}{\text{Mean}_w(\text{tradeval})_t + \epsilon_2}$ | $w \in \{1, 2, 6, 12, 16, 24, 48, 96\}$ |
-| 9 | `relative_open_interest_{w}`| 相对持仓量倍数 | $\frac{OI_t}{\text{Mean}_w(OI)_t + \epsilon_2}$ | $w \in \{1, 2, 6, 12, 16, 24, 48, 96\}$ |
-| 10 | `open_interest_change_ratio_{w}`| 跨窗口持仓量变动率 | $\frac{OI_t - OI_{t-w}}{OI_{t-w} + \epsilon_2}$ | $w \in \{1, 2, 6, 12, 16, 24, 48, 96\}$ |
+| # | 特征名称/模板 | 语义解释 | 精确数学公式 | 参数与时间窗口 | 是否相对化与无量纲化 |
+|---|-------------|---------|-------------|--------------|---------------------|
+| 1-8 | `atr_pct_{w}` | 真实波幅相对百分比 | $\frac{\text{Mean}_w(\text{TR})_t}{C_t} \cdot 100\%, \quad \text{TR} = \max(H - L, \vert H - C_{t-1} \vert, \vert L - C_{t-1} \vert)$ | $w \in W$ (8 列) | **是 (无漂移风险)**：真实波幅除以现价，纯无量纲百分比 |
+| 9-16 | `historical_volatility_{w}` | 历史年化波动率 | $\text{Std}_w(r)_t \cdot \sqrt{\text{BarsPerDay}}$ | $w \in W$ (8 列) | **是 (无漂移风险)**：基于对数收益率的滚动标准差，消除绝对价格 |
+| 17-24 | `rolling_volatility_{w}` | 指数加权移动波动率 | $\text{EWM\_Std}_w(r)_t$ | $w \in W$ (8 列) | **是 (无漂移风险)**：基于对数收益率的指数加权波动率 |
+| 25-32 | `parkinson_volatility_{w}` | 帕金森极值方差波动率 | $\sqrt{\frac{1}{4 \ln 2 \cdot w} \sum_{k=0}^{w-1} \ln\left(\frac{H_{t-k}}{L_{t-k}}\right)^2}$ | $w \in W$ (8 列) | **是 (无漂移风险)**：基于对数最高最低价差，纯相对波动率 |
+| 33-40 | `garman_klass_volatility_{w}` | 加曼-克拉斯开高低收波动率 | $\sqrt{\frac{1}{w} \sum_{k=0}^{w-1} \left[0.5 \ln\left(\frac{H}{L}\right)^2 - (2\ln 2 - 1)\ln\left(\frac{C}{O}\right)^2\right]}$ | $w \in W$ (8 列) | **是 (无漂移风险)**：全 K 线几何开高低收连续波动率估计 |
+| 41-48 | `realized_volatility_{w}` | 滚动已实现波动率 | $\sqrt{\sum_{k=0}^{w-1} r_{t-k}^2}$ | $w \in W$ (8 列) | **是 (无漂移风险)**：收益率平方和平方根，纯无量纲波动率 |
+| 49-56 | `relative_volume_{w}` | 相对成交量倍数 | $\frac{V_t}{\text{Mean}_w(V)_t + \epsilon_2}$ | $w \in W$ (8 列) | **是 (无漂移风险)**：现量相对自身局部均量比值，消除绝对量级 |
+| 57-64 | `relative_amount_{w}` | 相对成交金额倍数 | $\frac{\text{tradeval}_t}{\text{Mean}_w(\text{tradeval})_t + \epsilon_2}$ | $w \in W$ (8 列) | **是 (无漂移风险)**：成交额相对自身局部均额比值，消除绝对货币量级 |
+| 65-72 | `relative_open_interest_{w}` | 相对持仓量倍数 | $\frac{OI_t}{\text{Mean}_w(OI)_t + \epsilon_2}$ | $w \in W$ (8 列) | **是 (无漂移风险)**：持仓量相对自身局部均持仓比值，消除绝对量级 |
+| 73-80 | `open_interest_change_ratio_{w}` | 跨窗口持仓量变动率 | $\frac{OI_t - OI_{t-w}}{OI_{t-w} + \epsilon_2}$ | $w \in W$ (8 列) | **是 (无漂移风险)**：持仓相对增长率，消除绝对手数 |
 
 ---
 
 ### 10. 动量、振荡器与高阶增强特征 (Momentum, Oscillators & Enhanced Features)
 
-源码：`data_preprocess/operator_futures/time_operator/time_operator_util.py` (`process_enhanced_state_features`)
+源码：`data_preprocess/operator_futures/time_operator/time_operator_util.py` (`process_enhanced_state_features` 与 `_rolling_log_price_anchors`)，数据集实际包含 **37 列**：
 
-| # | 特征名称 | 语义解释 | 精确数学公式 | 参数与窗口 |
-|---|---------|---------|-------------|-----------|
-| 1 | `price_velocity_10m` | 价格短期均线速度 | $\frac{\text{EMA}_{10}(C) - \text{EMA}_{20}(C)}{C}$ | span=(10, 20) |
-| 2 | `price_acceleration_10m_norm` | 标准化价格加速度 | $\frac{\Delta_1(\text{price\_velocity\_10m})}{\text{RollingStd}_{10}(r) + \epsilon_3}$ | span=10, std=10 |
-| 3-5 | `ema_divergence_{s1}_{s2}` | 多尺度 EMA 发散度 | $\frac{\text{EMA}_{s1}(C) - \text{EMA}_{s2}(C)}{\text{EMA}_{s2}(C)}$ | (20, 60), (60, 120), (20, 120) |
-| 6 | `macd_histogram_norm` | 归一化 MACD 柱状图 | $\text{DIF} - \text{DEA}, \quad \text{DIF} = \frac{\text{EMA}_{12}(C) - \text{EMA}_{26}(C)}{C}, \text{DEA} = \text{EMA}_9(\text{DIF})$ | (12, 26, 9) |
-| 7 | `rsi_14_norm` | 归一化相对强弱指标 | $\frac{\text{RSI}_{14} - 50}{50}, \quad \text{RSI}_{14} = 100 \cdot \frac{\text{EWM}(\text{Gain})}{\text{EWM}(\text{Gain}) + \text{EWM}(\text{Loss})}$ | Wilder 14 周期 |
-| 8-10 | `plus_di_14`, `minus_di_14`, `adx_14`| 经典 DMI/ADX 趋势强度 | $+DI_{14} = 100 \frac{\text{EWM}(+DM)}{\text{ATR}}, -DI_{14} = 100 \frac{\text{EWM}(-DM)}{\text{ATR}}, ADX = \text{EWM}\left(100 \frac{|+DI - -DI|}{+DI + -DI}\right)$ | Wilder 14 周期 |
-| 11-12 | `stoch_k_14_norm`, `stoch_d_14_norm` | 归一化随机振荡器 KD | $\frac{K - 50}{50}, \frac{D - 50}{50}, \quad K = \text{EWM}_{3}(\text{RSV}_{14}), D = \text{EWM}_{3}(K)$ | 周期 (14, 3) |
-| 13 | `cci_14_norm` | 归一化顺势指标 | $\text{clip}\left(\frac{TP - \text{Mean}_{14}(TP)}{0.015 \cdot \text{MeanDev}_{14}(TP)} \cdot \frac{1}{100}, -3.0, 3.0\right), TP = \frac{H+L+C}{3}$ | 周期 14 |
-| 14-15 | `price_to_vwap_zscore_{w}` | 现价相对 VWAP 偏离 Z-Score | $\frac{\text{Dev}_t - \text{Mean}_w(\text{Dev})}{\text{Std}_w(\text{Dev}) + \epsilon_3}, \quad \text{Dev} = \frac{C - \text{VWAP}}{C}$ | $w \in \{48, 96\}$ |
-| 16-17 | `vwap_slope_{w}` | VWAP 宏观斜率 | $\frac{\text{VWAP}_t - \text{VWAP}_{t-w}}{\text{VWAP}_{t-w} \cdot w}$ | $w \in \{96, 192\}$ |
-| 18 | `ofi_norm_zscore_48` | 订单流不平衡 (OFI) Z-Score | $\frac{\text{OFI}_t - \text{Mean}_{48}(\text{OFI})}{\text{Std}_{48}(\text{OFI}) + \epsilon_3}$ | $w = 48$ |
-| 19 | `ofi_persistence_20m` | OFI 指数持续性平滑 | $\text{EWM}_{20}(\text{OFI})$ | span = 20 |
-| 20-21 | `cvd_slope_{w}` | 累积成交量增量 (CVD) 斜率 | $\frac{\sum_{k=0}^{w-1} (V \cdot \text{Direction})}{\sum_{k=0}^{w-1} V}$ | $w \in \{96, 192\}$ |
-| 22 | `realized_vol_zscore_192` | 波动率区制偏离 Z-Score | $\frac{\text{RV}_{12} - \text{Mean}_{192}(\text{RV}_{12})}{\text{Std}_{192}(\text{RV}_{12}) + \epsilon_3}$ | 滚动 192 Bar (约 4 天) |
-| 23 | `realized_vol_term_ratio_12_48` | 波动率期限结构期限比 | $\frac{\text{Realized\_Vol}_{12}}{\text{Realized\_Vol}_{48} + \epsilon_3}$ | 短期 12 对中期 48 比率 |
-| 24-26 | `macro_trade_imbalance_continuous_{w}` | 宏观平滑主动买卖失衡率 | $\frac{\sum_w N_{\text{up}} - \sum_w N_{\text{down}}}{\sum_w N_{\text{up}} + \sum_w N_{\text{down}} + 10w}$ | $w \in \{48, 240\}$ |
-| 27-29 | `macro_oi_change_rate_{w}` | 宏观持仓量迁移变动率 | $\text{clip}\left(\frac{OI_t - OI_{t-w}}{\text{Mean}_w(OI) + 1.0}, -0.5, 0.5\right)$ | $w \in \{48, 240\}$ |
-| 30-32 | `macro_turnover_rate_log_{w}` | 宏观对数累计换手率 | $\ln\left(1.0 + \frac{\sum_w V_t}{OI_t + 1.0}\right)$ | $w \in \{48, 240\}$ |
+| # | 特征名称/模板 | 语义解释 | 精确数学公式 | 参数与时间窗口 | 是否相对化与无量纲化 |
+|---|-------------|---------|-------------|--------------|---------------------|
+| 1 | `price_velocity_10m` | 价格短期均线速度 | $\frac{\text{EMA}_{10}(C) - \text{EMA}_{20}(C)}{C}$ | span=(10, 20) | **是 (无漂移风险)**：双均线差除以现价归一化，无物理量纲 |
+| 2 | `price_acceleration_10m_norm` | 标准化价格加速度 | $\frac{\Delta_1(\text{price\_velocity\_10m})}{\text{RollingStd}_{10}(r) + \epsilon_3}$ | span=10, std=10 | **是 (无漂移风险)**：除以收益率局部滚动标准差，标准化无量纲 |
+| 3-5 | `ema_divergence_{s1}_{s2}` | 多尺度 EMA 发散度 | $\frac{\text{EMA}_{s1}(C) - \text{EMA}_{s2}(C)}{\text{EMA}_{s2}(C)}$ | (20, 60), (60, 120), (20, 120) | **是 (无漂移风险)**：双均线相对百分比发散度 (3 列) |
+| 6 | `macd_histogram_norm` | 归一化 MACD 柱状图 | $\text{DIF} - \text{DEA}, \quad \text{DIF} = \frac{\text{EMA}_{12}(C) - \text{EMA}_{26}(C)}{C}, \text{DEA} = \text{EMA}_9(\text{DIF})$ | (12, 26, 9) | **是 (无漂移风险)**：DIF 除以现价归一化，消除绝对价格基数 |
+| 7 | `rsi_14_norm` | 归一化相对强弱指标 | $\frac{\text{RSI}_{14} - 50}{50}, \quad \text{RSI}_{14} = 100 \cdot \frac{\text{EWM}(\text{Gain})}{\text{EWM}(\text{Gain}) + \text{EWM}(\text{Loss})}$ | Wilder 14 周期 | **是 (无漂移风险)**：线性映射至 $[-1.0, 1.0]$，无物理量纲 |
+| 8-10 | `plus_di_14`, `minus_di_14`, `adx_14` | 经典 DMI/ADX 趋势强度 | $+DI_{14} = 100 \frac{\text{EWM}(+DM)}{\text{ATR}}, -DI_{14} = 100 \frac{\text{EWM}(-DM)}{\text{ATR}}, ADX = \text{EWM}\left(100 \frac{\vert +DI - -DI \vert}{+DI + -DI}\right)$ | Wilder 14 周期 | **是 (无漂移风险)**：除以 ATR 归一化，无物理量纲 (3 列) |
+| 11-12 | `stoch_k_14_norm`, `stoch_d_14_norm` | 归一化随机振荡器 KD | $\frac{K - 50}{50}, \frac{D - 50}{50}, \quad K = \text{EWM}_{3}(\text{RSV}_{14}), D = \text{EWM}_{3}(K)$ | 周期 (14, 3) | **是 (无漂移风险)**：线性映射至 $[-1.0, 1.0]$，无物理量纲 (2 列) |
+| 13 | `cci_14_norm` | 归一化顺势指标 | $\text{clip}\left(\frac{TP - \text{Mean}_{14}(TP)}{0.015 \cdot \text{MeanDev}_{14}(TP)} \cdot \frac{1}{100}, -3.0, 3.0\right), TP = \frac{H+L+C}{3}$ | 周期 14 | **是 (无漂移风险)**：平均绝对偏差归一化并硬截断至 $[-3.0, 3.0]$ |
+| 14-15 | `ema_slope_{w}` | EMA 宏观长期斜率 | $\frac{\text{EMA}_{20}(C)_t - \text{EMA}_{20}(C)_{t-w}}{\text{EMA}_{20}(C)_{t-w} \cdot w}$ | $w \in \{96, 192\}$ | **是 (无漂移风险)**：相对百分比变动斜率 (2 列) |
+| 16-17 | `vwap_slope_{w}` | VWAP 宏观长期斜率 | $\frac{\text{VWAP}_t - \text{VWAP}_{t-w}}{\text{VWAP}_{t-w} \cdot w}$ | $w \in \{96, 192\}$ | **是 (无漂移风险)**：相对百分比变动斜率 (2 列) |
+| 18-19 | `cvd_slope_{w}` | 累积成交量增量 (CVD) 斜率 | $\frac{\sum_{k=0}^{w-1} (V_k \cdot \text{Direction}_k)}{\sum_{k=0}^{w-1} V_k}$ | $w \in \{96, 192\}$ | **是 (无漂移风险)**：有向成交量除以总成交量 $[-1.0, 1.0]$，纯无量纲比例 (2 列) |
+| 20-21 | `log_price_slope_{w}` | 对数价格最小二乘趋势斜率 | $\text{OLS\_Slope}_w(\ln(C))$ | $w \in \{48, 96\}$ | **是 (无漂移风险)**：对数价格局部无偏线性回归斜率 (2 列) |
+| 22 | `log_price_slope_quantile_192` | 对数斜率滚动分位数秩 | $\text{QuantileRank}_{192}(\text{log\_price\_slope\_48})$ | 滚动 192 Bar | **是 (无漂移风险)**：局部滚动分位数 $[0.0, 1.0]$ |
+| 23 | `signed_efficiency_48` | 有符号价格运行效率比 | $\text{clip}\left(\frac{\ln(C_t) - \ln(C_{t-48})}{\sum_{k=0}^{47} \vert \ln(C_{t-k}) - \ln(C_{t-k-1}) \vert + \epsilon_3}, -1.0, 1.0\right)$ | $w=48$ | **是 (无漂移风险)**：净位移与累积路径之比 $[-1.0, 1.0]$ |
+| 24 | `trend_r2_48` | 对数价格回归拟合优度 $R^2$ | $\frac{(\text{Slope}_{48})^2 \sum (t - \bar{t})^2}{\sum (\ln(C) - \overline{\ln(C)})^2}$ | $w=48$ | **是 (无漂移风险)**：判定系数 $[0.0, 1.0]$，纯无量纲趋势纯度 |
+| 25-26 | `trend_to_noise_{w}` | 趋势与噪声信噪比 | $\frac{\text{log\_price\_slope}_w}{\max(\text{RollingStd}_w(r), \epsilon_3)}$ | $w \in \{48, 96\}$ | **是 (无漂移风险)**：趋势斜率除以收益率局部波动率 (2 列) |
+| 27 | `trade_direction_net_ratio_5m` | 主动买卖方向净比例 | $\text{clip}\left(\frac{N_{\text{up}} - N_{\text{down}}}{N_{\text{up}} + N_{\text{down}} + \epsilon_3}, -1.0, 1.0\right)$ | 单 Bar 瞬时 | **是 (无漂移风险)**：瞬时主动买卖笔数相对净差 $[-1.0, 1.0]$ |
+| 28 | `trade_direction_persistence_20m` | 买卖方向指数平滑持续性 | $\text{EMA}_{20}(\text{trade\_direction\_net\_ratio\_5m})$ | span = 20 | **是 (无漂移风险)**：平滑后的买卖方向持续性 $[-1.0, 1.0]$ |
+| 29 | `price_oi_vol_interaction_10m` | 价格-持仓-量价非线性交互 | $\text{sign}(\Delta_2 C) \cdot \text{sign}(\Delta_2 OI) \cdot \frac{V}{\text{Mean}_{10}(V) + \epsilon_3}$ | 跨 2 步差分 | **是 (无漂移风险)**：方向二值符号与相对成交量乘积，无绝对量纲 |
+| 30 | `oi_change_rate_norm_10m` | 10 分钟持仓变动率归一化 | $\frac{OI_t - OI_{t-10}}{OI_{t-10} + \epsilon_3}$ | 跨 10 Bar (100m) | **是 (无漂移风险)**：相对持仓变动百分比 |
+| 31 | `realized_vol_zscore_192` | 波动率区制偏离 Z-Score | $\frac{\text{RV}_{12} - \text{Mean}_{192}(\text{RV}_{12})}{\text{Std}_{192}(\text{RV}_{12}) + \epsilon_3}$ | 滚动 192 Bar (约 4 天) | **是 (无漂移风险)**：滚动 Z-Score 零均值单位方差平稳化 |
+| 32 | `realized_vol_term_ratio_12_48` | 波动率期限结构期限比 | $\frac{\text{Realized\_Vol}_{12}}{\text{Realized\_Vol}_{48} + \epsilon_3}$ | 短期 12 对中期 48 比率 | **是 (无漂移风险)**：短期与长期波动率之比，纯无量纲比值 |
+| 33 | `log_return_vol_quantile_192` | 收益率波动率滚动分位数秩 | $\text{QuantileRank}_{192}(\text{Volatility}_{48})$ | 滚动 192 Bar | **是 (无漂移风险)**：局部滚动经验分位数 $[0.0, 1.0]$ |
+| 34-35 | `macro_oi_change_rate_{w}` | 宏观持仓量迁移变动率 | $\text{clip}\left(\frac{OI_t - OI_{t-w}}{\text{Mean}_w(OI) + 1.0}, -0.5, 0.5\right)$ | $w \in \{48, 240\}$ | **是 (无漂移风险)**：持仓变动除以滚动均持仓，相对变动率截断 (2 列) |
+| 36-37 | `macro_turnover_rate_log_{w}` | 宏观对数累计换手率 | $\ln\left(1.0 + \frac{\sum_w V_t}{OI_t + 1.0}\right)$ | $w \in \{48, 240\}$ | **是 (无漂移风险)**：对数累计换手率，无物理量纲 (2 列) |
 
 ---
+
+### 11. 附录：数据合并伴生列说明与去重规范 (Join Artifact Handling)
+
+数据集中的 245 个以 `_right` 为后缀的特征列（例如 `UpperLimitPrice_right`、`ask1_price_right`、`prev_day_return_right` 等）：
+1. **生成成因**：在 Stage 4/Stage 6 混频数据多表拼接（如按交易日连接日频宏观表、按合约月连接跨期表）时，左右表中存在同名基础字段，系统在连接时未做重合字段前置投影裁剪，从而生成了后缀为 `_right` 的副本列。
+2. **审查与剔除规则**：在 Stage 6.5 特征审查与 Stage 7 三流特征选择中，`eligibility.py` 定义了严格的黑名单过滤规则：
+   ```python
+   EXCLUDED_SUFFIXES = ("_right", "_y", "_duplicate")
+   ```
+   所有带有 `_right` 后缀的列被 100% 自动拦截，确保特征选择空间严格限定在 1,077 个无重复的候选特征全集中。
 
 ## 三、三流特征过滤体系：门禁、阈值与物理/数学原理
 
@@ -448,7 +553,7 @@ $$F = \frac{\text{MS}_{\text{between}}}{\text{MS}_{\text{within}}} = \frac{\sum_
 | **正交聚类最大相关性** | `max_correlation` | $\le \mathbf{0.65}$ | $\le \mathbf{0.60}$ | $\le \mathbf{0.80}$ |
 | **聚类簇数范围** | `[min_clusters, max_clusters]` | **[12, 16]** 维 | **[10, 14]** 维 | **[100, 155]** 维 |
 | **多重共线性上限** | `max_vif` | $\le \mathbf{10.0}$ | $\le \mathbf{8.0}$ (严禁高度共线性) | $\le \mathbf{10.0}$ |
-| **强制时间特征模式** | `mandatory_feature_pattern` | `^(base_time_\|time_\|trading_minute_)` | `^(trading_minute_progress)` | `None` (接收全部 17 个强制特征) |
+| **强制时间特征模式** | `mandatory_feature_pattern` | `^(base_time_&#124;time_&#124;trading_minute_)` | `^(trading_minute_progress)` | `None` (接收全部 17 个强制特征) |
 
 ---
 

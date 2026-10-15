@@ -103,7 +103,14 @@ class ComparisonRunner:
                     "target_correlation": corr_a,
                 })
 
-        cmp_df = pl.DataFrame(comparison_records)
+        cmp_schema = {
+            "horizon": pl.String,
+            "target_kind": pl.String,
+            "matched_samples": pl.Int64,
+            "mean_paired_difference": pl.Float64,
+            "target_correlation": pl.Float64,
+        }
+        cmp_df = pl.DataFrame(comparison_records, schema=cmp_schema)
         cmp_df.write_csv(out_dir / "comparison_metrics.csv")
 
         # 5. Emit comparison manifest
