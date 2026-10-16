@@ -16,7 +16,53 @@ from .metrics import compute_spearman_correlation, compute_spearman_matrix
 from .reference_prices import ReferencePriceProvider
 from .report import generate_audit_report, generate_matrices
 from .split_guard import generate_evaluation_windows, EvaluationWindow
-from .uncertainty import joint_moving_block_bootstrap, joint_moving_block_bootstrap_matrix
+from .uncertainty import MatrixBootstrapResult, joint_moving_block_bootstrap, joint_moving_block_bootstrap_matrix
+
+
+def categorize_three_way_trajectory(
+    ic_1h: Optional[float], ic_1d: Optional[float], ic_5d: Optional[float]
+) -> str:
+    """Categorize feature trajectory across 1h -> 1day (next_td) -> 5day (next_5td)."""
+    if (
+        ic_1h is None
+        or ic_1d is None
+        or ic_5d is None
+        or np.isnan(ic_1h)
+        or np.isnan(ic_1d)
+        or np.isnan(ic_5d)
+    ):
+        return "INSUFFICIENT_COMMON_DATA"
+
+    a1 = abs(ic_1h)
+    ad = abs(ic_1d)
+    a5 = abs(ic_5d)
+
+    if max(a1, ad, a5) < 0.03:
+        return "NEGLIGIBLE_SIGNAL"
+
+    s1, sd, s5 = np.sign(ic_1h), np.sign(ic_1d), np.sign(ic_5d)
+    same_sign = bool(s1 == sd == s5)
+
+    if same_sign and a1 >= ad >= a5 and a1 >= 0.05:
+        return "CLEAN_DECAY"
+    elif same_sign and a1 <= ad <= a5 and a5 >= 0.05:
+        return "CLEAN_EMERGENCE"
+    elif ad > a1 and ad > a5 and ad >= 0.05:
+        return "DAY_RESONANCE"
+    elif (
+        same_sign
+        and a1 >= 0.05
+        and ad >= 0.05
+        and a5 >= 0.05
+        and (max(a1, ad, a5) / max(min(a1, ad, a5), 1e-6)) < 1.6
+    ):
+        return "ALL_PERSISTENT"
+    elif ad < a1 and ad < a5:
+        return "VALLEY_INTERMEDIATE"
+    elif not same_sign:
+        return "SIGN_FLIP_INSTABILITY"
+    else:
+        return "MIXED_IRREGULAR"
 
 
 class AuditRunner:
@@ -308,6 +354,7 @@ class AuditRunner:
         # 8. Compute window strata, aggregations, and bootstrap uncertainty
         strata_records: List[Dict[str, Any]] = []
         metric_results: List[Dict[str, Any]] = []
+        ci_diag_records: List[Dict[str, Any]] = []
 
         joined_all = all_data.join(labels_df, on=["contract", "timestamp", "trading_day"], how="inner")
         trading_days_sorted = sorted(all_data["trading_day"].unique().to_list())
@@ -336,6 +383,21 @@ class AuditRunner:
                 coverage = float(valid_p / total_p) if total_p > 0 else 0.0
 
                 if valid_p < 3:
+                    ci_diag_records.append({
+                        "horizon": horizon,
+                        "target_kind": target_kind,
+                        "num_valid_days": 0,
+                        "block_length": effective_block_len,
+                        "block_length_2x": effective_block_len * ev_proto.sensitivity_block_multiplier,
+                        "effective_blocks": 0.0,
+                        "effective_blocks_2x": 0.0,
+                        "min_effective_blocks": ev_proto.minimum_effective_blocks,
+                        "min_effective_blocks_2x": max(1, ev_proto.minimum_effective_blocks // 2),
+                        "ci_status": "INSUFFICIENT_PAIRS",
+                        "ci_status_2x": "INSUFFICIENT_PAIRS",
+                        "null_reason": "INSUFFICIENT_PAIRS",
+                        "null_reason_2x": "INSUFFICIENT_PAIRS",
+                    })
                     for feat_name in qualified_features:
                         metric_results.append({
                             "feature": feat_name,
@@ -355,6 +417,17 @@ class AuditRunner:
                             "total_pairs": total_p,
                             "coverage_ratio": coverage,
                             "null_reason": "INSUFFICIENT_PAIRS",
+                            "ci_status": "INSUFFICIENT_PAIRS",
+                            "ci_status_2x": "INSUFFICIENT_PAIRS",
+                            "ci_valid_trading_days": 0,
+                            "ci_block_length": effective_block_len,
+                            "ci_block_length_2x": effective_block_len * ev_proto.sensitivity_block_multiplier,
+                            "ci_effective_blocks": 0.0,
+                            "ci_effective_blocks_2x": 0.0,
+                            "ci_min_effective_blocks": ev_proto.minimum_effective_blocks,
+                            "ci_min_effective_blocks_2x": max(1, ev_proto.minimum_effective_blocks // 2),
+                            "ci_null_reason": "INSUFFICIENT_PAIRS",
+                            "ci_null_reason_2x": "INSUFFICIENT_PAIRS",
                         })
                     continue
 
@@ -468,7 +541,7 @@ class AuditRunner:
                     idxs = np.where(valid_tds == td)[0]
                     day_indices[td] = idxs
 
-                stat_base, ci_l_base, ci_u_base, eff_blocks = joint_moving_block_bootstrap_matrix(
+                res_base = joint_moving_block_bootstrap_matrix(
                     trading_days=trading_days_sorted,
                     day_indices=day_indices,
                     X=X_mat,
@@ -480,7 +553,7 @@ class AuditRunner:
                     confidence_level=ev_proto.confidence_level,
                 )
 
-                stat_2x, ci_l_2x, ci_u_2x, _ = joint_moving_block_bootstrap_matrix(
+                res_2x = joint_moving_block_bootstrap_matrix(
                     trading_days=trading_days_sorted,
                     day_indices=day_indices,
                     X=X_mat,
@@ -492,14 +565,30 @@ class AuditRunner:
                     confidence_level=ev_proto.confidence_level,
                 )
 
+                ci_diag_records.append({
+                    "horizon": horizon,
+                    "target_kind": target_kind,
+                    "num_valid_days": res_base.num_valid_days,
+                    "block_length": res_base.block_length,
+                    "block_length_2x": res_2x.block_length,
+                    "effective_blocks": res_base.effective_blocks,
+                    "effective_blocks_2x": res_2x.effective_blocks,
+                    "min_effective_blocks": res_base.min_effective_blocks,
+                    "min_effective_blocks_2x": res_2x.min_effective_blocks,
+                    "ci_status": res_base.ci_status,
+                    "ci_status_2x": res_2x.ci_status,
+                    "null_reason": res_base.null_reason,
+                    "null_reason_2x": res_2x.null_reason,
+                })
+
                 for f_idx, feat_name in enumerate(qualified_features):
                     c_eq = float(contract_equal_arr[f_idx]) if not np.isnan(contract_equal_arr[f_idx]) else None
                     s_wt = float(sample_weighted_arr[f_idx]) if not np.isnan(sample_weighted_arr[f_idx]) else None
 
-                    l_base = float(ci_l_base[f_idx]) if not np.isnan(ci_l_base[f_idx]) else None
-                    u_base = float(ci_u_base[f_idx]) if not np.isnan(ci_u_base[f_idx]) else None
-                    l_2x = float(ci_l_2x[f_idx]) if not np.isnan(ci_l_2x[f_idx]) else None
-                    u_2x = float(ci_u_2x[f_idx]) if not np.isnan(ci_u_2x[f_idx]) else None
+                    l_base = float(res_base.ci_lower[f_idx]) if not np.isnan(res_base.ci_lower[f_idx]) else None
+                    u_base = float(res_base.ci_upper[f_idx]) if not np.isnan(res_base.ci_upper[f_idx]) else None
+                    l_2x = float(res_2x.ci_lower[f_idx]) if not np.isnan(res_2x.ci_lower[f_idx]) else None
+                    u_2x = float(res_2x.ci_upper[f_idx]) if not np.isnan(res_2x.ci_upper[f_idx]) else None
 
                     null_reason = sign_null_reasons[f_idx]
                     if c_eq is None and null_reason is None:
@@ -523,6 +612,17 @@ class AuditRunner:
                         "total_pairs": total_p,
                         "coverage_ratio": coverage,
                         "null_reason": null_reason,
+                        "ci_status": res_base.ci_status,
+                        "ci_status_2x": res_2x.ci_status,
+                        "ci_valid_trading_days": res_base.num_valid_days,
+                        "ci_block_length": res_base.block_length,
+                        "ci_block_length_2x": res_2x.block_length,
+                        "ci_effective_blocks": res_base.effective_blocks,
+                        "ci_effective_blocks_2x": res_2x.effective_blocks,
+                        "ci_min_effective_blocks": res_base.min_effective_blocks,
+                        "ci_min_effective_blocks_2x": res_2x.min_effective_blocks,
+                        "ci_null_reason": res_base.null_reason,
+                        "ci_null_reason_2x": res_2x.null_reason,
                     })
 
         strata_schema = {
@@ -538,6 +638,24 @@ class AuditRunner:
         }
         strata_df = pl.DataFrame(strata_records, schema=strata_schema)
         strata_df.write_csv(result_dir / "window_strata_metrics.csv")
+
+        ci_diag_schema = {
+            "horizon": pl.String,
+            "target_kind": pl.String,
+            "num_valid_days": pl.Int64,
+            "block_length": pl.Int64,
+            "block_length_2x": pl.Int64,
+            "effective_blocks": pl.Float64,
+            "effective_blocks_2x": pl.Float64,
+            "min_effective_blocks": pl.Int64,
+            "min_effective_blocks_2x": pl.Int64,
+            "ci_status": pl.String,
+            "ci_status_2x": pl.String,
+            "null_reason": pl.String,
+            "null_reason_2x": pl.String,
+        }
+        ci_diag_df = pl.DataFrame(ci_diag_records, schema=ci_diag_schema)
+        ci_diag_df.write_csv(result_dir / "ci_diagnostics.csv")
 
         metric_schema = {
             "feature": pl.String,
@@ -557,6 +675,17 @@ class AuditRunner:
             "total_pairs": pl.Int64,
             "coverage_ratio": pl.Float64,
             "null_reason": pl.String,
+            "ci_status": pl.String,
+            "ci_status_2x": pl.String,
+            "ci_valid_trading_days": pl.Int64,
+            "ci_block_length": pl.Int64,
+            "ci_block_length_2x": pl.Int64,
+            "ci_effective_blocks": pl.Float64,
+            "ci_effective_blocks_2x": pl.Float64,
+            "ci_min_effective_blocks": pl.Int64,
+            "ci_min_effective_blocks_2x": pl.Int64,
+            "ci_null_reason": pl.String,
+            "ci_null_reason_2x": pl.String,
         }
         metrics_df = pl.DataFrame(metric_results, schema=metric_schema)
         metrics_df.write_csv(result_dir / "feature_metrics.csv")
@@ -582,7 +711,148 @@ class AuditRunner:
                 "sha256": legacy_selection.sha256,
             }
 
-        generate_audit_report(manifest, metrics_df, invalid_summary, result_dir / "audit_report.md")
+        # Three-Way Matched Common-Sample Horizon Comparisons (1h <-> next_td <-> next_5td)
+        matched_comparisons_df: Optional[pl.DataFrame] = None
+        target_3way_horizons = ["1h", "next_td", "next_5td"]
+        available_horizons = set(labels_df["horizon"].unique().to_list())
+        if set(target_3way_horizons).issubset(available_horizons):
+            matched_records: List[Dict[str, Any]] = []
+            l_1h = labels_df.filter((pl.col("horizon") == "1h") & pl.col("valid_mask")).select([
+                "contract", "timestamp", "trading_day",
+                pl.col("target_return").alias("ret_1h"),
+                pl.col("abs_target_return").alias("abs_ret_1h"),
+            ])
+            l_1d = labels_df.filter((pl.col("horizon") == "next_td") & pl.col("valid_mask")).select([
+                "contract", "timestamp", "trading_day",
+                pl.col("target_return").alias("ret_1d"),
+                pl.col("abs_target_return").alias("abs_ret_1d"),
+            ])
+            l_5d = labels_df.filter((pl.col("horizon") == "next_5td") & pl.col("valid_mask")).select([
+                "contract", "timestamp", "trading_day",
+                pl.col("target_return").alias("ret_5d"),
+                pl.col("abs_target_return").alias("abs_ret_5d"),
+            ])
+
+            matched_labels = l_1h.join(
+                l_1d, on=["contract", "timestamp", "trading_day"], how="inner"
+            ).join(
+                l_5d, on=["contract", "timestamp", "trading_day"], how="inner"
+            )
+            matched_df = all_data.join(
+                matched_labels, on=["contract", "timestamp", "trading_day"], how="inner"
+            )
+            n_matched = len(matched_df)
+            n_total = len(all_data)
+            retention_ratio = float(n_matched / n_total) if n_total > 0 else 0.0
+
+            for target_kind in ["return", "abs_return"]:
+                col_1h = "ret_1h" if target_kind == "return" else "abs_ret_1h"
+                col_1d = "ret_1d" if target_kind == "return" else "abs_ret_1d"
+                col_5d = "ret_5d" if target_kind == "return" else "abs_ret_5d"
+
+                c_corrs_1h = []
+                c_corrs_1d = []
+                c_corrs_5d = []
+
+                for contract in contracts:
+                    c_valid = matched_df.filter(pl.col("contract") == contract)
+                    if len(c_valid) >= 3:
+                        r_c = c_valid["_row_idx"].to_numpy()
+                        X_c = X_full[r_c, :]
+                        y_1h_c = c_valid[col_1h].to_numpy()
+                        y_1d_c = c_valid[col_1d].to_numpy()
+                        y_5d_c = c_valid[col_5d].to_numpy()
+                        c_corrs_1h.append(compute_spearman_matrix(X_c, y_1h_c))
+                        c_corrs_1d.append(compute_spearman_matrix(X_c, y_1d_c))
+                        c_corrs_5d.append(compute_spearman_matrix(X_c, y_5d_c))
+
+                def _avg_contract_corrs(corr_list: List[np.ndarray]) -> np.ndarray:
+                    if not corr_list:
+                        return np.full(D, np.nan)
+                    arr = np.array(corr_list)
+                    valid_mask = ~np.isnan(arr)
+                    cnt = np.sum(valid_mask, axis=0)
+                    return np.where(
+                        cnt > 0,
+                        np.sum(np.where(valid_mask, arr, 0.0), axis=0) / np.maximum(cnt, 1),
+                        np.nan,
+                    )
+
+                if len(c_corrs_1h) > 0:
+                    arr_1h = _avg_contract_corrs(c_corrs_1h)
+                    arr_1d = _avg_contract_corrs(c_corrs_1d)
+                    arr_5d = _avg_contract_corrs(c_corrs_5d)
+                elif n_matched >= 3:
+                    r_m = matched_df["_row_idx"].to_numpy()
+                    X_m = X_full[r_m, :]
+                    arr_1h = compute_spearman_matrix(X_m, matched_df[col_1h].to_numpy())
+                    arr_1d = compute_spearman_matrix(X_m, matched_df[col_1d].to_numpy())
+                    arr_5d = compute_spearman_matrix(X_m, matched_df[col_5d].to_numpy())
+                else:
+                    arr_1h = np.full(D, np.nan)
+                    arr_1d = np.full(D, np.nan)
+                    arr_5d = np.full(D, np.nan)
+
+                for f_idx, feat_name in enumerate(qualified_features):
+                    v_1h = float(arr_1h[f_idx]) if not np.isnan(arr_1h[f_idx]) else None
+                    v_1d = float(arr_1d[f_idx]) if not np.isnan(arr_1d[f_idx]) else None
+                    v_5d = float(arr_5d[f_idx]) if not np.isnan(arr_5d[f_idx]) else None
+
+                    d_1h_1d = float(v_1d - v_1h) if (v_1h is not None and v_1d is not None) else None
+                    d_1d_5d = float(v_5d - v_1d) if (v_1d is not None and v_5d is not None) else None
+                    d_1h_5d = float(v_5d - v_1h) if (v_1h is not None and v_5d is not None) else None
+
+                    traj = categorize_three_way_trajectory(v_1h, v_1d, v_5d)
+
+                    matched_records.append({
+                        "feature": feat_name,
+                        "target_kind": target_kind,
+                        "legacy_stream_membership": legacy_stream_map.get(feat_name, "unassigned"),
+                        "matched_samples": n_matched,
+                        "sample_retention_ratio": retention_ratio,
+                        "ic_common_1h": v_1h,
+                        "ic_common_1day": v_1d,
+                        "ic_common_5day": v_5d,
+                        "delta_1h_to_1day": d_1h_1d,
+                        "delta_1day_to_5day": d_1d_5d,
+                        "delta_1h_to_5day": d_1h_5d,
+                        "trajectory_category": traj,
+                    })
+
+            matched_schema = {
+                "feature": pl.String,
+                "target_kind": pl.String,
+                "legacy_stream_membership": pl.String,
+                "matched_samples": pl.Int64,
+                "sample_retention_ratio": pl.Float64,
+                "ic_common_1h": pl.Float64,
+                "ic_common_1day": pl.Float64,
+                "ic_common_5day": pl.Float64,
+                "delta_1h_to_1day": pl.Float64,
+                "delta_1day_to_5day": pl.Float64,
+                "delta_1h_to_5day": pl.Float64,
+                "trajectory_category": pl.String,
+            }
+            matched_comparisons_df = pl.DataFrame(matched_records, schema=matched_schema)
+            matched_comparisons_df.write_csv(result_dir / "matched_horizon_comparisons.csv")
+
+        if matched_comparisons_df is not None:
+            manifest["matched_horizon_status"] = "COMPLETED_MATCHED_EVALUATION"
+            manifest["matched_samples"] = n_matched
+            manifest["sample_retention_ratio"] = retention_ratio
+        else:
+            manifest["matched_horizon_status"] = "NOT_AVAILABLE"
+
+        manifest["ci_diagnostics_status"] = "completed"
+
+        generate_audit_report(
+            manifest=manifest,
+            metrics_df=metrics_df,
+            invalid_summary_df=invalid_summary,
+            output_path=result_dir / "audit_report.md",
+            ci_diagnostics_df=ci_diag_df,
+            matched_comparisons_df=matched_comparisons_df,
+        )
 
         with open(result_dir / "audit_run_manifest.json", "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2)

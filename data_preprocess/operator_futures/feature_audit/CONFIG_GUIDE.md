@@ -276,8 +276,18 @@
 | `feature_horizon_corr_matrix.csv` | 特征 × 预测期限主相关性矩阵（各合约等权平均值 `contract_equal_spearman`）。 |
 | `feature_horizon_coverage_matrix.csv` | 特征 × 预测期限有效数据覆盖率矩阵。 |
 | `window_strata_metrics.csv` | **细粒度分合约分窗口指标明细**。包含字段：`feature`、`horizon`、`target_kind`、`contract`、`window_id`、`spearman_corr`、`valid_pairs`、`null_reason` 等。可精确定位特定合约在特定窗口的有效性。 |
-| `audit_report.md` | 人类可读 Markdown 审计综合报告，展示全候选特征在 7 个期限上的相关系数、基准/双倍区块 95% 置信区间、符号一致率及有效合约数（`eligible_contracts_count`）。 |
-| `_SUCCESS` | 审计成功完成标记文件，记录最终 SHA256 指纹及完成元数据。 |
+| `audit_report.md` | 精简阅读入口：最多 50 个不同特征的复核示例、CI/共同样本概况，以及各产物的粒度和阅读方法；全量明细保留在 CSV/Parquet。 |
+| `_SUCCESS` | 空的运行完成标记文件；元数据见 `audit_run_manifest.json`。不代表统计充分或协议全面验收。 |
+
+日常逐特征复核优先从 `insights/executive_summary.md` 进入，依次查看
+`insights/feature_evidence.csv`（筛特征、期限和目标）、
+`insights/legacy_selection_comparison.csv`（展开各流淘汰原因）、
+`window_strata_metrics.csv`（排除历史参考期后检查各合约和窗口），
+比较期限时使用 `matched_horizon_comparisons.csv`。每个文件的粒度和关键字段在精简报告中列出。
+
+报告中的核心示例用于说明不同复核问题，不是自动排名或入选推荐。
+`--top-k` 仍控制候选 CSV 的摘录数量，不会把全部榜单展开进 Markdown。
+Markdown 用作摘要和导航；组合筛选、逐流展开、窗口联动应由交互表格承担。
 
 ### 3.7 常见多合约配置误区与避坑指南
 
@@ -412,3 +422,37 @@ python -m data_preprocess.operator_futures.feature_audit.cli run --config data_p
 # 3. 运行配对比较
 python -m data_preprocess.operator_futures.feature_audit.cli compare --manifest data_preprocess/operator_futures/feature_audit/configs/comparison_fu_10min_vs_30min_template.yaml
 ```
+
+### 6.3 分析已有结果及三流选择证据
+
+```bash
+conda activate finetf
+python -m data_preprocess.operator_futures.feature_audit.analyze_audit_results \
+  --audit-dir analysis_result/DiHFT/feature_horizon_audit/fu/10min \
+  --config data_preprocess/operator_futures/feature_audit/configs/10min/audit_fu_10min_template.yaml
+```
+
+`--config` 只读取其中的三流 Manifest，并核对品种和频率；不重新计算标签或 IC。
+也可单独传 `--legacy-selection-manifest <path>`，两者互斥。
+显式指定来源会标注为 `explicit_retrospective`，不能据此宣称该选择版本在历史运行时已经存在。
+不指定时优先读取审计目录中的 `legacy_selection_comparison.csv`，其次按运行 Manifest
+记录的路径和 SHA-256 校验原选择文件；两者都没有时保留 `unknown`。
+
+默认分析全部七期限。封装脚本
+`data_preprocess/script_preprocess/future_upgraded/commodity/run_analyze_fu_10min.sh`
+依次接受审计目录、输出目录、期限列表、审计 YAML 四个可选参数；默认使用 fu/10min 配置。
+
+新增分析输出：
+
+- `feature_evidence.csv`：全部指标及三流归属、剔除证据、CI 状态。
+- `legacy_selection_comparison.csv`：每个候选的选择证据及来源。
+- `selection_dynamics_summary.csv`：探索性期限分类与入选状态的交叉计数。
+- `ci_evidence_summary.csv`：按期限、目标汇总区间证据状态。
+- `analysis_manifest.json`：输入文件指纹、注释来源、展示参数及比较证据状态。
+
+CI 为空且上游没有原因字段时标为 `MISSING_CI_REASON_UNRECORDED`。上游 `feature_metrics.csv`
+与 `ci_diagnostics.csv` 显式记录 `ci_status`（如 `INSUFFICIENT_EFFECTIVE_BLOCKS`）及实际有效交易日数、
+区块长度与有效区块数。三维共同样本比对产物 `matched_horizon_comparisons.csv` 存在且格式完备时标为
+`COMPLETED_MATCHED_EVALUATION`，缺失时标为 `NOT_AVAILABLE`。
+展示列表按绝对 IC 排序并保留正负号；`ENDPOINT_SIGN_ALIGNED` 仅指两个端点同号，
+不能解释为全期限稳定。所有分类和排序均为探索性展示，不输出自动入选结论。

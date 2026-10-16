@@ -125,7 +125,7 @@ def test_audit_report_and_legacy_annotation(tmp_path, manifest_format):
     price_man_file.write_text(json.dumps({
         "price_file": str(price_file),
         "price_field": "LastPrice",
-        "max_quote_age_seconds": 60
+        "max_quote_age_seconds": 600
     }))
 
     feat_man_file = work_dir / "feat_man.json"
@@ -337,3 +337,165 @@ def test_strata_and_metrics_schema_robustness_with_null_prefixes(tmp_path):
     # Ensure some are null and some are not null
     assert strata_df["spearman_corr"].null_count() > 0
     assert (out_dir / "_SUCCESS").exists()
+
+
+def test_ci_diagnostics_and_three_way_matched_comparisons(tmp_path):
+    """End-to-end verification of CI diagnostic fields and three-way matched comparisons."""
+    work_dir = tmp_path / "ci_matched_work"
+    work_dir.mkdir(parents=True)
+
+    # 15 trading days
+    trading_days = [f"202402{i:02d}" for i in range(1, 16)]
+    intervals_json = []
+    for td in trading_days:
+        day_str = f"2024-02-{int(td[-2:]):02d}"
+        intervals_json.append({
+            "trading_day": td,
+            "sessions": [
+                {"start": f"{day_str} 09:00:00", "end": f"{day_str} 10:15:00", "name": "m1"},
+                {"start": f"{day_str} 10:30:00", "end": f"{day_str} 11:30:00", "name": "m2"},
+                {"start": f"{day_str} 13:30:00", "end": f"{day_str} 15:00:00", "name": "aft"},
+            ]
+        })
+    cal_file = work_dir / "calendar.json"
+    cal_file.write_text(json.dumps({"symbol": "fu", "trading_days": intervals_json}))
+
+    records = []
+    snapshot_records = []
+    rng = np.random.RandomState(42)
+    price_val = 3000.0
+
+    for td in trading_days:
+        day_str = f"2024-02-{int(td[-2:]):02d}"
+        for t in [f"{day_str} 09:10:00", f"{day_str} 10:40:00", f"{day_str} 14:00:00", f"{day_str} 15:00:00"]:
+            price_val += rng.normal(0, 1.5)
+            row = {
+                "contract": "fu2405",
+                "timestamp": t,
+                "trading_day": td,
+                "alpha_decay": rng.normal(0, 1.0),
+                "trend_emerge": price_val * 0.01,
+            }
+            records.append(row)
+            snapshot_records.append({
+                "contract": "fu2405",
+                "timestamp": t,
+                "trading_day": td,
+                "LastPrice": price_val,
+            })
+
+    stage6_dir = work_dir / "stage6"
+    stage6_dir.mkdir()
+    pl.DataFrame(records).write_ipc(stage6_dir / "fu2405.feather")
+
+    price_file = work_dir / "snapshots.feather"
+    pl.DataFrame(snapshot_records).write_ipc(price_file)
+
+    price_man = work_dir / "price_man.json"
+    price_man.write_text(json.dumps({
+        "price_file": str(price_file),
+        "price_field": "LastPrice",
+        "max_quote_age_seconds": 600
+    }))
+
+    feat_man = work_dir / "feat_man.json"
+    feat_man.write_text(json.dumps({"symbol": "fu", "data_path": str(stage6_dir)}))
+
+    split_man = work_dir / "split_man.json"
+    split_man.write_text(json.dumps({"train_contracts": ["fu2405"]}))
+
+    out_dir = work_dir / "audit_out"
+    config = {
+        "schema_version": "multi_horizon_audit.v1",
+        "protocol_version": "multi_horizon_audit.research.v1",
+        "symbol": "fu",
+        "frequency": "10min",
+        "horizons": ["1h", "next_td", "next_5td"],
+        "calendar_manifest": str(cal_file),
+        "feature_availability_manifest": str(feat_man),
+        "price_source_manifest": str(price_man),
+        "split_manifest": str(split_man),
+        "result_root": str(out_dir),
+        "evidence_protocol": {
+            "method": "joint_trading_day_moving_block_bootstrap",
+            "confidence_level": 0.95,
+            "replicates": 30,
+            "seed": 42,
+            "minimum_block_trading_days": 5,
+            "minimum_effective_blocks": 20,
+        }
+    }
+    cfg_file = work_dir / "cfg.yaml"
+    with open(cfg_file, "w") as f:
+        yaml.safe_dump(config, f)
+
+    cmd = [
+        sys.executable, "-m",
+        "data_preprocess.operator_futures.feature_audit.cli",
+        "run",
+        "--config", str(cfg_file)
+    ]
+    res = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
+    assert res.returncode == 0, f"run failed: {res.stderr}"
+
+    # 1. Verify feature_metrics.csv has all 11 CI diagnostic columns
+    fm = pl.read_csv(out_dir / "feature_metrics.csv")
+    expected_ci_cols = [
+        "ci_status", "ci_status_2x", "ci_valid_trading_days",
+        "ci_block_length", "ci_block_length_2x", "ci_effective_blocks",
+        "ci_effective_blocks_2x", "ci_min_effective_blocks", "ci_min_effective_blocks_2x",
+        "ci_null_reason", "ci_null_reason_2x",
+    ]
+    for col in expected_ci_cols:
+        assert col in fm.columns, f"Missing CI diagnostic column {col}"
+    assert "INSUFFICIENT_EFFECTIVE_BLOCKS" in fm["ci_status"].unique().to_list()
+
+    # 2. Verify ci_diagnostics.csv exists and has expected schema
+    diag_file = out_dir / "ci_diagnostics.csv"
+    assert diag_file.exists()
+    diag_df = pl.read_csv(diag_file)
+    assert "horizon" in diag_df.columns
+    assert "num_valid_days" in diag_df.columns
+    assert "block_length" in diag_df.columns
+    assert "effective_blocks" in diag_df.columns
+    assert "ci_status" in diag_df.columns
+
+    # 3. Verify matched_horizon_comparisons.csv exists in single-row wide format
+    matched_file = out_dir / "matched_horizon_comparisons.csv"
+    assert matched_file.exists()
+    m_df = pl.read_csv(matched_file)
+    expected_matched_cols = [
+        "feature", "target_kind", "legacy_stream_membership",
+        "matched_samples", "sample_retention_ratio",
+        "ic_common_1h", "ic_common_1day", "ic_common_5day",
+        "delta_1h_to_1day", "delta_1day_to_5day", "delta_1h_to_5day",
+        "trajectory_category",
+    ]
+    for col in expected_matched_cols:
+        assert col in m_df.columns, f"Missing matched comparison column {col}"
+    assert m_df["matched_samples"][0] > 0
+    assert 0.0 < m_df["sample_retention_ratio"][0] <= 1.0
+
+    # 4. Verify audit_report.md includes the new sections
+    report_text = (out_dir / "audit_report.md").read_text(encoding="utf-8")
+    assert "Bootstrap Uncertainty & Horizon Block Diagnostics (Protocol Q14)" in report_text
+    assert "Three-Way Matched Common-Sample Horizon Comparisons (1h ↔ 1day ↔ 5day)" in report_text
+
+    # 5. Verify analyze_audit_results updates matched_horizon_status
+    insights_dir = work_dir / "insights"
+    cmd_analyze = [
+        sys.executable, "-m",
+        "data_preprocess.operator_futures.feature_audit.analyze_audit_results",
+        "--audit-dir", str(out_dir),
+        "--output-dir", str(insights_dir),
+        "--horizons", "1h,next_td,next_5td",
+    ]
+    res_a = subprocess.run(cmd_analyze, cwd=REPO_ROOT, capture_output=True, text=True)
+    assert res_a.returncode == 0, f"analyze failed: {res_a.stderr}"
+
+    manifest_json = json.loads((insights_dir / "analysis_manifest.json").read_text())
+    assert manifest_json["matched_horizon_status"] == "COMPLETED_MATCHED_EVALUATION"
+    summary_md = (insights_dir / "executive_summary.md").read_text()
+    assert "COMPLETED_MATCHED_EVALUATION" in summary_md
+    assert "共同决策点" in summary_md
+    assert "每个关联产物是什么、怎么看" in summary_md

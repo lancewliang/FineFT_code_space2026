@@ -6,8 +6,8 @@ set -euo pipefail
 #
 # 该脚本执行以下步骤：
 #   1. 检查并激活 conda finetf 环境，设置 PYTHONPATH
-#   2. 解析审计产物目录及目标分析期限 (超短 1h, 短 2h, 次日 next_td, 中 next_5td, 长 next_15td)
-#   3. 调用 analyze_audit_results.py 运行全量洞察分析与稳健特征筛选
+#   2. 解析审计产物目录、七类期限及原审计配置中的三流 Manifest
+#   3. 调用 analyze_audit_results.py 运行探索性分析与证据状态汇总
 #   4. 输出汇总统计与洞察报告文件清单
 # ==============================================================================
 
@@ -33,8 +33,9 @@ AUDIT_DIR="${1:-${DEFAULT_AUDIT_DIR}}"
 DEFAULT_OUTPUT_DIR="${AUDIT_DIR}/insights"
 OUTPUT_DIR="${2:-${DEFAULT_OUTPUT_DIR}}"
 
-DEFAULT_HORIZONS="1h,2h,next_td,next_5td,next_15td"
+DEFAULT_HORIZONS="1h,2h,4h,today,next_td,next_5td,next_15td"
 HORIZONS="${3:-${DEFAULT_HORIZONS}}"
+AUDIT_CONFIG="${4:-${REPO_ROOT}/data_preprocess/operator_futures/feature_audit/configs/10min/audit_fu_10min_template.yaml}"
 
 if [[ ! -d "${AUDIT_DIR}" ]]; then
     echo "❌ 错误: 审计产物目录不存在: ${AUDIT_DIR}" >&2
@@ -66,6 +67,7 @@ if ! python -m data_preprocess.operator_futures.feature_audit.analyze_audit_resu
     --audit-dir "${AUDIT_DIR}" \
     --output-dir "${OUTPUT_DIR}" \
     --horizons "${HORIZONS}" \
+    --config "${AUDIT_CONFIG}" \
     --top-k 15 \
     --min-sign-consistency 0.80 \
     --min-coverage 0.50 2>&1 | tee -a "${LOG_FILE}"; then

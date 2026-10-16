@@ -1018,3 +1018,21 @@ _Avoid_: 订单号、动作编号、时间序列 ID
 **审计级回测 (Audit-grade Backtest)**:
 具备全量真实推断保存、全量执行事件跟踪、不重置独立合约账户快照以及确定性证据链的严格回测运行；通过离线校验后按显式 TradingDay 原子发布三份日度记录 CSV 与根级清单，杜绝缺失事实脑补或推测。
 _Avoid_: 普通回测、无审计回测、历史重构回测
+
+### Multi-Horizon Feature Audit & Evidence Chain
+
+**有效区块 (Effective Blocks)**:
+在联合移动区块 Bootstrap 中，由独立有效交易日数除以区块长度所得的整数块数（$\lfloor N_{\text{valid\_td}} / L_{\text{block}} \rfloor$），是评估重抽样渐近一致性的核心门槛。Protocol Q14 严格要求有效区块数 $\ge 20$；低于门槛时严禁下调参数凑数，必须如实记录不足原因。
+_Avoid_: 样本数不足、伪置信区间
+
+**区块长度 (Block Length)**:
+移动区块覆盖的连续交易日跨度，必须满足 $L_{\text{block}} \ge \max(L_{\text{min}}, \text{horizon\_span})$，以完整保全多日预测目标的收益自相关和重叠结构。
+_Avoid_: 随机抽样窗口、独立抽样
+
+**三维共同样本比对 (Three-Way Matched Common-Sample Comparison)**:
+在同一合约、相同决策时间截面上，仅保留超短（1h）、次日（1day/NextTD）与中周期（5day/Next5TD）三个预测标签全部有效的交集样本（在 10min 燃料油数据中占全量 86.01%），对特征重新计算完全同源的 IC 轨迹，彻底消除跨期限样本流失带来的幸存者偏差。
+_Avoid_: 跨样本直接对比、非配对 IC 差值
+
+**配对 IC 漂移 (Paired IC Transition)**:
+在共同决策样本截面上，长期限 IC 相对短期限 IC 的严格代数差值（$\Delta IC = IC_{H2} - IC_{H1}$），用于识别特征随时间视界展开是物理微观衰减还是宏观趋势慢涌现。
+_Avoid_: 宏观绝对增量、无基准差值

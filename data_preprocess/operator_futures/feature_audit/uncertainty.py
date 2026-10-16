@@ -15,6 +15,24 @@ class BootstrapResult:
     ci_upper: Optional[float]
     effective_blocks: float
     undefined_replicates_count: int
+    num_valid_days: int = 0
+    block_length: int = 0
+    min_effective_blocks: int = 20
+    null_reason: Optional[str] = None
+    ci_status: str = "AVAILABLE_EXPLORATORY"
+
+
+@dataclass(frozen=True)
+class MatrixBootstrapResult:
+    status: str  # "OK", "INSUFFICIENT_DATA", "UNDEFINED"
+    ci_status: str  # "AVAILABLE_EXPLORATORY", "INSUFFICIENT_EFFECTIVE_BLOCKS", "INSUFFICIENT_TRADING_DAYS", "UNDEFINED_REPLICATES"
+    ci_lower: np.ndarray
+    ci_upper: np.ndarray
+    effective_blocks: float
+    num_valid_days: int
+    block_length: int
+    min_effective_blocks: int
+    null_reason: Optional[str]
 
 
 def joint_moving_block_bootstrap(
@@ -32,22 +50,33 @@ def joint_moving_block_bootstrap(
     effective_blocks = float(num_valid_days // block_length) if block_length > 0 else 0.0
 
     if effective_blocks < min_effective_blocks:
+        reason = f"effective_blocks({effective_blocks:.1f}) < min_required({min_effective_blocks})"
         return BootstrapResult(
             status="INSUFFICIENT_DATA",
             ci_lower=None,
             ci_upper=None,
             effective_blocks=effective_blocks,
             undefined_replicates_count=0,
+            num_valid_days=num_valid_days,
+            block_length=block_length,
+            min_effective_blocks=min_effective_blocks,
+            null_reason=reason,
+            ci_status="INSUFFICIENT_EFFECTIVE_BLOCKS",
         )
 
     n_days = len(trading_days)
     if n_days < block_length:
+        reason = f"trading_days({n_days}) < block_length({block_length})"
         return BootstrapResult(
             status="INSUFFICIENT_DATA",
             ci_lower=None,
             ci_upper=None,
             effective_blocks=effective_blocks,
             undefined_replicates_count=0,
+            num_valid_days=num_valid_days,
+            block_length=block_length,
+            min_effective_blocks=min_effective_blocks,
+            null_reason=reason,
         )
 
     num_blocks = n_days - block_length + 1
@@ -89,12 +118,18 @@ def joint_moving_block_bootstrap(
             reps.append(corr)
 
     if len(reps) < 10:
+        reason = f"valid_replicates({len(reps)}) < 10"
         return BootstrapResult(
             status="UNDEFINED",
             ci_lower=None,
             ci_upper=None,
             effective_blocks=effective_blocks,
             undefined_replicates_count=undefined_count,
+            num_valid_days=num_valid_days,
+            block_length=block_length,
+            min_effective_blocks=min_effective_blocks,
+            null_reason=reason,
+            ci_status="UNDEFINED_REPLICATES",
         )
 
     ci_lower = float(np.percentile(reps, 100.0 * alpha))
@@ -106,6 +141,10 @@ def joint_moving_block_bootstrap(
         ci_upper=ci_upper,
         effective_blocks=effective_blocks,
         undefined_replicates_count=undefined_count,
+        num_valid_days=num_valid_days,
+        block_length=block_length,
+        min_effective_blocks=min_effective_blocks,
+        null_reason=None,
     )
 
 
@@ -119,18 +158,42 @@ def joint_moving_block_bootstrap_matrix(
     n_replicates: int = 2000,
     seed: int = 42,
     confidence_level: float = 0.95,
-) -> Tuple[str, np.ndarray, np.ndarray, float]:
-    """Vectorized joint moving block bootstrap for all columns in X simultaneously.
-    Returns: (status, ci_lower_arr, ci_upper_arr, effective_blocks)."""
+) -> MatrixBootstrapResult:
+    """Vectorized joint moving block bootstrap for all columns in X simultaneously."""
     N, D = X.shape
     valid_days = [td for td in trading_days if td in day_indices and len(day_indices[td]) > 0]
     num_valid_days = len(valid_days)
     effective_blocks = float(num_valid_days // block_length) if block_length > 0 else 0.0
 
-    if effective_blocks < min_effective_blocks or len(trading_days) < block_length:
-        return "INSUFFICIENT_DATA", np.full(D, np.nan), np.full(D, np.nan), effective_blocks
-
     n_days = len(trading_days)
+    if n_days < block_length:
+        reason = f"trading_days({n_days}) < block_length({block_length})"
+        return MatrixBootstrapResult(
+            status="INSUFFICIENT_DATA",
+            ci_status="INSUFFICIENT_TRADING_DAYS",
+            ci_lower=np.full(D, np.nan),
+            ci_upper=np.full(D, np.nan),
+            effective_blocks=effective_blocks,
+            num_valid_days=num_valid_days,
+            block_length=block_length,
+            min_effective_blocks=min_effective_blocks,
+            null_reason=reason,
+        )
+
+    if effective_blocks < min_effective_blocks:
+        reason = f"effective_blocks({effective_blocks:.1f}) < min_required({min_effective_blocks})"
+        return MatrixBootstrapResult(
+            status="INSUFFICIENT_DATA",
+            ci_status="INSUFFICIENT_EFFECTIVE_BLOCKS",
+            ci_lower=np.full(D, np.nan),
+            ci_upper=np.full(D, np.nan),
+            effective_blocks=effective_blocks,
+            num_valid_days=num_valid_days,
+            block_length=block_length,
+            min_effective_blocks=min_effective_blocks,
+            null_reason=reason,
+        )
+
     num_blocks = n_days - block_length + 1
     blocks = [trading_days[i : i + block_length] for i in range(num_blocks)]
     needed_blocks = int(np.ceil(n_days / block_length))
@@ -158,7 +221,18 @@ def joint_moving_block_bootstrap_matrix(
         reps_list.append(corrs)
 
     if len(reps_list) < 10:
-        return "UNDEFINED", np.full(D, np.nan), np.full(D, np.nan), effective_blocks
+        reason = f"valid_replicates({len(reps_list)}) < 10"
+        return MatrixBootstrapResult(
+            status="UNDEFINED",
+            ci_status="UNDEFINED_REPLICATES",
+            ci_lower=np.full(D, np.nan),
+            ci_upper=np.full(D, np.nan),
+            effective_blocks=effective_blocks,
+            num_valid_days=num_valid_days,
+            block_length=block_length,
+            min_effective_blocks=min_effective_blocks,
+            null_reason=reason,
+        )
 
     reps_arr = np.array(reps_list)  # (replicates, D)
     with warnings.catch_warnings():
@@ -166,4 +240,14 @@ def joint_moving_block_bootstrap_matrix(
         ci_lower = np.nanpercentile(reps_arr, 100.0 * alpha, axis=0)
         ci_upper = np.nanpercentile(reps_arr, 100.0 * (1.0 - alpha), axis=0)
 
-    return "OK", ci_lower, ci_upper, effective_blocks
+    return MatrixBootstrapResult(
+        status="OK",
+        ci_status="AVAILABLE_EXPLORATORY",
+        ci_lower=ci_lower,
+        ci_upper=ci_upper,
+        effective_blocks=effective_blocks,
+        num_valid_days=num_valid_days,
+        block_length=block_length,
+        min_effective_blocks=min_effective_blocks,
+        null_reason=None,
+    )
