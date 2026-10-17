@@ -205,6 +205,7 @@ def _build_config_from_legacy_kwargs(**kwargs) -> FeatureSelectionPipelineConfig
         scoring=NonlinearScoringConfig(
             decision_window=dec_window,
             composite_drop_ratio=float(kwargs.get("composite_drop_ratio", 0.1)),
+            catboost_iterations=int(kwargs.get("catboost_iterations", 1)),
         ),
         dedup=OrthogonalDedupConfig(
             max_correlation=float(kwargs.get("max_correlation", 0.7)),
@@ -1108,6 +1109,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min_sign_consistency", type=float, default=0.75)
     parser.add_argument("--target_decision_window", type=int, default=None)
     parser.add_argument("--composite_drop_ratio", type=float, default=0.1)
+    parser.add_argument(
+        "--catboost_iterations",
+        type=int,
+        default=1,
+        help="Number of CatBoost boosting iterations used for feature importance.",
+    )
     parser.add_argument("--feature_blacklist", nargs="*", default=None)
     parser.add_argument(
         "--feature_ablation_patterns",
@@ -1234,6 +1241,7 @@ def main(argv=None):
         target_decision_window=args.target_decision_window,
         windows_list=_parse_windows_list(args.windows_list),
         composite_drop_ratio=args.composite_drop_ratio,
+        catboost_iterations=args.catboost_iterations,
         feature_blacklist=args.feature_blacklist,
         feature_ablation_patterns=args.feature_ablation_patterns,
         mandatory_state_features=args.mandatory_state_features,

@@ -148,7 +148,7 @@ _Avoid_: 双流特征解耦、单份 VAE 特征、单体状态空间、vae_state
 _Avoid_: VAE 机制特征流、vae_state_features.npy、斜率特征宽表
 
 **波动率 VAE 机制特征流 (Volatility VAE Regime Feature Stream)**:
-针对金融波动聚集与无向离散度特性，经自适应分布平稳性（$\text{PSI} \le 0.12$）、前向绝对收益预测力（$\text{Vol-RankIC} \ge 0.030, \text{SignConsistency} \ge 0.75$）、Low/Mid/High Vol 体制单调递增性与精炼正交维度（10~14 维，Spearman $|r| \le 0.60, \text{VIF} \le 8.0$）筛选出的偶对称特征集合，输出为 `vae_volatility_state_features.npy`；专供高层波动率 VAE 识别市场离散度体制，严禁混入带符号有向指标以消除双峰重构误差与虚假 OOD 熔断。
+针对金融波动聚集与无向离散度特性，经自适应分布平稳性（$\text{PSI} \le 0.12$）、前向绝对收益预测力（$\text{Vol-RankIC} \ge 0.030, \text{SignConsistency} \ge 0.75$）、Low/Mid/High Vol 体制单调递增性与精炼正交维度（9~14 维，Spearman $|r| \le 0.60, \text{VIF} \le 10.0$）筛选出的偶对称特征集合，输出为 `vae_volatility_state_features.npy`；专供高层波动率 VAE 识别市场离散度体制，严禁混入带符号有向指标以消除双峰重构误差与虚假 OOD 熔断。
 _Avoid_: 波动特征宽表、通用 VAE 特征
 
 **RL 决策特征流 (RL Decision Feature Stream)**:

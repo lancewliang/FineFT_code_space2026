@@ -321,6 +321,41 @@ def test_parser_accepts_runtime_feature_blacklist():
 
     assert args.feature_blacklist == ["wap_1", "last_price"]
 
+
+def test_parser_and_config_accept_catboost_iterations_override():
+    from operator_futures.feature_selection.muti_contract.pipeline import (
+        _build_config_from_legacy_kwargs,
+    )
+
+    args = build_parser().parse_args(
+        [
+            "--symbol",
+            "fu",
+            "--target_freq",
+            "5min",
+            "--stage",
+            "train",
+            "--catboost_iterations",
+            "1",
+        ]
+    )
+
+    config = _build_config_from_legacy_kwargs(
+        root_path=Path("/tmp"),
+        symbol=args.symbol,
+        target_freq=args.target_freq,
+        stage=args.stage,
+        catboost_iterations=args.catboost_iterations,
+    )
+
+    assert config.scoring.catboost_iterations == 1
+
+    default_args = build_parser().parse_args(
+        ["--symbol", "fu", "--target_freq", "5min", "--stage", "train"]
+    )
+    assert default_args.catboost_iterations == 1
+
+
 def test_parser_rejects_legacy_dual_stream_flags():
     import pytest
     with pytest.raises(SystemExit):
@@ -1064,7 +1099,7 @@ def test_stream_filter_profile_immutability_and_defaults():
     assert DEFAULT_VAE_VOLATILITY_PROFILE.min_sign_consistency == 0.75
     assert DEFAULT_VAE_VOLATILITY_PROFILE.min_rank_ic_ir == 0.40
     assert DEFAULT_VAE_VOLATILITY_PROFILE.max_correlation == 0.60
-    assert DEFAULT_VAE_VOLATILITY_PROFILE.min_clusters == 10
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.min_clusters == 9
     assert DEFAULT_VAE_VOLATILITY_PROFILE.max_clusters == 14
     assert DEFAULT_VAE_VOLATILITY_PROFILE.psi_weight == 0.45
     assert DEFAULT_VAE_VOLATILITY_PROFILE.rank_ic_weight == 0.35
@@ -1075,7 +1110,7 @@ def test_stream_filter_profile_immutability_and_defaults():
     assert DEFAULT_VAE_VOLATILITY_PROFILE.min_anova_f == 6.0
     assert DEFAULT_VAE_VOLATILITY_PROFILE.require_monotonic is True
     assert DEFAULT_VAE_VOLATILITY_PROFILE.target_metric == "VolRankIC"
-    assert DEFAULT_VAE_VOLATILITY_PROFILE.max_vif == 8.0
+    assert DEFAULT_VAE_VOLATILITY_PROFILE.max_vif == 10.0
 
     # Verify RL Profile canonical values
     assert DEFAULT_RL_PROFILE.name == "rl_decision"
@@ -2062,7 +2097,7 @@ def test_triple_stream_feature_selection_orthogonality_and_bounds(tmp_path, fake
 
     # Verify cluster count bounds
     assert 12 <= len(slope_feats) <= 16, f"Slope features count {len(slope_feats)} out of [12, 16]"
-    assert 10 <= len(vol_feats) <= 14, f"Volatility features count {len(vol_feats)} out of [10, 14]"
+    assert 9 <= len(vol_feats) <= 14, f"Volatility features count {len(vol_feats)} out of [9, 14]"
     assert 55 <= len(rl_feats) <= 70, f"RL features count {len(rl_feats)} out of [55, 70]"
 
     # Verify zero cross-stream leakage:

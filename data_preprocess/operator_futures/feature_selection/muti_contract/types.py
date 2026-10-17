@@ -65,7 +65,7 @@ class NonlinearScoringConfig:
     composite_drop_ratio: float = 0.05
     early_stopping_rounds: int = 30
     catboost_depth: int = 6
-    catboost_iterations: int = 1000
+    catboost_iterations: int = 300
     random_seed: int = 42
 
 
@@ -142,7 +142,7 @@ DEFAULT_VAE_VOLATILITY_PROFILE = StreamFilterProfile(
     min_sign_consistency=0.75,
     min_rank_ic_ir=0.40,
     max_correlation=0.60,
-    min_clusters=10,
+    min_clusters=9,
     max_clusters=14,
     psi_weight=0.45,
     rank_ic_weight=0.35,
@@ -153,7 +153,7 @@ DEFAULT_VAE_VOLATILITY_PROFILE = StreamFilterProfile(
     min_anova_f=6.0,
     require_monotonic=True,
     target_metric="VolRankIC",
-    max_vif=8.0,
+    max_vif=10.0,
 )
 
 DEFAULT_RL_PROFILE = StreamFilterProfile(

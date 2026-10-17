@@ -633,6 +633,7 @@ run_commodity_feature_selection() {
     local symbol=$4
     local root_path=$5
     local regime_bins=${6:-${REGIME_BINS:-3}}
+    local catboost_iterations=${CATBOOST_ITERATIONS:-500}
 
     local vae_slope_feature_blacklist_args=()
     local vae_slope_blacklist=()
@@ -668,7 +669,16 @@ run_commodity_feature_selection() {
 
     local windows_list=(6 12 24 48 96 384 768)
 
-    PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" python -u -m operator_futures.feature_selection.muti_contract         --root_path "${root_path}"         --split_path "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST"         --save_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION"         --symbol "${symbol}" --windows_list "${windows_list[@]}"     --target_decision_window=48    --target_freq "${target_freq}"         --stage "${stage}"         --orderbook_depth 5         --regime_bins "${regime_bins}"         "${target_regime_bins_args[@]}"         --mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" "${CROSS_MONTH_FEATURE_COLUMNS[@]}"         "${vae_slope_feature_blacklist_args[@]}"         "${vae_volatility_feature_blacklist_args[@]}"         "${rl_feature_blacklist_args[@]}"
+    PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" python -u -m operator_futures.feature_selection.muti_contract         --root_path "${root_path}" \
+            --split_path "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST" \
+            --save_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION" \
+            --symbol "${symbol}" --windows_list "${windows_list[@]}" \
+            --target_decision_window=6 \
+            --catboost_iterations "${catboost_iterations}" \
+            --target_freq "${target_freq}"         --stage "${stage}" \
+            --orderbook_depth 5         --regime_bins "${regime_bins}" \
+            "${target_regime_bins_args[@]}" \
+            --mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" "${CROSS_MONTH_FEATURE_COLUMNS[@]}"         "${vae_slope_feature_blacklist_args[@]}"         "${vae_volatility_feature_blacklist_args[@]}"         "${rl_feature_blacklist_args[@]}"
 }
 
 run_commodity_maintenance_margin_dict() {
@@ -830,10 +840,10 @@ run_commodity_full_process() {
     #     return 1
     # fi
 
-    run_commodity_logged_step \
-        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-        "dataset_split" \
-        run_commodity_dataset_split "$summary_path" "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
+    # run_commodity_logged_step \
+    #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+    #     "dataset_split" \
+    #     run_commodity_dataset_split "$summary_path" "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
 
     run_commodity_logged_step \
         "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
