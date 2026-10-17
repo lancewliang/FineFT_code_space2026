@@ -13,6 +13,7 @@ Generates structured CSV deliverables for each evaluated horizon and a self-cont
 import argparse
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -392,11 +393,10 @@ def generate_executive_summary_md(
     audit_dir: Path,
     output_dir: Path,
 ) -> str:
-    """Render a compact evidence overview and linked artifact reading guide."""
-    from data_preprocess.operator_futures.feature_audit.report import (
-        render_artifact_guide,
-        render_review_examples,
-    )
+    """Summarize findings and next review priorities; details belong in the audit report."""
+    def link(path: Path, label: str) -> str:
+        relative = Path(os.path.relpath(path, output_dir)).as_posix()
+        return f"[{label}](<{relative}>)"
 
     symbol = (manifest or {}).get("symbol", "unknown")
     frequency = (manifest or {}).get("frequency", "unknown")
@@ -425,7 +425,7 @@ def generate_executive_summary_md(
             f"保留率 **{evidence['sample_retention_ratio']:.2%}**。"
         )
     lines = [
-        f"# 特征审计阅读摘要：{symbol.upper()} / {frequency}",
+        f"# 特征审计执行摘要：{symbol.upper()} / {frequency}",
         "",
         f"**{len(dynamics_df):,}** 个特征；**{evidence['evaluation_window_count']}** 个评价窗口；"
         f"**{evidence['contract_count']}** 个合约（排除历史参考期）。",
@@ -438,11 +438,7 @@ def generate_executive_summary_md(
         f"选择注释来源：`{evidence['selection_source']['mode']}`；具体版本见 analysis_manifest.json。",
         "回顾性注释描述提供的版本，不保证就是原审计当时的版本；非入选不等于因短期 IC 失败被淘汰。",
         "",
-        "## 先看这几个核心示例",
-        "",
-        render_review_examples(metrics.to_dict('records'), dynamics_df.to_dict('records')),
-        "",
-        "## 证据够不够",
+        "## 当前结论",
         "",
         "探索性审计不自动修改原三流清单。IC 不是利润；abs_return 是终点绝对收益，不是路径实现波动率。",
         "可用 CI 未做多重比较调整；CI 缺失不等于特征无效。若原产物未记录缺失原因，保留 unknown。",
@@ -455,20 +451,23 @@ def generate_executive_summary_md(
         "共同样本改善期限可比性，不能单独识别真实 alpha、因果关系或排除市场阶段影响。",
         f"原生样本平均覆盖率：{coverage or '无记录'}。不同期限的 IC 需结合样本口径阅读。",
         "",
-        "## 从一个特征下钻",
+        "## 当前优先处理",
         "",
-        "1. 打开 feature_evidence.csv，筛 feature → target_kind → horizon，看关联和证据状态。",
-        "2. 打开 legacy_selection_comparison.csv，按 scope 分三条流读 drop_reasons；缺证据保留 unknown。",
-        "3. 打开 window_strata_metrics.csv，排除历史参考期，核验各窗口、各合约是否变号。",
-        "4. 比较期限时读 matched_horizon_comparisons.csv；异常再查 CI、无效原因和行级标签。",
+        "1. 补齐未入选特征的去向；没有淘汰记录的，先查是否进入过原选择器及来源版本。",
+        "2. 对有记录的特征，逐流核对指标值、阈值、黑名单依据或被保留的相关特征。",
+        "3. 用多期限、分窗口和分合约证据检查规则适用范围，记录复核结论，不直接改入选清单。",
         "",
-        "## 每个关联产物是什么、怎么看",
+        "## 阅读入口",
         "",
-        render_artifact_guide(audit_dir, output_dir, output_dir),
+        "- " + link(audit_dir / "audit_report.md", "完整审计报告")
+        + "：50 个核心特征、逐特征复核顺序、全部产物的用途与阅读方法。",
+        "- " + link(output_dir / "feature_evidence.csv", "insights/feature_evidence.csv")
+        + "：直接筛选单个特征，查看各期限关联、三流状态及淘汰记录。",
+        "- " + link(audit_dir / "window_strata_metrics.csv", "window_strata_metrics.csv")
+        + "：检查各合约、各窗口表现；评价时排除历史参考期。",
         "",
         f"候选 CSV 的展示条件：合约符号一致率 ≥ {min_sign_consistency:.0%}、覆盖率 ≥ {min_coverage:.0%}，"
         f"各期限最多 {top_k} 项。该条件仅控制展示，不是入选门禁。",
-        "Markdown 适合摘要与导航；逐特征组合筛选、展开淘汰原因和联动窗口图，需要交互表格。",
     ]
     return "\n".join(lines) + "\n"
 

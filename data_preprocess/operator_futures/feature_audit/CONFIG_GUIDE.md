@@ -285,6 +285,10 @@
 `window_strata_metrics.csv`（排除历史参考期后检查各合约和窗口），
 比较期限时使用 `matched_horizon_comparisons.csv`。每个文件的粒度和关键字段在精简报告中列出。
 
+两份 Markdown 的职责不同：`executive_summary.md` 是一页执行摘要，只列总体结论、
+证据限制、当前复核优先项与三个阅读入口；`audit_report.md` 承载 50 个核心特征及完整产物导航。
+执行摘要不重复特征表和全量产物目录。
+
 报告中的核心示例用于说明不同复核问题，不是自动排名或入选推荐。
 `--top-k` 仍控制候选 CSV 的摘录数量，不会把全部榜单展开进 Markdown。
 Markdown 用作摘要和导航；组合筛选、逐流展开、窗口联动应由交互表格承担。

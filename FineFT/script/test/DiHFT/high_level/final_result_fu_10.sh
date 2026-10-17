@@ -84,6 +84,7 @@ if [ "${ENABLE_AUDIT}" = "1" ]; then
     if [ -f "result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/audit_metadata.json" ] || \
        ls result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/contracts/*/audit_metadata.json >/dev/null 2>&1; then
         python -u FineFT/analysis/diagnostics/daily_trading_audit.py \
+            --skip-missing-input \
             "${AUDIT_CMD_ARGS[@]}" \
             >>"${LOG_DIR}/final_result.log" 2>&1
     fi

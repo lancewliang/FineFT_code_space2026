@@ -465,6 +465,11 @@ def main() -> None:
     parser.add_argument("--run-id", "--run_id", default=None, help="Explicit run ID")
     parser.add_argument("--trading-day-mapping", "--trading_day_mapping", default=None, help="Path to explicit TradingDay mapping file")
     parser.add_argument("--contracts", nargs="*", default=None, help="Explicit contracts list")
+    parser.add_argument(
+        "--skip-missing-input",
+        action="store_true",
+        help="Skip optional pipeline publication when audit-grade input is incomplete",
+    )
 
     args = parser.parse_args()
     publisher = DailyTradingAuditPublisher(
@@ -475,7 +480,13 @@ def main() -> None:
         trading_day_mapping=args.trading_day_mapping,
         contracts=args.contracts,
     )
-    manifest = publisher.publish()
+    try:
+        manifest = publisher.publish()
+    except ValueError as exc:
+        if args.skip_missing_input and str(exc).startswith("Missing audit-grade input:"):
+            logger.warning("Skipping daily trading audit: %s", exc)
+            return
+        raise
     logger.info("Successfully published audit manifest: %s", manifest)
     print(json.dumps(manifest, indent=2))
 

@@ -819,3 +819,30 @@ def test_cli_invocation(tmp_path: Path):
     assert proc.returncode == 0, f"CLI failed: {proc.stderr}"
     assert (output_dir / AuditArtifactNames.AUDIT_MANIFEST_JSON).is_file()
     assert (output_dir / "2025-01-02" / AuditArtifactNames.TRADE_RECORDS_CSV).is_file()
+
+
+def test_cli_can_skip_missing_audit_input_for_optional_pipeline_integration(tmp_path: Path):
+    import subprocess
+
+    result_dir, market_dir = _setup_mock_run(tmp_path)
+    metadata_path = result_dir / "contracts" / "fu2508" / AuditArtifactNames.AUDIT_METADATA_JSON
+    metadata_path.unlink()
+    output_dir = tmp_path / "optional_cli_out"
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "analysis.diagnostics.daily_trading_audit",
+        "--result-dir",
+        str(result_dir),
+        "--market-data-dir",
+        str(market_dir),
+        "--output-dir",
+        str(output_dir),
+        "--skip-missing-input",
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path(__file__).resolve().parents[2]))
+
+    assert proc.returncode == 0, proc.stderr
+    assert "Skipping daily trading audit" in proc.stderr
+    assert not output_dir.exists()

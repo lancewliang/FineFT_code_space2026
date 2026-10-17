@@ -51,8 +51,8 @@ class PredictiveAuditConfig:
     min_abs_ic: float = 0.010
     min_sign_consistency: float = 0.55
     min_rank_ic_ir: float = 0.18
-    target_decision_window: int = 6
-    windows_list: tuple[int, ...] = (1, 2, 6, 12, 24, 48)
+    target_decision_window: int = 48
+    windows_list: tuple[int, ...] = (6, 12, 24, 48,96,384,768)
     fdr_threshold: float = 0.05
     ic_anomaly_ceiling: float = 0.45
     rank_ic_mode: str = "absolute"

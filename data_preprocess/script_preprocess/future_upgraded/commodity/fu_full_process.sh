@@ -666,9 +666,9 @@ run_commodity_feature_selection() {
         target_regime_bins_args=(--target_regime_bins ${TARGET_REGIME_BINS})
     fi
 
-    local windows_list=(1 2 6 12 24 48 96)
+    local windows_list=(6 12 24 48 96 384 768)
 
-    PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" python -u -m operator_futures.feature_selection.muti_contract         --root_path "${root_path}"         --split_path "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST"         --save_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION"         --symbol "${symbol}" --windows_list "${windows_list[@]}"         --target_freq "${target_freq}"         --stage "${stage}"         --orderbook_depth 5         --regime_bins "${regime_bins}"         "${target_regime_bins_args[@]}"         --mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" "${CROSS_MONTH_FEATURE_COLUMNS[@]}"         "${vae_slope_feature_blacklist_args[@]}"         "${vae_volatility_feature_blacklist_args[@]}"         "${rl_feature_blacklist_args[@]}"
+    PYTHONPATH="${root_path}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}" python -u -m operator_futures.feature_selection.muti_contract         --root_path "${root_path}"         --split_path "PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST"         --save_path "PREPROCESS_DATASET/commodity-futures/FEATURE_SELECTION"         --symbol "${symbol}" --windows_list "${windows_list[@]}"     --target_decision_window=48    --target_freq "${target_freq}"         --stage "${stage}"         --orderbook_depth 5         --regime_bins "${regime_bins}"         "${target_regime_bins_args[@]}"         --mandatory_state_features "${BASE_TIME_FEATURE_COLUMNS[@]}" "${CROSS_MONTH_FEATURE_COLUMNS[@]}"         "${vae_slope_feature_blacklist_args[@]}"         "${vae_volatility_feature_blacklist_args[@]}"         "${rl_feature_blacklist_args[@]}"
 }
 
 run_commodity_maintenance_margin_dict() {
@@ -835,23 +835,23 @@ run_commodity_full_process() {
         "dataset_split" \
         run_commodity_dataset_split "$summary_path" "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
 
-    # run_commodity_logged_step \
-    #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-    #     "feature_selection_train" \
-    #     run_commodity_feature_selection "train" "${root_path}/PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/${target_freq}" "$target_freq" "$symbol" "$root_path" "$regime_bins"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "feature_selection_train" \
+        run_commodity_feature_selection "train" "${root_path}/PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/${target_freq}" "$target_freq" "$symbol" "$root_path" "$regime_bins"
 
-    # run_commodity_logged_step \
-    #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-    #     "feature_selection_valid" \
-    #     run_commodity_feature_selection "valid" "${root_path}/PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/${target_freq}" "$target_freq" "$symbol" "$root_path" "$regime_bins"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "feature_selection_valid" \
+        run_commodity_feature_selection "valid" "${root_path}/PREPROCESS_DATASET/commodity-futures/SPLIT-TRAIN-VALID-TEST/${target_freq}" "$target_freq" "$symbol" "$root_path" "$regime_bins"
 
-    # run_commodity_logged_step \
-    #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-    #     "scale_save" \
-    #     run_commodity_scale_save "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "scale_save" \
+        run_commodity_scale_save "$target_freq" "$start_date" "$end_date" "$symbol" "$root_path"
 
-    # run_commodity_logged_step \
-    #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
-    #     "maintenance_margin_dict" \
-    #     run_commodity_maintenance_margin_dict "$root_path" "$symbol" "dataset"
+    run_commodity_logged_step \
+        "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
+        "maintenance_margin_dict" \
+        run_commodity_maintenance_margin_dict "$root_path" "$symbol" "dataset"
 }

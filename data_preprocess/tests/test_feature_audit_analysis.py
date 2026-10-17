@@ -87,7 +87,10 @@ def test_analysis_refresh_preserves_statistics_and_reports_real_selection(tmp_pa
     assert "符号一致率 ≥ 60%" in summary and "覆盖率 ≥ 70%" in summary
     assert "NOT_AVAILABLE" in summary
     assert "previously discarded under legacy" not in summary
-    assert len(summary.splitlines()) < 100
+    assert len(summary.splitlines()) < 50
+    assert "| 特征 | 目标 / 期限 |" not in summary
+    assert "每个关联产物是什么、怎么看" not in summary
+    assert "[完整审计报告](<../audit/audit_report.md>)" in summary
     assert "[window_strata_metrics.csv](<../audit/window_strata_metrics.csv>)" in summary
     assert "[insights/feature_evidence.csv](<feature_evidence.csv>)" in summary
     manifest = json.loads((output / "analysis_manifest.json").read_text())

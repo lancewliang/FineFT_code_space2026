@@ -85,6 +85,7 @@ run_pipeline() {
     if [ "${ENABLE_AUDIT}" = "1" ]; then
         if check_audit_ready; then
             python -u FineFT/analysis/diagnostics/daily_trading_audit.py \
+                --skip-missing-input \
                 "${AUDIT_CMD_ARGS[@]}"
         else
             echo "Notice: No audit artifacts found in result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}, skipping daily trading audit (applies to newly generated audit-grade backtests only)."
@@ -108,7 +109,7 @@ else
         fi
     fi
     if [ "${has_audit}" = "1" ]; then
-        python -u FineFT/analysis/diagnostics/daily_trading_audit.py '"${AUDIT_CMD_ARGS[*]}"'
+        python -u FineFT/analysis/diagnostics/daily_trading_audit.py --skip-missing-input '"${AUDIT_CMD_ARGS[*]}"'
     else
         echo "Notice: No audit artifacts found in ${target_dir}, skipping daily trading audit."
     fi

@@ -498,4 +498,5 @@ def test_ci_diagnostics_and_three_way_matched_comparisons(tmp_path):
     summary_md = (insights_dir / "executive_summary.md").read_text()
     assert "COMPLETED_MATCHED_EVALUATION" in summary_md
     assert "共同决策点" in summary_md
-    assert "每个关联产物是什么、怎么看" in summary_md
+    assert "完整审计报告" in summary_md
+    assert "| 特征 | 目标 / 期限 |" not in summary_md
