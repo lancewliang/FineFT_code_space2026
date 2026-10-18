@@ -5,21 +5,24 @@ set -euo pipefail
 ROOTPATH=${ROOTPATH:-$(pwd)}
 cd "$ROOTPATH"
 
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-30min_multi}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-30min_parallel}
 
-mkdir -p "log/fu/low_level/train/30min/${EXPERIMENT_NAME}"
+mkdir -p "log/DiHFT/fu/low_level/train/30min/${EXPERIMENT_NAME}"
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate finetf
 export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
 
-numactl --cpunodebind=1 --membind=1 python -u FineFT/RL/DiHFT/low_level/weight_advantage_pretrain.py \
+python -u FineFT/RL/DiHFT/low_level/parallel_weight_advantage_pretrain.py \
     --base_path dataset/30min \
     --dataset_name fu --experiment_name "${EXPERIMENT_NAME}" \
-    --initial_wallet_balance 10000 --batch_size 10240 --update_times=30 \
+    --result_path result/DiHFT/low_level \
+    --initial_wallet_balance 10000 --batch_size "${BATCH_SIZE:-100000}" --update_times="${UPDATE_TIMES:-300}" --diverse_num_workers "${DIVERSE_NUM_WORKERS:-32}" \
     --max_holding_number 1 --short_estimated_rate 0 --long_estimated_rate 0 \
-    --position_choices 3 --transcation_cost 0.001 --n_step 12 --gamma 0.9999 \
-    --order_book_depth 5 --early_stop 2 --N 13 --rollout_steps 1024 \
-    --num_sample 300 --pretrain_epoch 80 --lr_init 0.0001 --epsilon_min 0.05 \
-    --ada_min 0.01 --ada_step 280000 --neighbor_size 2 \
-    >"log/fu/low_level/train/30min/${EXPERIMENT_NAME}/advantage-30min.log"
+    --position_choices 3 --transcation_cost 0.002 --n_step 10 --gamma 0.992 \
+    --order_book_depth 5 --early_stop 2  --N 11 --buffer_size "${BUFFER_SIZE:-300000}" \
+    --pretrain_epoch 2 --curriculum_block_epochs 5 --num_epoch "${NUM_EPOCH:-72}" --lr_init 0.0005 --lr_min 0.0001 --ada_init 96.0 --epsilon_min 0.05 \
+    --ada_min 0.1 --neighbor_size 2 --load_pretrain_model False --action_persistence "${ACTION_PERSISTENCE:-3}" --eval_dfs "0,6,12" \
+    --turnover_base_rate "${TURNOVER_BASE_RATE:-0.002}" \
+    --turnover_adverse_ratio "${TURNOVER_ADVERSE_RATIO:-4.0}" \
+    >"log/DiHFT/fu/low_level/train/30min/${EXPERIMENT_NAME}/advantage-30min-parallel.log"

@@ -189,7 +189,7 @@ class TradingDiagnosticsCalculator:
             ("macro", macro_actions, macro_file.is_file(), list(range(10))),
             ("reason", reasons, reason_file.is_file(), [r.value for r in ActionDecisionReasons]),
         ):
-            length_valid = 0 < len(values) <= steps if name == "macro" else len(values) == steps
+            length_valid = 0 <= len(values) <= steps if name == "macro" else len(values) == steps
             if exists and (values.ndim != 1 or not length_valid or not np.isin(values, allowed).all()):
                 raise ValueError(f"{contract_name}: invalid {name} history")
         mark_prices = df["mark_price"].values[indices]

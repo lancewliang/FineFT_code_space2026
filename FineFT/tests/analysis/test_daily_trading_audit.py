@@ -846,3 +846,28 @@ def test_cli_can_skip_missing_audit_input_for_optional_pipeline_integration(tmp_
     assert proc.returncode == 0, proc.stderr
     assert "Skipping daily trading audit" in proc.stderr
     assert not output_dir.exists()
+
+
+def test_cli_can_skip_missing_trading_day_for_optional_pipeline_integration(tmp_path: Path):
+    import subprocess
+
+    result_dir, market_dir = _setup_mock_run(tmp_path, include_trading_day_col=False)
+    output_dir = tmp_path / "optional_cli_no_td_out"
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "analysis.diagnostics.daily_trading_audit",
+        "--result-dir",
+        str(result_dir),
+        "--market-data-dir",
+        str(market_dir),
+        "--output-dir",
+        str(output_dir),
+        "--skip-missing-input",
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path(__file__).resolve().parents[2]))
+
+    assert proc.returncode == 0, proc.stderr
+    assert "Skipping daily trading audit" in proc.stderr
+    assert not output_dir.exists()

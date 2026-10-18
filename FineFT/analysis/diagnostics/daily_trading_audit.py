@@ -483,7 +483,10 @@ def main() -> None:
     try:
         manifest = publisher.publish()
     except ValueError as exc:
-        if args.skip_missing_input and str(exc).startswith("Missing audit-grade input:"):
+        if args.skip_missing_input and (
+            str(exc).startswith("Missing audit-grade input:")
+            or str(exc).startswith("Missing explicit TradingDay")
+        ):
             logger.warning("Skipping daily trading audit: %s", exc)
             return
         raise

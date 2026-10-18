@@ -207,3 +207,15 @@ def test_frozen_methodology_does_not_pass_reported_validation_scores():
     assert grades["portfolio_gross_return_pct"] == "Fail"
     assert grades["mean_annual_sr"] == "Warning"
     assert grades["win_rate_pct"] == "Warning"
+
+
+def test_empty_macro_history_for_short_contract_is_valid(tmp_path):
+    # Tests that when a contract finishes within the warm-up window,
+    # empty macro_actions (len == 0) is valid and recorded as 0 steps.
+    calc, result = _diagnose(tmp_path, [100, 105], [1], [0])
+    np.save(result / HistoryArtifactNames.MACRO_ACTION_HISTORY_NPY, np.array([], dtype=np.int64))
+    summary = calc.run()
+    d = summary["contracts"][0]
+    assert d["macro_recorded_steps"] == 0
+    assert d["macro_history_available"] is True
+    assert all(count == 0 for count in d["macro_counts"].values())

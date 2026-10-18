@@ -712,7 +712,7 @@ run_commodity_full_process() {
     #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
     #     "stitch_main_contract" \
     #     run_commodity_stitch_main_contract "$root_path" "$commodity_name" "$start_date" "$end_date" "$symbol" "$preprocess_workers"
-    local summary_path="${root_path}/PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/${symbol}/main_contract_summary.json"
+    # local summary_path="${root_path}/PREPROCESS_DATASET/commodity-futures/CONTINUOUS_RAW/${symbol}/main_contract_summary.json"
     # run_commodity_logged_step \
     #     "$log_dir" "$symbol" "$target_freq" "$start_date" "$end_date" \
     #     "downscale_continuous_by_trading_day" \
@@ -723,7 +723,7 @@ run_commodity_full_process() {
     local -a contract_names=()
     local contract_failed=0
 
-    local contract
+    # local contract
     # while IFS= read -r contract; do
     #     [ -n "$contract" ] || continue
     #     while [ "${#contract_pids[@]}" -ge "$max_contract_workers" ]; do
@@ -763,9 +763,9 @@ run_commodity_full_process() {
     #     return 1
     # fi
 
-    contract_pids=()
-    contract_names=()
-    contract_failed=0
+    # contract_pids=()
+    # contract_names=()
+    # contract_failed=0
 
     # while IFS= read -r contract; do
     #     [ -n "$contract" ] || continue
