@@ -99,6 +99,13 @@ parser_all.add_argument(
     help="是否在非主力与非次主力合约上启用防御性门控机制",
 )
 parser_all.add_argument(
+    "--non_main_defense_mode",
+    type=str,
+    default="strict_instant_close",
+    choices=["strict_instant_close", "graceful_hold_exit"],
+    help="非主力合约防御模式：graceful_hold_exit（禁开仓但允许持有和平仓）或 strict_instant_close（即时规则平仓）",
+)
+parser_all.add_argument(
     "--n_trials",
     type=int,
     default=128,
@@ -216,6 +223,9 @@ def prepare_base_args(args_1, args_2):
     base_args.enable_non_main_contract_defense = (
         args_2.enable_non_main_contract_defense
         or base_args.enable_non_main_contract_defense
+    )
+    base_args.non_main_defense_mode = getattr(
+        args_2, "non_main_defense_mode", getattr(base_args, "non_main_defense_mode", "strict_instant_close")
     )
     base_args.gating_strategy = args_2.gating_strategy
     base_args.action_persistence = args_2.action_persistence

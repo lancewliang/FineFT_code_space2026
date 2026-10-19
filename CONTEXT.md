@@ -805,8 +805,16 @@ _Avoid_: 相对阈值、间距门控、Softmax 门控
 _Avoid_: 门控结果、路由决策字典
 
 **非主力合约门控防御 (Non-Main Contract Defensive Gating)**:
-在高层路由中基于前一交易日合约角色档位（`prev_day_contract_role_tier < 0.5`）对非主力及非次主力合约实施规则平仓并保持空仓的保护策略，避免浅盘口低流动性合约扭曲多合约验证集评估与 Optuna 门控超参遴选；支持通过参数进行退化消融测试。
+在高层路由中基于前一交易日合约角色档位（`prev_day_contract_role_tier < 0.5`）实施的防御策略，分为默认平滑降级（`graceful_hold_exit`：禁开新仓与反手，仅允许保持原仓位或由策略平仓）与即时强制平仓（`strict_instant_close`），避免浅盘口低流动性合约扭曲多合约评估；支持通过参数进行退化消融测试。
 _Avoid_: 非主力过滤、角色熔断、合约降级
+
+**动态双主力准入控制 (Dynamic Dual-Main Admission Control)**:
+在每一决策时间步仅允许当期主力合约（`tier=1.0`）与次主力合约（`tier=0.5`）发出开新仓指令，在全市场任意时点提供至多 2 个活跃开仓通道。
+_Avoid_: 静态双合约限制、双通道锁
+
+**时间同步组合净值核算 (Time-Synchronized Portfolio Accounting)**:
+将多合约在全局时间戳上的单步净盈亏进行实时对齐累加，在统一样本外初始资金池下合成全局连续资金曲线，计算跨合约并发持仓下的真实组合 TR、MDD 与年化夏普比率。
+_Avoid_: 静态求和评估、单利平均
 
 ### Evaluation And Diagnostics
 

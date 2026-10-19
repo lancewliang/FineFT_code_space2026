@@ -2,6 +2,7 @@
 # based on a sequence of high level actions
 import argparse
 from collections import deque
+from typing import Any
 import json
 import logging
 import os
@@ -249,6 +250,12 @@ parser.add_argument(
     help="高层路由策略测试结果与日志的存储路径",
 )
 parser.add_argument(
+    "--output_sub_dir",
+    type=str,
+    default=None,
+    help="结果保存的子目录名（例如 main_sub）",
+)
+parser.add_argument(
     "--window_length",
     type=int,
     default=64,
@@ -278,6 +285,13 @@ parser.add_argument(
     action="store_true",
     default=False,
     help="是否在非主力与非次主力合约上启用防御性门控机制",
+)
+parser.add_argument(
+    "--non_main_defense_mode",
+    type=str,
+    default="strict_instant_close",
+    choices=["strict_instant_close", "graceful_hold_exit"],
+    help="非主力合约防御模式：graceful_hold_exit（禁开仓但允许持有和平仓）或 strict_instant_close（即时规则平仓）",
 )
 parser.add_argument(
     "--eval_stage",
@@ -777,6 +791,7 @@ class vae_risk_aware_routing:
     flat_action: int = 0
     action_decision_reason_history: list[int]
     enable_non_main_contract_defense: bool = False
+    non_main_defense_mode: str = "strict_instant_close"
     role_tier_index: int | None = None
     save_artifacts: bool = True
     precomputed_quantiles_dir: str | None = None
@@ -876,6 +891,7 @@ class vae_risk_aware_routing:
         )
         self.vae_vol_indicators = self.vae_volatility_indicators
         self.enable_non_main_contract_defense = args.enable_non_main_contract_defense
+        self.non_main_defense_mode = getattr(args, "non_main_defense_mode", "strict_instant_close")
         self.stop_loss_return_threshold = float(args.stop_loss_return_threshold)
         if self.stop_loss_return_threshold < 0:
             raise ValueError("stop_loss_return_threshold must be non-negative")
@@ -1041,6 +1057,44 @@ class vae_risk_aware_routing:
                 self.in_ds_logpx[axis] = [np.sort(logpx) for logpx in logpx_list]
         self.action = self.zero_position_action
         self.macro_action_history = []
+        self._log_initialized_attributes()
+
+    def _log_initialized_attributes(self) -> None:
+        """Log all initialized instance attributes and their values."""
+        logger.info("=" * 80)
+        logger.info("📌 [vae_risk_aware_routing] 初始化完成属性列表 (Initialized Attributes):")
+        for key in sorted(self.__dict__.keys()):
+            val = self.__dict__[key]
+            val_str = self._format_attribute_for_logging(val)
+            logger.info("  • %-35s : %s", key, val_str)
+        logger.info("=" * 80)
+
+    @staticmethod
+    def _format_attribute_for_logging(val: Any) -> str:
+        """Format an attribute value concisely for logging."""
+        if isinstance(val, (int, float, bool, str)) or val is None:
+            return repr(val)
+        if isinstance(val, np.ndarray):
+            if val.ndim == 1 and len(val) <= 5:
+                return f"ndarray(shape={val.shape}, dtype={val.dtype}, items={list(val)})"
+            return f"ndarray(shape={val.shape}, dtype={val.dtype})"
+        if isinstance(val, torch.nn.Module):
+            param_count = sum(p.numel() for p in val.parameters())
+            return f"{val.__class__.__name__}(parameters={param_count:,})"
+        if isinstance(val, dict):
+            if len(val) <= 5 and all(isinstance(v, (int, float, str, bool)) for v in val.values()):
+                return repr(val)
+            return f"dict(len={len(val)}, keys={list(val.keys())[:6]})"
+        if isinstance(val, (list, tuple)):
+            if len(val) <= 8 and all(isinstance(v, (int, float, str, bool)) for v in val):
+                return repr(val)
+            return f"{type(val).__name__}(len={len(val)}, items={list(val[:4])}...)"
+        if isinstance(val, deque):
+            return f"deque(maxlen={val.maxlen}, len={len(val)})"
+        repr_str = repr(val)
+        if len(repr_str) > 120:
+            return f"{val.__class__.__name__}({repr_str[:90]}...)"
+        return repr_str
 
     def reset_routing_state(self):
         self.quantiles = {
@@ -1102,12 +1156,14 @@ class vae_risk_aware_routing:
         return None
 
     def _resolve_test_path(self, args):
+        sub_dir = getattr(args, "output_sub_dir", None)
         if self.eval_stage == "test" or args.result_path.endswith("final_result"):
-            return os.path.join(
+            base = os.path.join(
                 args.result_path,
                 args.dataset_name,
                 self.experiment_name,
             )
+            return os.path.join(base, sub_dir) if sub_dir else base
         self.model_path = os.path.join(
             args.result_path,
             args.dataset_name,
@@ -1116,17 +1172,19 @@ class vae_risk_aware_routing:
         )
         trial_suffix = "" if args.trial_number is None else f"_trial_{args.trial_number}"
         if args.gating_strategy == "hierarchical":
-            return os.path.join(
+            target = os.path.join(
                 self.model_path,
                 f"strat_hierarchical_gamma_{self.gamma}_window_{self.window_length}_ood_{args.ood_threshold}_ms_{args.slope_margin_threshold}_mv_{args.volatility_margin_threshold}"
                 + trial_suffix,
             )
-        return os.path.join(
+        else:
+            target = os.path.join(
             self.model_path,
             "gamma_{}_window_{}_threshold_{}".format(
                 self.gamma, self.window_length, self.rule_base_threshold
             ) + trial_suffix,
         )
+        return os.path.join(target, sub_dir) if sub_dir else target
 
     def reconfigure_routing(self, args):
         """Reset trial-dependent routing state while keeping loaded models.
@@ -1165,6 +1223,7 @@ class vae_risk_aware_routing:
         )
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
         self.enable_non_main_contract_defense = args.enable_non_main_contract_defense
+        self.non_main_defense_mode = getattr(args, "non_main_defense_mode", "strict_instant_close")
         self.stop_loss_return_threshold = float(args.stop_loss_return_threshold)
         if self.stop_loss_return_threshold < 0:
             raise ValueError("stop_loss_return_threshold must be non-negative")
@@ -1264,6 +1323,8 @@ class vae_risk_aware_routing:
         ]
 
     def _defensive_action(self, info, current_position, current_leverage):
+        if float(current_position) == 0.0:
+            return self.zero_position_action
         return rule_based_close(
             info,
             self.zero_position_action,
@@ -1377,14 +1438,18 @@ class vae_risk_aware_routing:
             return action
 
         # 3. Existing high-level defenses
+        is_downgraded_hold = False
         if (
             self.enable_non_main_contract_defense
             and self.role_tier_index is not None
             and float(s[self.role_tier_index]) < 0.5
         ):
-            return self._apply_defensive_action(
-                info, current_pos_float, current_leverage
-            )
+            mode = getattr(self, "non_main_defense_mode", "strict_instant_close")
+            if mode == "strict_instant_close" or current_pos_float == 0.0:
+                return self._apply_defensive_action(
+                    info, current_pos_float, current_leverage
+                )
+            is_downgraded_hold = True
 
         volatility_weights = self.calculate_axis_window_result("volatility")
         slope_weights = self.calculate_axis_window_result("slope")
@@ -1436,6 +1501,34 @@ class vae_risk_aware_routing:
                     ActionDecisionReasons.STOP_LOSS_COOLDOWN
                 )
                 self.cooldown_intercept_count += 1
+                self.action = action
+                self.previous_step_position = current_pos_float
+                return action
+
+        # 6. Graceful Downgrade: forbid opening new positions or expanding exposure on non-main contracts
+        if is_downgraded_hold:
+            target_pos, _ = map_action_to_position_leverage(
+                candidate_action, self.leverage_choices, self.position_list
+            )
+            if target_pos * current_pos_float < 0:
+                self.remaining_persist = 0
+                action = self._defensive_action(info, current_pos_float, current_leverage)
+                self.current_action = action
+                self.action_decision_reason_history.append(
+                    ActionDecisionReasons.DEFENSIVE_RULE_CLOSE
+                )
+                self.action = action
+                self.previous_step_position = current_pos_float
+                return action
+            elif abs(target_pos) > abs(current_pos_float):
+                self.remaining_persist = 0
+                action = map_position_leverage_to_action(
+                    current_pos_float, current_leverage, self.leverage_choices, self.position_list
+                )
+                self.current_action = action
+                self.action_decision_reason_history.append(
+                    ActionDecisionReasons.ACTION_PERSISTENCE
+                )
                 self.action = action
                 self.previous_step_position = current_pos_float
                 return action

@@ -37,6 +37,10 @@ class ArtifactNames:
     ID_LOGPX_NPY: str = "id_logpx.npy"
     OOD_LOGPX_ALL_NPY: str = "ood_logpx_all.npy"
     OOD_LOGPX_ALL_CSV: str = "ood_logpx_all.csv"
+    SUMMARY_METRICS_JSON: str = "summary_metrics.json"
+    SUMMARY_METRICS_CSV: str = "summary_metrics.csv"
+    PORTFOLIO_ACTION_TIMELINE_CSV: str = "portfolio_action_timeline.csv"
+    PORTFOLIO_SUMMARY_MD: str = "portfolio_summary.md"
 
 
 class HistoryArtifactNames:

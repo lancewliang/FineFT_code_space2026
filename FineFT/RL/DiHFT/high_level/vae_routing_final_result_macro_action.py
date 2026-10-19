@@ -1,5 +1,6 @@
 import argparse
 import os
+import shutil
 import sys
 import torch
 
@@ -17,7 +18,10 @@ from RL.DiHFT.high_level.vae_routing_util import (
 def parse_and_prepare_args(args_list=None):
     """Parse and resolve configuration for final result evaluation."""
     parser = argparse.ArgumentParser(parents=[base_parser], add_help=False)
-    parser.set_defaults(eval_stage="test")
+    parser.set_defaults(
+        eval_stage="test",
+        non_main_defense_mode="graceful_hold_exit",
+    )
 
     if args_list is not None:
         args = parser.parse_args(args_list)
@@ -84,6 +88,11 @@ def main():
     final_return_rate = vae_routing.test()
     logger.info("Final result test completed with return rate: %.6f", final_return_rate)
 
+    if args.para_file and os.path.exists(args.para_file) and getattr(args, "save_artifacts", True):
+        dest_para = os.path.join(vae_routing.test_path, ArtifactNames.HIGH_LEVEL_AGENT_PARA_TXT)
+        if os.path.abspath(args.para_file) != os.path.abspath(dest_para):
+            shutil.copy(args.para_file, dest_para)
+
     # Automatically generate comprehensive diagnostics for final result
     from analysis.diagnostics.trading_diagnostics import TradingDiagnosticsCalculator
 
@@ -97,6 +106,23 @@ def main():
         contract_unit=10.0,
     )
     diag_calculator.run()
+
+    # Automatically generate time-synchronized multi-contract portfolio diagnostics
+    from analysis.diagnostics.synchronized_portfolio_diagnostics import (
+        SynchronizedPortfolioCalculator,
+    )
+
+    port_calculator = SynchronizedPortfolioCalculator(
+        result_dir=vae_routing.test_path,
+        data_dir=data_dir,
+        output_dir=vae_routing.test_path,
+        single_contract_capital=float(args.initial_wallet_balance),
+        contract_unit=10.0,
+        commission_rate=float(args.transcation_cost),
+        freq=12,
+        eval_stage=args.eval_stage,
+    )
+    port_calculator.run()
 
     return final_return_rate
 
