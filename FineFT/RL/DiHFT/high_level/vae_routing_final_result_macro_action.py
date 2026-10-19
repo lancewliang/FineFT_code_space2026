@@ -117,7 +117,7 @@ def main():
         data_dir=data_dir,
         output_dir=vae_routing.test_path,
         single_contract_capital=float(args.initial_wallet_balance),
-        contract_unit=10.0,
+        contract_unit=1.0,
         commission_rate=float(args.transcation_cost),
         freq=12,
         eval_stage=args.eval_stage,

@@ -78,7 +78,7 @@ class SynchronizedPortfolioCalculator:
         data_dir: str | Path,
         output_dir: str | Path | None = None,
         single_contract_capital: float = 6000.0,
-        contract_unit: float = 10.0,
+        contract_unit: float = 1.0,
         commission_rate: float = 0.0003,
         freq: int = 12,
         eval_stage: str = "valid",
