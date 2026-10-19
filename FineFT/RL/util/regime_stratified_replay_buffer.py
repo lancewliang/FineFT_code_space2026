@@ -16,8 +16,10 @@ DIRECTIONAL_REGIME_PHASES = {
     1: [2, 5, 8],  # Phase 1: 上涨趋势 (Uptrend / Bull)
     2: [1, 4, 7],  # Phase 2: 横盘震荡 (Range / Flat)
     3: [0, 3, 6],  # Phase 3: 下跌趋势 (Downtrend / Bear)        
-    4: [0, 4, 8],  # Phase 4: 对角匹配体制 (Diagonal / Matched: s0v0, s1v1, s2v2)     
-    5: [0, 1, 2, 3, 4, 5, 6, 7, 8],  # Phase 5: 全量经验抽取 (All Regimes / Full Experience)
+    4: [6],
+    5: [6, 7, 8],  # Phase 4: 对角匹配体制 (Diagonal / Matched: s0v0, s1v1, s2v2)     
+    6: [0, 1, 2, 3, 4, 5, 6, 7, 8],  # Phase 5: 全量经验抽取 (All Regimes / Full Experience)
+    
 }
 
 

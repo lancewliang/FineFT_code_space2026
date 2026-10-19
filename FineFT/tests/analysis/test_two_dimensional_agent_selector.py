@@ -593,6 +593,10 @@ def test_invalid_contract_weighting_or_min_slice_steps() -> None:
         TwoDimensionalAgentSelector(
             SelectionConfig(min_slice_steps=-5)
         )
+    with pytest.raises(ValueError, match="min_grid_slice_steps must be non-negative"):
+        TwoDimensionalAgentSelector(
+            SelectionConfig(min_grid_slice_steps=-1)
+        )
 
 
 def test_worst_initial_position_step_weighted_and_volatility_tiered(
@@ -1020,3 +1024,228 @@ def test_select_raises_descriptive_error_when_detail_rows_missing(tmp_path: Path
                 min_joint_contracts=1,
             )
         ).select(candidate_root, valid_root)
+
+
+def test_single_contract_joint_cell_lcb_fallback_selects_eligible_model(
+    tmp_path: Path,
+) -> None:
+    candidate_root = tmp_path / "candidate"
+    valid_root = tmp_path / "valid"
+    epoch_path = candidate_root / "epoch_1"
+    (epoch_path / "trained_model.pkl").parent.mkdir(parents=True)
+    (epoch_path / "trained_model.pkl").write_bytes(b"checkpoint")
+
+    analysis_rows = [
+        {
+            "标签": "label_0",
+            "初始动作": 0,
+            "分箱索引": 0,
+            "合约": json.dumps(["fu0001"]),
+            "数据文件": json.dumps(["fu0001/label_0/df_0.feather"]),
+            "奖励总和": json.dumps([2.0]),
+            "数据长度": json.dumps([3]),
+            "换手率": json.dumps([0.0]),
+        },
+    ]
+    detail_rows = [
+        {
+            "标签": "label_0",
+            "数据文件": "fu0001/label_0/df_0.feather",
+            "初始动作": 0,
+            "分箱索引": 0,
+            "时间戳": "2026-01-01 09:00:00",
+            "单步奖励": 1.0,
+        },
+        {
+            "标签": "label_0",
+            "数据文件": "fu0001/label_0/df_0.feather",
+            "初始动作": 0,
+            "分箱索引": 0,
+            "时间戳": "2026-01-01 09:30:00",
+            "单步奖励": 1.0,
+        },
+    ]
+    for label_type in ("volatility", "slope"):
+        result_path = epoch_path / label_type
+        result_path.mkdir(parents=True)
+        pl.DataFrame(analysis_rows).write_csv(result_path / "analysis_result.csv")
+        pl.DataFrame(detail_rows).write_csv(
+            result_path / "trading_action_detail_epoch_1.csv"
+        )
+
+        label_path = valid_root / label_type / "fu0001" / "label_0"
+        label_path.mkdir(parents=True)
+        pl.DataFrame(
+            {"timestamp": ["2026-01-01 09:00:00", "2026-01-01 09:30:00"]}
+        ).write_ipc(label_path / "df_0.feather")
+
+    config = SelectionConfig(
+        num_labels=1,
+        lcb_z=0.20,
+        min_marginal_contracts=1,
+        min_joint_contracts=1,
+        min_lcb=0.0,
+        min_mean_return=0.0,
+        min_positive_contract_ratio=0.5,
+        min_worst_initial_position_return=-1.0,
+    )
+    artifacts = TwoDimensionalAgentSelector(config).select(candidate_root, valid_root)
+    assert artifacts.manifest.slots[0]["kind"] == "model"
+    assert artifacts.manifest.slots[0]["candidate_id"] == "epoch_1:bin_0"
+    assert artifacts.manifest.slots[0]["pair_score"] == pytest.approx(1.0)
+
+
+def test_select_filters_in_grid_short_contract_steps(tmp_path: Path) -> None:
+    candidate_root = tmp_path / "candidate"
+    valid_root = tmp_path / "valid"
+    epoch_path = candidate_root / "epoch_1"
+    (epoch_path / "trained_model.pkl").parent.mkdir(parents=True)
+    (epoch_path / "trained_model.pkl").write_bytes(b"checkpoint")
+
+    # Contract fu0001 has 100 total timestamps.
+    # Cell 0,0 (vol 0, slope 0): 40 timestamps (>= 30 steps, kept)
+    # Cell 0,1 (vol 0, slope 1): 10 timestamps (< 30 steps, filtered)
+    # Cell 1,1 (vol 1, slope 1): 50 timestamps (>= 30 steps, kept)
+    timestamps_cell00 = [f"2026-01-01 {i // 60:02d}:{i % 60:02d}:00" for i in range(40)]
+    timestamps_cell01 = [f"2026-01-02 {i // 60:02d}:{i % 60:02d}:00" for i in range(10)]
+    timestamps_cell11 = [f"2026-01-03 {i // 60:02d}:{i % 60:02d}:00" for i in range(50)]
+
+    vol_label_0_ts = timestamps_cell00 + timestamps_cell01
+    vol_label_1_ts = timestamps_cell11
+
+    slope_label_0_ts = timestamps_cell00
+    slope_label_1_ts = timestamps_cell01 + timestamps_cell11
+
+    analysis_rows_vol = [
+        {
+            "标签": "label_0",
+            "初始动作": 0,
+            "分箱索引": 0,
+            "合约": json.dumps(["fu0001"]),
+            "数据文件": json.dumps(["fu0001/label_0/df_0.feather"]),
+            "奖励总和": json.dumps([50.0]),
+            "数据长度": json.dumps([51]),
+            "换手率": json.dumps([0.1]),
+        },
+        {
+            "标签": "label_1",
+            "初始动作": 0,
+            "分箱索引": 0,
+            "合约": json.dumps(["fu0001"]),
+            "数据文件": json.dumps(["fu0001/label_1/df_0.feather"]),
+            "奖励总和": json.dumps([50.0]),
+            "数据长度": json.dumps([51]),
+            "换手率": json.dumps([0.1]),
+        },
+    ]
+    detail_rows_vol = [
+        {
+            "标签": "label_0",
+            "数据文件": "fu0001/label_0/df_0.feather",
+            "初始动作": 0,
+            "分箱索引": 0,
+            "时间戳": ts,
+            "单步奖励": 1.0,
+        }
+        for ts in vol_label_0_ts
+    ] + [
+        {
+            "标签": "label_1",
+            "数据文件": "fu0001/label_1/df_0.feather",
+            "初始动作": 0,
+            "分箱索引": 0,
+            "时间戳": ts,
+            "单步奖励": 1.0,
+        }
+        for ts in vol_label_1_ts
+    ]
+
+    analysis_rows_slope = [
+        {
+            "标签": "label_0",
+            "初始动作": 0,
+            "分箱索引": 0,
+            "合约": json.dumps(["fu0001"]),
+            "数据文件": json.dumps(["fu0001/label_0/df_0.feather"]),
+            "奖励总和": json.dumps([40.0]),
+            "数据长度": json.dumps([41]),
+            "换手率": json.dumps([0.1]),
+        },
+        {
+            "标签": "label_1",
+            "初始动作": 0,
+            "分箱索引": 0,
+            "合约": json.dumps(["fu0001"]),
+            "数据文件": json.dumps(["fu0001/label_1/df_0.feather"]),
+            "奖励总和": json.dumps([60.0]),
+            "数据长度": json.dumps([61]),
+            "换手率": json.dumps([0.1]),
+        },
+    ]
+    detail_rows_slope = [
+        {
+            "标签": "label_0",
+            "数据文件": "fu0001/label_0/df_0.feather",
+            "初始动作": 0,
+            "分箱索引": 0,
+            "时间戳": ts,
+            "单步奖励": 1.0,
+        }
+        for ts in slope_label_0_ts
+    ] + [
+        {
+            "标签": "label_1",
+            "数据文件": "fu0001/label_1/df_0.feather",
+            "初始动作": 0,
+            "分箱索引": 0,
+            "时间戳": ts,
+            "单步奖励": 1.0,
+        }
+        for ts in slope_label_1_ts
+    ]
+
+    vol_path = epoch_path / "volatility"
+    vol_path.mkdir(parents=True)
+    pl.DataFrame(analysis_rows_vol).write_csv(vol_path / "analysis_result.csv")
+    pl.DataFrame(detail_rows_vol).write_csv(vol_path / "trading_action_detail_epoch_1.csv")
+
+    vol_valid_0 = valid_root / "volatility" / "fu0001" / "label_0"
+    vol_valid_0.mkdir(parents=True)
+    pl.DataFrame({"timestamp": vol_label_0_ts}).write_ipc(vol_valid_0 / "df_0.feather")
+    vol_valid_1 = valid_root / "volatility" / "fu0001" / "label_1"
+    vol_valid_1.mkdir(parents=True)
+    pl.DataFrame({"timestamp": vol_label_1_ts}).write_ipc(vol_valid_1 / "df_0.feather")
+
+    slope_path = epoch_path / "slope"
+    slope_path.mkdir(parents=True)
+    pl.DataFrame(analysis_rows_slope).write_csv(slope_path / "analysis_result.csv")
+    pl.DataFrame(detail_rows_slope).write_csv(slope_path / "trading_action_detail_epoch_1.csv")
+
+    slope_valid_0 = valid_root / "slope" / "fu0001" / "label_0"
+    slope_valid_0.mkdir(parents=True)
+    pl.DataFrame({"timestamp": slope_label_0_ts}).write_ipc(slope_valid_0 / "df_0.feather")
+    slope_valid_1 = valid_root / "slope" / "fu0001" / "label_1"
+    slope_valid_1.mkdir(parents=True)
+    pl.DataFrame({"timestamp": slope_label_1_ts}).write_ipc(slope_valid_1 / "df_0.feather")
+
+    selector = TwoDimensionalAgentSelector(
+        SelectionConfig(
+            num_labels=2,
+            min_marginal_contracts=1,
+            min_joint_contracts=1,
+            min_slice_steps=0,
+            min_grid_slice_steps=30,
+            missing_joint_policy="empty_model",
+        )
+    )
+    artifacts = selector.select(candidate_root, valid_root)
+
+    # Slot 0 (label_0 x label_0) has 40 timestamps >= 30, kept
+    slot_0 = [s for s in artifacts.manifest.slots if s["slot_id"] == 0][0]
+    assert slot_0["kind"] == "model"
+    assert slot_0["joint_contract_count"] == 1
+
+    # Slot 1 (label_0 x label_1) has 10 timestamps < 30, filtered out -> empty_model
+    slot_1 = [s for s in artifacts.manifest.slots if s["slot_id"] == 1][0]
+    assert slot_1["kind"] == "empty_model"
+    assert slot_1["joint_contract_count"] == 0

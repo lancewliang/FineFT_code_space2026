@@ -26,6 +26,7 @@ MIN_WORST_INITIAL_POSITION_RETURN_V3=${MIN_WORST_INITIAL_POSITION_RETURN_V3:--5.
 MISSING_JOINT_POLICY=${MISSING_JOINT_POLICY:-empty_model}
 CONTRACT_WEIGHTING=${CONTRACT_WEIGHTING:-step_weighted}
 MIN_SLICE_STEPS=${MIN_SLICE_STEPS:-30}
+MIN_GRID_SLICE_STEPS=${MIN_GRID_SLICE_STEPS:-${MIN_SLICE_STEPS}}
 
 mkdir -p "log/analysis/pick_agent/DiHFT/${DATASET_NAME}"
 
@@ -47,6 +48,7 @@ CMD_ARGS=(
     --missing_joint_policy "${MISSING_JOINT_POLICY}"
     --contract_weighting "${CONTRACT_WEIGHTING}"
     --min_slice_steps "${MIN_SLICE_STEPS}"
+    --min_grid_slice_steps "${MIN_GRID_SLICE_STEPS}"
 )
 
 nohup python -u FineFT/analysis/pick_agent/FineFT_two_dimensional_agent_selector.py \

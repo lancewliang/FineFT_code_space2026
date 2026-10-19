@@ -90,6 +90,13 @@ class SelectionConfig:
     missing_joint_policy: str = "slope_marginal_best"
     contract_weighting: str = "step_weighted"
     min_slice_steps: int = 0
+    min_grid_slice_steps: int | None = None
+
+    @property
+    def effective_min_grid_slice_steps(self) -> int:
+        if self.min_grid_slice_steps is not None:
+            return self.min_grid_slice_steps
+        return self.min_slice_steps
 
 
 @dataclass(frozen=True)
@@ -358,6 +365,13 @@ class TwoDimensionalAgentSelector:
         if self.config.min_slice_steps < 0:
             raise ValueError(
                 f"min_slice_steps must be non-negative, got {self.config.min_slice_steps}"
+            )
+        if (
+            self.config.min_grid_slice_steps is not None
+            and self.config.min_grid_slice_steps < 0
+        ):
+            raise ValueError(
+                f"min_grid_slice_steps must be non-negative, got {self.config.min_grid_slice_steps}"
             )
         self.labels = [f"label_{index}" for index in range(config.num_labels)]
 
@@ -713,10 +727,22 @@ class TwoDimensionalAgentSelector:
                 f"unmatched={unmatched_count}"
             )
 
+        contract_counts = (
+            lookup.group_by(["volatility_label", "slope_label", "contract"])
+            .agg(pl.len().alias("timestamp_count"))
+        )
+        min_grid_steps = self.config.effective_min_grid_slice_steps
+        if min_grid_steps > 0:
+            valid_contracts = contract_counts.filter(
+                pl.col("timestamp_count") >= min_grid_steps
+            )
+        else:
+            valid_contracts = contract_counts
+
         support_actual = (
-            lookup.group_by(["volatility_label", "slope_label"])
+            valid_contracts.group_by(["volatility_label", "slope_label"])
             .agg(
-                pl.len().alias("joint_row_count"),
+                pl.col("timestamp_count").sum().alias("joint_row_count"),
                 pl.col("contract").n_unique().alias("joint_contract_count"),
             )
         )
@@ -967,6 +993,16 @@ class TwoDimensionalAgentSelector:
             )
         )
 
+        min_steps = (
+            self.config.effective_min_grid_slice_steps
+            if "volatility_label" in group_keys
+            else self.config.min_slice_steps
+        )
+        if min_steps > 0:
+            contract_position = contract_position.filter(
+                pl.col("step_count") >= min_steps
+            )
+
         contract_summary = (
             contract_position.group_by(group_keys + ["contract"])
             .agg(
@@ -1020,12 +1056,20 @@ class TwoDimensionalAgentSelector:
             )
             .with_columns(
                 pl.when(pl.col("contract_count") > 1)
+                .then(pl.col("contract_std"))
+                .when(pl.col("contract_count") == 1)
+                .then(pl.lit(0.0))
+                .otherwise(None)
+                .alias("contract_std"),
+                pl.when(pl.col("contract_count") > 1)
                 .then(
                     pl.col("contract_std")
                     / (pl.col("contract_count").cast(pl.Float64).sqrt())
                 )
+                .when(pl.col("contract_count") == 1)
+                .then(pl.lit(0.0))
                 .otherwise(None)
-                .alias("standard_error")
+                .alias("standard_error"),
             )
             .with_columns(
                 (
@@ -1802,6 +1846,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Minimum step count for an individual slice to be included (default: 30).",
     )
     parser.add_argument(
+        "--min_grid_slice_steps",
+        type=int,
+        default=None,
+        help="Minimum step count for a contract within an individual 2D grid cell to be included (default: min_slice_steps).",
+    )
+    parser.add_argument(
         "--output_dir",
         help="Override the default two_dimensional_selection output directory.",
     )
@@ -1820,7 +1870,7 @@ def main() -> None:
     print(f"Dataset: {args.dataset_name}, Experiment: {args.experiment_name}", flush=True)
     print(f"Num labels: {args.num_labels} ({args.num_labels}x{args.num_labels} = {args.num_labels**2} slots)", flush=True)
     print(f"Position choices: {args.position_choices}, LCB z: {args.lcb_z}", flush=True)
-    print(f"Contract weighting: {args.contract_weighting}, Min slice steps: {args.min_slice_steps}", flush=True)
+    print(f"Contract weighting: {args.contract_weighting}, Min slice steps: {args.min_slice_steps}, Min grid slice steps: {args.min_grid_slice_steps}", flush=True)
     print(f"Missing joint policy: {args.missing_joint_policy}", flush=True)
     print("=" * 60, flush=True)
 
@@ -1854,6 +1904,7 @@ def main() -> None:
         missing_joint_policy=args.missing_joint_policy,
         contract_weighting=args.contract_weighting,
         min_slice_steps=args.min_slice_steps,
+        min_grid_slice_steps=args.min_grid_slice_steps,
     )
     artifacts = TwoDimensionalAgentSelector(config).select(
         candidate_root,

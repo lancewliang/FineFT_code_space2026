@@ -13,7 +13,7 @@ function run_test_agent_index {
         label_types=("$LABEL_TYPE")
     fi
     local result_path=${RESULT_PATH:-result/DiHFT/low_level}
-    local max_parallel=${MAX_PARALLEL:-70}
+    local max_parallel=${MAX_PARALLEL:-75}
     ROOTPATH=${ROOTPATH:-$(pwd)}
     cd "$ROOTPATH"
     export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
@@ -39,7 +39,7 @@ function run_test_agent_index {
                 --transcation_cost 0.0003 --short_estimated_rate 0 --long_estimated_rate 0 \
                 --label_type "${label_type}" \
                 --device "${device}" \
-                --action_persistence "${ACTION_PERSISTENCE:-3}" \
+                --action_persistence "${ACTION_PERSISTENCE:-4}" \
                 --save_trading_detail_csv \
                 >"${log_dir}/epoch_${epoch}.log" 2>&1 &
             pids+=($!) # 将每个后台进程的PID添加到数组中

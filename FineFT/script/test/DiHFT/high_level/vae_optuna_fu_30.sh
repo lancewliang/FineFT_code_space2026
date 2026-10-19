@@ -10,11 +10,11 @@ BASE_PATH=${BASE_PATH:-dataset/30min}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-30min_parallel}
 MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-1}
 ENABLE_NON_MAIN_DEFENSE=${ENABLE_NON_MAIN_DEFENSE:-1}
-ACTION_PERSISTENCE=${ACTION_PERSISTENCE:-3}
-STOP_LOSS_RETURN_THRESHOLD=${STOP_LOSS_RETURN_THRESHOLD:-0.015}
-STOP_LOSS_COOLDOWN_STEPS=${STOP_LOSS_COOLDOWN_STEPS:-12}
+ACTION_PERSISTENCE=${ACTION_PERSISTENCE:-4}
+STOP_LOSS_RETURN_THRESHOLD=${STOP_LOSS_RETURN_THRESHOLD:-0.04}
+STOP_LOSS_COOLDOWN_STEPS=${STOP_LOSS_COOLDOWN_STEPS:-8}
 CIRCUIT_BREAKER_CONSECUTIVE_STOPS=${CIRCUIT_BREAKER_CONSECUTIVE_STOPS:-2}
-CIRCUIT_BREAKER_COOLING_STEPS=${CIRCUIT_BREAKER_COOLING_STEPS:-72}
+CIRCUIT_BREAKER_COOLING_STEPS=${CIRCUIT_BREAKER_COOLING_STEPS:-24}
 
 mkdir -p "log/DiHFT/fu/high_level/optuna/${EXPERIMENT_NAME}"
 
@@ -37,12 +37,13 @@ python -u FineFT/RL/DiHFT/high_level/vae_routing_optuna.py \
     --initial_wallet_balance 6000 \
     --position_choices 3 \
     --order_book_depth 5 \
+    --window_length_max 40 \
     --selection_manifest "analysis_result/DiHFT/low_level/${DATASET_NAME}/${EXPERIMENT_NAME}/two_dimensional_selection/two_dimensional_selection_manifest.json" \
     --n_workers "${N_WORKERS:-60}" \
     --transcation_cost 0.0003 \
     --short_estimated_rate 0 \
     --long_estimated_rate 0 \
-    --n_trials 400 \
+    --n_trials 500 \
     --rule_base_threshold_min 0.2 \
     --rule_base_threshold_max 0.45 \
     --action_persistence "${ACTION_PERSISTENCE}" \
