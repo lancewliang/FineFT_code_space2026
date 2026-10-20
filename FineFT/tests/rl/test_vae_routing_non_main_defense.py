@@ -127,6 +127,13 @@ def test_prepare_base_args_forwards_enable_non_main_contract_defense(tmp_path):
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
         hysteresis_exit_ratio=0.65,
+        non_main_defense_mode="strict_instant_close",
+        enable_delivery_month_defense=False,
+        delivery_defense_days=5,
+        enable_mdd_penalty=True,
+        target_mdd=0.05,
+        mdd_penalty_weight=4.0,
+        min_trades_guard=60,
     )
 
     base_args = vro.prepare_base_args(args_1, args_2)

@@ -316,7 +316,7 @@ parser.add_argument(
     "--target_mdd",
     type=float,
     default=0.05,
-    help="目标最大回撤阈值（默认 0.05 即 5%）",
+    help="目标最大回撤阈值（默认 0.05 即 5%%）",
 )
 parser.add_argument(
     "--mdd_penalty_weight",
@@ -1306,15 +1306,6 @@ class vae_risk_aware_routing:
         )
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
         self.enable_non_main_contract_defense = bool(args.enable_non_main_contract_defense)
-        self.non_main_defense_mode = args.non_main_defense_mode
-        self.enable_delivery_month_defense = bool(args.enable_delivery_month_defense)
-        self.delivery_defense_days = int(args.delivery_defense_days)
-        if self.delivery_defense_days < 0:
-            raise ValueError("delivery_defense_days must be non-negative")
-        self.enable_mdd_penalty = bool(args.enable_mdd_penalty)
-        self.target_mdd = float(args.target_mdd)
-        self.mdd_penalty_weight = float(args.mdd_penalty_weight)
-        self.min_trades_guard = int(args.min_trades_guard)
         self.stop_loss_return_threshold = float(args.stop_loss_return_threshold)
         if self.stop_loss_return_threshold < 0:
             raise ValueError("stop_loss_return_threshold must be non-negative")

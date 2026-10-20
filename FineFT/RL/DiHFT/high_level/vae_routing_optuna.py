@@ -127,7 +127,7 @@ parser_all.add_argument(
     "--target_mdd",
     type=float,
     default=0.05,
-    help="目标最大回撤阈值（默认 0.05 即 5%）",
+    help="目标最大回撤阈值（默认 0.05 即 5%%）",
 )
 parser_all.add_argument(
     "--mdd_penalty_weight",
@@ -261,10 +261,7 @@ def prepare_base_args(args_1, args_2):
         or base_args.enable_non_main_contract_defense
     )
     base_args.non_main_defense_mode = args_2.non_main_defense_mode
-    base_args.enable_delivery_month_defense = (
-        args_2.enable_delivery_month_defense
-        or base_args.enable_delivery_month_defense
-    )
+    base_args.enable_delivery_month_defense = bool(args_2.enable_delivery_month_defense)
     base_args.delivery_defense_days = args_2.delivery_defense_days
     base_args.enable_mdd_penalty = args_2.enable_mdd_penalty
     base_args.target_mdd = args_2.target_mdd

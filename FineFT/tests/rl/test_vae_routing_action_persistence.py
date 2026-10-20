@@ -267,6 +267,10 @@ def test_diagnostic_artifacts_and_metrics_saved_to_disk(tmp_path, monkeypatch):
         position = 0.0
         unrealized_pnl = 0.0
         current_markprice = 100.0
+        commission_fee_step = 0.0
+        realized_pnl_step = 0.0
+        slippage_step = 0.0
+        account_audit_history = []
         leverage = 1
         margine_balance_history = [100.0, 100.5, 101.0, 101.5]
         micro_action_history = []
