@@ -294,6 +294,18 @@ parser.add_argument(
     help="非主力合约防御模式：graceful_hold_exit（禁开仓但允许持有和平仓）或 strict_instant_close（即时规则平仓）",
 )
 parser.add_argument(
+    "--enable_delivery_month_defense",
+    action="store_true",
+    default=False,
+    help="是否在合约生命周期临近交割尾部阶段启用终局强制平仓与空仓锁定风控",
+)
+parser.add_argument(
+    "--delivery_defense_days",
+    type=int,
+    default=5,
+    help="合约临近交割防御的尾部交易日天数（默认最后 5 个交易日）",
+)
+parser.add_argument(
     "--eval_stage",
     type=str,
     default="valid",
@@ -792,6 +804,10 @@ class vae_risk_aware_routing:
     action_decision_reason_history: list[int]
     enable_non_main_contract_defense: bool = False
     non_main_defense_mode: str = "strict_instant_close"
+    enable_delivery_month_defense: bool = False
+    delivery_defense_days: int = 5
+    is_in_delivery_terminal: bool = False
+    is_terminal_defense_step: np.ndarray | None = None
     role_tier_index: int | None = None
     save_artifacts: bool = True
     precomputed_quantiles_dir: str | None = None
@@ -892,6 +908,12 @@ class vae_risk_aware_routing:
         self.vae_vol_indicators = self.vae_volatility_indicators
         self.enable_non_main_contract_defense = args.enable_non_main_contract_defense
         self.non_main_defense_mode = getattr(args, "non_main_defense_mode", "strict_instant_close")
+        self.enable_delivery_month_defense = bool(getattr(args, "enable_delivery_month_defense", False))
+        self.delivery_defense_days = int(getattr(args, "delivery_defense_days", 5))
+        if self.delivery_defense_days < 0:
+            raise ValueError("delivery_defense_days must be non-negative")
+        self.is_in_delivery_terminal = False
+        self.is_terminal_defense_step = None
         self.stop_loss_return_threshold = float(args.stop_loss_return_threshold)
         if self.stop_loss_return_threshold < 0:
             raise ValueError("stop_loss_return_threshold must be non-negative")
@@ -1120,6 +1142,8 @@ class vae_risk_aware_routing:
         self.previous_step_position = 0.0
         self.active_trade_stopped = False
         self.step_idx = 0
+        self.is_in_delivery_terminal = False
+        self.is_terminal_defense_step = None
         self.audit_predictions = []
         self.audit_trades = []
         self.last_prediction_id = ""
@@ -1224,6 +1248,10 @@ class vae_risk_aware_routing:
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
         self.enable_non_main_contract_defense = args.enable_non_main_contract_defense
         self.non_main_defense_mode = getattr(args, "non_main_defense_mode", "strict_instant_close")
+        self.enable_delivery_month_defense = bool(getattr(args, "enable_delivery_month_defense", False))
+        self.delivery_defense_days = int(getattr(args, "delivery_defense_days", 5))
+        if self.delivery_defense_days < 0:
+            raise ValueError("delivery_defense_days must be non-negative")
         self.stop_loss_return_threshold = float(args.stop_loss_return_threshold)
         if self.stop_loss_return_threshold < 0:
             raise ValueError("stop_loss_return_threshold must be non-negative")
@@ -1436,6 +1464,23 @@ class vae_risk_aware_routing:
             self.action = action
             self.previous_step_position = current_pos_float
             return action
+
+        # 2.5 Delivery month terminal defense
+        is_delivery_terminal = False
+        if getattr(self, "is_in_delivery_terminal", False):
+            is_delivery_terminal = True
+        elif (
+            self.enable_delivery_month_defense
+            and getattr(self, "is_terminal_defense_step", None) is not None
+        ):
+            step_i = getattr(self, "step_idx", 0)
+            if step_i < len(self.is_terminal_defense_step) and self.is_terminal_defense_step[step_i]:
+                is_delivery_terminal = True
+
+        if is_delivery_terminal:
+            return self._apply_defensive_action(
+                info, current_pos_float, current_leverage
+            )
 
         # 3. Existing high-level defenses
         is_downgraded_hold = False
@@ -1668,6 +1713,29 @@ class vae_risk_aware_routing:
                 self.current_contract_quantiles = None
         else:
             self.current_contract_quantiles = None
+
+        if (
+            self.enable_delivery_month_defense
+            and self.delivery_defense_days > 0
+            and "timestamp" in self.df.columns
+        ):
+            unique_dates = sorted(self.df["timestamp"].dt.date.unique())
+            cutoff_idx = max(0, len(unique_dates) - self.delivery_defense_days)
+            terminal_dates = set(unique_dates[cutoff_idx:])
+            self.is_terminal_defense_step = (
+                self.df["timestamp"].dt.date.isin(terminal_dates).to_numpy()
+            )
+            logger.info(
+                "[Delivery Defense] Contract '%s' enabled delivery month terminal defense for last %d trading days (total %d days, cutoff date: %s, matching rows: %d/%d)",
+                contract_name,
+                self.delivery_defense_days,
+                len(unique_dates),
+                unique_dates[cutoff_idx] if len(unique_dates) > 0 else "N/A",
+                int(np.sum(self.is_terminal_defense_step)),
+                len(self.df),
+            )
+        else:
+            self.is_terminal_defense_step = None
         env = initiate_base_env(
             df=self.df,
             feature_list=self.tech_indicator_list,

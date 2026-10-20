@@ -106,6 +106,18 @@ parser_all.add_argument(
     help="非主力合约防御模式：graceful_hold_exit（禁开仓但允许持有和平仓）或 strict_instant_close（即时规则平仓）",
 )
 parser_all.add_argument(
+    "--enable_delivery_month_defense",
+    action="store_true",
+    default=False,
+    help="是否在合约生命周期临近交割尾部阶段启用终局强制平仓与空仓锁定风控",
+)
+parser_all.add_argument(
+    "--delivery_defense_days",
+    type=int,
+    default=5,
+    help="合约临近交割防御的尾部交易日天数（默认最后 5 个交易日）",
+)
+parser_all.add_argument(
     "--n_trials",
     type=int,
     default=128,
@@ -226,6 +238,13 @@ def prepare_base_args(args_1, args_2):
     )
     base_args.non_main_defense_mode = getattr(
         args_2, "non_main_defense_mode", getattr(base_args, "non_main_defense_mode", "strict_instant_close")
+    )
+    base_args.enable_delivery_month_defense = (
+        getattr(args_2, "enable_delivery_month_defense", False)
+        or getattr(base_args, "enable_delivery_month_defense", False)
+    )
+    base_args.delivery_defense_days = getattr(
+        args_2, "delivery_defense_days", getattr(base_args, "delivery_defense_days", 5)
     )
     base_args.gating_strategy = args_2.gating_strategy
     base_args.action_persistence = args_2.action_persistence
