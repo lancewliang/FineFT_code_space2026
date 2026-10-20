@@ -17,6 +17,10 @@ ENABLE_NON_MAIN_DEFENSE=${ENABLE_NON_MAIN_DEFENSE:-1}
 NON_MAIN_DEFENSE_MODE=${NON_MAIN_DEFENSE_MODE:-graceful_hold_exit}
 ENABLE_DELIVERY_DEFENSE=${ENABLE_DELIVERY_DEFENSE:-1}
 DELIVERY_DEFENSE_DAYS=${DELIVERY_DEFENSE_DAYS:-5}
+ENABLE_MDD_PENALTY=${ENABLE_MDD_PENALTY:-1}
+TARGET_MDD=${TARGET_MDD:-0.05}
+MDD_PENALTY_WEIGHT=${MDD_PENALTY_WEIGHT:-4.0}
+MIN_TRADES_GUARD=${MIN_TRADES_GUARD:-60}
 ACTION_PERSISTENCE=${ACTION_PERSISTENCE:-6}
 STOP_LOSS_RETURN_THRESHOLD=${STOP_LOSS_RETURN_THRESHOLD:-0.03}
 STOP_LOSS_COOLDOWN_STEPS=${STOP_LOSS_COOLDOWN_STEPS:-12}
@@ -49,6 +53,16 @@ if [[ "${ENABLE_DELIVERY_DEFENSE}" == "1" || "${ENABLE_DELIVERY_DEFENSE}" == "tr
         --enable_delivery_month_defense
         --delivery_defense_days "${DELIVERY_DEFENSE_DAYS}"
     )
+fi
+if [[ "${ENABLE_MDD_PENALTY}" == "1" || "${ENABLE_MDD_PENALTY}" == "true" ]]; then
+    DEFENSE_ARGS+=(
+        --enable_mdd_penalty
+        --target_mdd "${TARGET_MDD}"
+        --mdd_penalty_weight "${MDD_PENALTY_WEIGHT}"
+        --min_trades_guard "${MIN_TRADES_GUARD}"
+    )
+else
+    DEFENSE_ARGS+=(--no-enable_mdd_penalty)
 fi
 
 python -u FineFT/RL/DiHFT/high_level/vae_routing_optuna.py \

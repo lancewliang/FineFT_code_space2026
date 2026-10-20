@@ -88,7 +88,7 @@ def main():
     final_return_rate = vae_routing.test()
     logger.info("Final result test completed with return rate: %.6f", final_return_rate)
 
-    if args.para_file and os.path.exists(args.para_file) and getattr(args, "save_artifacts", True):
+    if args.para_file and os.path.exists(args.para_file) and args.save_artifacts:
         dest_para = os.path.join(vae_routing.test_path, ArtifactNames.HIGH_LEVEL_AGENT_PARA_TXT)
         if os.path.abspath(args.para_file) != os.path.abspath(dest_para):
             shutil.copy(args.para_file, dest_para)

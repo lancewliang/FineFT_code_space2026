@@ -9,6 +9,7 @@ import os
 import random
 import shutil
 import sys
+import time
 
 import numpy as np
 import pandas as pd
@@ -304,6 +305,30 @@ parser.add_argument(
     type=int,
     default=5,
     help="合约临近交割防御的尾部交易日天数（默认最后 5 个交易日）",
+)
+parser.add_argument(
+    "--enable_mdd_penalty",
+    action=argparse.BooleanOptionalAction,
+    default=False,
+    help="是否在目标函数中启用 MDD 屏障惩罚与交易活跃度守卫",
+)
+parser.add_argument(
+    "--target_mdd",
+    type=float,
+    default=0.05,
+    help="目标最大回撤阈值（默认 0.05 即 5%）",
+)
+parser.add_argument(
+    "--mdd_penalty_weight",
+    type=float,
+    default=4.0,
+    help="超出目标 MDD 时的指数惩罚强度系数",
+)
+parser.add_argument(
+    "--min_trades_guard",
+    type=int,
+    default=60,
+    help="最低有效交易次数门限，防止空仓作弊",
 )
 parser.add_argument(
     "--eval_stage",
@@ -825,6 +850,24 @@ class vae_risk_aware_routing:
     circuit_breaker_suspension_count: int = 0
     previous_step_position: float = 0.0
     active_trade_stopped: bool = False
+    max_holding_number: int = 1
+    position_choices: int = 3
+    _position_list: list[float] | None = None
+    enable_mdd_penalty: bool = False
+    target_mdd: float = 0.05
+    mdd_penalty_weight: float = 4.0
+    min_trades_guard: int = 60
+    run_id: str = "unspecified_run"
+    current_contract_name: str = "default_contract"
+    model_id: str = "dihft_high_level_vae_routing"
+    feature_version: str = "v1"
+    parameter_version: str = "v1"
+    step_idx: int = 0
+    last_prediction_id: str = ""
+    latest_action_values: list[float] = [0.0, 0.0, 0.0]
+    audit_predictions: list[dict[str, Any]] = []
+    audit_trades: list[dict[str, Any]] = []
+    df: pd.DataFrame | None = None
 
     def __init__(self, args) -> None:
         # device
@@ -906,14 +949,18 @@ class vae_risk_aware_routing:
             os.path.join(self.base_path, self.dataset_name, ArtifactNames.VAE_VOLATILITY_STATE_FEATURES_NPY)
         )
         self.vae_vol_indicators = self.vae_volatility_indicators
-        self.enable_non_main_contract_defense = args.enable_non_main_contract_defense
-        self.non_main_defense_mode = getattr(args, "non_main_defense_mode", "strict_instant_close")
-        self.enable_delivery_month_defense = bool(getattr(args, "enable_delivery_month_defense", False))
-        self.delivery_defense_days = int(getattr(args, "delivery_defense_days", 5))
+        self.enable_non_main_contract_defense = bool(args.enable_non_main_contract_defense)
+        self.non_main_defense_mode = args.non_main_defense_mode
+        self.enable_delivery_month_defense = bool(args.enable_delivery_month_defense)
+        self.delivery_defense_days = int(args.delivery_defense_days)
         if self.delivery_defense_days < 0:
             raise ValueError("delivery_defense_days must be non-negative")
         self.is_in_delivery_terminal = False
         self.is_terminal_defense_step = None
+        self.enable_mdd_penalty = bool(args.enable_mdd_penalty)
+        self.target_mdd = float(args.target_mdd)
+        self.mdd_penalty_weight = float(args.mdd_penalty_weight)
+        self.min_trades_guard = int(args.min_trades_guard)
         self.stop_loss_return_threshold = float(args.stop_loss_return_threshold)
         if self.stop_loss_return_threshold < 0:
             raise ValueError("stop_loss_return_threshold must be non-negative")
@@ -1079,6 +1126,18 @@ class vae_risk_aware_routing:
                 self.in_ds_logpx[axis] = [np.sort(logpx) for logpx in logpx_list]
         self.action = self.zero_position_action
         self.macro_action_history = []
+        self.run_id = f"run_{self.experiment_name}_{int(time.time())}"
+        self.current_contract_name = "default_contract"
+        self.model_id = "dihft_high_level_vae_routing"
+        self.feature_version = "v1"
+        self.parameter_version = "v1"
+        self.step_idx = 0
+        self.audit_predictions = []
+        self.audit_trades = []
+        self.last_prediction_id = ""
+        self.latest_action_values = [0.0, 0.0, 0.0]
+        self.df = None
+        self._position_list = None
         self._log_initialized_attributes()
 
     def _log_initialized_attributes(self) -> None:
@@ -1151,9 +1210,9 @@ class vae_risk_aware_routing:
 
     @property
     def position_list(self):
-        if not hasattr(self, "_position_list") or self._position_list is None:
-            max_h = getattr(self, "max_holding_number", 1)
-            choices = getattr(self, "position_choices", 3)
+        if self._position_list is None:
+            max_h = self.max_holding_number
+            choices = self.position_choices
             self._position_list = np.linspace(-max_h, max_h, choices).tolist()
             self._position_list.sort()
         return self._position_list
@@ -1180,7 +1239,7 @@ class vae_risk_aware_routing:
         return None
 
     def _resolve_test_path(self, args):
-        sub_dir = getattr(args, "output_sub_dir", None)
+        sub_dir = args.output_sub_dir
         if self.eval_stage == "test" or args.result_path.endswith("final_result"):
             base = os.path.join(
                 args.result_path,
@@ -1246,12 +1305,16 @@ class vae_risk_aware_routing:
             volatility_margin_threshold=args.volatility_margin_threshold,
         )
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
-        self.enable_non_main_contract_defense = args.enable_non_main_contract_defense
-        self.non_main_defense_mode = getattr(args, "non_main_defense_mode", "strict_instant_close")
-        self.enable_delivery_month_defense = bool(getattr(args, "enable_delivery_month_defense", False))
-        self.delivery_defense_days = int(getattr(args, "delivery_defense_days", 5))
+        self.enable_non_main_contract_defense = bool(args.enable_non_main_contract_defense)
+        self.non_main_defense_mode = args.non_main_defense_mode
+        self.enable_delivery_month_defense = bool(args.enable_delivery_month_defense)
+        self.delivery_defense_days = int(args.delivery_defense_days)
         if self.delivery_defense_days < 0:
             raise ValueError("delivery_defense_days must be non-negative")
+        self.enable_mdd_penalty = bool(args.enable_mdd_penalty)
+        self.target_mdd = float(args.target_mdd)
+        self.mdd_penalty_weight = float(args.mdd_penalty_weight)
+        self.min_trades_guard = int(args.min_trades_guard)
         self.stop_loss_return_threshold = float(args.stop_loss_return_threshold)
         if self.stop_loss_return_threshold < 0:
             raise ValueError("stop_loss_return_threshold must be non-negative")
@@ -1467,13 +1530,13 @@ class vae_risk_aware_routing:
 
         # 2.5 Delivery month terminal defense
         is_delivery_terminal = False
-        if getattr(self, "is_in_delivery_terminal", False):
+        if self.is_in_delivery_terminal:
             is_delivery_terminal = True
         elif (
             self.enable_delivery_month_defense
-            and getattr(self, "is_terminal_defense_step", None) is not None
+            and self.is_terminal_defense_step is not None
         ):
-            step_i = getattr(self, "step_idx", 0)
+            step_i = self.step_idx
             if step_i < len(self.is_terminal_defense_step) and self.is_terminal_defense_step[step_i]:
                 is_delivery_terminal = True
 
@@ -1489,7 +1552,7 @@ class vae_risk_aware_routing:
             and self.role_tier_index is not None
             and float(s[self.role_tier_index]) < 0.5
         ):
-            mode = getattr(self, "non_main_defense_mode", "strict_instant_close")
+            mode = self.non_main_defense_mode
             if mode == "strict_instant_close" or current_pos_float == 0.0:
                 return self._apply_defensive_action(
                     info, current_pos_float, current_leverage
@@ -1588,36 +1651,27 @@ class vae_risk_aware_routing:
         self.action = candidate_action
         self.previous_step_position = current_pos_float
 
-        if not hasattr(self, "audit_predictions"):
-            self.audit_predictions = []
-        if not hasattr(self, "last_prediction_id"):
-            self.last_prediction_id = ""
-
         if candidate_reason in (
             ActionDecisionReasons.POLICY_INFERENCE,
             ActionDecisionReasons.ACTION_UNAVAILABLE_BREAK,
         ):
-            step_i = int(getattr(self, "step_idx", 0))
-            run_id = str(getattr(self, "run_id", "unspecified_run"))
-            contract = str(getattr(self, "current_contract_name", "default_contract"))
+            step_i = int(self.step_idx)
+            run_id = str(self.run_id)
+            contract = str(self.current_contract_name)
             pred_id = build_prediction_id(run_id, contract, step_i)
             dec_id = build_decision_id(run_id, contract, step_i)
-            row_idx = (
-                min(step_i, len(self.df) - 1)
-                if hasattr(self, "df") and self.df is not None
-                else 0
-            )
+            row_idx = min(step_i, len(self.df) - 1) if self.df is not None else 0
             event_time = (
                 str(self.df["timestamp"].iloc[row_idx])
-                if hasattr(self, "df") and self.df is not None and "timestamp" in self.df.columns
+                if self.df is not None and "timestamp" in self.df.columns
                 else ""
             )
             trading_day = (
                 str(self.df["trading_day"].iloc[row_idx])
-                if hasattr(self, "df") and self.df is not None and "trading_day" in self.df.columns
+                if self.df is not None and "trading_day" in self.df.columns
                 else ""
             )
-            actions_vals = getattr(self, "latest_action_values", [0.0, 0.0, 0.0])
+            actions_vals = self.latest_action_values
             q_short = float(actions_vals[0]) if len(actions_vals) > 0 else 0.0
             q_flat = float(actions_vals[1]) if len(actions_vals) > 1 else 0.0
             q_long = float(actions_vals[2]) if len(actions_vals) > 2 else 0.0
@@ -1633,9 +1687,9 @@ class vae_risk_aware_routing:
                 prediction_id=pred_id,
                 decision_id=dec_id,
                 run_id=run_id,
-                model_id=str(getattr(self, "model_id", "unknown_model")),
-                feature_version=str(getattr(self, "feature_version", "unknown_features")),
-                parameter_version=str(getattr(self, "parameter_version", "unknown_params")),
+                model_id=str(self.model_id),
+                feature_version=str(self.feature_version),
+                parameter_version=str(self.parameter_version),
                 contract=contract,
                 step_index=step_i,
                 event_time=event_time,
@@ -1784,7 +1838,7 @@ class vae_risk_aware_routing:
             s_, r, done, info = env.step(action)
             reason = (
                 self.action_decision_reason_history[-1]
-                if getattr(self, "action_decision_reason_history", None)
+                if self.action_decision_reason_history
                 else ActionDecisionReasons.POLICY_INFERENCE
             )
             pred_id = (
@@ -1908,13 +1962,13 @@ class vae_risk_aware_routing:
                 self.macro_action_history,
             )
 
-        run_id = str(getattr(self, "run_id", "unspecified_run"))
-        contract = str(getattr(self, "current_contract_name", "default_contract"))
+        run_id = str(self.run_id)
+        contract = str(self.current_contract_name)
         audit_accounts: list[dict[str, Any]] = []
 
-        acc_history = getattr(env, "account_audit_history", [])
+        acc_history = env.account_audit_history
         if not acc_history:
-            init_eq = float(getattr(self, "initial_wallet_balance", 10000.0))
+            init_eq = float(self.initial_wallet_balance)
             acc_history = [
                 {
                     "step_index": 0,
@@ -1946,19 +2000,15 @@ class vae_risk_aware_routing:
                 curr_eq = snap["equity"]
                 r_val = float(curr_eq - prev_eq)
 
-            row_i = (
-                min(k, len(self.df) - 1)
-                if hasattr(self, "df") and self.df is not None
-                else 0
-            )
+            row_i = min(k, len(self.df) - 1) if self.df is not None else 0
             e_time = (
                 str(self.df["timestamp"].iloc[row_i])
-                if hasattr(self, "df") and self.df is not None and "timestamp" in self.df.columns
+                if self.df is not None and "timestamp" in self.df.columns
                 else ""
             )
             t_day = (
                 str(self.df["trading_day"].iloc[row_i])
-                if hasattr(self, "df") and self.df is not None and "trading_day" in self.df.columns
+                if self.df is not None and "trading_day" in self.df.columns
                 else ""
             )
 
@@ -2013,9 +2063,9 @@ class vae_risk_aware_routing:
                 json.dump(
                     {
                         "run_id": run_id,
-                        "model_id": str(getattr(self, "model_id", "unknown_model")),
-                        "feature_version": str(getattr(self, "feature_version", "unknown_features")),
-                        "parameter_version": str(getattr(self, "parameter_version", "unknown_params")),
+                        "model_id": str(self.model_id),
+                        "feature_version": str(self.feature_version),
+                        "parameter_version": str(self.parameter_version),
                         "contract": contract,
                     },
                     f,
@@ -2032,20 +2082,46 @@ class vae_risk_aware_routing:
         )
         reward_sum = np.sum(reward_history)
         self.return_rate = reward_sum / (require_money + 1e-12)
+        equities = np.array(env.margine_balance_history, dtype=np.float64)
+        if len(equities) > 0:
+            peaks = np.maximum.accumulate(equities)
+            drawdowns = (peaks - equities) / (peaks + 1e-12)
+            contract_mdd = float(np.max(drawdowns))
+        else:
+            contract_mdd = 0.0
+
+        executed_positions = np.array(env.executed_position_history, dtype=np.float64)
+        if len(executed_positions) > 0:
+            pos_diffs = np.abs(np.diff(np.r_[0.0, executed_positions]))
+            trades_count = int(np.sum(pos_diffs > 1e-6))
+        else:
+            trades_count = 0
+
         if self.save_artifacts:
             logger.info(
-                "[Artifacts] Saved simulation history to %s | rows: %d, reward_sum: %.4f, require_money: %.4f, return_rate: %.6f",
+                "[Artifacts] Saved simulation history to %s | rows: %d, reward_sum: %.4f, require_money: %.4f, return_rate: %.6f, mdd: %.4f, trades: %d",
                 save_path,
                 len(self.df),
                 reward_sum,
                 require_money,
                 self.return_rate,
+                contract_mdd,
+                trades_count,
             )
+        contract_timestamps = (
+            self.df["timestamp"].values
+            if self.df is not None and "timestamp" in self.df.columns
+            else None
+        )
         return {
             "rows": len(self.df),
             "reward_sum": float(reward_sum),
             "require_money": float(require_money),
             "return_rate": float(self.return_rate),
+            "mdd": float(contract_mdd),
+            "trades": int(trades_count),
+            "timestamps": contract_timestamps,
+            "step_net_pnls": reward_history,
         }
 
     def test(self):
@@ -2065,12 +2141,34 @@ class vae_risk_aware_routing:
                 self.test_path,
                 contract_name=contract_name,
             )
+            if self.enable_mdd_penalty:
+                single_mdd = float(result.get("mdd", 0.0))
+                single_trades = int(result.get("trades", 0))
+                target_mdd = float(self.target_mdd)
+                penalty_weight = float(self.mdd_penalty_weight)
+                min_trades = int(self.min_trades_guard)
+
+                if single_mdd <= target_mdd:
+                    mdd_factor = 1.0 + 2.0 * (target_mdd - single_mdd)
+                else:
+                    excess_mdd = (single_mdd - target_mdd) / (target_mdd + 1e-12)
+                    mdd_factor = float(np.exp(-penalty_weight * excess_mdd))
+
+                trade_guard = min(1.0, float(single_trades / min_trades)) if min_trades > 0 and single_trades > 0 else (1.0 if min_trades <= 0 else 0.0)
+                base_ret = result["return_rate"]
+                if base_ret >= 0:
+                    score = float(base_ret * mdd_factor * trade_guard)
+                else:
+                    score = float(base_ret / max(mdd_factor, 1e-4))
+                self.return_rate = score
+            else:
+                self.return_rate = result["return_rate"]
             logger.info(
                 "[Test End] Single dataset test completed | return_rate: %.6f | artifacts: %s",
-                result["return_rate"],
+                self.return_rate,
                 self.test_path,
             )
-            return result["return_rate"]
+            return self.return_rate
 
         logger.info(
             "[Test] Found %d contracts to evaluate in stage '%s'.",
@@ -2111,6 +2209,13 @@ class vae_risk_aware_routing:
             )
 
         result_df = pd.DataFrame(contract_results)
+        for col_name, default_val in [
+            (MetricColumns.MDD, 0.0),
+            ("trades", 0),
+        ]:
+            if col_name not in result_df.columns:
+                result_df[col_name] = default_val
+
         result_df = result_df[
             [
                 MetricColumns.CONTRACT,
@@ -2119,6 +2224,8 @@ class vae_risk_aware_routing:
                 MetricColumns.REWARD_SUM,
                 MetricColumns.REQUIRE_MONEY,
                 MetricColumns.RETURN_RATE,
+                MetricColumns.MDD,
+                "trades",
             ]
         ]
         if self.save_artifacts:
@@ -2142,16 +2249,74 @@ class vae_risk_aware_routing:
         )
         portfolio_return_rate = total_reward_sum / (total_initial_capital + 1e-12)
         win_rate = float((result_df[MetricColumns.RETURN_RATE] > 0).mean())
-        self.return_rate = portfolio_return_rate * win_rate
+        base_objective = portfolio_return_rate * win_rate
+        total_trades = int(result_df["trades"].sum())
+
+        portfolio_mdd = None
+        has_timestamps = all(
+            res.get("timestamps") is not None and res.get("step_net_pnls") is not None
+            for res in contract_results
+        )
+        if has_timestamps and len(contract_results) > 0:
+            timeline_ts = [
+                res["timestamps"][:len(res["step_net_pnls"])]
+                for res in contract_results
+                if len(res["step_net_pnls"]) > 0
+            ]
+            timeline_pnls = [
+                res["step_net_pnls"]
+                for res in contract_results
+                if len(res["step_net_pnls"]) > 0
+            ]
+            if timeline_ts and timeline_pnls:
+                concat_ts = np.concatenate(timeline_ts)
+                concat_pnls = np.concatenate(timeline_pnls)
+                timeline_df = pd.DataFrame({"ts": concat_ts, "pnl": concat_pnls})
+                step_pnls = timeline_df.groupby("ts")["pnl"].sum().sort_index().to_numpy()
+                portfolio_capital = self.initial_wallet_balance * 2.0
+                equities = portfolio_capital + np.cumsum(step_pnls)
+                peaks = np.maximum.accumulate(equities)
+                portfolio_mdd = float(np.max((peaks - equities) / (peaks + 1e-12)))
+
+        if portfolio_mdd is None:
+            portfolio_mdd = float(result_df[MetricColumns.MDD].max()) if MetricColumns.MDD in result_df else 0.0
+
+        if self.enable_mdd_penalty:
+            target_mdd = float(self.target_mdd)
+            penalty_weight = float(self.mdd_penalty_weight)
+            min_trades = int(self.min_trades_guard)
+
+            if portfolio_mdd <= target_mdd:
+                mdd_factor = 1.0 + 2.0 * (target_mdd - portfolio_mdd)
+            else:
+                excess_mdd = (portfolio_mdd - target_mdd) / (target_mdd + 1e-12)
+                mdd_factor = float(np.exp(-penalty_weight * excess_mdd))
+
+            trade_guard = min(1.0, float(total_trades / min_trades)) if min_trades > 0 and total_trades > 0 else (1.0 if min_trades <= 0 else 0.0)
+            if base_objective >= 0:
+                self.return_rate = float(base_objective * mdd_factor * trade_guard)
+            else:
+                self.return_rate = float(base_objective / max(mdd_factor, 1e-4))
+            aggregation_mode = "option3_hinged_mdd_barrier_and_trades_guard"
+        else:
+            mdd_factor = 1.0
+            trade_guard = 1.0
+            self.return_rate = base_objective
+            aggregation_mode = "option2_portfolio_return_times_win_rate"
 
         if self.save_artifacts:
             trading_info = {
                 "return_rate": self.return_rate,
+                "base_objective": base_objective,
                 "portfolio_return_rate": portfolio_return_rate,
                 "win_rate": win_rate,
+                "portfolio_mdd": portfolio_mdd,
+                "mdd_factor": mdd_factor,
+                "total_trades": total_trades,
+                "trade_guard": trade_guard,
                 "equal_weighted_mean_return": float(result_df[MetricColumns.RETURN_RATE].mean()),
                 "total_reward_sum": total_reward_sum,
-                "aggregation": "option2_portfolio_return_times_win_rate",
+                "aggregation": aggregation_mode,
                 "contract_count": len(contract_results),
             }
             trading_info_path = os.path.join(self.test_path, ArtifactNames.TRADING_INFO_NPY)
@@ -2160,12 +2325,17 @@ class vae_risk_aware_routing:
 
         logger.info(
             "[Test End] Multi-contract test completed | Contracts: %d | Total Reward Sum: %.4f | "
-            "Portfolio Return: %.6f | Win Rate: %.4f (%.1f%%) | Final Return Rate: %.6f | Output Dir: %s",
+            "Portfolio Return: %.6f | Win Rate: %.4f (%.1f%%) | Portfolio MDD: %.4f (%.2f%%) | "
+            "MDD Factor: %.4f | Total Trades: %d | Final Score: %.6f | Output Dir: %s",
             len(contract_results),
             total_reward_sum,
             portfolio_return_rate,
             win_rate,
             win_rate * 100.0,
+            portfolio_mdd,
+            portfolio_mdd * 100.0,
+            mdd_factor,
+            total_trades,
             self.return_rate,
             self.test_path,
         )
@@ -2221,33 +2391,26 @@ class vae_risk_aware_routing:
         decision_reason: int,
         prediction_id: str,
     ) -> None:
-        if not hasattr(self, "audit_trades"):
-            self.audit_trades = []
-
-        run_id = str(getattr(self, "run_id", "unspecified_run"))
-        contract = str(getattr(self, "current_contract_name", "default_contract"))
+        run_id = str(self.run_id)
+        contract = str(self.current_contract_name)
         decision_id = build_decision_id(run_id, contract, step_index)
-        row_idx = (
-            min(step_index, len(self.df) - 1)
-            if hasattr(self, "df") and self.df is not None
-            else 0
-        )
+        row_idx = min(step_index, len(self.df) - 1) if self.df is not None else 0
         event_time = (
             str(self.df["timestamp"].iloc[row_idx])
-            if hasattr(self, "df") and self.df is not None and "timestamp" in self.df.columns
+            if self.df is not None and "timestamp" in self.df.columns
             else ""
         )
         trading_day = (
             str(self.df["trading_day"].iloc[row_idx])
-            if hasattr(self, "df") and self.df is not None and "trading_day" in self.df.columns
+            if self.df is not None and "trading_day" in self.df.columns
             else ""
         )
         decision_reason_str = ActionDecisionReasons(decision_reason).name
-        reference_price = float(getattr(env, "current_markprice", 0.0))
-        executed_position = float(getattr(env, "position", 0.0))
-        commission = float(getattr(env, "commission_fee_step", 0.0))
-        realized_pnl = float(getattr(env, "realized_pnl_step", 0.0))
-        slippage = float(getattr(env, "slippage_step", 0.0))
+        reference_price = float(env.current_markprice)
+        executed_position = float(env.position)
+        commission = float(env.commission_fee_step)
+        realized_pnl = float(env.realized_pnl_step)
+        slippage = float(env.slippage_step)
 
         if step_index == 0:
             pre_snapshot_id = build_account_snapshot_id(run_id, contract, 0, "initial")

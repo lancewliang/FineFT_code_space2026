@@ -118,6 +118,30 @@ parser_all.add_argument(
     help="合约临近交割防御的尾部交易日天数（默认最后 5 个交易日）",
 )
 parser_all.add_argument(
+    "--enable_mdd_penalty",
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help="是否在 Optuna 目标函数中启用 MDD 屏障惩罚与交易活跃度守卫",
+)
+parser_all.add_argument(
+    "--target_mdd",
+    type=float,
+    default=0.05,
+    help="目标最大回撤阈值（默认 0.05 即 5%）",
+)
+parser_all.add_argument(
+    "--mdd_penalty_weight",
+    type=float,
+    default=4.0,
+    help="超出目标 MDD 时的指数惩罚强度系数",
+)
+parser_all.add_argument(
+    "--min_trades_guard",
+    type=int,
+    default=60,
+    help="最低有效交易次数门限，防止空仓作弊",
+)
+parser_all.add_argument(
     "--n_trials",
     type=int,
     default=128,
@@ -236,16 +260,16 @@ def prepare_base_args(args_1, args_2):
         args_2.enable_non_main_contract_defense
         or base_args.enable_non_main_contract_defense
     )
-    base_args.non_main_defense_mode = getattr(
-        args_2, "non_main_defense_mode", getattr(base_args, "non_main_defense_mode", "strict_instant_close")
-    )
+    base_args.non_main_defense_mode = args_2.non_main_defense_mode
     base_args.enable_delivery_month_defense = (
-        getattr(args_2, "enable_delivery_month_defense", False)
-        or getattr(base_args, "enable_delivery_month_defense", False)
+        args_2.enable_delivery_month_defense
+        or base_args.enable_delivery_month_defense
     )
-    base_args.delivery_defense_days = getattr(
-        args_2, "delivery_defense_days", getattr(base_args, "delivery_defense_days", 5)
-    )
+    base_args.delivery_defense_days = args_2.delivery_defense_days
+    base_args.enable_mdd_penalty = args_2.enable_mdd_penalty
+    base_args.target_mdd = args_2.target_mdd
+    base_args.mdd_penalty_weight = args_2.mdd_penalty_weight
+    base_args.min_trades_guard = args_2.min_trades_guard
     base_args.gating_strategy = args_2.gating_strategy
     base_args.action_persistence = args_2.action_persistence
     base_args.stop_loss_return_threshold = args_2.stop_loss_return_threshold
