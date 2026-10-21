@@ -30,6 +30,11 @@ elif [ -f "${HOME}/miniconda3/etc/profile.d/conda.sh" ]; then
 fi
 
 export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT:${ROOTPATH}/data_preprocess${PYTHONPATH:+:${PYTHONPATH}}"
+export MAX_HOLDING_NUMBER="${MAX_HOLDING_NUMBER:-1}"
+export POSITION_CHOICES="${POSITION_CHOICES:-3}"
+export LEVERAGE_CHOICES="${LEVERAGE_CHOICES:-1}"
+export INITIAL_LEVERAGE="${INITIAL_LEVERAGE:-1}"
+export CONTRACT_UNIT="${CONTRACT_UNIT:-1.0}"
 export FOREGROUND="${FOREGROUND:-1}"
 
 # 9 个核心脚本定义 (格式: 步骤名称|脚本相对路径|主要日志路径)

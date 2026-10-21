@@ -920,16 +920,12 @@ def calculate_open_long_close_short_position(
 def get_maintenance_margin(
     value,
     maintenance_margin_ratio_dict={
-        "50000": [0.004, 0],
-        "500000": [0.005, 50],
-        "10000000": [0.01, 2550],
+        "1000000000000": [0.5, 0],
     },
 ):
     if not maintenance_margin_ratio_dict:
         maintenance_margin_ratio_dict = {
-            "50000": [0.004, 0],
-            "500000": [0.005, 50],
-            "10000000": [0.01, 2550],
+            "1000000000000": [0.5, 0],
         }
     # 转换给定的字典键为整型以便比较
     keys_as_int = sorted([int(key) for key in maintenance_margin_ratio_dict.keys()])
@@ -944,9 +940,7 @@ def get_maintenance_margin(
 def calculate_maintenance_margin(
     value,
     maintenance_margin_ratio_dict={
-        "50000": [0.004, 0],
-        "500000": [0.005, 50],
-        "10000000": [0.01, 2550],
+        "1000000000000": [0.5, 0],
     },
 ):
     ratio, sub = get_maintenance_margin(value, maintenance_margin_ratio_dict)
@@ -960,9 +954,7 @@ def judge_liquidation(
     unrealized_pnL,
     wallet_balance,
     maintenance_margin_ratio_dict={
-        "50000": [0.004, 0],
-        "500000": [0.005, 50],
-        "10000000": [0.01, 2550],
+        "1000000000000": [0.5, 0],
     },
 ):
     """ 当前账户是否已经触发强平 """
@@ -994,8 +986,8 @@ def calculate_avaiable_action(
     unrealized_pnL,
     wallet_balance,
     # action space setting
-    leverage_choices=[1, 2, 5],
-    position_choices=[-8, -6, -4, -2, 0, 2, 4, 6, 8],
+    leverage_choices=[1],
+    position_choices=[-1, 0, 1],
     buy_fee_rate=None,
     sell_fee_rate=None,
 ):
@@ -1175,10 +1167,10 @@ def create_optimal_q_table(
     timestamp_array,
     funding_rate_array,
     funding_timestamp_array,
-    max_holding_number=8,
-    position_choices=9,  # (must be an odd number, the minum of trading equals to (max_holder_number)/((action_dim-1)/2)s))
+    max_holding_number=1,
+    position_choices=3,  # (must be an odd number, the minum of trading equals to (max_holder_number)/((action_dim-1)/2)s))
     leverage_choice=[
-        5
+        1
     ],  # recommend only use one leverage choice, because the leverage does not influence the return directly, the position
     # itself is enough to show the risk preference
     long_estimated_rate=0.0005,
@@ -1407,10 +1399,10 @@ def create_optimal_q_table(
 
 def create_optimal_q_table_from_df(
     df: pd.DataFrame,
-    max_holding_number: int | float = 8,
-    position_choices: int = 9,  # (must be an odd number, the minum of trading equals to (max_holder_number)/((action_dim-1)/2)s))
+    max_holding_number: int | float = 1,
+    position_choices: int = 3,  # (must be an odd number, the minum of trading equals to (max_holder_number)/((action_dim-1)/2)s))
     leverage_choice: Sequence[int | float] = [
-        5
+        1
     ],  # recommend only use one leverage choice, because the leverage does not influence the return directly, the position
     # itself is enough to show the risk preference
     long_estimated_rate: float = 0.0005,

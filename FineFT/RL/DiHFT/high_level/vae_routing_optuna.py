@@ -39,8 +39,27 @@ parser_all.add_argument(
 parser_all.add_argument(
     "--max_holding_number",
     type=float,
-    default=8,
+    default=1,
     help="最大允许持仓头寸上限，用于根据离散动作数划分单侧持仓档位",
+)
+parser_all.add_argument(
+    "--position_choices",
+    type=int,
+    default=3,
+    help="离散目标仓位选择数量（例如 3 档，包含空头档位、空仓及多头档位）",
+)
+parser_all.add_argument(
+    "--leverage_choices",
+    nargs="+",
+    type=int,
+    default=[1],
+    help="交易可选的杠杆倍数列表",
+)
+parser_all.add_argument(
+    "--initial_leverage",
+    type=float,
+    default=1,
+    help="交易环境初始化的初始杠杆倍数",
 )
 parser_all.add_argument(
     "--order_book_depth",
@@ -251,7 +270,13 @@ def prepare_base_args(args_1, args_2):
 
     base_args = copy.deepcopy(args_1)
     base_args.dataset_name = args_2.dataset_name
-    base_args.max_holding_number = args_2.max_holding_number
+    base_args.max_holding_number = getattr(args_2, "max_holding_number", getattr(args_1, "max_holding_number", 1))
+    if hasattr(args_2, "position_choices") and args_2.position_choices is not None:
+        base_args.position_choices = args_2.position_choices
+    if hasattr(args_2, "leverage_choices") and args_2.leverage_choices is not None:
+        base_args.leverage_choices = args_2.leverage_choices
+    if hasattr(args_2, "initial_leverage") and args_2.initial_leverage is not None:
+        base_args.initial_leverage = args_2.initial_leverage
     base_args.order_book_depth = args_2.order_book_depth
     base_args.experiment_name = (
         args_2.experiment_name or base_args.experiment_name

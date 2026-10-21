@@ -103,7 +103,7 @@ def main():
         output_dir=os.path.join(vae_routing.test_path, "diagnostics"),
         initial_wallet_balance=float(args.initial_wallet_balance),
         commission_rate=float(args.transcation_cost),
-        contract_unit=10.0,
+        contract_unit=1.0,
     )
     diag_calculator.run()
 

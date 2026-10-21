@@ -9,6 +9,9 @@ DATASET_NAME=${DATASET_NAME:-fu}
 BASE_PATH=${BASE_PATH:-dataset/5min}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-5min_parallel}
 MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-1}
+POSITION_CHOICES=${POSITION_CHOICES:-3}
+LEVERAGE_CHOICES=${LEVERAGE_CHOICES:-1}
+INITIAL_LEVERAGE=${INITIAL_LEVERAGE:-1}
 ENABLE_NON_MAIN_DEFENSE=${ENABLE_NON_MAIN_DEFENSE:-1}
 ACTION_PERSISTENCE=${ACTION_PERSISTENCE:-5}
 
@@ -31,7 +34,9 @@ python -u FineFT/RL/DiHFT/high_level/vae_routing_optuna.py \
     --experiment_name "${EXPERIMENT_NAME}" \
     --max_holding_number "${MAX_HOLDING_NUMBER}" \
     --initial_wallet_balance 6000 \
-    --position_choices 3 \
+    --position_choices "${POSITION_CHOICES}" \
+    --leverage_choices "${LEVERAGE_CHOICES}" \
+    --initial_leverage "${INITIAL_LEVERAGE}" \
     --order_book_depth 5 \
     --selection_manifest "analysis_result/DiHFT/low_level/${DATASET_NAME}/${EXPERIMENT_NAME}/two_dimensional_selection/two_dimensional_selection_manifest.json" \
     --n_workers "${N_WORKERS:-60}" \

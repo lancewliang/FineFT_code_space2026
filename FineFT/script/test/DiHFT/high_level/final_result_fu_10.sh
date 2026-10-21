@@ -10,6 +10,9 @@ BASE_PATH=${BASE_PATH:-dataset/10min}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-10min_parallel}
 MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-1}
 POSITION_CHOICES=${POSITION_CHOICES:-3}
+LEVERAGE_CHOICES=${LEVERAGE_CHOICES:-1}
+INITIAL_LEVERAGE=${INITIAL_LEVERAGE:-1}
+CONTRACT_UNIT=${CONTRACT_UNIT:-1.0}
 ORDER_BOOK_DEPTH=${ORDER_BOOK_DEPTH:-5}
 TRANSACTION_COST=${TRANSACTION_COST:-0.0003}
 ACTION_PERSISTENCE=${ACTION_PERSISTENCE:-3}
@@ -40,6 +43,8 @@ python -u FineFT/RL/DiHFT/high_level/vae_routing_final_result_macro_action.py \
     --max_holding_number "${MAX_HOLDING_NUMBER}" \
     --initial_wallet_balance 5000 \
     --position_choices "${POSITION_CHOICES}" \
+    --leverage_choices "${LEVERAGE_CHOICES}" \
+    --initial_leverage "${INITIAL_LEVERAGE}" \
     --order_book_depth "${ORDER_BOOK_DEPTH}" \
     --transcation_cost "${TRANSACTION_COST}" \
     --short_estimated_rate 0 \
@@ -58,7 +63,7 @@ python -u FineFT/analysis/diagnostics/trading_diagnostics.py \
     --output_dir "result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/diagnostics" \
     --initial_wallet_balance 5000 \
     --commission_rate "${TRANSACTION_COST}" \
-    --contract_unit 10.0 \
+    --contract_unit "${CONTRACT_UNIT}" \
     >>"${LOG_DIR}/final_result.log" 2>&1
 
 ENABLE_AUDIT=${ENABLE_AUDIT:-1}

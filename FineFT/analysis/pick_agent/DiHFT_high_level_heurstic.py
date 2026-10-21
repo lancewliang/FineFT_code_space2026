@@ -525,7 +525,7 @@ class Picker:
                 output_dir=os.path.join(self.save_path, "diagnostics"),
                 initial_wallet_balance=6000.0,
                 commission_rate=0.0005,
-                contract_unit=10.0,
+                contract_unit=1.0,
             )
             diag_calculator.run()
 
@@ -596,7 +596,7 @@ class Picker:
 
             result_dict = {}
             result_dict["Buy & Hold"] = np.array(df.mark_price / df.mark_price.iloc[0]) - 1
-            result_dict["Buy & Hold 5 times leverage"] = (np.array(df.mark_price / df.mark_price.iloc[0]) - 1) * 5
+            result_dict["Buy & Hold 1x leverage"] = (np.array(df.mark_price / df.mark_price.iloc[0]) - 1) * 1
 
             accummulative_reward_sum = [reward_history[0]]
             for i in range(len(reward_history) - 1):

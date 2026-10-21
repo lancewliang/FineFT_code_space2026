@@ -89,20 +89,20 @@ parser.add_argument(
 parser.add_argument(
     "--max_holding_number",
     type=float,
-    default=8,
+    default=1,
     help="最大允许持仓头寸上限，用于根据离散动作数划分单侧持仓档位",
 )
 parser.add_argument(
     "--position_choices",
     type=int,
-    default=9,
+    default=3,
     help="离散目标仓位选择数量（例如 9 档，包含空头档位、空仓及多头档位）",
 )
 parser.add_argument(
     "--leverage_choices",
-    action="append",
+    nargs="+",
     type=int,
-    default=[5],
+    default=[1],
     help="交易可选的杠杆倍数列表",
 )
 parser.add_argument(
@@ -157,7 +157,7 @@ parser.add_argument(
 parser.add_argument(
     "--initial_leverage",
     type=float,
-    default=5,
+    default=1,
     help="交易环境初始化的初始杠杆倍数",
 )
 parser.add_argument(
@@ -979,12 +979,28 @@ class vae_risk_aware_routing:
         self.role_tier_index = (
             int(role_tier_indices[0]) if len(role_tier_indices) > 0 else None
         )
-        self.maintenance_margin_ratio_dict = np.load(
-            os.path.join(
-                self.base_path, self.dataset_name, ArtifactNames.MAINTENANCE_MARGIN_RATIO_DICT_NPY
-            ),
-            allow_pickle=True,
-        ).item()
+        mmr_path = os.path.join(
+            self.base_path, self.dataset_name, ArtifactNames.MAINTENANCE_MARGIN_RATIO_DICT_NPY
+        )
+        if os.path.exists(mmr_path):
+            self.maintenance_margin_ratio_dict = np.load(
+                mmr_path,
+                allow_pickle=True,
+            ).item()
+        else:
+            candidates = [
+                os.path.join(self.base_path, "fu", ArtifactNames.MAINTENANCE_MARGIN_RATIO_DICT_NPY),
+                os.path.join(os.path.dirname(self.base_path), "fu", ArtifactNames.MAINTENANCE_MARGIN_RATIO_DICT_NPY),
+                os.path.join("dataset", "fu", ArtifactNames.MAINTENANCE_MARGIN_RATIO_DICT_NPY),
+            ]
+            loaded = False
+            for cand in candidates:
+                if os.path.exists(cand):
+                    self.maintenance_margin_ratio_dict = np.load(cand, allow_pickle=True).item()
+                    loaded = True
+                    break
+            if not loaded:
+                self.maintenance_margin_ratio_dict = {"1000000000000": [0.5, 0]}
         self.max_holding_number = args.max_holding_number
         self.position_choices = args.position_choices
         self.single_side_action_num = int((self.position_choices - 1) / 2)
@@ -1000,7 +1016,11 @@ class vae_risk_aware_routing:
             ]
         )
         self.position_list.sort()
-        self.leverage_choices = args.leverage_choices
+        self.leverage_choices = (
+            [int(x) for x in args.leverage_choices]
+            if isinstance(args.leverage_choices, list)
+            else [int(args.leverage_choices)]
+        )
         self.long_estimated_rate = args.long_estimated_rate
         self.short_estimated_rate = args.short_estimated_rate
         self.transcation_cost = args.transcation_cost

@@ -16,6 +16,7 @@ SAVE_PATH=${SAVE_PATH:-analysis_result/DiHFT/high_level_heurstic}
 RESULT_PATH=${RESULT_PATH:-result/DiHFT/high_level}
 SELECTION_METRIC=${SELECTION_METRIC:-tr}
 EARLY_STOP=${EARLY_STOP:-0}
+CONTRACT_UNIT=${CONTRACT_UNIT:-1.0}
 FOREGROUND=${FOREGROUND:-0}
 
 mkdir -p "log/analysis/pick_agent/DiHFT/${DATASET_NAME}/high_level_heurstic"
@@ -41,7 +42,8 @@ run_pipeline() {
     python -u FineFT/analysis/diagnostics/trading_diagnostics.py \
         --result_dir "result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}" \
         --data_dir "${BASE_PATH}/${DATASET_NAME}/valid" \
-        --output_dir "${SAVE_PATH}/${DATASET_NAME}/${EXPERIMENT_NAME}/diagnostics"
+        --output_dir "${SAVE_PATH}/${DATASET_NAME}/${EXPERIMENT_NAME}/diagnostics" \
+        --contract_unit "${CONTRACT_UNIT:-1.0}"
 }
 
 if [ "${FOREGROUND}" = "1" ]; then
@@ -55,7 +57,8 @@ else
         python -u FineFT/analysis/diagnostics/trading_diagnostics.py \
             --result_dir "result/DiHFT/final_result/'"${DATASET_NAME}"'/'"${EXPERIMENT_NAME}"'" \
             --data_dir "'"${BASE_PATH}"'/'"${DATASET_NAME}"'/valid" \
-            --output_dir "'"${SAVE_PATH}"'/'"${DATASET_NAME}"'/'"${EXPERIMENT_NAME}"'/diagnostics"
+            --output_dir "'"${SAVE_PATH}"'/'"${DATASET_NAME}"'/'"${EXPERIMENT_NAME}"'/diagnostics" \
+            --contract_unit "'"${CONTRACT_UNIT:-1.0}"'"
     ' >"log/analysis/pick_agent/DiHFT/${DATASET_NAME}/high_level_heurstic/${EXPERIMENT_NAME}.log" 2>&1 &
     PID=$!
     echo "Started DiHFT_high_level_heurstic with diagnostics (PID: ${PID}) -> log/analysis/pick_agent/DiHFT/${DATASET_NAME}/high_level_heurstic/${EXPERIMENT_NAME}.log"

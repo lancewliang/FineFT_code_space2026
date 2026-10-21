@@ -17,8 +17,10 @@ numactl --cpunodebind=0 --membind=0 python -u FineFT/RL/DiHFT/low_level/weight_a
     --base_path dataset/30min \
     --dataset_name al --experiment_name "${EXPERIMENT_NAME}" \
     --initial_wallet_balance 100000 --batch_size 512 --update_times=30 \
-    --max_holding_number 1 --short_estimated_rate 0 --long_estimated_rate 0 \
-    --position_choices 3 --transcation_cost 0.0004 --n_step 12 --gamma 0.99 \
+    --max_holding_number "${MAX_HOLDING_NUMBER:-1}" --short_estimated_rate 0 --long_estimated_rate 0 \
+    --position_choices "${POSITION_CHOICES:-3}" \
+    --leverage_choices "${LEVERAGE_CHOICES:-1}" \
+    --initial_leverage "${INITIAL_LEVERAGE:-1}" --transcation_cost 0.0004 --n_step 12 --gamma 0.99 \
     --order_book_depth 5 --early_stop 2 \
     --pretrain_epoch 30 --lr_init 0.001 --epsilon_min 0.05 \
     --ada_min 1.0 --ada_step 2000000 \

@@ -28,7 +28,8 @@ nohup bash -c '
     python -u FineFT/analysis/diagnostics/trading_diagnostics.py \
         --result_dir "result/DiHFT/final_result/'"${DATASET_NAME}"'/'"${EXPERIMENT_NAME}"'" \
         --data_dir "'"${BASE_PATH}"'/'"${DATASET_NAME}"'/valid" \
-        --output_dir "'"${SAVE_PATH}"'/'"${DATASET_NAME}"'/'"${EXPERIMENT_NAME}"'/diagnostics"
+        --output_dir "'"${SAVE_PATH}"'/'"${DATASET_NAME}"'/'"${EXPERIMENT_NAME}"'/diagnostics" \
+            --contract_unit "'"${CONTRACT_UNIT:-1.0}"'"
 ' >"log/analysis/pick_agent/DiHFT/${DATASET_NAME}/high_level_heurstic/${EXPERIMENT_NAME}.log" 2>&1 &
 
 PID=$!

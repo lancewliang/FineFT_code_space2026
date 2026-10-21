@@ -48,20 +48,20 @@ parser.add_argument(
 parser.add_argument(
     "--max_holding_number",
     type=float,
-    default=8,
+    default=1,
     help="the transcation cost of not holding the same action as before",
 )
 parser.add_argument(
     "--position_choices",
     type=int,
-    default=9,
+    default=3,
     help="the transcation cost of not holding the same action as before",
 )
 parser.add_argument(
     "--leverage_choices",
-    action="append",
+    nargs="+",
     type=int,
-    default=[5],
+    default=[1],
     help="the transaction cost of not holding the same action as before",
 )
 parser.add_argument(
@@ -116,7 +116,7 @@ parser.add_argument(
 parser.add_argument(
     "--initial_leverage",
     type=float,
-    default=5,
+    default=1,
     help="initial leverage",
 )
 # low level network setting
@@ -269,12 +269,28 @@ class high_level_trader:
         self.tech_indicator_list = np.load(
             os.path.join(self.base_path, self.dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY)
         )
-        self.maintenance_margin_ratio_dict = np.load(
-            os.path.join(
-                self.base_path, self.dataset_name, "maintenance_margin_ratio_dict.npy"
-            ),
-            allow_pickle=True,
-        ).item()
+        mmr_path = os.path.join(
+            self.base_path, self.dataset_name, "maintenance_margin_ratio_dict.npy"
+        )
+        if os.path.exists(mmr_path):
+            self.maintenance_margin_ratio_dict = np.load(
+                mmr_path,
+                allow_pickle=True,
+            ).item()
+        else:
+            candidates = [
+                os.path.join(self.base_path, "fu", "maintenance_margin_ratio_dict.npy"),
+                os.path.join(os.path.dirname(self.base_path), "fu", "maintenance_margin_ratio_dict.npy"),
+                os.path.join("dataset", "fu", "maintenance_margin_ratio_dict.npy"),
+            ]
+            loaded = False
+            for cand in candidates:
+                if os.path.exists(cand):
+                    self.maintenance_margin_ratio_dict = np.load(cand, allow_pickle=True).item()
+                    loaded = True
+                    break
+            if not loaded:
+                self.maintenance_margin_ratio_dict = {"1000000000000": [0.5, 0]}
         self.max_holding_number = args.max_holding_number
         self.position_choices = args.position_choices
         self.single_side_action_num = int((self.position_choices - 1) / 2)
@@ -290,7 +306,11 @@ class high_level_trader:
             ]
         )
         self.position_list.sort()
-        self.leverage_choices = args.leverage_choices
+        self.leverage_choices = (
+            [int(x) for x in args.leverage_choices]
+            if isinstance(args.leverage_choices, list)
+            else [int(args.leverage_choices)]
+        )
         self.long_estimated_rate = args.long_estimated_rate
         self.short_estimated_rate = args.short_estimated_rate
         self.transcation_cost = args.transcation_cost

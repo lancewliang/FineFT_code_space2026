@@ -34,7 +34,10 @@ function run_test_agent_index {
                 --dataset_name "${dataset_name}" --experiment_name "${experiment_name}" \
                 --result_path "${result_path}" \
                 --max_holding_number "${max_holding_number}" --initial_wallet_balance 10000 --order_book_depth 5 \
-                --epoch_num "${epoch}" --position_choices 5 --N "${ensemble_number}" --transcation_cost 0.0004 --short_estimated_rate 0 --long_estimated_rate 0 \
+                --epoch_num "${epoch}" --position_choices "${POSITION_CHOICES:-3}" \
+                --leverage_choices "${LEVERAGE_CHOICES:-1}" \
+                --initial_leverage "${INITIAL_LEVERAGE:-1}" \
+                --N "${ensemble_number}" --transcation_cost 0.0004 --short_estimated_rate 0 --long_estimated_rate 0 \
                 --label_type "${label_type}" \
                 --save_trading_detail_csv \
                 >"${log_dir}/epoch_${epoch}.log" 2>&1 &

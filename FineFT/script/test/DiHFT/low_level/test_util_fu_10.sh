@@ -35,7 +35,10 @@ function run_test_agent_index {
                 --dataset_name "${dataset_name}" --experiment_name "${experiment_name}" \
                 --result_path "${result_path}" \
                 --max_holding_number "${max_holding_number}" --initial_wallet_balance 6000 --order_book_depth 5 \
-                --epoch_num "${epoch}" --position_choices 3 --N "${ensemble_number}" \
+                --epoch_num "${epoch}" --position_choices "${POSITION_CHOICES:-3}" \
+                --leverage_choices "${LEVERAGE_CHOICES:-1}" \
+                --initial_leverage "${INITIAL_LEVERAGE:-1}" \
+                --N "${ensemble_number}" \
                 --transcation_cost 0.0003 --short_estimated_rate 0 --long_estimated_rate 0 \
                 --label_type "${label_type}" \
                 --device "${device}" \
@@ -123,6 +126,9 @@ function run_ddqn_average {
 
 DATASET_NAME=${DATASET_NAME:-fu}
 MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-1}
+POSITION_CHOICES=${POSITION_CHOICES:-3}
+LEVERAGE_CHOICES=${LEVERAGE_CHOICES:-1}
+INITIAL_LEVERAGE=${INITIAL_LEVERAGE:-1}
 EPOCH_START=${EPOCH_START:-35}
 EPOCH_END=${EPOCH_END:-72}
 BASE_PATH=${BASE_PATH:-dataset/10min}

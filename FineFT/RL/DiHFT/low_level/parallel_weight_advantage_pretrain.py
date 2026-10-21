@@ -199,7 +199,7 @@ parser.add_argument(
 parser.add_argument(
     "--max_holding_number",
     type=float,
-    default=8,
+    default=1,
     help="最大允许持仓头寸上限，用于根据离散动作数划分单侧持仓档位",
 )
 parser.add_argument(
@@ -211,12 +211,12 @@ parser.add_argument(
 parser.add_argument(
     "--position_choices",
     type=int,
-    default=9,
+    default=3,
     help="离散目标仓位选择数量（例如 9 档，包含空头档位、空仓及多头档位）",
 )
 parser.add_argument(
     "--leverage_choices",
-    action="append",
+    nargs="+",
     type=int,
     default=[1],
     help="交易可选的杠杆倍数列表",
@@ -806,10 +806,25 @@ class Weighted_Contexts_DQN:
             "maintenance_margin_ratio_path"
         ]
         self.tech_indicator_list = np.load(self.tech_indicator_list_path)
-        self.maintenance_margin_ratio_dict = np.load(
-            self.maintenance_margin_ratio_dict_path,
-            allow_pickle=True,
-        ).item()
+        if os.path.exists(self.maintenance_margin_ratio_dict_path):
+            self.maintenance_margin_ratio_dict = np.load(
+                self.maintenance_margin_ratio_dict_path,
+                allow_pickle=True,
+            ).item()
+        else:
+            candidates = [
+                os.path.join(self.base_path, "fu", "maintenance_margin_ratio_dict.npy"),
+                os.path.join(os.path.dirname(self.base_path), "fu", "maintenance_margin_ratio_dict.npy"),
+                os.path.join("dataset", "fu", "maintenance_margin_ratio_dict.npy"),
+            ]
+            loaded = False
+            for cand in candidates:
+                if os.path.exists(cand):
+                    self.maintenance_margin_ratio_dict = np.load(cand, allow_pickle=True).item()
+                    loaded = True
+                    break
+            if not loaded:
+                self.maintenance_margin_ratio_dict = {"1000000000000": [0.5, 0]}
         self.max_holding_number = args.max_holding_number
         self.order_book_depth = args.order_book_depth
         self.position_choices = args.position_choices
@@ -826,7 +841,11 @@ class Weighted_Contexts_DQN:
             ]
         )
         self.position_list.sort()
-        self.leverage_choices = args.leverage_choices
+        self.leverage_choices = (
+            [int(x) for x in args.leverage_choices]
+            if isinstance(args.leverage_choices, list)
+            else [int(args.leverage_choices)]
+        )
         self.long_estimated_rate = args.long_estimated_rate
         self.short_estimated_rate = args.short_estimated_rate
         self.transcation_cost = args.transcation_cost
