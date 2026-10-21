@@ -17,7 +17,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from analysis.calculate_metric.calculate_metric import calculate_metric
+from analysis.calculate_metric.calculate_metric import calculate_metric, assign_trading_days_from_timestamps
 from common import ArtifactNames, HistoryArtifactNames
 
 logger = logging.getLogger(__name__)
@@ -46,6 +46,8 @@ class ContractMetricSummary:
     main_role_steps: int
     sub_role_steps: int
     non_main_steps: int
+    trading_days_count: int = 0
+    daily_mdd: float | None = None
 
 
 @dataclass
@@ -67,6 +69,8 @@ class PortfolioMetricSummary:
     mean_concurrent_contracts: float
     total_timeline_steps: int
     eval_stage: str
+    trading_days_count: int = 0
+    daily_mdd: float | None = None
 
 
 class SynchronizedPortfolioCalculator:
@@ -194,20 +198,38 @@ class SynchronizedPortfolioCalculator:
             else 0.0
         )
 
+        trading_days = assign_trading_days_from_timestamps(timestamps)
+
         if steps >= self.freq:
             tr, daily_vol, mdd, downside_dev, annual_sr, daily_cr, daily_sor = (
                 calculate_metric(
                     self.single_contract_capital,
                     np.r_[0.0, net_pnl],
                     freq=self.freq,
+                    trading_days=trading_days.to_numpy(),
+                    annual_trading_days=242,
                 )
             )
+            df_contract_daily = pd.DataFrame(
+                {"td": trading_days, "equity": self.single_contract_capital + np.cumsum(net_pnl)}
+            )
+            c_daily_close = df_contract_daily.groupby("td", sort=False)["equity"].last().to_numpy()
+            c_daily_seq = np.r_[self.single_contract_capital, c_daily_close]
+            c_daily_peaks = np.maximum.accumulate(c_daily_seq)
+            contract_daily_mdd = (
+                float(np.max((c_daily_peaks - c_daily_seq) / (c_daily_peaks + 1e-12)))
+                if len(c_daily_seq) > 0
+                else 0.0
+            )
+            contract_td_count = int(trading_days.nunique())
         else:
             equity = self.single_contract_capital + np.cumsum(net_pnl)
             tr = float((equity[-1] - equity[0]) / (equity[0] + 1e-12))
             peaks = np.maximum.accumulate(equity)
             mdd = float(np.max((peaks - equity) / (peaks + 1e-12)))
             daily_vol = annual_sr = daily_cr = daily_sor = None
+            contract_daily_mdd = None
+            contract_td_count = int(trading_days.nunique()) if len(trading_days) > 0 else 0
 
         long_pct = float((positions > 0).mean() * 100.0) if steps > 0 else 0.0
         short_pct = float((positions < 0).mean() * 100.0) if steps > 0 else 0.0
@@ -235,12 +257,15 @@ class SynchronizedPortfolioCalculator:
             main_role_steps=int((role_tiers == 1.0).sum()),
             sub_role_steps=int((role_tiers == 0.5).sum()),
             non_main_steps=int((role_tiers < 0.5).sum()),
+            trading_days_count=contract_td_count,
+            daily_mdd=contract_daily_mdd,
         )
 
         step_df = pd.DataFrame(
             {
                 "contract": contract_name,
                 "timestamp": timestamps,
+                "trading_day": trading_days,
                 "role_tier": role_tiers,
                 "mark_price": mark_prices[:-1],
                 "micro_action": micro_actions,
@@ -335,6 +360,8 @@ class SynchronizedPortfolioCalculator:
             )
 
         df_timeline = pd.DataFrame(timeline_records)
+        portfolio_trading_days = assign_trading_days_from_timestamps(df_timeline["timestamp"])
+        df_timeline["trading_day"] = portfolio_trading_days
 
         # Calculate portfolio-level metrics
         step_net_pnls = df_timeline["step_net_pnl"].to_numpy()
@@ -346,14 +373,30 @@ class SynchronizedPortfolioCalculator:
                     portfolio_initial_capital,
                     np.r_[0.0, step_net_pnls],
                     freq=self.freq,
+                    trading_days=portfolio_trading_days.to_numpy(),
+                    annual_trading_days=242,
                 )
             )
+            df_port_daily = pd.DataFrame(
+                {"td": portfolio_trading_days, "equity": df_timeline["portfolio_equity"].to_numpy()}
+            )
+            p_daily_close = df_port_daily.groupby("td", sort=False)["equity"].last().to_numpy()
+            p_daily_seq = np.r_[portfolio_initial_capital, p_daily_close]
+            p_daily_peaks = np.maximum.accumulate(p_daily_seq)
+            p_daily_mdd = (
+                float(np.max((p_daily_peaks - p_daily_seq) / (p_daily_peaks + 1e-12)))
+                if len(p_daily_seq) > 0
+                else 0.0
+            )
+            p_td_count = int(portfolio_trading_days.nunique())
         else:
             equities = df_timeline["portfolio_equity"].to_numpy()
             p_tr = float((equities[-1] - equities[0]) / (equities[0] + 1e-12))
             peaks = np.maximum.accumulate(equities)
             p_mdd = float(np.max((peaks - equities) / (peaks + 1e-12)))
-            p_vol = p_annual_sr = p_daily_cr = p_daily_sor = None
+            p_daily_vol = p_annual_sr = p_daily_cr = p_daily_sor = None
+            p_daily_mdd = None
+            p_td_count = int(portfolio_trading_days.nunique()) if len(portfolio_trading_days) > 0 else 0
 
         total_trades = sum(c.trades for c in contract_summaries)
         total_turnover = sum(c.turnover_volume for c in contract_summaries)
@@ -382,6 +425,8 @@ class SynchronizedPortfolioCalculator:
             mean_concurrent_contracts=mean_concurrent,
             total_timeline_steps=steps,
             eval_stage=self.eval_stage,
+            trading_days_count=p_td_count,
+            daily_mdd=p_daily_mdd,
         )
 
         # Save artifacts
@@ -426,6 +471,7 @@ class SynchronizedPortfolioCalculator:
         sr_text = f"{p.annual_sr:.4f}" if p.annual_sr is not None else "N/A"
         cr_text = f"{p.daily_cr:.4f}" if p.daily_cr is not None else "N/A"
         sor_text = f"{p.daily_sor:.4f}" if p.daily_sor is not None else "N/A"
+        daily_mdd_text = f"{p.daily_mdd * 100.0:.2f}%" if p.daily_mdd is not None else "N/A"
 
         lines = [
             "# 双主力动态时间同步投资组合回测总结报告",
@@ -434,27 +480,29 @@ class SynchronizedPortfolioCalculator:
             f"- **初始组合本金 (Initial Capital)**: `¥{p.initial_capital:,.2f}` (两合约各 ¥{self.single_contract_capital:,.2f})",
             f"- **组合累计净收益 (Net PnL)**: `¥{p.total_net_pnl:+,.2f}`",
             f"- **组合累计总收益率 (Total Return / TR)**: **`{p.tr * 100.0:+.2f}%`**",
-            f"- **组合最大回撤 (Max Drawdown / MDD)**: **`{p.mdd * 100.0:.2f}%`**",
-            f"- **组合年化夏普比率 (Annualized Sharpe Ratio)**: **`{sr_text}`**",
+            f"- **步级高水位最大回撤 (Step MDD)**: **`{p.mdd * 100.0:.2f}%`** | **日末净值最大回撤 (Daily Close MDD)**: **`{daily_mdd_text}`**",
+            f"- **真实交易日天数 (TradingDays)**: `{p.trading_days_count}` 天 (年化基准: 242 交易日)",
+            f"- **组合年化夏普比率 (242-Day Annualized Sharpe Ratio)**: **`{sr_text}`**",
             f"- **组合卡玛比率 (Calmar Ratio)**: `{cr_text}` | **索提诺比率 (Sortino Ratio)**: `{sor_text}`",
             f"- **总交易次数 (Total Trades)**: `{p.total_trades}` 次 | **名义换手额**: `¥{p.total_turnover_volume:,.2f}` ({p.turnover_multiple:.1f}x)",
             f"- **总手续费摩擦 (Commission Fee)**: `¥{p.total_commission:,.2f}`",
             f"- **最大并发持仓合约数 (Max Concurrent Contracts)**: **`{p.max_concurrent_contracts}`** (平均: `{p.mean_concurrent_contracts:.2f}`)",
-            f"- **时间步总数 (Timeline Steps)**: `{p.total_timeline_steps}` 根 30min Bar",
+            f"- **时间步总数 (Timeline Steps)**: `{p.total_timeline_steps}` 根 10min Bar",
             "",
             "---",
             "",
-            "## 逐合约独立收益与流动性角色统计 (单合约本金 ¥6,000)",
+            f"## 逐合约独立收益与流动性角色统计 (单合约本金 ¥{self.single_contract_capital:,.2f})",
             "",
-            "| 合约代码 | TR (%) | MDD (%) | Annual SR | Net PnL (元) | 手续费 (元) | 交易次数 | 主力步数 | 次主力步数 | 非主力步数 |",
-            "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
+            "| 合约代码 | TR (%) | Step MDD (%) | Daily MDD (%) | Annual SR (242d) | Net PnL (元) | 手续费 (元) | 交易次数 | 交易日数 | 主力步数 | 次主力步数 | 非主力步数 |",
+            "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
         ]
 
         for c in contracts:
             c_sr = f"{c.annual_sr:.2f}" if c.annual_sr is not None else "N/A"
+            c_dmdd = f"{c.daily_mdd * 100.0:.2f}%" if c.daily_mdd is not None else "N/A"
             lines.append(
-                f"| `{c.contract}` | {c.tr * 100.0:+.2f}% | {c.mdd * 100.0:.2f}% | {c_sr} | "
-                f"{c.net_pnl:+,.1f} | {c.commission:,.1f} | {c.trades} | "
+                f"| `{c.contract}` | {c.tr * 100.0:+.2f}% | {c.mdd * 100.0:.2f}% | {c_dmdd} | {c_sr} | "
+                f"{c.net_pnl:+,.1f} | {c.commission:,.1f} | {c.trades} | {c.trading_days_count} | "
                 f"{c.main_role_steps} | {c.sub_role_steps} | {c.non_main_steps} |"
             )
 
@@ -466,20 +514,22 @@ class SynchronizedPortfolioCalculator:
         contracts: list[ContractMetricSummary],
     ) -> None:
         sr_text = f"{p.annual_sr:.4f}" if p.annual_sr is not None else "N/A"
+        daily_mdd_text = f"{p.daily_mdd * 100.0:.4f}%" if p.daily_mdd is not None else "N/A"
         print("=" * 80)
         print("🎉 [双主力动态时间同步组合回测完成 (Synchronized Dual-Main Portfolio)]")
         print(f"  评测阶段: {p.eval_stage}")
         print(f"  初始本金: ¥{p.initial_capital:,.2f} (单合约基准: ¥{self.single_contract_capital:,.2f})")
         print(f"  净收益额: ¥{p.total_net_pnl:+,.2f}")
         print(f"  累计收益率 (TR): {p.tr * 100.0:+.4f}%")
-        print(f"  最大回撤 (MDD): {p.mdd * 100.0:.4f}%")
-        print(f"  年化夏普比率 (Sharpe): {sr_text}")
+        print(f"  步级最大回撤 (Step MDD): {p.mdd * 100.0:.4f}% | 日末最大回撤 (Daily MDD): {daily_mdd_text}")
+        print(f"  真实交易日: {p.trading_days_count} 天 | 年化夏普 (242d Sharpe): {sr_text}")
         print(f"  最大瞬时持仓合约数: {p.max_concurrent_contracts} (平均: {p.mean_concurrent_contracts:.2f})")
         print(f"  总调仓次数: {p.total_trades} 次 | 总手续费: ¥{p.total_commission:,.2f}")
         print("-" * 80)
-        print(f"{'合约':<10} {'TR(%)':>10} {'MDD(%)':>10} {'Sharpe':>10} {'Net PnL':>12} {'Trades':>8} {'主力/次主力/非主力步数':>22}")
+        print(f"{'合约':<10} {'TR(%)':>10} {'StepMDD(%)':>12} {'DailyMDD(%)':>12} {'Sharpe(242d)':>14} {'Net PnL':>12} {'Trades':>8} {'主力/次主力/非主力步数':>22}")
         for c in contracts:
             c_sr = f"{c.annual_sr:.2f}" if c.annual_sr is not None else "N/A"
+            c_dmdd = f"{c.daily_mdd * 100.0:.2f}%" if c.daily_mdd is not None else "N/A"
             steps_str = f"{c.main_role_steps}/{c.sub_role_steps}/{c.non_main_steps}"
-            print(f"{c.contract:<10} {c.tr * 100.0:>9.2f}% {c.mdd * 100.0:>9.2f}% {c_sr:>10} {c.net_pnl:>12.2f} {c.trades:>8} {steps_str:>22}")
+            print(f"{c.contract:<10} {c.tr * 100.0:>9.2f}% {c.mdd * 100.0:>11.2f}% {c_dmdd:>11} {c_sr:>13} {c.net_pnl:>12.2f} {c.trades:>8} {steps_str:>22}")
         print("=" * 80)

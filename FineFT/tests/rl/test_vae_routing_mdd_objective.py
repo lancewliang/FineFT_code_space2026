@@ -42,7 +42,7 @@ def test_mdd_penalty_calculation_low_vs_high_drawdown(monkeypatch):
 
     score_low_mdd = routing.test()
 
-    expected_base = 0.10 * 1.0
+    expected_base = 600.0 / 12000.0  # Unified 12k portfolio capital
     expected_mdd_factor = 1.0 + 2.0 * (0.05 - 0.0)
     expected_trade_guard = 1.0
     assert score_low_mdd == pytest.approx(expected_base * expected_mdd_factor * expected_trade_guard)
@@ -103,7 +103,7 @@ def test_mdd_penalty_trade_guard_penalizes_inactivity(monkeypatch):
 
     score = routing.test()
 
-    base_obj = 0.10 * 1.0
+    base_obj = 600.0 / 12000.0  # Unified 12k portfolio capital
     mdd_factor = 1.0 + 2.0 * (0.05 - 0.0)
     expected_trade_guard = 25.0 / 100.0
     assert score == pytest.approx(base_obj * mdd_factor * expected_trade_guard)
@@ -140,4 +140,4 @@ def test_mdd_penalty_disabled_reverts_to_legacy_objective(monkeypatch):
     routing.run_single_valid_df = lambda df, p, contract_name: contract[0]
 
     score = routing.test()
-    assert score == pytest.approx(0.10)
+    assert score == pytest.approx(600.0 / 12000.0)  # Unified 12k portfolio capital

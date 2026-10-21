@@ -1,39 +1,42 @@
 ---
-status: superseded
+status: Reopened / Amended
 ---
 
-# 合约临近交割终局平仓与空仓锁定防御 (Contract Delivery Terminal Defense)
+# 合约真实生命周期与切片边界解耦架构 (Contract Lifecycle and Slice Boundary Decoupling Architecture)
 
-> **废弃说明 (2026-10-21)**：
-> 本决策已被 [ADR-0060](0060-contract-boundaries-and-tonne-rmb-accounting.md) 完全取代并废除。
-> 废弃原因：由于数据预处理阶段（`main_contract.py:544`）已从物理上排除了每个合约完整生命周期的最后 10 个交易日（`Contract Lifecycle Tail Exclusion`），高层回测数据集内已不存在到期交割期的流动性真空与极端跳空风险；在此基础上再次计算最后 X 天交割防御不仅属于无意义的冗余限制，还会误把切片分区边界（如 valid 结束点）当成交割终局，导致存续主力合约（如 fu2509）被错误提前平仓。高层路由中的 `--enable_delivery_month_defense` 及相关代码已全部物理清理，合约生命周期采用“数据预处理 10 天尾部裁剪 + 评估窗口末盯市（Mark-to-Market）”标准。
+> **修订说明 (2026-10-21)**：
+> 本决策由 2026-10-20 原“切片末尾交割防御”正式重开并修订（Reopened / Amended），并与 [ADR-0060](0060-contract-boundaries-and-tonne-rmb-accounting.md) 共同确立真实生命周期与切片边界的三层解耦架构。
+> **重开与物理删除原因**：
+> 1. **交割真空在特征工程中已物理剔除**：在数据预处理阶段（`main_contract.py:544`），特征工程已经从每个合约完整生命周期中严格排除了最后 10 个交易日（`Contract Lifecycle Tail Exclusion: ordered_days[-11]`），高层回测切片内已物理不存在交割月的流动性枯竭与极端跳空。
+> 2. **切片尾部不等于合约生命周期到期**：原 ADR-0058 简单锚定评估 DataFrame 尾部最后 5 日，误将样本切片分区边界（如 Valid 集终止点 2025-06-27）当成交割终局，导致正处于主力存续期的合约（如 fu2509、fu2510）被错误提前强平并错失盈利（诊断显示因此压制了 1,286.40 收益），且未来追加行情时会破坏历史决策掩码的前缀不变性（Prefix Invariance）。
+> 因此，高层回测中原 `--enable_delivery_month_defense` 及硬性切片尾部平仓规则被彻底物理移除。
 
+---
 
-为阻断商品期货（如上期所燃料油 fu）临近交割月份流动性断崖萎缩、现货与多空对峙导致的基差剧烈异动以及开盘跳空深幅回撤风险（如 fu2409 在 2024 年 8 月中旬交割前夕发生的跳空与大幅亏损），在高层路由评估中建立“临近交割期终局平仓与空仓锁定防御”机制。用户于 2026-10-20 设计访谈确认此决定。
+### 1. 三层解耦核心架构决策
 
-### 1. 业务与数据物理背景
-1. **交易所规则与交易数据截断**：以上期所燃料油（fu）为例，燃料油合约（如 `fu2409`）的名义交割月为 9 月，其实际最后交易日为交割月前一月的最后一个交易日（8 月 30 日）。在数据预处理阶段（`main_contract.py:544`），为了剔除交割收尾流动性真空期，系统预先对各合约数据进行了尾部截断（`ordered_days[-11]`），导致回测数据集中合约往往在到期日前 10 个交易日左右终止（例如 `fu2409` 在验证集中仅存续至 2024-08-16）。
-2. **生命周期尾部陷阱**：在合约临近到期退市的最后数个交易日内，投机资金大幅离场，盘口承接力锐减，点差走阔且频繁发生极端跳空，RL 策略模型在此类非平稳行情中极易连续受损。
+为彻底解决“合约真实退市”、“特征数据可用范围”与“策略评估切片边界”混淆引发的决策漂移与过度风控，确立以下三层解耦标准：
 
-### 2. 核心架构决策
+#### 1.1 第一层：合约真实生命周期与前置交割物理裁剪 (Preprocessing Lifecycle Boundary)
+- **职责归属**：离线数据预处理与特征工程层（`main_contract.py`）。
+- **行为规范**：基于交易所官方合约规则（如上期所燃料油 fu 到期前一月最后交易日退市），以该合约完整的全部交易日序列为基准，统一裁剪剔除最后 10 个交易日（`ordered_days[-11]`）。
+- **保证**：进入高层训练与评估的特征数据集已物理隔离交割期流动性断崖，策略无需且严禁在运行时重复推算“到期前 X 天防御”。
 
-#### 2.1 尾部交易日锚定 (Tail Trading Days Anchor)
-以合约在当前评估数据集切片（DataFrame）中包含的全部唯一交易日序列 `unique_dates` 为基准。当设定防御天数为 $X$ 交易日（默认 $X = 5$ 交易日，即最后 1 周）时，将最后 $X$ 个交易日（`unique_dates[-X:]`）界定为交割终局风控期。该设计使风控完全自包含于评估切片，天然适应不同数据切片（Train / Valid / Test）和已执行前置截断的数据。
+#### 1.2 第二层：运行时流动性角色与老仓平滑退出 (Runtime Dynamic Liquidity & Graceful Exit)
+- **职责归属**：高层 VAE 路由与角色准入控制层（`vae_routing_util.py` / `ADR-0057`）。
+- **行为规范**：
+  1. 策略只允许在每日结算判定的主力（tier=1.0）与次主力（tier=0.5）合约上发起新增开仓。
+  2. 当合约因流动性自然转移退化为非主力（tier < 0.5）时，触发平滑降级（`graceful_hold_exit`）：禁止任何加仓与反向开仓，允许跟随模型策略退出或触碰止损自然平仓退出，不再施加全局时间步硬性强平。
 
-#### 2.2 终局平仓与空仓锁定行为 (Strict Instant Close & Lockout)
-一旦时间步落入最后 $X$ 个交易日内：
-1. **强制立即平仓**：若当前持有非零仓位（`position != 0`），立即解除动作持续性（`remaining_persist = 0`），通过规则平仓动作（`rule_based_close`）强制平仓至 0；
-2. **全程锁定空仓**：若当前已为空仓（`position == 0`），严格禁止发起任何开仓推断，直接返回空仓动作（`zero_position_action`）；
-3. **审计归因记录**：决策原因在动作历史中记录为 `DEFENSIVE_RULE_CLOSE`（若打断持续性则记录为 `DEFENSIVE_PREEMPTION`），宏观动作槽位标记为防御槽位（`slot_count`），完全兼容既有交易审计体系与下游诊断工具。
+#### 1.3 第三层：评估切片窗口末真实盯市 (Evaluation Slice Mark-to-Market)
+- **职责归属**：回测统计与组合绩效评估层（`calculate_metric.py` / `synchronized_portfolio_diagnostics.py`）。
+- **行为规范**：
+  1. 样本切片（Train / Valid / Test）结束点仅作为统计观测边界，最后一刻保留真实持仓状态与可用行情盯市估值（Mark-to-Market），绝对不触发虚构的瞬时平仓交易与清算手续费。
+  2. **前缀不变性严格契约 (Prefix Invariance)**：策略在时刻 $t$ 的准入、风控与动作决策只能依赖 $t$ 及以前的信息，向后追加未来数据时，历史所有步的决策与风控掩码完全恒定不变。
 
-#### 2.3 CLI 参数与配置界面
-- Python CLI 参数：
-  - `--enable_delivery_month_defense`：布尔开关，启用交割终局平仓防御。
-  - `--delivery_defense_days`：整型参数，指定到期前平仓的交易日天数，默认值为 `5`。
-- Shell 启动脚本配置：
-  - `ENABLE_DELIVERY_MONTH_DEFENSE=${ENABLE_DELIVERY_MONTH_DEFENSE:-1}`
-  - `DELIVERY_DEFENSE_DAYS=${DELIVERY_DEFENSE_DAYS:-5}`
-  - 同步集成于 `FineFT/script/test/DiHFT/high_level/final_result_fu_10_main_sub.sh` 及 `final_result_fu_30_main_sub.sh`。
+---
 
-
-2026-10-21 更新：边界与账户范围以 [ADR-0060](0060-contract-boundaries-and-tonne-rmb-accounting.md) 为准；原文保留记录历史决策。
+### 2. 状态机与接口契约
+- 高层不再暴露 `--enable_delivery_month_defense` 和 `--delivery_defense_days` 参数。
+- `is_terminal_defense_step` 统一返回 `False`，仅作为向下兼容旧接口的轻量契约。
+- 终局测试严格遵循 `fu_10min_terminal_boundary_check.py`：追加未来 2 天行情时，历史所有时间步的风控掩码与决策差异必须为 0。

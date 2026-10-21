@@ -2030,7 +2030,8 @@ class vae_risk_aware_routing:
             np.array(env.wallet_balance_history),
         )
         reward_sum = np.sum(reward_history)
-        self.return_rate = reward_sum / (require_money + 1e-12)
+        contract_capital = float(self.initial_wallet_balance) if self.initial_wallet_balance > 0 else 6000.0
+        self.return_rate = float(reward_sum / contract_capital)
         equities = np.array(env.margine_balance_history, dtype=np.float64)
         if len(equities) > 0:
             peaks = np.maximum.accumulate(equities)
@@ -2189,16 +2190,10 @@ class vae_risk_aware_routing:
             logger.info("[Artifacts] Saved contract results summary to %s", csv_path)
 
         total_reward_sum = float(result_df[MetricColumns.REWARD_SUM].sum())
-        traded_mask = (result_df[MetricColumns.REWARD_SUM] != 0) | (result_df[MetricColumns.RETURN_RATE] != 0)
-        traded_count = int(traded_mask.sum())
-        total_initial_capital = (
-            self.initial_wallet_balance * traded_count
-            if traded_count > 0
-            else self.initial_wallet_balance * len(contract_results)
-        )
-        portfolio_return_rate = total_reward_sum / (total_initial_capital + 1e-12)
+        portfolio_capital = float(self.initial_wallet_balance * 2.0)
+        portfolio_return_rate = float(total_reward_sum / (portfolio_capital + 1e-12))
         win_rate = float((result_df[MetricColumns.RETURN_RATE] > 0).mean())
-        base_objective = portfolio_return_rate * win_rate
+        base_objective = portfolio_return_rate
         total_trades = int(result_df["trades"].sum())
 
         portfolio_mdd = None
@@ -2258,6 +2253,9 @@ class vae_risk_aware_routing:
                 "return_rate": self.return_rate,
                 "base_objective": base_objective,
                 "portfolio_return_rate": portfolio_return_rate,
+                "portfolio_capital": portfolio_capital,
+                "contract_capital": float(self.initial_wallet_balance),
+                "tr": portfolio_return_rate,
                 "win_rate": win_rate,
                 "portfolio_mdd": portfolio_mdd,
                 "mdd_factor": mdd_factor,

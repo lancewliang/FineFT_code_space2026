@@ -649,7 +649,7 @@ def test_vae_routing_test_uses_contract_level_valid_features(tmp_path, monkeypat
     assert len(created_envs) == 2
     result = pd.read_csv(tmp_path / "result" / "contract_results.csv")
     assert result["contract"].tolist() == ["fu2508", "fu2509"]
-    assert result["return_rate"].tolist() == pytest.approx([0.2, 0.3])
+    assert result["return_rate"].tolist() == pytest.approx([0.02, 0.06])
     assert routing_start_states == [(4, 0, [0, 0, 0]), (4, 0, [0, 0, 0])]
     assert (
         tmp_path / "result" / "contracts" / "fu2508" / "reward_history.npy"
