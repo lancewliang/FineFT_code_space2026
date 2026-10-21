@@ -396,3 +396,44 @@ def test_reconfigure_routing_resets_persistence_state():
     assert router.remaining_persist == 0
     assert router.current_action == router.flat_action
     assert router.action_decision_reason_history == []
+
+
+def test_empty_model_slot_graceful_hold_exit_and_no_new_risk():
+    router = _create_test_router(action_persistence=3)
+    # Selected slot: volatility index 1, slope index 2 -> slot 5
+    router.selection_manifest.slots[5]["kind"] = "empty_model"
+    info = {"avaliable_action": [1, 1, 1]}
+    state = np.array([0.0])
+
+    def mock_agent_act(s, inf):
+        raise AssertionError("Low-level Q-net should not be queried for empty_model slot")
+
+    router.agent_act = mock_agent_act
+
+    # 1. Zero position: forbids opening new positions (No New Risk)
+    action_zero = router.get_action(info, state, 0.0, 1)
+    assert action_zero == router.flat_action
+    assert router.remaining_persist == 0
+    assert router.action_decision_reason_history[-1] == ActionDecisionReasons.DEFENSIVE_RULE_CLOSE
+
+    # 2. Non-zero position with active persistence buffer: Graceful Hold
+    router.remaining_persist = 2
+    router.current_action = 2
+
+    # Step 1: Holds position (action 2), decrements persist to 1
+    a1 = router.get_action(info, state, 1.0, 1)
+    assert a1 == 2
+    assert router.remaining_persist == 1
+    assert router.action_decision_reason_history[-1] == ActionDecisionReasons.ACTION_PERSISTENCE
+
+    # Step 2: Holds position (action 2), decrements persist to 0
+    a2 = router.get_action(info, state, 1.0, 1)
+    assert a2 == 2
+    assert router.remaining_persist == 0
+    assert router.action_decision_reason_history[-1] == ActionDecisionReasons.ACTION_PERSISTENCE
+
+    # Step 3: Persistence expired, gracefully exits via rule close
+    a3 = router.get_action(info, state, 1.0, 1)
+    assert a3 == router.flat_action
+    assert router.remaining_persist == 0
+    assert router.action_decision_reason_history[-1] == ActionDecisionReasons.DEFENSIVE_RULE_CLOSE

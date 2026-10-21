@@ -13,7 +13,7 @@ set -euo pipefail
 #   6. VAE_util_fu_10.sh
 #   7. vae_optuna_fu_10.sh
 #   8. high_level_heurstic_fu_10.sh
-#   9. final_result_fu_10.sh
+#   9. final_result_fu_10_main_sub.sh
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,7 +47,7 @@ declare -a PIPELINE_STEPS=(
     "VAE 并行训练与评估 (多进程并行)|FineFT/script/train/DiHFT/low_level/VAE_util_fu_10.sh|log/DiHFT/fu/VAE/10min_parallel/{slope,volatility}/train_label_*.log"
     "高层 VAE 路由 Optuna 优化与分析|FineFT/script/test/DiHFT/high_level/vae_optuna_fu_10.sh|log/DiHFT/fu/high_level/optuna/10min_parallel/optuna.log"
     "高层启发式路由策略筛选与分析|FineFT/script/analysis/pick_agent/high_level_heurstic_fu_10.sh|log/analysis/pick_agent/DiHFT/fu/high_level_heurstic/10min_parallel.log"
-    "高层路由测试集最终回测与评估|FineFT/script/test/DiHFT/high_level/final_result_fu_10.sh|log/DiHFT/fu/high_level/final_result/10min_parallel/final_result.log"
+    "双主力动态时间同步回测与诊断评估|FineFT/script/test/DiHFT/high_level/final_result_fu_10_main_sub.sh|log/DiHFT/fu/high_level/final_result_main_sub/10min_parallel/final_result_valid.log"
 )
 
 TOTAL_STEPS="${#PIPELINE_STEPS[@]}"

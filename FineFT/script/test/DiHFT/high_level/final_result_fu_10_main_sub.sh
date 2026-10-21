@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # ==============================================================================
-# fu 30min 双主力动态时间同步回测与诊断评估脚本 (Graceful Downgrade & Dual-Main Only)
+# fu 10min 双主力动态时间同步回测与诊断评估脚本 (Graceful Downgrade & Dual-Main Only)
 #
 # 特性：
 #   1. 仅允许在当前时点的主力与次主力合约上开仓；

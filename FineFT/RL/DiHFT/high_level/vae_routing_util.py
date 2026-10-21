@@ -1545,6 +1545,28 @@ class vae_risk_aware_routing:
         slot_id = volatility_index * self.num_labels + slope_index
         slot = self.selection_manifest.slots[slot_id]
         if slot["kind"] == "empty_model":
+            # ADR-0061: Graceful hold exit and No New Risk semantics
+            if current_pos_float != 0.0 and self.remaining_persist > 0:
+                hold_action = map_position_leverage_to_action(
+                    current_pos_float,
+                    current_leverage,
+                    self.leverage_choices,
+                    self.position_list,
+                )
+                if bool(info["avaliable_action"][hold_action]):
+                    if self.cooldown_remaining_steps > 0:
+                        self.cooldown_remaining_steps -= 1
+                    self.remaining_persist -= 1
+                    self.current_action = hold_action
+                    self.selected_agent_index = slot_id
+                    self.macro_action_history.append(slot_id)
+                    self.action_decision_reason_history.append(
+                        ActionDecisionReasons.ACTION_PERSISTENCE
+                    )
+                    self.action = hold_action
+                    self.previous_step_position = current_pos_float
+                    return hold_action
+                self.remaining_persist = 0
             return self._apply_defensive_action(
                 info, current_pos_float, current_leverage
             )
