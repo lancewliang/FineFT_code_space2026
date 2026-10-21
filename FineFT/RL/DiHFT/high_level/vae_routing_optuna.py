@@ -125,18 +125,6 @@ parser_all.add_argument(
     help="非主力合约防御模式：graceful_hold_exit（禁开仓但允许持有和平仓）或 strict_instant_close（即时规则平仓）",
 )
 parser_all.add_argument(
-    "--enable_delivery_month_defense",
-    action="store_true",
-    default=False,
-    help="是否在合约生命周期临近交割尾部阶段启用终局强制平仓与空仓锁定风控",
-)
-parser_all.add_argument(
-    "--delivery_defense_days",
-    type=int,
-    default=5,
-    help="合约临近交割防御的尾部交易日天数（默认最后 5 个交易日）",
-)
-parser_all.add_argument(
     "--enable_mdd_penalty",
     action=argparse.BooleanOptionalAction,
     default=True,
@@ -286,8 +274,6 @@ def prepare_base_args(args_1, args_2):
         or base_args.enable_non_main_contract_defense
     )
     base_args.non_main_defense_mode = args_2.non_main_defense_mode
-    base_args.enable_delivery_month_defense = bool(args_2.enable_delivery_month_defense)
-    base_args.delivery_defense_days = args_2.delivery_defense_days
     base_args.enable_mdd_penalty = args_2.enable_mdd_penalty
     base_args.target_mdd = args_2.target_mdd
     base_args.mdd_penalty_weight = args_2.mdd_penalty_weight

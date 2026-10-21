@@ -17,8 +17,6 @@ ORDER_BOOK_DEPTH=${ORDER_BOOK_DEPTH:-5}
 TRANSACTION_COST=${TRANSACTION_COST:-0.0003}
 ENABLE_NON_MAIN_DEFENSE=${ENABLE_NON_MAIN_DEFENSE:-1}
 NON_MAIN_DEFENSE_MODE=${NON_MAIN_DEFENSE_MODE:-graceful_hold_exit}
-ENABLE_DELIVERY_DEFENSE=${ENABLE_DELIVERY_DEFENSE:-1}
-DELIVERY_DEFENSE_DAYS=${DELIVERY_DEFENSE_DAYS:-5}
 ENABLE_MDD_PENALTY=${ENABLE_MDD_PENALTY:-1}
 TARGET_MDD=${TARGET_MDD:-0.05}
 MDD_PENALTY_WEIGHT=${MDD_PENALTY_WEIGHT:-4.0}
@@ -48,12 +46,6 @@ if [[ "${ENABLE_NON_MAIN_DEFENSE}" == "1" || "${ENABLE_NON_MAIN_DEFENSE}" == "tr
     DEFENSE_ARGS+=(
         --enable_non_main_contract_defense
         --non_main_defense_mode "${NON_MAIN_DEFENSE_MODE}"
-    )
-fi
-if [[ "${ENABLE_DELIVERY_DEFENSE}" == "1" || "${ENABLE_DELIVERY_DEFENSE}" == "true" ]]; then
-    DEFENSE_ARGS+=(
-        --enable_delivery_month_defense
-        --delivery_defense_days "${DELIVERY_DEFENSE_DAYS}"
     )
 fi
 if [[ "${ENABLE_MDD_PENALTY}" == "1" || "${ENABLE_MDD_PENALTY}" == "true" ]]; then

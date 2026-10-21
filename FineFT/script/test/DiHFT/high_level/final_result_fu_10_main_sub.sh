@@ -42,7 +42,6 @@ STOP_LOSS_COOLDOWN_STEPS=${STOP_LOSS_COOLDOWN_STEPS:-12}
 CIRCUIT_BREAKER_CONSECUTIVE_STOPS=${CIRCUIT_BREAKER_CONSECUTIVE_STOPS:-3}
 CIRCUIT_BREAKER_COOLING_STEPS=${CIRCUIT_BREAKER_COOLING_STEPS:-24}
 NON_MAIN_DEFENSE_MODE=${NON_MAIN_DEFENSE_MODE:-graceful_hold_exit}
-DELIVERY_DEFENSE_DAYS=${DELIVERY_DEFENSE_DAYS:-5}
 OUTPUT_SUB_DIR=${OUTPUT_SUB_DIR:-main_sub}
 RESULT_DIR="result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/${OUTPUT_SUB_DIR}"
 
@@ -60,7 +59,6 @@ echo "  评测阶段 (EVAL_STAGE): ${EVAL_STAGE}"
 echo "  单合约初始资金: ¥${INITIAL_WALLET_BALANCE} (两主力组合总本金: ¥$((INITIAL_WALLET_BALANCE * 2)))"
 echo "  最优门控配置: ${PARA_FILE}"
 echo "  非主力防御模式: ${NON_MAIN_DEFENSE_MODE}"
-echo "  交割期终局平仓防御:  (到期前 ${DELIVERY_DEFENSE_DAYS} 交易日平仓)"
 echo "  产物输出目录: ${RESULT_DIR}"
 echo "  日志位置: ${LOG_FILE}"
 echo "================================================================================"

@@ -295,18 +295,6 @@ parser.add_argument(
     help="非主力合约防御模式：graceful_hold_exit（禁开仓但允许持有和平仓）或 strict_instant_close（即时规则平仓）",
 )
 parser.add_argument(
-    "--enable_delivery_month_defense",
-    action="store_true",
-    default=False,
-    help="是否在合约生命周期临近交割尾部阶段启用终局强制平仓与空仓锁定风控",
-)
-parser.add_argument(
-    "--delivery_defense_days",
-    type=int,
-    default=5,
-    help="合约临近交割防御的尾部交易日天数（默认最后 5 个交易日）",
-)
-parser.add_argument(
     "--enable_mdd_penalty",
     action=argparse.BooleanOptionalAction,
     default=False,
@@ -829,10 +817,6 @@ class vae_risk_aware_routing:
     action_decision_reason_history: list[int]
     enable_non_main_contract_defense: bool = False
     non_main_defense_mode: str = "strict_instant_close"
-    enable_delivery_month_defense: bool = False
-    delivery_defense_days: int = 5
-    is_in_delivery_terminal: bool = False
-    is_terminal_defense_step: np.ndarray | None = None
     role_tier_index: int | None = None
     save_artifacts: bool = True
     precomputed_quantiles_dir: str | None = None
@@ -951,12 +935,6 @@ class vae_risk_aware_routing:
         self.vae_vol_indicators = self.vae_volatility_indicators
         self.enable_non_main_contract_defense = bool(args.enable_non_main_contract_defense)
         self.non_main_defense_mode = args.non_main_defense_mode
-        self.enable_delivery_month_defense = bool(args.enable_delivery_month_defense)
-        self.delivery_defense_days = int(args.delivery_defense_days)
-        if self.delivery_defense_days < 0:
-            raise ValueError("delivery_defense_days must be non-negative")
-        self.is_in_delivery_terminal = False
-        self.is_terminal_defense_step = None
         self.enable_mdd_penalty = bool(args.enable_mdd_penalty)
         self.target_mdd = float(args.target_mdd)
         self.mdd_penalty_weight = float(args.mdd_penalty_weight)
@@ -1221,8 +1199,6 @@ class vae_risk_aware_routing:
         self.previous_step_position = 0.0
         self.active_trade_stopped = False
         self.step_idx = 0
-        self.is_in_delivery_terminal = False
-        self.is_terminal_defense_step = None
         self.audit_predictions = []
         self.audit_trades = []
         self.last_prediction_id = ""
@@ -1539,23 +1515,6 @@ class vae_risk_aware_routing:
             self.previous_step_position = current_pos_float
             return action
 
-        # 2.5 Delivery month terminal defense
-        is_delivery_terminal = False
-        if self.is_in_delivery_terminal:
-            is_delivery_terminal = True
-        elif (
-            self.enable_delivery_month_defense
-            and self.is_terminal_defense_step is not None
-        ):
-            step_i = self.step_idx
-            if step_i < len(self.is_terminal_defense_step) and self.is_terminal_defense_step[step_i]:
-                is_delivery_terminal = True
-
-        if is_delivery_terminal:
-            return self._apply_defensive_action(
-                info, current_pos_float, current_leverage
-            )
-
         # 3. Existing high-level defenses
         is_downgraded_hold = False
         if (
@@ -1779,28 +1738,6 @@ class vae_risk_aware_routing:
         else:
             self.current_contract_quantiles = None
 
-        if (
-            self.enable_delivery_month_defense
-            and self.delivery_defense_days > 0
-            and "timestamp" in self.df.columns
-        ):
-            unique_dates = sorted(self.df["timestamp"].dt.date.unique())
-            cutoff_idx = max(0, len(unique_dates) - self.delivery_defense_days)
-            terminal_dates = set(unique_dates[cutoff_idx:])
-            self.is_terminal_defense_step = (
-                self.df["timestamp"].dt.date.isin(terminal_dates).to_numpy()
-            )
-            logger.info(
-                "[Delivery Defense] Contract '%s' enabled delivery month terminal defense for last %d trading days (total %d days, cutoff date: %s, matching rows: %d/%d)",
-                contract_name,
-                self.delivery_defense_days,
-                len(unique_dates),
-                unique_dates[cutoff_idx] if len(unique_dates) > 0 else "N/A",
-                int(np.sum(self.is_terminal_defense_step)),
-                len(self.df),
-            )
-        else:
-            self.is_terminal_defense_step = None
         env = initiate_base_env(
             df=self.df,
             feature_list=self.tech_indicator_list,
