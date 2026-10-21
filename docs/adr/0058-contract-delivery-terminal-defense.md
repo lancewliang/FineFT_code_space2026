@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded
 ---
 
 # 合约临近交割终局平仓与空仓锁定防御 (Contract Delivery Terminal Defense)
@@ -29,3 +29,6 @@ status: accepted
   - `ENABLE_DELIVERY_MONTH_DEFENSE=${ENABLE_DELIVERY_MONTH_DEFENSE:-1}`
   - `DELIVERY_DEFENSE_DAYS=${DELIVERY_DEFENSE_DAYS:-5}`
   - 同步集成于 `FineFT/script/test/DiHFT/high_level/final_result_fu_10_main_sub.sh` 及 `final_result_fu_30_main_sub.sh`。
+
+
+2026-10-21 更新：边界与账户范围以 [ADR-0060](0060-contract-boundaries-and-tonne-rmb-accounting.md) 为准；原文保留记录历史决策。

@@ -36,3 +36,6 @@ status: accepted
 - 交付脚本：`FineFT/script/test/DiHFT/high_level/final_result_fu_30_main_sub.sh`。
 - 默认评测阶段：`valid`，支持通过参数切换至 `test`。
 - 输出产物隔离存储于：`result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/main_sub/`，包含 `summary_metrics.json`、`summary_metrics.csv`、`portfolio_action_timeline.csv`、`portfolio_summary.md`，并保留逐合约标准历史与诊断轨迹。
+
+
+2026-10-21 更新：边界与账户范围以 [ADR-0060](0060-contract-boundaries-and-tonne-rmb-accounting.md) 为准；原文保留记录历史决策。

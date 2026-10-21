@@ -1,0 +1,35 @@
+{
+  "scope": "in-sample descriptive regression; calendar-date cash increments / fixed 12000 capital; not validated alpha",
+  "calendar_dates": 225,
+  "r_squared": 0.4150591424216039,
+  "coefficients": {
+    "const": 0.0009351578835914288,
+    "benchmark_long": 0.4612458404246978,
+    "benchmark_mom48": 0.23971803396605515
+  },
+  "hac_t_values": {
+    "const": 2.161073065091411,
+    "benchmark_long": 4.052212340022555,
+    "benchmark_mom48": 2.4417361150852073
+  },
+  "hac_p_values": {
+    "const": 0.030689695827792,
+    "benchmark_long": 5.073558550588539e-05,
+    "benchmark_mom48": 0.014616826507774697
+  },
+  "hac_confidence_intervals": {
+    "const": {
+      "0": 8.702562869223034e-05,
+      "1": 0.0017832901384906273
+    },
+    "benchmark_long": {
+      "0": 0.23815159970031247,
+      "1": 0.6843400811490832
+    },
+    "benchmark_mom48": {
+      "0": 0.04729809549869873,
+      "1": 0.43213797243341157
+    }
+  },
+  "intercept_total_pnl": 2524.926285696858
+}

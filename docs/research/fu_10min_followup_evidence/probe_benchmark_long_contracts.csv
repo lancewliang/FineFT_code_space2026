@@ -1,0 +1,13 @@
+case,contract,net_pnl,trades,hard_stops
+benchmark_long,fu2409,62.083199999999124,4,1
+benchmark_long,fu2411,158.1899000000003,10,4
+benchmark_long,fu2412,0.0,0,0
+benchmark_long,fu2501,-41.16010000000006,12,5
+benchmark_long,fu2503,757.9857999999995,2,0
+benchmark_long,fu2505,-107.28779999999915,6,2
+benchmark_long,fu2507,-662.6408000000001,14,6
+benchmark_long,fu2508,0.0,0,0
+benchmark_long,fu2509,598.5283999999992,4,1
+benchmark_long,fu2510,108.02959999999985,2,0
+benchmark_long,fu2511,0.0,0,0
+benchmark_long,fu2601,0.0,0,0

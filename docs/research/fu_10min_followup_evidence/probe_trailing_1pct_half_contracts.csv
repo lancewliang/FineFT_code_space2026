@@ -1,0 +1,13 @@
+case,contract,net_pnl,trades,hard_stops
+trailing_1pct_half,fu2409,82.20439999999871,10,1
+trailing_1pct_half,fu2411,-125.89910000000145,48,8
+trailing_1pct_half,fu2412,0.0,0,0
+trailing_1pct_half,fu2501,398.09569999999894,64,6
+trailing_1pct_half,fu2503,478.29279999999744,62,3
+trailing_1pct_half,fu2505,-134.5072,66,4
+trailing_1pct_half,fu2507,587.5382000000027,42,2
+trailing_1pct_half,fu2508,0.0,0,0
+trailing_1pct_half,fu2509,137.94860000000517,36,3
+trailing_1pct_half,fu2510,-112.98269999999957,2,1
+trailing_1pct_half,fu2511,0.0,0,0
+trailing_1pct_half,fu2601,0.0,0,0
