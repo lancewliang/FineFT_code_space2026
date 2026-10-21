@@ -838,6 +838,38 @@ _Avoid_: 中间文件、临时产出、结果文件
 测试与高层路由仿真过程中，按环境 Step 保存的单维度 NumPy 数值向量，包括收益、总资产、钱包余额、持仓保证金与动作时序。
 _Avoid_: 回测向量、时序数组、历史记录
 
+**证据门禁体系 (Evidence-Based Selection Gates)**:
+在 Stage II 选拔 low-level agent 时，由边际门禁、联合切片门禁、日度主力子门禁、扣费净收益与反事实硬止损率门禁构成的多维一票否决准入体系。
+_Avoid_: 启发式筛选、单指标门限、宽松选拔
+
+**核心高流量槽位 (Core High-Traffic Slot)**:
+在验证集 2D Regime (Volatility × Slope) 中满足时间步覆盖率 $\ge 10\%$ 且合约覆盖数 $\ge 5$ 的关键逻辑槽位，适用更严苛的统计证据（至少 6 支合约且正收益合约比例 $\ge 70\%$）。
+_Avoid_: 关键槽位、高频 slot、高频状态
+
+**长尾槽位 (Peripheral / Long-Tail Slot)**:
+验证集覆盖时间步 $< 10\%$ 或合约数 $< 5$ 的低频边缘槽位，适用基础安全门禁（至少 4 支合约且正收益合约比例 $\ge 67\%$）。
+_Avoid_: 边缘 slot、长尾状态、次要槽位
+
+**双重强制合规 (Conjunctive Marginal-Joint Compliance)**:
+候选 agent 必须同时通过波动率边际切片、趋势边际切片以及 2D 联合切片的独立准入门禁（扣费净均值与 LCB 均大于 0），任何单维边际负收益一票否决。
+_Avoid_: 仅看联合切片、局部盈利豁免、局部拟合入选
+
+**扣费单步净收益 (Friction-Adjusted Step Net PnL)**:
+单步已实现盈亏扣除真实手续费与滑点后的真实净收益 $\Delta PnL_{net} = \text{realized_pnl} - \text{commission} - \text{slippage}$，作为替代环境单步奖励的唯一准入与排序收益标尺。
+_Avoid_: 单步环境奖励、毛收益、未扣费收益
+
+**日度主力独立达标子门禁 (Daily Main Contract Sub-Gate)**:
+在具备有效样本（$\ge 100$ 步）的日度主力合约时间步子集上，强制要求候选 agent 扣费单步净收益均值必须大于 0 的一票否决门禁。
+_Avoid_: 主力加权、主力偏好、主力经验门限
+
+**反事实硬止损触发率 (Counterfactual Hard Stop-Loss Rate)**:
+在离线交易明细中按持仓回合度量达到标的价格相对浮亏阈值（3.0%）的回合数占总持仓回合数的比例，用于一票淘汰缺乏自我风控能力的失控模型。
+_Avoid_: 止损率、强平率、硬止损次数
+
+**空仓降级槽位 (Flat Degradation Slot)**:
+在特定 2D 槽位无任何候选 agent 通过全部证据门禁时，按照 ADR-0057 优雅降级原则组装为恒定零仓位输出的防御性占位槽位。
+_Avoid_: 空模型、失效槽位、默认平仓网络
+
 **Selection Manifest (选拔清单)**:
 低层 Agent 筛选后输出的标准化元数据 JSON，记录各动态 Label 最优 Agent 的 Epoch、模型路径、分桶与选拔指标。
 _Avoid_: 筛选结果、选择清单、model manifest

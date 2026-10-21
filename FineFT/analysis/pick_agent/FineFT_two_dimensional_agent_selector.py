@@ -62,6 +62,14 @@ DETAIL_COLUMNS = {
     "时间戳": "timestamp",
     "单步奖励": "reward",
 }
+OPTIONAL_DETAIL_COLUMNS = {
+    "单步实现盈亏": "realized_pnl",
+    "单步手续费": "commission_fee",
+    "单步滑点": "slippage",
+    "执行后仓位": "position",
+    "标记价格": "mark_price",
+    "浮动盈亏": "unrealized_pnl",
+}
 
 CANDIDATE_KEYS = [
     "candidate_id",
@@ -91,6 +99,20 @@ class SelectionConfig:
     contract_weighting: str = "step_weighted"
     min_slice_steps: int = 0
     min_grid_slice_steps: int | None = None
+    enable_conjunctive_gates: bool = False
+    enable_traffic_tiering: bool = False
+    core_slot_min_steps_ratio: float = 0.10
+    core_slot_min_contracts: int = 5
+    core_slot_min_joint_contracts: int = 3
+    core_slot_min_positive_contract_ratio: float = 0.60
+    peripheral_slot_min_joint_contracts: int = 3
+    peripheral_slot_min_positive_contract_ratio: float = 0.60
+    enable_main_contract_sub_gate: bool = False
+    min_main_steps: int = 100
+    enable_hard_stop_loss_gate: bool = False
+    hard_stop_loss_threshold: float = 0.03
+    max_hard_stop_loss_episode_ratio: float = 0.10
+    reward_metric: str = "reward"
 
     @property
     def effective_min_grid_slice_steps(self) -> int:
@@ -727,6 +749,38 @@ class TwoDimensionalAgentSelector:
                 f"unmatched={unmatched_count}"
             )
 
+        role_tier_parts: list[pl.DataFrame] = []
+        for contract_file in sorted(valid_root.glob("*.feather")) + sorted(valid_root.glob("*.parquet")) + sorted(valid_root.glob("*.csv")):
+            contract_name = contract_file.stem
+            try:
+                if contract_file.suffix == ".feather":
+                    cdf = pl.read_ipc(contract_file, columns=["timestamp", "prev_day_contract_role_tier"], memory_map=False)
+                elif contract_file.suffix == ".parquet":
+                    cdf = pl.read_parquet(contract_file, columns=["timestamp", "prev_day_contract_role_tier"])
+                else:
+                    cdf = pl.read_csv(contract_file, columns=["timestamp", "prev_day_contract_role_tier"])
+                if cdf.schema["timestamp"].is_temporal():
+                    ts_expr = pl.col("timestamp").dt.strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    ts_expr = pl.col("timestamp").cast(pl.String)
+                role_tier_parts.append(
+                    cdf.select([
+                        pl.lit(contract_name).alias("contract"),
+                        ts_expr.alias("timestamp"),
+                        pl.col("prev_day_contract_role_tier").cast(pl.Float64),
+                    ])
+                )
+            except Exception:
+                continue
+
+        if role_tier_parts:
+            role_tiers_df = pl.concat(role_tier_parts)
+            lookup = lookup.join(role_tiers_df, on=["contract", "timestamp"], how="left")
+        else:
+            lookup = lookup.with_columns(
+                pl.lit(None, dtype=pl.Float64).alias("prev_day_contract_role_tier")
+            )
+
         contract_counts = (
             lookup.group_by(["volatility_label", "slope_label", "contract"])
             .agg(pl.len().alias("timestamp_count"))
@@ -755,11 +809,19 @@ class TwoDimensionalAgentSelector:
             grid_data,
             schema={"volatility_label": pl.String, "slope_label": pl.String},
         )
+        total_timestamps = max(1, lookup.height)
         support = (
             grid.join(support_actual, on=["volatility_label", "slope_label"], how="left")
             .with_columns(
                 pl.col("joint_row_count").fill_null(0).cast(pl.Int64),
                 pl.col("joint_contract_count").fill_null(0).cast(pl.Int64),
+                pl.when(
+                    (pl.col("joint_row_count").fill_null(0) / total_timestamps >= self.config.core_slot_min_steps_ratio)
+                    & (pl.col("joint_contract_count").fill_null(0) >= self.config.core_slot_min_contracts)
+                )
+                .then(pl.lit("core"))
+                .otherwise(pl.lit("peripheral"))
+                .alias("traffic_tier"),
             )
         )
         print(
@@ -784,9 +846,10 @@ class TwoDimensionalAgentSelector:
         )
         t_start = time.time()
         summaries: list[pl.DataFrame] = []
-        lookup = label_lookup.select(
-            ["contract", "timestamp", "volatility_label", "slope_label"]
-        )
+        lookup_cols = ["contract", "timestamp", "volatility_label", "slope_label"]
+        if "prev_day_contract_role_tier" in label_lookup.columns:
+            lookup_cols.append("prev_day_contract_role_tier")
+        lookup = label_lookup.select(lookup_cols)
 
         for idx, (epoch_number, files) in enumerate(result_files.items(), 1):
             epoch_t0 = time.time()
@@ -804,18 +867,51 @@ class TwoDimensionalAgentSelector:
                         pl.col("label_type") == route_context
                     ).select(["candidate_id", "label", "initial_action", "df_path"])
                 )
+                avail_cols = pl.read_csv(detail_path, n_rows=0, infer_schema_length=0).columns
+                read_cols = list(DETAIL_COLUMNS.keys())
+                rename_cols = dict(DETAIL_COLUMNS)
+                schema_overrides = {
+                    "标签": pl.String,
+                    "数据文件": pl.String,
+                    "初始动作": pl.Int64,
+                    "分箱索引": pl.Int64,
+                    "时间戳": pl.String,
+                    "单步奖励": pl.Float64,
+                }
+                for opt_k, opt_v in OPTIONAL_DETAIL_COLUMNS.items():
+                    if opt_k in avail_cols:
+                        read_cols.append(opt_k)
+                        rename_cols[opt_k] = opt_v
+                        schema_overrides[opt_k] = pl.Float64
+
                 detail_df = pl.read_csv(
                     detail_path,
-                    columns=list(DETAIL_COLUMNS.keys()),
-                    schema_overrides={
-                        "标签": pl.String,
-                        "数据文件": pl.String,
-                        "初始动作": pl.Int64,
-                        "分箱索引": pl.Int64,
-                        "时间戳": pl.String,
-                        "单步奖励": pl.Float64,
-                    },
-                ).rename(DETAIL_COLUMNS)
+                    columns=read_cols,
+                    schema_overrides=schema_overrides,
+                ).rename(rename_cols)
+
+                if self.config.reward_metric == "reward":
+                    detail_df = detail_df.with_columns(
+                        pl.col("reward").alias("net_pnl")
+                    )
+                elif "realized_pnl" in detail_df.columns:
+                    fee = (
+                        pl.col("commission_fee")
+                        if "commission_fee" in detail_df.columns
+                        else pl.lit(0.0)
+                    )
+                    slip = (
+                        pl.col("slippage")
+                        if "slippage" in detail_df.columns
+                        else pl.lit(0.0)
+                    )
+                    detail_df = detail_df.with_columns(
+                        (pl.col("realized_pnl") - fee - slip).alias("net_pnl")
+                    )
+                else:
+                    detail_df = detail_df.with_columns(
+                        pl.col("reward").alias("net_pnl")
+                    )
 
                 detail_df = detail_df.with_columns(
                     pl.col("df_path").str.split("/").list.get(0).alias("contract"),
@@ -858,6 +954,93 @@ class TwoDimensionalAgentSelector:
                         f"{detail_path} label disagrees with timestamp label lookup"
                     )
 
+                if "prev_day_contract_role_tier" in detail_df.columns:
+                    is_main_expr = (pl.col("prev_day_contract_role_tier") == 1.0)
+                else:
+                    is_main_expr = pl.lit(False)
+
+                has_episode_cols = (
+                    "position" in detail_df.columns
+                    and "mark_price" in detail_df.columns
+                    and "unrealized_pnl" in detail_df.columns
+                )
+                if has_episode_cols:
+                    sign_expr = (
+                        pl.when(pl.col("position") > 1e-6)
+                        .then(1)
+                        .when(pl.col("position") < -1e-6)
+                        .then(-1)
+                        .otherwise(0)
+                    )
+                    prev_sign_expr = sign_expr.shift(1).over(
+                        ["candidate_id", "contract", "initial_action"]
+                    )
+                    new_ep_expr = (sign_expr != 0) & (
+                        (sign_expr != prev_sign_expr) | prev_sign_expr.is_null()
+                    )
+                    ep_id_expr = new_ep_expr.cast(pl.Int64).cum_sum()
+                    active_ep_expr = (
+                        pl.when(pl.col("position").abs() > 1e-6)
+                        .then(ep_id_expr)
+                        .otherwise(None)
+                    )
+
+                    loss_rate_expr = (
+                        pl.when(
+                            (pl.col("position").abs() > 1e-6)
+                            & (pl.col("mark_price") > 1e-6)
+                        )
+                        .then(
+                            (-pl.col("unrealized_pnl"))
+                            / (pl.col("position").abs() * pl.col("mark_price"))
+                        )
+                        .otherwise(0.0)
+                    )
+                    is_stopped_expr = (
+                        loss_rate_expr >= self.config.hard_stop_loss_threshold
+                    )
+
+                    detail_df = detail_df.with_columns(
+                        active_ep_expr.alias("active_ep_id"),
+                        is_stopped_expr.alias("is_stopped"),
+                    )
+                    detail_df = detail_df.with_columns(
+                        pl.when(pl.col("active_ep_id").is_not_null())
+                        .then(pl.col("is_stopped").max().over("active_ep_id"))
+                        .otherwise(False)
+                        .alias("ep_stopped")
+                    )
+
+                agg_exprs = [
+                    pl.col("reward").cast(pl.Float64).sum().alias("reward_sum"),
+                    pl.col("net_pnl").cast(pl.Float64).sum().alias("net_pnl_sum"),
+                    pl.len().alias("step_count"),
+                    is_main_expr.cast(pl.Int64).sum().alias("main_step_count"),
+                    pl.when(is_main_expr)
+                    .then(pl.col("net_pnl").cast(pl.Float64))
+                    .otherwise(pl.lit(0.0))
+                    .sum()
+                    .alias("main_net_pnl_sum"),
+                ]
+                if has_episode_cols:
+                    agg_exprs.extend([
+                        pl.col("active_ep_id")
+                        .drop_nulls()
+                        .n_unique()
+                        .alias("total_episodes"),
+                        pl.when(pl.col("ep_stopped"))
+                        .then(pl.col("active_ep_id"))
+                        .otherwise(None)
+                        .drop_nulls()
+                        .n_unique()
+                        .alias("stop_episodes"),
+                    ])
+                else:
+                    agg_exprs.extend([
+                        pl.lit(0).cast(pl.UInt32).alias("total_episodes"),
+                        pl.lit(0).cast(pl.UInt32).alias("stop_episodes"),
+                    ])
+
                 grouped = (
                     detail_df.group_by([
                         "candidate_id",
@@ -867,10 +1050,7 @@ class TwoDimensionalAgentSelector:
                         "volatility_label",
                         "slope_label",
                     ])
-                    .agg(
-                        pl.col("reward").cast(pl.Float64).sum().alias("reward_sum"),
-                        pl.len().alias("step_count"),
-                    )
+                    .agg(agg_exprs)
                     .with_columns(
                         pl.lit(0.0).alias("turnover_sum"),
                         pl.lit(epoch_number).cast(pl.Int64).alias("epoch_number"),
@@ -898,8 +1078,13 @@ class TwoDimensionalAgentSelector:
             joint_rows.group_by(group_keys)
             .agg(
                 pl.col("reward_sum").sum().alias("reward_sum"),
+                pl.col("net_pnl_sum").sum().alias("net_pnl_sum"),
                 pl.col("step_count").sum().alias("step_count"),
                 pl.col("turnover_sum").sum().alias("turnover_sum"),
+                pl.col("main_step_count").sum().alias("main_step_count"),
+                pl.col("main_net_pnl_sum").sum().alias("main_net_pnl_sum"),
+                pl.col("total_episodes").sum().alias("total_episodes"),
+                pl.col("stop_episodes").sum().alias("stop_episodes"),
             )
         )
         print(
@@ -981,15 +1166,30 @@ class TwoDimensionalAgentSelector:
         self, rows: pl.DataFrame, *, group_keys: list[str]
     ) -> pl.DataFrame:
         base_keys = group_keys + ["contract", "initial_action"]
+        has_net_pnl = "net_pnl_sum" in rows.columns and self.config.reward_metric == "realized_net_pnl"
+        agg_list = [
+            pl.col("reward_sum").sum().alias("reward_sum"),
+            pl.col("step_count").sum().alias("step_count"),
+            pl.col("turnover_sum").sum().alias("turnover_sum"),
+        ]
+        if has_net_pnl:
+            agg_list.append(pl.col("net_pnl_sum").sum().alias("net_pnl_sum"))
+        if "main_step_count" in rows.columns:
+            agg_list.extend([
+                pl.col("main_step_count").sum().alias("main_step_count"),
+                pl.col("main_net_pnl_sum").sum().alias("main_net_pnl_sum"),
+                pl.col("total_episodes").sum().alias("total_episodes"),
+                pl.col("stop_episodes").sum().alias("stop_episodes"),
+            ])
+
         contract_position = (
             rows.group_by(base_keys)
-            .agg(
-                pl.col("reward_sum").sum().alias("reward_sum"),
-                pl.col("step_count").sum().alias("step_count"),
-                pl.col("turnover_sum").sum().alias("turnover_sum"),
-            )
+            .agg(agg_list)
             .with_columns(
-                (pl.col("reward_sum") / pl.col("step_count")).alias("return_per_step")
+                (
+                    (pl.col("net_pnl_sum") if has_net_pnl else pl.col("reward_sum"))
+                    / pl.col("step_count")
+                ).alias("return_per_step")
             )
         )
 
@@ -1103,13 +1303,36 @@ class TwoDimensionalAgentSelector:
             )
         )
 
+        totals_aggs = [
+            pl.col("step_count").sum().alias("step_count"),
+            pl.col("turnover_sum").sum().alias("turnover_sum"),
+        ]
+        if "main_step_count" in contract_position.columns:
+            totals_aggs.extend([
+                pl.col("main_step_count").sum().alias("main_step_count"),
+                pl.col("main_net_pnl_sum").sum().alias("main_net_pnl_sum"),
+                pl.col("total_episodes").sum().alias("total_episodes"),
+                pl.col("stop_episodes").sum().alias("stop_episodes"),
+            ])
+
         totals = (
             contract_position.group_by(group_keys)
-            .agg(
-                pl.col("step_count").sum().alias("step_count"),
-                pl.col("turnover_sum").sum().alias("turnover_sum"),
-            )
+            .agg(totals_aggs)
         )
+        if "main_step_count" in totals.columns:
+            totals = totals.with_columns(
+                pl.when(pl.col("main_step_count") > 0)
+                .then(pl.col("main_net_pnl_sum") / pl.col("main_step_count"))
+                .otherwise(0.0)
+                .alias("mean_net_return_main"),
+                pl.when(pl.col("total_episodes") > 0)
+                .then(
+                    pl.col("stop_episodes").cast(pl.Float64)
+                    / pl.col("total_episodes").cast(pl.Float64)
+                )
+                .otherwise(0.0)
+                .alias("hard_stop_loss_episode_ratio"),
+            )
 
         cols_order = group_keys + [
             "mean_return_per_step",
@@ -1123,6 +1346,14 @@ class TwoDimensionalAgentSelector:
             "step_count",
             "turnover_sum",
         ]
+        if "mean_net_return_main" in totals.columns:
+            cols_order.extend([
+                "mean_net_return_main",
+                "hard_stop_loss_episode_ratio",
+                "main_step_count",
+                "total_episodes",
+                "stop_episodes",
+            ])
 
         return (
             contract_metrics.join(position_metrics, on=group_keys, how="inner")
@@ -1174,17 +1405,31 @@ class TwoDimensionalAgentSelector:
                 ).row(0, named=True)
                 joint_row_count = int(support_row["joint_row_count"])
                 joint_contract_count = int(support_row["joint_contract_count"])
+                traffic_tier = support_row.get("traffic_tier", "peripheral")
+
+                if self.config.enable_traffic_tiering:
+                    if traffic_tier == "core":
+                        req_joint_contracts = self.config.core_slot_min_joint_contracts
+                        req_pos_ratio = self.config.core_slot_min_positive_contract_ratio
+                    else:
+                        req_joint_contracts = self.config.peripheral_slot_min_joint_contracts
+                        req_pos_ratio = self.config.peripheral_slot_min_positive_contract_ratio
+                else:
+                    req_joint_contracts = self.config.min_joint_contracts
+                    req_pos_ratio = self.config.min_positive_contract_ratio
+
                 pair = pair.with_columns(
                     pl.lit(slot_id).alias("slot_id"),
                     pl.lit(joint_row_count).alias("joint_row_count"),
                     pl.lit(joint_contract_count).alias(
                         "joint_contract_count"
                     ),
+                    pl.lit(traffic_tier).alias("traffic_tier"),
                 )
 
                 has_joint_data = (
                     joint_row_count > 0
-                    and joint_contract_count >= self.config.min_joint_contracts
+                    and joint_contract_count >= req_joint_contracts
                 )
 
                 if has_joint_data:
@@ -1193,6 +1438,8 @@ class TwoDimensionalAgentSelector:
                         volatility_label=volatility_label,
                         slope_label=slope_label,
                         mode="joint",
+                        req_joint_contracts=req_joint_contracts,
+                        req_pos_ratio=req_pos_ratio,
                     )
                     pair = pair.sort(
                         by=["eligible", "pair_score", "mean_lcb", "epoch_number", "bin_index"],
@@ -1226,6 +1473,7 @@ class TwoDimensionalAgentSelector:
                             slope_label,
                             pair,
                             support_row,
+                            req_joint_contracts=req_joint_contracts,
                         )
                         slots.append(slot_dict)
                         print(
@@ -1286,6 +1534,8 @@ class TwoDimensionalAgentSelector:
                             volatility_label=volatility_label,
                             slope_label=slope_label,
                             mode="joint",
+                            req_joint_contracts=req_joint_contracts,
+                            req_pos_ratio=req_pos_ratio,
                         )
                         pair = pair.sort(
                             by=["eligible", "pair_score", "mean_lcb", "epoch_number", "bin_index"],
@@ -1301,6 +1551,7 @@ class TwoDimensionalAgentSelector:
                             slope_label,
                             pair,
                             support_row,
+                            req_joint_contracts=req_joint_contracts,
                         )
                         slots.append(slot_dict)
                         print(
@@ -1309,7 +1560,7 @@ class TwoDimensionalAgentSelector:
                             flush=True,
                         )
 
-        return pl.concat(rankings), pl.DataFrame(slots)
+        return pl.concat(rankings, how="diagonal_relaxed"), pl.DataFrame(slots)
 
     def _pair_candidates(
         self,
@@ -1369,8 +1620,20 @@ class TwoDimensionalAgentSelector:
         volatility_label: str | None = None,
         slope_label: str | None = None,
         mode: str = "joint",
+        req_joint_contracts: int | None = None,
+        req_pos_ratio: float | None = None,
     ) -> pl.DataFrame:
         if mode == "joint":
+            effective_req_joint_contracts = (
+                req_joint_contracts
+                if req_joint_contracts is not None
+                else self.config.min_joint_contracts
+            )
+            effective_req_pos_ratio = (
+                req_pos_ratio
+                if req_pos_ratio is not None
+                else self.config.min_positive_contract_ratio
+            )
             lcb_columns = [
                 "lcb_return_per_step_volatility_run",
                 "lcb_return_per_step_slope_run",
@@ -1396,7 +1659,7 @@ class TwoDimensionalAgentSelector:
             gate_exprs = {
                 "joint_support": (
                     pl.col("joint_contract_count").fill_null(0)
-                    >= self.config.min_joint_contracts
+                    >= effective_req_joint_contracts
                 ),
                 "marginal_contracts": pl.lit(True),
                 "mean_return": (
@@ -1425,14 +1688,72 @@ class TwoDimensionalAgentSelector:
                 "positive_contract_ratio": (
                     (
                         pl.col("positive_contract_ratio_volatility_run")
-                        >= self.config.min_positive_contract_ratio
+                        >= effective_req_pos_ratio
                     )
                     & (
                         pl.col("positive_contract_ratio_slope_run")
-                        >= self.config.min_positive_contract_ratio
+                        >= effective_req_pos_ratio
                     )
                 ).fill_null(False),
             }
+            if self.config.enable_conjunctive_gates:
+                vol_marginal_check = (
+                    pl.col("mean_return_per_step_volatility") > self.config.min_mean_return
+                )
+                if self.config.min_lcb > 0:
+                    vol_marginal_check = vol_marginal_check & (
+                        pl.col("lcb_return_per_step_volatility") > self.config.min_lcb
+                    )
+                gate_exprs["marginal_volatility"] = vol_marginal_check.fill_null(False)
+
+                slope_marginal_check = (
+                    pl.col("mean_return_per_step_slope") > self.config.min_mean_return
+                )
+                if self.config.min_lcb > 0:
+                    slope_marginal_check = slope_marginal_check & (
+                        pl.col("lcb_return_per_step_slope") > self.config.min_lcb
+                    )
+                gate_exprs["marginal_slope"] = slope_marginal_check.fill_null(False)
+            if self.config.enable_main_contract_sub_gate:
+                vol_main_check = (
+                    pl.when(
+                        pl.col("main_step_count_volatility_run").fill_null(0)
+                        >= self.config.min_main_steps
+                    )
+                    .then(pl.col("mean_net_return_main_volatility_run") > 0.0)
+                    .otherwise(True)
+                )
+                slope_main_check = (
+                    pl.when(
+                        pl.col("main_step_count_slope_run").fill_null(0)
+                        >= self.config.min_main_steps
+                    )
+                    .then(pl.col("mean_net_return_main_slope_run") > 0.0)
+                    .otherwise(True)
+                )
+                gate_exprs["daily_main_contract"] = (
+                    vol_main_check & slope_main_check
+                ).fill_null(False)
+            if self.config.enable_hard_stop_loss_gate:
+                vol_stop_check = (
+                    pl.when(pl.col("total_episodes_volatility_run").fill_null(0) > 0)
+                    .then(
+                        pl.col("hard_stop_loss_episode_ratio_volatility_run")
+                        <= self.config.max_hard_stop_loss_episode_ratio
+                    )
+                    .otherwise(True)
+                )
+                slope_stop_check = (
+                    pl.when(pl.col("total_episodes_slope_run").fill_null(0) > 0)
+                    .then(
+                        pl.col("hard_stop_loss_episode_ratio_slope_run")
+                        <= self.config.max_hard_stop_loss_episode_ratio
+                    )
+                    .otherwise(True)
+                )
+                gate_exprs["hard_stop_loss"] = (
+                    vol_stop_check & slope_stop_check
+                ).fill_null(False)
         elif mode == "slope_marginal":
             lcb_columns = [
                 "lcb_return_per_step_slope",
@@ -1478,6 +1799,20 @@ class TwoDimensionalAgentSelector:
                     >= self.config.min_positive_contract_ratio
                 ).fill_null(False),
             }
+            if self.config.enable_conjunctive_gates:
+                gate_exprs["marginal_volatility"] = pl.lit(True)
+                slope_marginal_check = (
+                    pl.col("mean_return_per_step_slope") > self.config.min_mean_return
+                )
+                if self.config.min_lcb > 0:
+                    slope_marginal_check = slope_marginal_check & (
+                        pl.col("lcb_return_per_step_slope") > self.config.min_lcb
+                    )
+                gate_exprs["marginal_slope"] = slope_marginal_check.fill_null(False)
+            if self.config.enable_main_contract_sub_gate:
+                gate_exprs["daily_main_contract"] = pl.lit(True)
+            if self.config.enable_hard_stop_loss_gate:
+                gate_exprs["hard_stop_loss"] = pl.lit(True)
         else:
             raise ValueError(f"unsupported selection gate mode: {mode!r}")
 
@@ -1513,6 +1848,7 @@ class TwoDimensionalAgentSelector:
             "slot_id": slot_id,
             "volatility_label": volatility_label,
             "slope_label": slope_label,
+            "traffic_tier": support.get("traffic_tier", "peripheral"),
             "kind": "model",
             "candidate_id": selected["candidate_id"],
             "epoch_number": int(selected["epoch_number"]),
@@ -1533,10 +1869,16 @@ class TwoDimensionalAgentSelector:
         slope_label: str,
         pair: pl.DataFrame,
         support: dict[str, Any],
+        req_joint_contracts: int | None = None,
     ) -> dict[str, Any]:
+        min_contracts = (
+            req_joint_contracts
+            if req_joint_contracts is not None
+            else self.config.min_joint_contracts
+        )
         if int(support["joint_row_count"]) == 0:
             reason = "no_joint_validation_rows"
-        elif int(support["joint_contract_count"]) < self.config.min_joint_contracts:
+        elif int(support["joint_contract_count"]) < min_contracts:
             reason = "insufficient_joint_contract_coverage"
         else:
             reason = "no_candidate_passed_all_profitability_and_stability_gates"
@@ -1545,6 +1887,7 @@ class TwoDimensionalAgentSelector:
             "slot_id": slot_id,
             "volatility_label": volatility_label,
             "slope_label": slope_label,
+            "traffic_tier": support.get("traffic_tier", "peripheral"),
             "kind": "empty_model",
             "candidate_id": None,
             "epoch_number": None,
@@ -1658,6 +2001,10 @@ def _selected_metric_columns(row: dict[str, Any]) -> dict[str, Any]:
         "worst_initial_position_return_slope",
         "worst_initial_position_return_volatility_run",
         "worst_initial_position_return_slope_run",
+        "mean_net_return_main_volatility_run",
+        "mean_net_return_main_slope_run",
+        "hard_stop_loss_episode_ratio_volatility_run",
+        "hard_stop_loss_episode_ratio_slope_run",
     ]
     return {
         name: (
@@ -1852,6 +2199,86 @@ def build_parser() -> argparse.ArgumentParser:
         help="Minimum step count for a contract within an individual 2D grid cell to be included (default: min_slice_steps).",
     )
     parser.add_argument(
+        "--enable_conjunctive_gates",
+        action="store_true",
+        help="Enable conjunctive marginal and joint gates (ADR-0059).",
+    )
+    parser.add_argument(
+        "--enable_traffic_tiering",
+        action="store_true",
+        help="Enable traffic-aware tiered evidence thresholds for core vs peripheral slots (ADR-0059).",
+    )
+    parser.add_argument(
+        "--core_slot_min_steps_ratio",
+        type=float,
+        default=0.10,
+        help="Minimum validation steps ratio to classify slot as core (default: 0.10).",
+    )
+    parser.add_argument(
+        "--core_slot_min_contracts",
+        type=int,
+        default=5,
+        help="Minimum validation contracts to classify slot as core (default: 5).",
+    )
+    parser.add_argument(
+        "--core_slot_min_joint_contracts",
+        type=int,
+        default=3,
+        help="Minimum joint contracts required for core slots (default: 3).",
+    )
+    parser.add_argument(
+        "--core_slot_min_positive_contract_ratio",
+        type=float,
+        default=0.60,
+        help="Minimum positive contract ratio for core slots (default: 0.60).",
+    )
+    parser.add_argument(
+        "--peripheral_slot_min_joint_contracts",
+        type=int,
+        default=3,
+        help="Minimum joint contracts required for peripheral slots (default: 3).",
+    )
+    parser.add_argument(
+        "--peripheral_slot_min_positive_contract_ratio",
+        type=float,
+        default=0.60,
+        help="Minimum positive contract ratio for peripheral slots (default: 0.60).",
+    )
+    parser.add_argument(
+        "--reward_metric",
+        choices=["reward", "realized_net_pnl"],
+        default="reward",
+        help="Return metric for agent selection: 'reward' (environment mark-to-market equity delta net of fee/slippage) or 'realized_net_pnl' (realized closed PnL net of fee/slippage). Default: reward.",
+    )
+    parser.add_argument(
+        "--enable_main_contract_sub_gate",
+        action="store_true",
+        help="Enable daily main contract net return sub-gate (ADR-0059).",
+    )
+    parser.add_argument(
+        "--min_main_steps",
+        type=int,
+        default=100,
+        help="Minimum steps on daily main contract required to enforce sub-gate (default: 100).",
+    )
+    parser.add_argument(
+        "--enable_hard_stop_loss_gate",
+        action="store_true",
+        help="Enable counterfactual hard stop loss gate (ADR-0059).",
+    )
+    parser.add_argument(
+        "--hard_stop_loss_threshold",
+        type=float,
+        default=0.03,
+        help="Hard stop loss max drawdown threshold per episode (default: 0.03).",
+    )
+    parser.add_argument(
+        "--max_hard_stop_loss_episode_ratio",
+        type=float,
+        default=0.10,
+        help="Maximum allowed ratio of hard stop loss episodes (default: 0.10).",
+    )
+    parser.add_argument(
         "--output_dir",
         help="Override the default two_dimensional_selection output directory.",
     )
@@ -1905,6 +2332,20 @@ def main() -> None:
         contract_weighting=args.contract_weighting,
         min_slice_steps=args.min_slice_steps,
         min_grid_slice_steps=args.min_grid_slice_steps,
+        enable_conjunctive_gates=args.enable_conjunctive_gates,
+        enable_traffic_tiering=args.enable_traffic_tiering,
+        core_slot_min_steps_ratio=args.core_slot_min_steps_ratio,
+        core_slot_min_contracts=args.core_slot_min_contracts,
+        core_slot_min_joint_contracts=args.core_slot_min_joint_contracts,
+        core_slot_min_positive_contract_ratio=args.core_slot_min_positive_contract_ratio,
+        peripheral_slot_min_joint_contracts=args.peripheral_slot_min_joint_contracts,
+        peripheral_slot_min_positive_contract_ratio=args.peripheral_slot_min_positive_contract_ratio,
+        enable_main_contract_sub_gate=args.enable_main_contract_sub_gate,
+        min_main_steps=args.min_main_steps,
+        enable_hard_stop_loss_gate=args.enable_hard_stop_loss_gate,
+        hard_stop_loss_threshold=args.hard_stop_loss_threshold,
+        max_hard_stop_loss_episode_ratio=args.max_hard_stop_loss_episode_ratio,
+        reward_metric=args.reward_metric,
     )
     artifacts = TwoDimensionalAgentSelector(config).select(
         candidate_root,
