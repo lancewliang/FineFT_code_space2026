@@ -686,3 +686,66 @@ def test_detail_csv_with_mixed_numeric_schema_parses_without_compute_error(tmp_p
     selector = TwoDimensionalAgentSelector(config)
     artifacts = selector.select(candidate_root, valid_root)
     assert artifacts.selected_slots.height > 0
+
+
+def test_ensemble_traffic_coverage_fail_fast_and_sparse_bypass(tmp_path: Path) -> None:
+    contracts = ["fu2409"]
+    timestamps = [f"2026-01-01 {hour:02d}:00:00" for hour in range(9, 13)]
+    analysis_rows = [{
+        "标签": "label_0",
+        "初始动作": 0,
+        "分箱索引": 0,
+        "合约": json.dumps(contracts),
+        "数据文件": json.dumps([f"{c}/label_0/df_0.feather" for c in contracts]),
+        "奖励总和": json.dumps([0.80]),
+        "数据长度": json.dumps([len(timestamps) + 1]),
+        "换手率": json.dumps([0.10]),
+    }]
+    detail_rows = [{
+        "标签": "label_0",
+        "数据文件": "fu2409/label_0/df_0.feather",
+        "初始动作": 0,
+        "分箱索引": 0,
+        "时间戳": ts,
+        "单步奖励": 0.20,
+    } for ts in timestamps]
+
+    valid_labels = {
+        "volatility": {c: {"label_0": timestamps} for c in contracts},
+        "slope": {c: {"label_0": timestamps} for c in contracts},
+    }
+
+    candidate_root, valid_root = _setup_mock_environment(
+        tmp_path,
+        epoch_num=1,
+        vol_analysis_rows=analysis_rows,
+        slope_analysis_rows=analysis_rows,
+        vol_detail_rows=detail_rows,
+        slope_detail_rows=detail_rows,
+        valid_labels=valid_labels,
+    )
+
+    # Requires 4 joint contracts, but only 1 exists -> Slot 0 becomes empty_model -> coverage = 0.0%
+    strict_config = SelectionConfig(
+        num_labels=1,
+        min_marginal_contracts=1,
+        min_joint_contracts=4,
+        missing_joint_policy="empty_model",
+        min_ensemble_traffic_coverage=0.40,
+        allow_sparse_ensemble=False,
+    )
+    with pytest.raises(RuntimeError, match="Ensemble traffic coverage 0.00% is below required minimum"):
+        TwoDimensionalAgentSelector(strict_config).select(candidate_root, valid_root)
+
+    # With allow_sparse_ensemble=True, it succeeds
+    sparse_config = SelectionConfig(
+        num_labels=1,
+        min_marginal_contracts=1,
+        min_joint_contracts=4,
+        missing_joint_policy="empty_model",
+        min_ensemble_traffic_coverage=0.40,
+        allow_sparse_ensemble=True,
+    )
+    artifacts = TwoDimensionalAgentSelector(sparse_config).select(candidate_root, valid_root)
+    assert artifacts.selected_slots.row(0, named=True)["kind"] == "empty_model"
+    assert artifacts.manifest.artifacts.traffic_coverage_ratio == 0.0

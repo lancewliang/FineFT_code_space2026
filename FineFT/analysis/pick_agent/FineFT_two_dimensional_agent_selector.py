@@ -113,6 +113,8 @@ class SelectionConfig:
     hard_stop_loss_threshold: float = 0.03
     max_hard_stop_loss_episode_ratio: float = 0.10
     reward_metric: str = "reward"
+    min_ensemble_traffic_coverage: float = 0.0
+    allow_sparse_ensemble: bool = False
 
     @property
     def effective_min_grid_slice_steps(self) -> int:
@@ -232,12 +234,16 @@ class SelectionMetricDefinition:
 class SelectionManifestArtifacts:
     model_assembly: str = "not_performed"
     high_level_model_change: str = "not_performed"
+    traffic_coverage_ratio: float | None = None
 
-    def to_dict(self) -> dict[str, str]:
-        return {
+    def to_dict(self) -> dict[str, Any]:
+        res: dict[str, Any] = {
             "model_assembly": self.model_assembly,
             "high_level_model_change": self.high_level_model_change,
         }
+        if self.traffic_coverage_ratio is not None:
+            res["traffic_coverage_ratio"] = self.traffic_coverage_ratio
+        return res
 
 
 @dataclass
@@ -329,9 +335,15 @@ class TwoDimensionalSelectionManifest:
                 joint_context_note=str(metric_def_data["joint_context_note"]),
             ),
             artifacts=SelectionManifestArtifacts(
-                model_assembly=str(artifacts_data["model_assembly"]),
+                model_assembly=str(artifacts_data.get("model_assembly", "not_performed")),
                 high_level_model_change=str(
-                    artifacts_data["high_level_model_change"]
+                    artifacts_data.get("high_level_model_change", "not_performed")
+                ),
+                traffic_coverage_ratio=(
+                    float(artifacts_data["traffic_coverage_ratio"])
+                    if "traffic_coverage_ratio" in artifacts_data
+                    and artifacts_data["traffic_coverage_ratio"] is not None
+                    else None
                 ),
             ),
             slots=list(data["slots"]),
@@ -449,7 +461,7 @@ class TwoDimensionalAgentSelector:
             flush=True,
         )
 
-        rankings, slots = self._select_grid(
+        rankings, slots, traffic_coverage_ratio = self._select_grid(
             marginal_metrics, joint_metrics, joint_support
         )
         manifest = self._build_manifest(
@@ -458,6 +470,7 @@ class TwoDimensionalAgentSelector:
             result_files,
             coverage,
             slots,
+            traffic_coverage_ratio=traffic_coverage_ratio,
         )
         print(
             f"2D agent selection completed in {time.time() - t0:.1f}s.",
@@ -1560,7 +1573,34 @@ class TwoDimensionalAgentSelector:
                             flush=True,
                         )
 
-        return pl.concat(rankings, how="diagonal_relaxed"), pl.DataFrame(slots)
+        total_timestamps = max(1, joint_support["joint_row_count"].sum())
+        covered_timestamps = sum(
+            int(s["joint_row_count"]) for s in slots if s.get("kind") == "model"
+        )
+        traffic_coverage_ratio = float(covered_timestamps / total_timestamps)
+        print(
+            f"      Selected 2D grid traffic coverage: {traffic_coverage_ratio:.2%} "
+            f"({covered_timestamps}/{total_timestamps} timestamps).",
+            flush=True,
+        )
+
+        if not self.config.allow_sparse_ensemble and self.config.min_ensemble_traffic_coverage > 0.0:
+            if self.config.enable_traffic_tiering:
+                core_slots = [s for s in slots if s.get("traffic_tier") == "core"]
+                if core_slots and all(s.get("kind") == "empty_model" for s in core_slots):
+                    raise RuntimeError(
+                        f"All {len(core_slots)} core slots in the ensemble failed selection gates "
+                        f"(traffic_coverage_ratio={traffic_coverage_ratio:.2%}). "
+                        "Pass --allow_sparse_ensemble to bypass this safety gate."
+                    )
+            if traffic_coverage_ratio < self.config.min_ensemble_traffic_coverage:
+                raise RuntimeError(
+                    f"Ensemble traffic coverage {traffic_coverage_ratio:.2%} is below required minimum "
+                    f"{self.config.min_ensemble_traffic_coverage:.2%}. "
+                    "Pass --allow_sparse_ensemble to bypass this safety gate."
+                )
+
+        return pl.concat(rankings, how="diagonal_relaxed"), pl.DataFrame(slots), traffic_coverage_ratio
 
     def _pair_candidates(
         self,
@@ -1920,6 +1960,7 @@ class TwoDimensionalAgentSelector:
         result_files: dict[int, dict[str, Path]],
         coverage: CandidateCoverage,
         slots: pl.DataFrame,
+        traffic_coverage_ratio: float | None = None,
     ) -> TwoDimensionalSelectionManifest:
         return TwoDimensionalSelectionManifest(
             schema_version=1,
@@ -1948,6 +1989,7 @@ class TwoDimensionalAgentSelector:
             artifacts=SelectionManifestArtifacts(
                 model_assembly="not_performed",
                 high_level_model_change="not_performed",
+                traffic_coverage_ratio=traffic_coverage_ratio,
             ),
             slots=slots.to_dicts(),
         )
@@ -2279,6 +2321,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum allowed ratio of hard stop loss episodes (default: 0.10).",
     )
     parser.add_argument(
+        "--min_ensemble_traffic_coverage",
+        type=float,
+        default=0.40,
+        help="Minimum required validation traffic coverage ratio across non-empty slots before triggering fail-fast (default: 0.40).",
+    )
+    parser.add_argument(
+        "--allow_sparse_ensemble",
+        action="store_true",
+        help="Allow ensemble with traffic coverage below threshold or all core slots empty (ADR-0061).",
+    )
+    parser.add_argument(
         "--output_dir",
         help="Override the default two_dimensional_selection output directory.",
     )
@@ -2346,6 +2399,8 @@ def main() -> None:
         hard_stop_loss_threshold=args.hard_stop_loss_threshold,
         max_hard_stop_loss_episode_ratio=args.max_hard_stop_loss_episode_ratio,
         reward_metric=args.reward_metric,
+        min_ensemble_traffic_coverage=args.min_ensemble_traffic_coverage,
+        allow_sparse_ensemble=args.allow_sparse_ensemble,
     )
     artifacts = TwoDimensionalAgentSelector(config).select(
         candidate_root,

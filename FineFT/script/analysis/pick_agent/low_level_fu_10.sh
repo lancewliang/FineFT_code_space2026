@@ -14,7 +14,7 @@ EXPERIMENT_NAME=${EXPERIMENT_NAME:-10min_parallel}
 BASE_PATH=${BASE_PATH:-dataset/10min}
 POSITION_CHOICES=${POSITION_CHOICES:-3}
 NUM_LABELS=${NUM_LABELS:-${NUM_LABEL:-3}}
-LCB_Z=${LCB_Z:-0.20}
+LCB_Z=${LCB_Z:-1.0}
 MIN_MARGINAL_CONTRACTS=${MIN_MARGINAL_CONTRACTS:-1}
 MIN_JOINT_CONTRACTS=${MIN_JOINT_CONTRACTS:-3}
 MIN_POSITIVE_CONTRACT_RATIO=${MIN_POSITIVE_CONTRACT_RATIO:-0.60}
@@ -37,6 +37,8 @@ ENABLE_MAIN_CONTRACT_SUB_GATE=${ENABLE_MAIN_CONTRACT_SUB_GATE:-1}
 ENABLE_HARD_STOP_LOSS_GATE=${ENABLE_HARD_STOP_LOSS_GATE:-0}
 MAX_HARD_STOP_LOSS_EPISODE_RATIO=${MAX_HARD_STOP_LOSS_EPISODE_RATIO:-0.30}
 REWARD_METRIC=${REWARD_METRIC:-reward}
+MIN_ENSEMBLE_TRAFFIC_COVERAGE=${MIN_ENSEMBLE_TRAFFIC_COVERAGE:-0.40}
+ALLOW_SPARSE_ENSEMBLE=${ALLOW_SPARSE_ENSEMBLE:-0}
 
 mkdir -p "log/analysis/pick_agent/DiHFT/${DATASET_NAME}"
 
@@ -62,6 +64,7 @@ CMD_ARGS=(
     --min_grid_slice_steps "${MIN_GRID_SLICE_STEPS}"
     --max_hard_stop_loss_episode_ratio "${MAX_HARD_STOP_LOSS_EPISODE_RATIO}"
     --reward_metric "${REWARD_METRIC}"
+    --min_ensemble_traffic_coverage "${MIN_ENSEMBLE_TRAFFIC_COVERAGE}"
 )
 
 if [ "${ENABLE_CONJUNCTIVE_GATES}" = "1" ]; then
@@ -81,6 +84,9 @@ if [ "${ENABLE_MAIN_CONTRACT_SUB_GATE}" = "1" ]; then
 fi
 if [ "${ENABLE_HARD_STOP_LOSS_GATE}" = "1" ]; then
     CMD_ARGS+=(--enable_hard_stop_loss_gate)
+fi
+if [ "${ALLOW_SPARSE_ENSEMBLE}" = "1" ]; then
+    CMD_ARGS+=(--allow_sparse_ensemble)
 fi
 
 nohup python -u FineFT/analysis/pick_agent/FineFT_two_dimensional_agent_selector.py \
