@@ -852,6 +852,7 @@ class vae_risk_aware_routing:
     audit_predictions: list[dict[str, Any]] = []
     audit_trades: list[dict[str, Any]] = []
     df: pd.DataFrame | None = None
+    is_terminal_defense_step: np.ndarray | None = None
 
     def __init__(self, args) -> None:
         # device
@@ -2354,7 +2355,8 @@ class vae_risk_aware_routing:
             else ""
         )
         decision_reason_str = ActionDecisionReasons(decision_reason).name
-        reference_price = float(env.current_markprice)
+        reference_price = float(getattr(env, "last_reference_price", env.current_markprice))
+        wc = getattr(env, "last_wallet_change", None)
         executed_position = float(env.position)
         commission = float(env.commission_fee_step)
         realized_pnl = float(env.realized_pnl_step)
@@ -2368,6 +2370,16 @@ class vae_risk_aware_routing:
 
         # 1. Reversal: old_position * target_position < 0 and executed_position != old_position
         if old_position * target_position < 0 and executed_position != old_position:
+            close_qty = float(getattr(wc, "closed_quantity", abs(old_position))) if wc else float(abs(old_position))
+            close_val = float(getattr(wc, "closed_value", 0.0)) if wc else 0.0
+            close_fee = float(getattr(wc, "closing_fee", commission / 2.0)) if wc else commission / 2.0
+            close_fill_p = (close_val / close_qty) if close_qty > 0 and close_val > 0 else reference_price
+
+            open_qty = float(getattr(wc, "opened_quantity", abs(executed_position))) if wc else float(abs(executed_position))
+            open_val = float(getattr(wc, "opened_value", 0.0)) if wc else 0.0
+            open_fee = float(getattr(wc, "opening_fee", commission / 2.0)) if wc else commission / 2.0
+            open_fill_p = (open_val / open_qty) if open_qty > 0 and open_val > 0 else reference_price
+
             trade_close = TradeRecord(
                 trade_id=build_trade_id(run_id, contract, step_index, leg=0),
                 decision_id=decision_id,
@@ -2384,11 +2396,11 @@ class vae_risk_aware_routing:
                 requested_position=0.0,
                 executed_position=0.0,
                 requested_quantity=float(abs(old_position)),
-                executed_quantity=float(abs(old_position)),
-                remaining_quantity=0.0,
+                executed_quantity=close_qty,
+                remaining_quantity=float(max(0.0, abs(old_position) - close_qty)),
                 reference_price=reference_price,
-                fill_price=reference_price,
-                commission=commission / 2.0,
+                fill_price=close_fill_p,
+                commission=close_fee,
                 realized_pnl=realized_pnl,
                 slippage=slippage / 2.0,
                 pre_snapshot_id=pre_snapshot_id,
@@ -2410,11 +2422,11 @@ class vae_risk_aware_routing:
                 requested_position=float(target_position),
                 executed_position=float(executed_position),
                 requested_quantity=float(abs(target_position)),
-                executed_quantity=float(abs(executed_position)),
-                remaining_quantity=float(max(0.0, abs(target_position) - abs(executed_position))),
+                executed_quantity=open_qty,
+                remaining_quantity=float(max(0.0, abs(target_position) - open_qty)),
                 reference_price=reference_price,
-                fill_price=reference_price,
-                commission=commission / 2.0,
+                fill_price=open_fill_p,
+                commission=open_fee,
                 realized_pnl=0.0,
                 slippage=slippage / 2.0,
                 pre_snapshot_id=pre_snapshot_id,
@@ -2490,8 +2502,6 @@ class vae_risk_aware_routing:
         # 4. Partial fill or full fill
         req_qty = float(abs(target_position - old_position))
         exec_qty = float(abs(executed_position - old_position))
-        rem_qty = float(max(0.0, req_qty - exec_qty))
-        is_partial = rem_qty > 1e-6 and exec_qty > 0
 
         if old_position == 0:
             ev_type = "open"
@@ -2502,10 +2512,19 @@ class vae_risk_aware_routing:
         else:
             ev_type = "close"
 
-        if executed_position > old_position:
-            fill_p = reference_price + (slippage / exec_qty if exec_qty > 0 and slippage > 0 else 0.0)
+        if ev_type == "open":
+            exec_qty = float(getattr(wc, "opened_quantity", exec_qty)) if wc else exec_qty
+            exec_val = float(getattr(wc, "opened_value", 0.0)) if wc else 0.0
+            commission = float(getattr(wc, "opening_fee", commission)) if wc else commission
+            fill_p = (exec_val / exec_qty) if exec_qty > 0 and exec_val > 0 else reference_price
         else:
-            fill_p = reference_price - (slippage / exec_qty if exec_qty > 0 and slippage > 0 else 0.0)
+            exec_qty = float(getattr(wc, "closed_quantity", exec_qty)) if wc else exec_qty
+            exec_val = float(getattr(wc, "closed_value", 0.0)) if wc else 0.0
+            commission = float(getattr(wc, "closing_fee", commission)) if wc else commission
+            fill_p = (exec_val / exec_qty) if exec_qty > 0 and exec_val > 0 else reference_price
+
+        rem_qty = float(max(0.0, req_qty - exec_qty))
+        is_partial = rem_qty > 1e-6 and exec_qty > 0
 
         trade = TradeRecord(
             trade_id=build_trade_id(run_id, contract, step_index, leg=0),

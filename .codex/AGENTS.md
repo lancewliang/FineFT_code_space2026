@@ -4,7 +4,7 @@ use conda activate finetf run python script
 
 ### Issue tracker
 
-GitHub Issues for this repo. See `docs/agents/issue-tracker.md`.
+Local markdown files in `.scratch/`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

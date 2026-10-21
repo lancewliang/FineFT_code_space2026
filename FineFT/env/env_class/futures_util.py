@@ -26,6 +26,10 @@ class WalletChangeResult:
     opened_quantity: float = 0.0
     opened_value: float = 0.0
     opening_fee: float = 0.0
+    closed_quantity: float = 0.0
+    closed_value: float = 0.0
+    closing_fee: float = 0.0
+    reference_price: float = 0.0
 
     def legacy_tuple(self):
         return (
@@ -235,6 +239,7 @@ def change_of_wallet(
             slippage_step=slippage,
             commission_fee_step=0,
             realized_pnl_step=0,
+            reference_price=float(markprice),
         )
     else:
         if current_position * previous_position < 0:
@@ -251,6 +256,7 @@ def change_of_wallet(
                 slippage_step=0,
                 commission_fee_step=0,
                 realized_pnl_step=0,
+                reference_price=float(markprice),
             )
         elif max(current_position, previous_position) > 0:
             # 多头情况，分close long 和 open long
@@ -325,6 +331,10 @@ def change_of_wallet(
                     + leverage_result.slippage_step,
                     commission_fee_step=close_result.commission_fee_step,
                     realized_pnl_step=close_result.realized_pnl_step,
+                    closed_quantity=close_result.closed_quantity,
+                    closed_value=close_result.closed_value,
+                    closing_fee=close_result.closing_fee,
+                    reference_price=close_result.reference_price,
                 )
         elif min(current_position, previous_position) < 0:
             # 空头情况, 分close short 和 open short
@@ -400,6 +410,10 @@ def change_of_wallet(
                     + leverage_result.slippage_step,
                     commission_fee_step=close_result.commission_fee_step,
                     realized_pnl_step=close_result.realized_pnl_step,
+                    closed_quantity=close_result.closed_quantity,
+                    closed_value=close_result.closed_value,
+                    closing_fee=close_result.closing_fee,
+                    reference_price=close_result.reference_price,
                 )
 
 
@@ -449,6 +463,7 @@ def change_of_leverage(
         slippage_step=slippage,
         commission_fee_step=0,
         realized_pnl_step=0,
+        reference_price=float(markprice),
     )
 
 
@@ -536,6 +551,7 @@ def open_short_position(
         ),
         opened_value=open_value if current_position != previous_position else 0.0,
         opening_fee=commission_fee if current_position != previous_position else 0.0,
+        reference_price=float(markprice),
     )
 
 
@@ -595,6 +611,12 @@ def close_short_position(
         slippage_step=slippage,
         commission_fee_step=commission_fee,
         realized_pnl_step=realized_pnL,
+        closed_quantity=(
+            close_short_position if current_position != previous_position else 0.0
+        ),
+        closed_value=value if current_position != previous_position else 0.0,
+        closing_fee=commission_fee if current_position != previous_position else 0.0,
+        reference_price=float(markprice),
     )
 
 
@@ -678,6 +700,7 @@ def open_long_position(
         ),
         opened_value=open_value if current_position != previous_position else 0.0,
         opening_fee=commission_fee if current_position != previous_position else 0.0,
+        reference_price=float(markprice),
     )
 
 
@@ -736,6 +759,12 @@ def close_long_position(
         slippage_step=slippage,
         commission_fee_step=commission_fee,
         realized_pnl_step=realized_pnL,
+        closed_quantity=(
+            close_long_position if current_position != previous_position else 0.0
+        ),
+        closed_value=value if current_position != previous_position else 0.0,
+        closing_fee=commission_fee if current_position != previous_position else 0.0,
+        reference_price=float(markprice),
     )
 
 

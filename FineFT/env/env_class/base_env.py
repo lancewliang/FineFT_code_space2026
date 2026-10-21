@@ -359,8 +359,14 @@ class Base_Env(gym.Env):
         self.cumulative_commission_fee = 0
         self.cumulative_realized_pnl = 0
         self.cumulative_slippage = 0
+        self.last_wallet_change = None
+        self.last_reference_price = (
+            float(self.current_markprice) if hasattr(self, "current_markprice") else 0.0
+        )
 
     def _update_execution_metrics(self, wallet_change):
+        self.last_wallet_change = wallet_change
+        self.last_reference_price = float(getattr(wallet_change, "reference_price", 0.0))
         self.commission_fee_step = wallet_change.commission_fee_step
         self.realized_pnl_step = wallet_change.realized_pnl_step
         self.slippage_step = wallet_change.slippage_step

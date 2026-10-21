@@ -81,7 +81,6 @@ python -u FineFT/RL/DiHFT/high_level/vae_routing_final_result_macro_action.py \
     --long_estimated_rate 0 \
     --enable_non_main_contract_defense \
     --non_main_defense_mode "${NON_MAIN_DEFENSE_MODE}" \
-    --enable_delivery_month_defense --delivery_defense_days "${DELIVERY_DEFENSE_DAYS}" \
     --action_persistence "${ACTION_PERSISTENCE}" \
     --stop_loss_return_threshold "${STOP_LOSS_RETURN_THRESHOLD}" \
     --stop_loss_cooldown_steps "${STOP_LOSS_COOLDOWN_STEPS}" \
