@@ -41,6 +41,9 @@ class ArtifactNames:
     SUMMARY_METRICS_CSV: str = "summary_metrics.csv"
     PORTFOLIO_ACTION_TIMELINE_CSV: str = "portfolio_action_timeline.csv"
     PORTFOLIO_SUMMARY_MD: str = "portfolio_summary.md"
+    FROZEN_PRODUCTION_MANIFEST_JSON: str = "frozen_production_manifest.json"
+    FROZEN_TEST_COMPARISON_JSON: str = "frozen_test_comparison.json"
+    FROZEN_TEST_RUN_MARKER_JSON: str = "one_shot_test_run.json"
 
 
 class HistoryArtifactNames:

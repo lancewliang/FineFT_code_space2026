@@ -233,3 +233,15 @@ def test_online_rejected_add_holds_existing_position() -> None:
     decision = router.latest_utility_admission_decision
     assert decision.transition == "same_direction_add"
     assert router.audit_predictions[-1]["final_action"] == 3
+def test_circuit_breaker_preempts_utility_gate() -> None:
+    router = _router(_StaticUtilityGate(admitted=True, raises=True))
+    router.circuit_breaker_remaining_steps = 1
+
+    action = router.get_action(_info(), np.asarray([0.25]), 0.0, 5)
+
+    assert action == router.flat_action
+    assert router.latest_utility_admission_decision is None
+    assert (
+        router.action_decision_reason_history[-1]
+        == ActionDecisionReasons.CIRCUIT_BREAKER_SUSPENSION
+    )

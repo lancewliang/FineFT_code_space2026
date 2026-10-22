@@ -56,6 +56,21 @@ class PrequentialProtocol:
             raise ValueError("lambda_grid must contain only non-zero positive values")
         if not 0.0 <= self.ood_enter_threshold < self.ood_recover_threshold <= 1.0:
             raise ValueError("frozen OOD thresholds are invalid")
+        boundaries = tuple(
+            pd.Timestamp(value)
+            for value in (
+                self.initial_start,
+                self.initial_end,
+                self.fold_1_start,
+                self.fold_1_end,
+                self.fold_2_start,
+                self.fold_2_end,
+            )
+        )
+        if any(left >= right for left, right in zip(boundaries, boundaries[1:])):
+            raise ValueError(
+                "initial history and outer Fold boundaries must be strictly ordered"
+            )
 
     @property
     def valid_start(self) -> pd.Timestamp:

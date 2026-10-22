@@ -140,6 +140,11 @@ def test_frozen_protocol_change_invalidates_fingerprint() -> None:
     assert baseline.fingerprint != changed.fingerprint
 
 
+def test_outer_fold_boundaries_cannot_overlap_or_reuse_unseen_samples() -> None:
+    with pytest.raises(ValueError, match="strictly ordered"):
+        PrequentialProtocol(fold_2_start="2025-02-28")
+
+
 def test_embargo_removes_all_candidates_from_each_tail_decision_step() -> None:
     frame = pd.DataFrame(
         {

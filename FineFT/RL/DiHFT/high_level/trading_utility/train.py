@@ -118,6 +118,7 @@ def train_prequential_from_candidate_csv(
     feature_names: Sequence[str],
     random_seed: int = 42,
     backend: str = "auto",
+    code_version: str = "unspecified",
 ) -> Path:
     """Run the frozen two-Fold protocol and publish loadable production assets."""
     source = Path(episodes_csv)
@@ -184,6 +185,7 @@ def train_prequential_from_candidate_csv(
         "candidate_episode_sha256": _source_hash(source),
         "outer_predictions_sha256": _source_hash(outer_path),
         "high_level_gating_stack": "tri_module",
+        "code_version": str(code_version),
     }
     runtime_manifest = publish_runtime_manifest(
         output_dir=target / "runtime",
@@ -235,6 +237,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="run the frozen two-Fold workflow and publish the runtime manifest",
     )
+    parser.add_argument(
+        "--code-version",
+        default="unspecified",
+        help="immutable source revision recorded for production freeze compatibility",
+    )
     return parser
 
 
@@ -247,6 +254,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             feature_names=tuple(args.feature_names.split(",")),
             random_seed=args.random_seed,
             backend=args.backend,
+            code_version=args.code_version,
         )
     else:
         train_from_candidate_csv(

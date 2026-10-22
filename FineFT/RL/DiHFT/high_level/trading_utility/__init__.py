@@ -26,6 +26,12 @@ from RL.DiHFT.high_level.trading_utility.runtime import (
     load_utility_runtime,
     publish_runtime_manifest,
 )
+from RL.DiHFT.high_level.trading_utility.frozen_test import (
+    StackTestResult,
+    deterministic_frame_identity,
+    freeze_production_assets,
+    run_one_shot_test_comparison,
+)
 
 __all__ = [
     "CandidateEpisode",
@@ -44,4 +50,8 @@ __all__ = [
     "LoadedUtilityRuntime",
     "load_utility_runtime",
     "publish_runtime_manifest",
+    "StackTestResult",
+    "deterministic_frame_identity",
+    "freeze_production_assets",
+    "run_one_shot_test_comparison",
 ]

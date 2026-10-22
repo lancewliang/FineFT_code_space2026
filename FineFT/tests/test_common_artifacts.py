@@ -78,6 +78,12 @@ def test_artifact_names_literals() -> None:
     assert ArtifactNames.ID_LOGPX_NPY == "id_logpx.npy"
     assert ArtifactNames.OOD_LOGPX_ALL_NPY == "ood_logpx_all.npy"
     assert ArtifactNames.OOD_LOGPX_ALL_CSV == "ood_logpx_all.csv"
+    assert (
+        ArtifactNames.FROZEN_PRODUCTION_MANIFEST_JSON
+        == "frozen_production_manifest.json"
+    )
+    assert ArtifactNames.FROZEN_TEST_COMPARISON_JSON == "frozen_test_comparison.json"
+    assert ArtifactNames.FROZEN_TEST_RUN_MARKER_JSON == "one_shot_test_run.json"
 
 
 def test_history_artifact_names_literals_and_typo_compatibility() -> None:

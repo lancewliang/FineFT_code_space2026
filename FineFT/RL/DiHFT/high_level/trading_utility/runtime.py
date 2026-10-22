@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -41,7 +43,16 @@ def publish_runtime_manifest(
     bundle = UtilityModelBundle.load(bundle_path)
     _validate_protocol_manifest(protocol_manifest)
     calibrator_path = target / "utility_calibrator.joblib"
-    joblib.dump(calibrator, calibrator_path)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".utility_calibrator.", suffix=".joblib", dir=target
+    )
+    os.close(descriptor)
+    temporary_calibrator = Path(temporary_name)
+    try:
+        joblib.dump(calibrator, temporary_calibrator)
+        os.replace(temporary_calibrator, calibrator_path)
+    finally:
+        temporary_calibrator.unlink(missing_ok=True)
     core = {
         "schema_version": 1,
         "bundle_manifest": _asset_entry(bundle_path),
@@ -53,12 +64,21 @@ def publish_runtime_manifest(
         ),
         "feature_schema": list(bundle.feature_names),
     }
-    artifact_id = hashlib.sha256(
-        json.dumps(core, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    artifact_id = _runtime_artifact_id(core)
     payload = {**core, "artifact_id": artifact_id}
     path = target / "trading_utility_runtime_manifest.json"
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".utility_runtime.", suffix=".json", dir=target
+    )
+    os.close(descriptor)
+    temporary_manifest = Path(temporary_name)
+    try:
+        temporary_manifest.write_text(
+            json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        os.replace(temporary_manifest, path)
+    finally:
+        temporary_manifest.unlink(missing_ok=True)
     return path
 
 
@@ -92,10 +112,11 @@ def load_utility_runtime(manifest_path: str | Path) -> LoadedUtilityRuntime:
     for key in ("bundle_manifest", "calibrator", "eligibility_manifest"):
         _verify_asset(payload[key], key)
     core = {key: value for key, value in payload.items() if key != "artifact_id"}
-    expected_id = hashlib.sha256(
+    expected_id = _runtime_artifact_id(core)
+    legacy_path_bound_id = hashlib.sha256(
         json.dumps(core, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    if payload.get("artifact_id") != expected_id:
+    if payload.get("artifact_id") not in {expected_id, legacy_path_bound_id}:
         raise ValueError("utility runtime manifest artifact_id mismatch")
     bundle = UtilityModelBundle.load(payload["bundle_manifest"]["path"])
     if list(bundle.feature_names) != list(payload["feature_schema"]):
@@ -106,6 +127,29 @@ def load_utility_runtime(manifest_path: str | Path) -> LoadedUtilityRuntime:
     ):
         raise ValueError("utility runtime calibrator contract mismatch")
     eligibility = EligibilityReport.load(payload["eligibility_manifest"]["path"])
+    evidence = eligibility.evidence_metadata
+    protocol_manifest = payload["protocol_manifest"]
+    if "final_calibration_source" in protocol_manifest:
+        if evidence.get("protocol_fingerprint") != payload["protocol_fingerprint"]:
+            raise ValueError("utility runtime eligibility protocol fingerprint mismatch")
+        if int(evidence.get("outer_fold_count", -1)) != int(
+            protocol_manifest.get("outer_fold_count", -2)
+        ):
+            raise ValueError("utility runtime eligibility outer-Fold mismatch")
+        if evidence.get("calibration_source") != protocol_manifest.get(
+            "final_calibration_source"
+        ):
+            raise ValueError("utility runtime eligibility calibration source mismatch")
+        if (
+            "lambda_cvar" in evidence
+            and float(evidence["lambda_cvar"]) != bundle.lambda_cvar
+        ):
+            raise ValueError("utility runtime eligibility lambda_cvar mismatch")
+        if (
+            "lambda_mae" in evidence
+            and float(evidence["lambda_mae"]) != bundle.lambda_mae
+        ):
+            raise ValueError("utility runtime eligibility lambda_mae mismatch")
     gate = TradingUtilityGate(bundle, calibrator, eligibility)
     return LoadedUtilityRuntime(
         gate=gate,
@@ -164,3 +208,15 @@ def _file_hash(path: Path) -> str:
         for chunk in iter(lambda: file.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _runtime_artifact_id(core: Mapping[str, Any]) -> str:
+    """Content identity that does not change when verified assets are relocated."""
+
+    identity = json.loads(json.dumps(core))
+    for name in ("bundle_manifest", "calibrator", "eligibility_manifest"):
+        identity[name] = {"sha256": identity[name]["sha256"]}
+    identity.get("protocol_manifest", {}).pop("candidate_episode_source", None)
+    return hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
