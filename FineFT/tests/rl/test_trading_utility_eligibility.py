@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from RL.DiHFT.high_level.trading_utility.eligibility import (
+from RL.DiHFT.trading_utility.eligibility import (
     EligibilityPolicy,
     evaluate_channel_eligibility,
 )

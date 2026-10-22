@@ -10,8 +10,9 @@ import pandas as pd
 from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 
-from RL.DiHFT.high_level.trading_utility.model_bundle import (
-    UtilityModelBundle,
+from RL.DiHFT.trading_utility.model_bundle import UtilityModelBundle
+from RL.DiHFT.trading_utility.model_training import (
+    UtilityModelTrainer,
     UtilityTrainingData,
 )
 
@@ -441,7 +442,7 @@ def build_utility_model_fitter(
             slots=frame["slot_id"].to_numpy(dtype=int),
             directions=frame["direction"].to_numpy(dtype=int),
         )
-        return UtilityModelBundle.fit(
+        return UtilityModelTrainer.fit(
             data,
             lambda_cvar=lambda_cvar,
             lambda_mae=lambda_mae,

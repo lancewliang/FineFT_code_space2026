@@ -7,11 +7,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from RL.DiHFT.high_level.trading_utility.model_bundle import (
-    UtilityModelBundle,
+from RL.DiHFT.trading_utility.model_bundle import UtilityModelBundle
+from RL.DiHFT.trading_utility.model_training import (
+    UtilityModelTrainer,
     UtilityTrainingData,
 )
-from RL.DiHFT.high_level.trading_utility.train import train_from_candidate_csv
+from RL.DiHFT.trading_utility.train import train_from_candidate_csv
 
 
 def _training_data() -> UtilityTrainingData:
@@ -50,7 +51,7 @@ def _training_data() -> UtilityTrainingData:
 
 
 def test_four_head_bundle_roundtrips_through_explicit_manifest(tmp_path: Path) -> None:
-    bundle = UtilityModelBundle.fit(
+    bundle = UtilityModelTrainer.fit(
         _training_data(),
         lambda_cvar=0.5,
         lambda_mae=1.0,
@@ -87,7 +88,7 @@ def test_four_head_bundle_roundtrips_through_explicit_manifest(tmp_path: Path) -
 
 
 def test_bundle_loader_rejects_tampered_head(tmp_path: Path) -> None:
-    manifest_path = UtilityModelBundle.fit(_training_data()).save(tmp_path)
+    manifest_path = UtilityModelTrainer.fit(_training_data()).save(tmp_path)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     mean_asset = tmp_path / manifest["heads"]["mean_net_pnl"]["path"]
     mean_asset.write_bytes(mean_asset.read_bytes() + b"tampered")

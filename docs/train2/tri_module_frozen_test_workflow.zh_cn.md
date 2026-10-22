@@ -25,7 +25,7 @@ export UTILITY_EPISODES_CSV=/absolute/path/candidate_episodes.csv
 export UTILITY_OUTPUT_DIR=/absolute/path/utility_run
 export UTILITY_FEATURE_NAMES=feature_a,feature_b
 export UTILITY_CODE_VERSION=<immutable-git-revision>
-bash FineFT/script/train/DiHFT/high_level/trading_utility_fu_10.sh
+bash FineFT/script/train/DiHFT/trading_utility_fu_10.sh
 ```
 
 训练报告必须显示：`outer_fold_count = 2`、`final_calibration_source = outer_unseen_predictions`、`test_accessed = false`。

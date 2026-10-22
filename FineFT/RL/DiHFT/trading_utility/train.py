@@ -10,20 +10,21 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
-from RL.DiHFT.high_level.trading_utility.model_bundle import (
-    UtilityModelBundle,
+from RL.DiHFT.trading_utility.model_bundle import UtilityModelBundle
+from RL.DiHFT.trading_utility.model_training import (
+    UtilityModelTrainer,
     UtilityTrainingData,
 )
-from RL.DiHFT.high_level.trading_utility.eligibility import (
+from RL.DiHFT.trading_utility.eligibility import (
     EligibilityPolicy,
     evaluate_channel_eligibility,
 )
-from RL.DiHFT.high_level.trading_utility.prequential import (
+from RL.DiHFT.trading_utility.prequential import (
     PrequentialProtocol,
     build_utility_model_fitter,
     run_strict_prequential,
 )
-from RL.DiHFT.high_level.trading_utility.runtime import publish_runtime_manifest
+from RL.DiHFT.trading_utility.runtime_artifacts import publish_runtime_manifest
 
 
 def _source_hash(path: Path) -> str:
@@ -79,7 +80,7 @@ def train_from_candidate_csv(
         slots=frame["slot_id"].to_numpy(dtype=int),
         directions=frame["direction"].to_numpy(dtype=int),
     )
-    bundle = UtilityModelBundle.fit(
+    bundle = UtilityModelTrainer.fit(
         data,
         lambda_cvar=lambda_cvar,
         lambda_mae=lambda_mae,

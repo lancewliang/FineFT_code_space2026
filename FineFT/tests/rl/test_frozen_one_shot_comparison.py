@@ -14,25 +14,26 @@ from common.audit_records import (
     PREDICTION_RECORD_COLUMNS,
     TRADE_RECORD_COLUMNS,
 )
-from RL.DiHFT.high_level.trading_utility.eligibility import (
+from RL.DiHFT.trading_utility.eligibility import (
     ChannelEligibility,
     EligibilityPolicy,
     EligibilityReport,
 )
-from RL.DiHFT.high_level.trading_utility.frozen_test import (
+from RL.DiHFT.trading_utility.frozen_test import (
     AUDIT_SCHEMA_VERSION,
     StackTestResult,
     deterministic_frame_identity,
     freeze_production_assets,
     run_one_shot_test_comparison,
 )
-from RL.DiHFT.high_level.trading_utility.model_bundle import (
-    UtilityModelBundle,
+from RL.DiHFT.trading_utility.model_bundle import UtilityModelBundle
+from RL.DiHFT.trading_utility.model_training import (
+    UtilityModelTrainer,
     UtilityTrainingData,
 )
-from RL.DiHFT.high_level.trading_utility.prequential import PrequentialProtocol
-from RL.DiHFT.high_level.trading_utility.prequential import run_strict_prequential
-from RL.DiHFT.high_level.trading_utility.runtime import publish_runtime_manifest
+from RL.DiHFT.trading_utility.prequential import PrequentialProtocol
+from RL.DiHFT.trading_utility.prequential import run_strict_prequential
+from RL.DiHFT.trading_utility.runtime_artifacts import publish_runtime_manifest
 
 
 class _IdentityCalibrator:
@@ -63,7 +64,7 @@ def _freeze(tmp_path: Path, *, evidence_protocol: str | None = None) -> Path:
         slots=np.zeros(len(values), dtype=int),
         directions=np.ones(len(values), dtype=int),
     )
-    bundle = UtilityModelBundle.fit(training, backend="sklearn", random_seed=7)
+    bundle = UtilityModelTrainer.fit(training, backend="sklearn", random_seed=7)
     bundle_manifest = bundle.save(tmp_path / "bundle")
     channel = ChannelEligibility(
         slot_id=0,

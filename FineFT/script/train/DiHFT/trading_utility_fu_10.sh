@@ -6,7 +6,7 @@ set -euo pipefail
 : "${UTILITY_FEATURE_NAMES:?set UTILITY_FEATURE_NAMES in feature_values order}"
 : "${UTILITY_CODE_VERSION:?set UTILITY_CODE_VERSION to the immutable source revision}"
 
-python -m RL.DiHFT.high_level.trading_utility.train \
+python -m RL.DiHFT.trading_utility.train \
   --episodes-csv "${UTILITY_EPISODES_CSV}" \
   --output-dir "${UTILITY_OUTPUT_DIR}" \
   --feature-names "${UTILITY_FEATURE_NAMES}" \

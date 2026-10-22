@@ -6,18 +6,19 @@ import hashlib
 import numpy as np
 import pytest
 
-from RL.DiHFT.high_level.trading_utility.eligibility import (
+from RL.DiHFT.trading_utility.eligibility import (
     ChannelEligibility,
     EligibilityPolicy,
     EligibilityReport,
 )
-from RL.DiHFT.high_level.trading_utility.model_bundle import (
-    UtilityModelBundle,
+from RL.DiHFT.trading_utility.model_bundle import UtilityModelBundle
+from RL.DiHFT.trading_utility.model_training import (
+    UtilityModelTrainer,
     UtilityTrainingData,
 )
+from RL.DiHFT.trading_utility.runtime_artifacts import publish_runtime_manifest
 from RL.DiHFT.high_level.trading_utility.runtime import (
     load_utility_runtime,
-    publish_runtime_manifest,
 )
 
 
@@ -42,7 +43,7 @@ def _runtime_manifest(tmp_path):
         slots=np.zeros(len(values), dtype=int),
         directions=np.ones(len(values), dtype=int),
     )
-    bundle = UtilityModelBundle.fit(data, backend="sklearn", random_seed=7)
+    bundle = UtilityModelTrainer.fit(data, backend="sklearn", random_seed=7)
     bundle_manifest = bundle.save(tmp_path / "bundle")
     channel = ChannelEligibility(
         slot_id=0,

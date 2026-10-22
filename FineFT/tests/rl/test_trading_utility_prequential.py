@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from RL.DiHFT.high_level.trading_utility.prequential import (
+from RL.DiHFT.trading_utility.prequential import (
     PrequentialProtocol,
     _purge_contract_tails,
     run_strict_prequential,

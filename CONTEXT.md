@@ -852,6 +852,10 @@ _Avoid_: 隐式路由准入、槽位门控
 三阶门控中的第三阶核心模块（Module 3），以考虑摩擦成本与尾部风险的真实交易效用为监督目标，对开仓、同向加仓与反手等全部风险增加动作实施校准准入；拒绝时分别保持 Flat、保持当前仓位或平旧仓后保持 Flat。
 _Avoid_: 信号过滤门控、胜率门控、规则准入
 
+**交易效用模型 (Trading Utility Model)**:
+根据候选交易特征估计扣除交易摩擦并计入尾部风险后的效用；离线训练形成模型资产，在线推理为交易效用准入门控提供预测依据。
+_Avoid_: 交易信号模型、胜率模型
+
 **校准单调性走查门禁 (Calibrated Monotonicity Walk-Forward Gate)**:
 在严格扩展窗口 prequential 的 OOF/外层未见预测上，以 Isotonic Regression 校准连续效用、以 Platt scaling 校准盈利概率，并要求 `(slot, direction)` 五分位档的扣费后胜率与盈亏比严格递增的检验协议。
 _Avoid_: 启发式打分、未校准置信度

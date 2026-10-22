@@ -17,10 +17,11 @@ from common.audit_records import (
     PREDICTION_RECORD_COLUMNS,
     TRADE_RECORD_COLUMNS,
 )
-from RL.DiHFT.high_level.trading_utility.eligibility import EligibilityReport
-from RL.DiHFT.high_level.trading_utility.model_bundle import UtilityModelBundle
-from RL.DiHFT.high_level.trading_utility.prequential import PrequentialProtocol
+from RL.DiHFT.trading_utility.eligibility import EligibilityReport
+from RL.DiHFT.trading_utility.model_bundle import UtilityModelBundle
+from RL.DiHFT.trading_utility.prequential import PrequentialProtocol
 from RL.DiHFT.high_level.trading_utility.runtime import load_utility_runtime
+from RL.DiHFT.trading_utility.runtime_artifacts import publish_runtime_manifest
 
 
 TEST_START = pd.Timestamp("2025-06-30")

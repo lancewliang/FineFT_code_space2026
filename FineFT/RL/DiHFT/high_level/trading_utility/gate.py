@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from RL.DiHFT.high_level.trading_utility.eligibility import EligibilityReport
-from RL.DiHFT.high_level.trading_utility.model_bundle import UtilityModelBundle
+from RL.DiHFT.trading_utility.eligibility import EligibilityReport
+from RL.DiHFT.trading_utility.model_bundle import UtilityModelBundle
 
 
 @dataclass(frozen=True)

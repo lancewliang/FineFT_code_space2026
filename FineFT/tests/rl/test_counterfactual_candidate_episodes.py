@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from RL.DiHFT.high_level.trading_utility.labels import (
+from RL.DiHFT.trading_utility.labels import (
     CandidateObservation,
     CounterfactualEpisodeBuilder,
 )

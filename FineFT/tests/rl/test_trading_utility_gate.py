@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from RL.DiHFT.high_level.trading_utility.eligibility import (
+from RL.DiHFT.trading_utility.eligibility import (
     ChannelEligibility,
     EligibilityPolicy,
     EligibilityReport,
 )
 from RL.DiHFT.high_level.trading_utility.gate import TradingUtilityGate
-from RL.DiHFT.high_level.trading_utility.model_bundle import UtilityPrediction
+from RL.DiHFT.trading_utility.model_bundle import UtilityPrediction
 
 
 class _Bundle:

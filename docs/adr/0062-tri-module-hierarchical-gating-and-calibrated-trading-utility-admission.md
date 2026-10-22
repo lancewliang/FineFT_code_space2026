@@ -155,11 +155,24 @@ U = μ_net - λ_CVaR × L_CVaR - λ_MAE × L_MAE
 
 四个 head 共享特征规范、Fold 定义和 artifact manifest。首选 CatBoost，但必须位于可替换接口之后，模型类型和搜索空间在首个外层评价前冻结。
 
-实现时放置独立训练代码，例如：
+训练与运行时推理分开放置。训练侧拥有候选标签、模型定义、拟合、prequential 校准/验证、资格评估和制品发布；`high_level` 只拥有模型加载、在线预测和交易准入。模型 bundle 的预测/加载契约由训练侧模型定义提供，在线侧不得导入训练器或训练入口。
+
+实现结构：
 
 ```text
+FineFT/RL/DiHFT/trading_utility/
+  labels.py
+  model_bundle.py          # bundle 定义、加载与预测
+  model_training.py        # 训练数据与模型拟合
+  prequential.py
+  eligibility.py
+  train.py
+  runtime_artifacts.py     # 训练/发布侧生成运行时清单
+  frozen_test.py
 FineFT/RL/DiHFT/high_level/trading_utility/
-FineFT/script/train/DiHFT/high_level/trading_utility_fu_10.sh
+  gate.py                  # 在线交易效用准入
+  runtime.py               # 在线加载与推理
+FineFT/script/train/DiHFT/trading_utility_fu_10.sh
 ```
 
 运行时只加载显式指定且校验通过的 artifact manifest，禁止寻找隐式 `latest`。因为该模块需要训练独立模型，所以必须提供独立训练入口和独立 shell 脚本；VAE 不因本 ADR 新增重复训练脚本。
