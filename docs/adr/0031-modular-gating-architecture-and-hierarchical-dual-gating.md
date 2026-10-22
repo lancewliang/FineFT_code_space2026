@@ -1,8 +1,10 @@
 ---
-status: accepted
+status: superseded by ADR-0062
 ---
 
 # Modular Gating Architecture and Hierarchical Dual Gating Strategy
+
+> **Supersession note:** ADR-0062 取代本 ADR 作为新架构决策，但不会自动删除本 ADR 所定义的旧门控代码。旧实现继续作为隔离的 `legacy` 门控栈保留，是否及何时删除由用户另行决定。
 
 We decouple the high-level VAE risk-aware gating logic into an isolated, pluggable strategy module, preserving the legacy absolute threshold gating as `AbsoluteThresholdGating` (`absolute`) and introducing `HierarchicalDualGating` (`hierarchical`) to eliminate cash-lock paralysis through dual-layer risk control.
 

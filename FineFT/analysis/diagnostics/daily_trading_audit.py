@@ -422,7 +422,7 @@ class DailyTradingAuditPublisher:
 
             # Create AuditManifest
             manifest = AuditManifest(
-                schema_version="1.0.0",
+                schema_version="1.1.0",
                 run_id=run_id,
                 model_id=model_id,
                 feature_version=feature_version,

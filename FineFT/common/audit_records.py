@@ -48,6 +48,24 @@ PREDICTION_RECORD_COLUMNS = [
     "action_value_margin",
     "available_actions",
     "selected_action",
+    "gating_stack",
+    "ood_state",
+    "ood_reason",
+    "routing_volatility_slot",
+    "routing_slope_slot",
+    "candidate_id",
+    "candidate_kind",
+    "candidate_action",
+    "denied_baseline_action",
+    "final_action",
+    "utility_raw",
+    "utility_calibrated",
+    "utility_lower",
+    "win_probability",
+    "channel_eligible",
+    "utility_reject_stage",
+    "utility_reject_reason",
+    "utility_artifact_id",
 ]
 
 TRADE_RECORD_COLUMNS = [
@@ -122,6 +140,24 @@ class PredictionRecord:
     action_value_margin: float
     available_actions: str
     selected_action: int
+    gating_stack: str = "legacy"
+    ood_state: str | None = None
+    ood_reason: str | None = None
+    routing_volatility_slot: int | None = None
+    routing_slope_slot: int | None = None
+    candidate_id: str | None = None
+    candidate_kind: str | None = None
+    candidate_action: int | None = None
+    denied_baseline_action: int | None = None
+    final_action: int | None = None
+    utility_raw: float | None = None
+    utility_calibrated: float | None = None
+    utility_lower: float | None = None
+    win_probability: float | None = None
+    channel_eligible: bool | None = None
+    utility_reject_stage: str | None = None
+    utility_reject_reason: str | None = None
+    utility_artifact_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -149,6 +185,64 @@ class PredictionRecord:
             action_value_margin=float(kwargs["action_value_margin"]),
             available_actions=str(kwargs["available_actions"]),
             selected_action=int(kwargs["selected_action"]),
+            gating_stack=str(kwargs.get("gating_stack", "legacy")),
+            ood_state=kwargs.get("ood_state"),
+            ood_reason=kwargs.get("ood_reason"),
+            routing_volatility_slot=(
+                int(kwargs["routing_volatility_slot"])
+                if kwargs.get("routing_volatility_slot") is not None
+                else None
+            ),
+            routing_slope_slot=(
+                int(kwargs["routing_slope_slot"])
+                if kwargs.get("routing_slope_slot") is not None
+                else None
+            ),
+            candidate_id=kwargs.get("candidate_id"),
+            candidate_kind=kwargs.get("candidate_kind"),
+            candidate_action=(
+                int(kwargs["candidate_action"])
+                if kwargs.get("candidate_action") is not None
+                else None
+            ),
+            denied_baseline_action=(
+                int(kwargs["denied_baseline_action"])
+                if kwargs.get("denied_baseline_action") is not None
+                else None
+            ),
+            final_action=(
+                int(kwargs["final_action"])
+                if kwargs.get("final_action") is not None
+                else None
+            ),
+            utility_raw=(
+                float(kwargs["utility_raw"])
+                if kwargs.get("utility_raw") is not None
+                else None
+            ),
+            utility_calibrated=(
+                float(kwargs["utility_calibrated"])
+                if kwargs.get("utility_calibrated") is not None
+                else None
+            ),
+            utility_lower=(
+                float(kwargs["utility_lower"])
+                if kwargs.get("utility_lower") is not None
+                else None
+            ),
+            win_probability=(
+                float(kwargs["win_probability"])
+                if kwargs.get("win_probability") is not None
+                else None
+            ),
+            channel_eligible=(
+                bool(kwargs["channel_eligible"])
+                if kwargs.get("channel_eligible") is not None
+                else None
+            ),
+            utility_reject_stage=kwargs.get("utility_reject_stage"),
+            utility_reject_reason=kwargs.get("utility_reject_reason"),
+            utility_artifact_id=kwargs.get("utility_artifact_id"),
         )
 
 

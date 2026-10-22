@@ -85,7 +85,7 @@ parser = argparse.ArgumentParser(
 parser.add_argument(
     "--train",
     action="store_true",
-    help="materialize cross-contract training data, train the VAE, and analyze test contracts",
+    help="materialize cross-contract training data and train the VAE without reading test contracts",
 )
 parser.add_argument(
     "--analyze-only",
@@ -339,10 +339,16 @@ class Piplineruner:
             log_interval,
             prr,
         )
-        self.contract_loader_list = prepare_contract_dataset_loader_list(
-            discover_test_sources(self.args.data_base_path, self.args.dataset_name, labeling_method=self.args.labeling_method),
-            expected_feature_dim=train_manifest.feature_dim,
-        )
+        self.contract_loader_list = []
+        if self.args.analyze_only:
+            self.contract_loader_list = prepare_contract_dataset_loader_list(
+                discover_test_sources(
+                    self.args.data_base_path,
+                    self.args.dataset_name,
+                    labeling_method=self.args.labeling_method,
+                ),
+                expected_feature_dim=train_manifest.feature_dim,
+            )
 
     def train(self):
         logger.info(
@@ -412,5 +418,6 @@ if __name__ == "__main__":
     piplinerunner = Piplineruner(args)
     if args.train:
         piplinerunner.train()
-    piplinerunner.analyze_contracts()
-    maybe_write_routing_summary_after_analysis(args)
+    else:
+        piplinerunner.analyze_contracts()
+        maybe_write_routing_summary_after_analysis(args)

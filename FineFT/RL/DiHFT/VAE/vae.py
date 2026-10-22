@@ -102,6 +102,13 @@ class MLP_VAE(nn.Module):
         recon_mu, recon_logvar = self.decode(z)
         return recon_mu, recon_logvar, mu, logvar
 
+    def forward_deterministic(self, x):
+        """Decode the latent mean for repeatable OOD likelihood scoring."""
+        x = x.view(-1, self.INPUT_DIM)
+        mu, logvar = self.encode(x)
+        recon_mu, recon_logvar = self.decode(mu)
+        return recon_mu, recon_logvar, mu, logvar
+
     # --- defines the loss function --- #
     def loss_function(self, recon_mu, recon_logvar, x, mu, logvar):
         if self.loss_func == "BCE":
@@ -233,7 +240,7 @@ def analyze_single_sample(model: MLP_VAE, data, device):
     data = data.float()
     with torch.no_grad():
         data = data.to(device)
-        recon_mu, recon_logsigma, mu, logvar = model(data)
+        recon_mu, recon_logsigma, mu, logvar = model.forward_deterministic(data)
         loss = model.loss_function(recon_mu, recon_logsigma, data, mu, logvar)
     loss = -loss.cpu().numpy()
     z_mu = mu.cpu().numpy()
@@ -264,7 +271,7 @@ def analyze(model, data_loader, device):
             else:
                 # for 1D dataset
                 data = data.to(device)
-            recon_mu, recon_logsigma, mu, logvar = model(data)
+            recon_mu, recon_logsigma, mu, logvar = model.forward_deterministic(data)
             loss = model.loss_function(recon_mu, recon_logsigma, data, mu, logvar)
             z_mus.append(mu.cpu().numpy())
             x_logpx.append(-loss.cpu().numpy())

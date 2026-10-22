@@ -832,6 +832,38 @@ _Avoid_: 单阈值门控、传统门控、旧门控
 解耦黑天鹅绝对底线熔断与相对模式清晰度降噪的新一代风控门控策略 (`HierarchicalDualGating`，CLI 标识为 `hierarchical`)。
 _Avoid_: 相对概率门控、混合门控
 
+**三阶分立分级门控架构 (Tri-Module Hierarchical Gating)**:
+在高层门控中将决策权严格拆分为极端状态/输入有效性拒识、机制槽位路由与交易效用准入三个串行子模块的架构；模块可传递连续证据，但不得越权形成隐藏硬否决。
+_Avoid_: 双层分级门控、单体门控、混合门控
+
+**极端状态 OOD 拒识门控 (Extreme OOD Rejection Gate)**:
+三阶门控中的第一道防线（Module 1），仅使用确定性双轴 VAE train-ID 经验似然与数据完整性检查识别极端分布外行情、数据跳空或关键字段缺失，并以迟滞规则管理系统防御降级与恢复。
+_Avoid_: 绝对过滤、底线拒识、黑天鹅绝对熔断
+
+**宏观体制槽位路由 (Regime Slot Router)**:
+三阶门控中的第二阶模块（Module 2），仅根据双轴 VAE 状态输出当前市场最匹配的 2D 状态槽位及连续路由证据，不解析候选策略，也不承担交易准入裁决。
+_Avoid_: 机制门控、概率截断路由
+
+**候选动作解析器 (Candidate Resolver)**:
+位于 Regime Slot Router 与 Trading Utility Admission Gate 之间，将 2D 状态槽位显式映射为候选策略和候选动作；空槽位返回 `NullCandidate`，自身不拥有交易准入权。
+_Avoid_: 隐式路由准入、槽位门控
+
+**交易效用准入门控 (Trading Utility Admission Gate)**:
+三阶门控中的第三阶核心模块（Module 3），以考虑摩擦成本与尾部风险的真实交易效用为监督目标，对开仓、同向加仓与反手等全部风险增加动作实施校准准入；拒绝时分别保持 Flat、保持当前仓位或平旧仓后保持 Flat。
+_Avoid_: 信号过滤门控、胜率门控、规则准入
+
+**校准单调性走查门禁 (Calibrated Monotonicity Walk-Forward Gate)**:
+在严格扩展窗口 prequential 的 OOF/外层未见预测上，以 Isotonic Regression 校准连续效用、以 Platt scaling 校准盈利概率，并要求 `(slot, direction)` 五分位档的扣费后胜率与盈亏比严格递增的检验协议。
+_Avoid_: 启发式打分、未校准置信度
+
+**效用尾部风险惩罚 (Utility Tail-Risk Penalty)**:
+交易效用目标 `U = μ_net - λ_CVaR × L_CVaR - λ_MAE × L_MAE` 中对 5% 下行条件尾部损失与最大不利偏移施加的非零全局惩罚；所有分量统一使用 bps，交易成本只计一次。
+_Avoid_: 波动率惩罚、方差惩罚
+
+**门控栈选择器 (High-Level Gating Stack Selector)**:
+通过 `legacy|tri_module` 单一参数在两套物理隔离的高层门控代码路径之间选择；不得在同一次运行中混用，`tri_module` 资产异常时不得静默回退到 legacy。
+_Avoid_: 混合运行、自动回退、test 驱动切换
+
 **黑天鹅绝对熔断 (Tail-Risk Circuit Breaker)**:
 双层分级门控中的第一道防线（Gate 1）。当双轴最大平滑似然分位数跌破极低绝对阈值（如 0.005）时触发，防止模型在完全未见过的极端黑天鹅行情中盲目交易。
 _Avoid_: 绝对过滤、底线拒识

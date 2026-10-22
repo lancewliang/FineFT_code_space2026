@@ -31,7 +31,16 @@ from env.env_class.futures_util import (
     rule_based_close,
 )
 from RL.DiHFT.VAE.vae import MLP_VAE, analyze_single_sample, gaussian_nll, softclip
-from RL.DiHFT.high_level.gating import create_gating_strategy
+from RL.DiHFT.high_level.gating import (
+    create_gating_strategy,
+    create_high_level_gating_stack,
+)
+from RL.DiHFT.high_level.trading_utility.gate import UtilityAdmissionDecision
+from RL.DiHFT.high_level.trading_utility.runtime import load_utility_runtime
+from RL.DiHFT.high_level.tri_module import (
+    InputValidity,
+    TriModuleGatingStack,
+)
 
 from analysis.pick_agent.FineFT_two_dimensional_agent_selector import (
     TwoDimensionalSelectionManifest,
@@ -381,6 +390,19 @@ parser.add_argument(
     help="门控路由策略类型，可选绝对阈值门控（absolute）或分层门控（hierarchical）",
 )
 parser.add_argument(
+    "--high_level_gating_stack",
+    type=str,
+    default="legacy",
+    choices=["legacy", "tri_module"],
+    help="高层门控代码栈：保留旧行为的 legacy 或职责分离的 tri_module",
+)
+parser.add_argument(
+    "--trading_utility_runtime_manifest",
+    type=str,
+    default=None,
+    help="tri_module 使用的显式 Utility Runtime Manifest；禁止隐式 latest",
+)
+parser.add_argument(
     "--ood_threshold",
     type=float,
     default=0.005,
@@ -462,7 +484,7 @@ def compute_vae_losses_batch(
     with torch.no_grad():
         for start_idx in range(0, len(data_tensor), batch_size):
             batch = data_tensor[start_idx : start_idx + batch_size].to(device)
-            recon_mu, recon_logsigma, mu, logvar = model(batch)
+            recon_mu, recon_logsigma, mu, logvar = model.forward_deterministic(batch)
             recon_logvar = softclip(recon_logsigma, -6.0)
             recon_logvar = -softclip(-recon_logvar, 0.0)
             rec = gaussian_nll(recon_mu, 0.5 * recon_logvar, batch).sum(dim=-1)
@@ -896,15 +918,24 @@ class vae_risk_aware_routing:
         if self.circuit_breaker_cooling_steps < -1:
             raise ValueError("circuit_breaker_cooling_steps must be -1 or non-negative")
         self.hysteresis_exit_ratio = float(args.hysteresis_exit_ratio)
-        self.gating_strategy = create_gating_strategy(
-            args.gating_strategy,
-            slope_threshold=self.axis_thresholds["slope"],
-            volatility_threshold=self.axis_thresholds["volatility"],
-            hysteresis_exit_ratio=self.hysteresis_exit_ratio,
-            ood_threshold=args.ood_threshold,
-            slope_margin_threshold=args.slope_margin_threshold,
-            volatility_margin_threshold=args.volatility_margin_threshold,
+        self.high_level_gating_stack = str(
+            getattr(args, "high_level_gating_stack", "legacy")
         )
+        self.gating_strategy = None
+        if self.high_level_gating_stack == "legacy":
+            self.gating_strategy = create_gating_strategy(
+                args.gating_strategy,
+                slope_threshold=self.axis_thresholds["slope"],
+                volatility_threshold=self.axis_thresholds["volatility"],
+                hysteresis_exit_ratio=self.hysteresis_exit_ratio,
+                ood_threshold=args.ood_threshold,
+                slope_margin_threshold=args.slope_margin_threshold,
+                volatility_margin_threshold=args.volatility_margin_threshold,
+            )
+        self.tri_module_stack = None
+        self.utility_runtime_artifact_id = None
+        self.latest_tri_module_market_decision = None
+        self.latest_utility_admission_decision = None
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
         self.base_path = args.base_path
         self.dataset_name = args.dataset_name
@@ -1032,6 +1063,7 @@ class vae_risk_aware_routing:
             raise ValueError("action_persistence must be positive")
         self.remaining_persist = 0
         self.current_action = self.flat_action
+        self._configure_high_level_gating_stack(args)
         self.action_decision_reason_history = []
         self.cooldown_remaining_steps = 0
         self.last_stopped_position = 0.0
@@ -1135,9 +1167,45 @@ class vae_risk_aware_routing:
         self.audit_trades = []
         self.last_prediction_id = ""
         self.latest_action_values = [0.0, 0.0, 0.0]
+        self.latest_tri_module_market_decision = None
+        self.latest_utility_admission_decision = None
+        tri_module_stack = getattr(self, "tri_module_stack", None)
+        if tri_module_stack is not None:
+            tri_module_stack.reset()
         self.df = None
         self._position_list = None
         self._log_initialized_attributes()
+
+    def _configure_high_level_gating_stack(self, args) -> None:
+        stack_type = str(getattr(args, "high_level_gating_stack", "legacy"))
+        tri_module_stack = None
+        if stack_type == "tri_module":
+            runtime_manifest = getattr(args, "trading_utility_runtime_manifest", None)
+            if not runtime_manifest:
+                raise ValueError(
+                    "tri_module stack is not configured: "
+                    "trading_utility_runtime_manifest is required"
+                )
+            runtime = load_utility_runtime(runtime_manifest)
+            tri_module_stack = TriModuleGatingStack(
+                num_labels=self.num_labels,
+                selection_manifest=self.selection_manifest,
+                utility_gate=runtime.gate,
+                recovery_steps=max(
+                    max(self.axis_window_lengths.values()),
+                    int(runtime.horizon),
+                ),
+                enter_threshold=runtime.ood_enter_threshold,
+                recover_threshold=runtime.ood_recover_threshold,
+            )
+            self.utility_runtime_artifact_id = runtime.artifact_id
+        self.active_high_level_gating_stack = create_high_level_gating_stack(
+            stack_type,
+            legacy_stack=self.gating_strategy,
+            tri_module_stack=tri_module_stack,
+        )
+        self.high_level_gating_stack = stack_type
+        self.tri_module_stack = tri_module_stack
 
     def _log_initialized_attributes(self) -> None:
         """Log all initialized instance attributes and their values."""
@@ -1237,12 +1305,15 @@ class vae_risk_aware_routing:
 
     def _resolve_test_path(self, args):
         sub_dir = args.output_sub_dir
+        stack_type = str(getattr(args, "high_level_gating_stack", "legacy"))
         if self.eval_stage == "test" or args.result_path.endswith("final_result"):
             base = os.path.join(
                 args.result_path,
                 args.dataset_name,
                 self.experiment_name,
             )
+            if stack_type == "tri_module":
+                base = os.path.join(base, "tri_module")
             return os.path.join(base, sub_dir) if sub_dir else base
         self.model_path = os.path.join(
             args.result_path,
@@ -1263,7 +1334,9 @@ class vae_risk_aware_routing:
             "gamma_{}_window_{}_threshold_{}".format(
                 self.gamma, self.window_length, self.rule_base_threshold
             ) + trial_suffix,
-        )
+            )
+        if stack_type == "tri_module":
+            target = os.path.join(target, "tri_module")
         return os.path.join(target, sub_dir) if sub_dir else target
 
     def reconfigure_routing(self, args):
@@ -1292,15 +1365,19 @@ class vae_risk_aware_routing:
             "volatility": args.volatility_rule_base_threshold,
         }
         self.hysteresis_exit_ratio = float(args.hysteresis_exit_ratio)
-        self.gating_strategy = create_gating_strategy(
-            args.gating_strategy,
-            slope_threshold=self.axis_thresholds["slope"],
-            volatility_threshold=self.axis_thresholds["volatility"],
-            hysteresis_exit_ratio=self.hysteresis_exit_ratio,
-            ood_threshold=args.ood_threshold,
-            slope_margin_threshold=args.slope_margin_threshold,
-            volatility_margin_threshold=args.volatility_margin_threshold,
-        )
+        stack_type = str(getattr(args, "high_level_gating_stack", "legacy"))
+        self.gating_strategy = None
+        if stack_type == "legacy":
+            self.gating_strategy = create_gating_strategy(
+                args.gating_strategy,
+                slope_threshold=self.axis_thresholds["slope"],
+                volatility_threshold=self.axis_thresholds["volatility"],
+                hysteresis_exit_ratio=self.hysteresis_exit_ratio,
+                ood_threshold=args.ood_threshold,
+                slope_margin_threshold=args.slope_margin_threshold,
+                volatility_margin_threshold=args.volatility_margin_threshold,
+            )
+        self._configure_high_level_gating_stack(args)
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
         self.enable_non_main_contract_defense = bool(args.enable_non_main_contract_defense)
         self.stop_loss_return_threshold = float(args.stop_loss_return_threshold)
@@ -1404,6 +1481,16 @@ class vae_risk_aware_routing:
     def _defensive_action(self, info, current_position, current_leverage):
         if float(current_position) == 0.0:
             return self.zero_position_action
+        if (
+            "avaliable_action" not in info
+            and getattr(self, "high_level_gating_stack", "legacy") == "tri_module"
+        ):
+            return map_position_leverage_to_action(
+                current_position,
+                current_leverage,
+                self.leverage_choices,
+                self.position_list,
+            )
         return rule_based_close(
             info,
             self.zero_position_action,
@@ -1437,6 +1524,232 @@ class vae_risk_aware_routing:
             self.remaining_persist = self.action_persistence - 1
         else:
             self.remaining_persist = 0
+
+    @staticmethod
+    def _tri_module_input_validity(info, state) -> InputValidity:
+        if bool(info.get("data_gap_detected", False)):
+            return InputValidity.invalid("data_gap_detected")
+        if info.get("event_time_monotonic", True) is False:
+            return InputValidity.invalid("non_monotonic_event_time")
+        if info.get("execution_state_available", True) is False:
+            return InputValidity.invalid("execution_state_unavailable")
+        if info.get("data_valid", True) is False:
+            return InputValidity.invalid(
+                str(info.get("data_integrity_reason", "explicit_invalid_flag"))
+            )
+        if "avaliable_action" not in info:
+            return InputValidity.invalid("missing_available_action")
+        try:
+            available_actions = np.asarray(
+                info["avaliable_action"], dtype=float
+            )
+        except (TypeError, ValueError):
+            return InputValidity.invalid("invalid_available_action")
+        if available_actions.size == 0 or not np.all(np.isfinite(available_actions)):
+            return InputValidity.invalid("invalid_available_action")
+        required_fields = tuple(info.get("required_execution_fields", ()))
+        missing_fields = [field for field in required_fields if field not in info]
+        if missing_fields:
+            return InputValidity.invalid(
+                "missing_execution_fields:" + ",".join(sorted(missing_fields))
+            )
+        try:
+            state_values = np.asarray(state, dtype=float).reshape(-1)
+        except (TypeError, ValueError):
+            return InputValidity.invalid("invalid_state_features")
+        if state_values.size == 0 or not np.all(np.isfinite(state_values)):
+            return InputValidity.invalid("invalid_state_features")
+        return InputValidity.valid()
+
+    def _utility_feature_values(
+        self,
+        state,
+        *,
+        slot_id: int,
+        candidate_action: int,
+        current_position: float,
+        target_position: float,
+    ) -> dict[str, float]:
+        market = self.latest_tri_module_market_decision
+        evidence = market.route.evidence if market is not None and market.route else {}
+        direction = 1.0 if target_position > 0.0 else -1.0
+        values: dict[str, float] = {
+            "slot_id": float(slot_id),
+            "direction": direction,
+            "candidate_action": float(candidate_action),
+            "current_position": float(current_position),
+            "target_position": float(target_position),
+        }
+        for key, value in evidence.items():
+            if isinstance(value, (int, float)):
+                values[str(key)] = float(value)
+        for index, value in enumerate(np.asarray(state, dtype=float).reshape(-1)):
+            values[f"state_{index}"] = float(value)
+        return values
+
+    def _utility_fail_closed_decision(
+        self,
+        *,
+        candidate_action: int,
+        flat_action: int,
+        hold_action: int,
+        current_position: float,
+        target_position: float,
+        reason: str,
+    ) -> UtilityAdmissionDecision:
+        if current_position == 0.0 and target_position != 0.0:
+            transition = "open"
+            denied_action = flat_action
+        elif current_position * target_position < 0.0:
+            transition = "reversal"
+            denied_action = flat_action
+        elif current_position * target_position > 0.0 and abs(target_position) > abs(
+            current_position
+        ):
+            transition = "same_direction_add"
+            denied_action = hold_action
+        else:
+            transition = "no_risk_increase"
+            denied_action = candidate_action
+        return UtilityAdmissionDecision(
+            admitted=transition == "no_risk_increase",
+            transition=transition,
+            candidate_action=int(candidate_action),
+            denied_baseline_action=int(denied_action),
+            final_action=int(candidate_action if transition == "no_risk_increase" else denied_action),
+            channel_eligible=False if transition != "no_risk_increase" else None,
+            reject_stage="asset_validation" if transition != "no_risk_increase" else None,
+            reject_reason=reason if transition != "no_risk_increase" else None,
+            utility_raw_bps=None,
+            utility_calibrated_bps=None,
+            utility_lower_bps=None,
+            win_probability_calibrated=None,
+            utility_artifact_id=self.utility_runtime_artifact_id,
+        )
+
+    def _append_prediction_audit(
+        self,
+        *,
+        info,
+        volatility_weights,
+        slope_weights,
+        routing_slot: int,
+        volatility_index: int | None,
+        slope_index: int | None,
+        candidate_action: int | None,
+        final_action: int,
+        utility_decision: UtilityAdmissionDecision | None = None,
+    ) -> None:
+        step_i = int(self.step_idx)
+        run_id = str(self.run_id)
+        contract = str(self.current_contract_name)
+        pred_id = build_prediction_id(run_id, contract, step_i)
+        dec_id = build_decision_id(run_id, contract, step_i)
+        row_idx = min(step_i, len(self.df) - 1) if self.df is not None else 0
+        event_time = (
+            str(self.df["timestamp"].iloc[row_idx])
+            if self.df is not None and "timestamp" in self.df.columns
+            else ""
+        )
+        trading_day = (
+            str(self.df["trading_day"].iloc[row_idx])
+            if self.df is not None and "trading_day" in self.df.columns
+            else ""
+        )
+        actions_vals = self.latest_action_values
+        q_short = float(actions_vals[0]) if len(actions_vals) > 0 else 0.0
+        q_flat = float(actions_vals[1]) if len(actions_vals) > 1 else 0.0
+        q_long = float(actions_vals[2]) if len(actions_vals) > 2 else 0.0
+        market_decision = self.latest_tri_module_market_decision
+        def audit_number(value):
+            number = float(value)
+            return number if np.isfinite(number) else None
+
+        if market_decision is not None and market_decision.route is not None:
+            routing_evidence_payload = dict(market_decision.route.evidence)
+            volatility_index = market_decision.route.volatility_index
+            slope_index = market_decision.route.slope_index
+        else:
+            routing_evidence_payload = {
+                "volatility_weights": [audit_number(x) for x in volatility_weights],
+                "slope_weights": [audit_number(x) for x in slope_weights],
+            }
+        if market_decision is not None:
+            routing_evidence_payload["ood_max_volatility_quantile"] = (
+                audit_number(market_decision.ood.max_volatility_quantile)
+            )
+            routing_evidence_payload["ood_max_slope_quantile"] = (
+                audit_number(market_decision.ood.max_slope_quantile)
+            )
+            routing_evidence_payload["ood_recovery_streak"] = (
+                market_decision.ood.recovery_streak
+            )
+        candidate = market_decision.candidate if market_decision is not None else None
+        pred = PredictionRecord(
+            prediction_id=pred_id,
+            decision_id=dec_id,
+            run_id=run_id,
+            model_id=str(self.model_id),
+            feature_version=str(self.feature_version),
+            parameter_version=str(self.parameter_version),
+            contract=contract,
+            step_index=step_i,
+            event_time=event_time,
+            trading_day=trading_day,
+            market_index=step_i,
+            routing_slot=int(routing_slot),
+            routing_evidence=json.dumps(routing_evidence_payload),
+            action_value_short=q_short,
+            action_value_flat=q_flat,
+            action_value_long=q_long,
+            action_value_margin=calculate_action_value_margin(actions_vals),
+            available_actions=(
+                str([int(x) for x in info["avaliable_action"]])
+                if "avaliable_action" in info
+                else "[]"
+            ),
+            selected_action=int(
+                final_action if candidate_action is None else candidate_action
+            ),
+            gating_stack=str(getattr(self, "high_level_gating_stack", "legacy")),
+            ood_state=(market_decision.ood.lifecycle if market_decision else None),
+            ood_reason=(market_decision.ood.reason if market_decision else None),
+            routing_volatility_slot=volatility_index,
+            routing_slope_slot=slope_index,
+            candidate_id=(candidate.candidate_id if candidate is not None else None),
+            candidate_kind=(candidate.kind if candidate is not None else None),
+            candidate_action=candidate_action,
+            denied_baseline_action=(
+                utility_decision.denied_baseline_action if utility_decision else None
+            ),
+            final_action=int(final_action),
+            utility_raw=(utility_decision.utility_raw_bps if utility_decision else None),
+            utility_calibrated=(
+                utility_decision.utility_calibrated_bps if utility_decision else None
+            ),
+            utility_lower=(
+                utility_decision.utility_lower_bps if utility_decision else None
+            ),
+            win_probability=(
+                utility_decision.win_probability_calibrated
+                if utility_decision
+                else None
+            ),
+            channel_eligible=(
+                utility_decision.channel_eligible if utility_decision else None
+            ),
+            utility_reject_stage=(
+                utility_decision.reject_stage if utility_decision else None
+            ),
+            utility_reject_reason=(
+                utility_decision.reject_reason if utility_decision else None
+            ),
+            utility_artifact_id=(
+                utility_decision.utility_artifact_id if utility_decision else None
+            ),
+        )
+        self.audit_predictions.append(pred.to_dict())
+        self.last_prediction_id = pred_id
 
     def get_action(
         self,
@@ -1532,17 +1845,64 @@ class vae_risk_aware_routing:
 
         volatility_weights = self.calculate_axis_window_result("volatility")
         slope_weights = self.calculate_axis_window_result("slope")
-        decision = self.gating_strategy.decide(
-            volatility_weights, slope_weights, current_position=current_pos_float
-        )
-        if decision.is_defensive:
-            return self._apply_defensive_action(
-                info, current_pos_float, current_leverage
+        self.latest_tri_module_market_decision = None
+        self.latest_utility_admission_decision = None
+        market_decision = None
+        if getattr(self, "high_level_gating_stack", "legacy") == "tri_module":
+            if self.tri_module_stack is None:
+                return self._apply_defensive_action(
+                    info, current_pos_float, current_leverage
+                )
+            market_decision = self.tri_module_stack.evaluate_market(
+                volatility_weights=volatility_weights,
+                slope_weights=slope_weights,
+                input_validity=self._tri_module_input_validity(info, s),
             )
-
-        volatility_index = decision.volatility_index
-        slope_index = decision.slope_index
-        slot_id = volatility_index * self.num_labels + slope_index
+            self.latest_tri_module_market_decision = market_decision
+            if market_decision.ood.degraded:
+                action = self._apply_defensive_action(
+                    info, current_pos_float, current_leverage
+                )
+                self._append_prediction_audit(
+                    info=info,
+                    volatility_weights=volatility_weights,
+                    slope_weights=slope_weights,
+                    routing_slot=self.slot_count,
+                    volatility_index=None,
+                    slope_index=None,
+                    candidate_action=None,
+                    final_action=action,
+                )
+                return action
+            if market_decision.route is None or market_decision.candidate is None:
+                action = self._apply_defensive_action(
+                    info, current_pos_float, current_leverage
+                )
+                self._append_prediction_audit(
+                    info=info,
+                    volatility_weights=volatility_weights,
+                    slope_weights=slope_weights,
+                    routing_slot=self.slot_count,
+                    volatility_index=None,
+                    slope_index=None,
+                    candidate_action=None,
+                    final_action=action,
+                )
+                return action
+            volatility_index = market_decision.route.volatility_index
+            slope_index = market_decision.route.slope_index
+            slot_id = market_decision.route.slot_id
+        else:
+            decision = self.gating_strategy.decide(
+                volatility_weights, slope_weights, current_position=current_pos_float
+            )
+            if decision.is_defensive:
+                return self._apply_defensive_action(
+                    info, current_pos_float, current_leverage
+                )
+            volatility_index = decision.volatility_index
+            slope_index = decision.slope_index
+            slot_id = volatility_index * self.num_labels + slope_index
         slot = self.selection_manifest.slots[slot_id]
         if slot["kind"] == "empty_model":
             # ADR-0061: Graceful hold exit and No New Risk semantics
@@ -1565,11 +1925,34 @@ class vae_risk_aware_routing:
                     )
                     self.action = hold_action
                     self.previous_step_position = current_pos_float
+                    if market_decision is not None:
+                        self._append_prediction_audit(
+                            info=info,
+                            volatility_weights=volatility_weights,
+                            slope_weights=slope_weights,
+                            routing_slot=slot_id,
+                            volatility_index=volatility_index,
+                            slope_index=slope_index,
+                            candidate_action=None,
+                            final_action=hold_action,
+                        )
                     return hold_action
                 self.remaining_persist = 0
-            return self._apply_defensive_action(
+            action = self._apply_defensive_action(
                 info, current_pos_float, current_leverage
             )
+            if market_decision is not None:
+                self._append_prediction_audit(
+                    info=info,
+                    volatility_weights=volatility_weights,
+                    slope_weights=slope_weights,
+                    routing_slot=slot_id,
+                    volatility_index=volatility_index,
+                    slope_index=slope_index,
+                    candidate_action=None,
+                    final_action=action,
+                )
+            return action
 
         self.selected_agent_index = slot_id
         self.macro_action_history.append(slot_id)
@@ -1634,73 +2017,84 @@ class vae_risk_aware_routing:
                 self.previous_step_position = current_pos_float
                 return action
 
+        final_action = candidate_action
+        utility_decision = None
+        if getattr(self, "high_level_gating_stack", "legacy") == "tri_module":
+            target_position, _ = map_action_to_position_leverage(
+                candidate_action, self.leverage_choices, self.position_list
+            )
+            hold_action = (
+                self.flat_action
+                if current_pos_float == 0.0
+                else map_position_leverage_to_action(
+                    current_pos_float,
+                    current_leverage,
+                    self.leverage_choices,
+                    self.position_list,
+                )
+            )
+            direction = 1 if target_position >= 0.0 else -1
+            try:
+                utility_decision = self.tri_module_stack.utility_gate.decide(
+                    slot_id=slot_id,
+                    direction=direction,
+                    features=self._utility_feature_values(
+                        s,
+                        slot_id=slot_id,
+                        candidate_action=candidate_action,
+                        current_position=current_pos_float,
+                        target_position=target_position,
+                    ),
+                    candidate_action=candidate_action,
+                    flat_action=self.flat_action,
+                    hold_action=hold_action,
+                    current_position=current_pos_float,
+                    target_position=target_position,
+                )
+            except Exception as error:
+                logger.error("Trading Utility Gate failed closed: %s", error)
+                utility_decision = self._utility_fail_closed_decision(
+                    candidate_action=candidate_action,
+                    flat_action=self.flat_action,
+                    hold_action=hold_action,
+                    current_position=current_pos_float,
+                    target_position=target_position,
+                    reason=f"runtime_validation:{type(error).__name__}",
+                )
+            self.latest_utility_admission_decision = utility_decision
+            final_action = utility_decision.final_action
+            if not utility_decision.admitted:
+                self.remaining_persist = 0
+                candidate_reason = ActionDecisionReasons.UTILITY_REJECTION
+
         if candidate_reason == ActionDecisionReasons.ACTION_PERSISTENCE:
             self.remaining_persist -= 1
-        else:
-            self._arm_persistence(candidate_action)
+        elif candidate_reason != ActionDecisionReasons.UTILITY_REJECTION:
+            self._arm_persistence(final_action)
 
-        self.current_action = candidate_action
+        self.current_action = final_action
         self.action_decision_reason_history.append(candidate_reason)
-        self.action = candidate_action
+        self.action = final_action
         self.previous_step_position = current_pos_float
 
         if candidate_reason in (
             ActionDecisionReasons.POLICY_INFERENCE,
             ActionDecisionReasons.ACTION_UNAVAILABLE_BREAK,
+            ActionDecisionReasons.UTILITY_REJECTION,
         ):
-            step_i = int(self.step_idx)
-            run_id = str(self.run_id)
-            contract = str(self.current_contract_name)
-            pred_id = build_prediction_id(run_id, contract, step_i)
-            dec_id = build_decision_id(run_id, contract, step_i)
-            row_idx = min(step_i, len(self.df) - 1) if self.df is not None else 0
-            event_time = (
-                str(self.df["timestamp"].iloc[row_idx])
-                if self.df is not None and "timestamp" in self.df.columns
-                else ""
+            self._append_prediction_audit(
+                info=info,
+                volatility_weights=volatility_weights,
+                slope_weights=slope_weights,
+                routing_slot=self.selected_agent_index,
+                volatility_index=volatility_index,
+                slope_index=slope_index,
+                candidate_action=candidate_action,
+                final_action=final_action,
+                utility_decision=utility_decision,
             )
-            trading_day = (
-                str(self.df["trading_day"].iloc[row_idx])
-                if self.df is not None and "trading_day" in self.df.columns
-                else ""
-            )
-            actions_vals = self.latest_action_values
-            q_short = float(actions_vals[0]) if len(actions_vals) > 0 else 0.0
-            q_flat = float(actions_vals[1]) if len(actions_vals) > 1 else 0.0
-            q_long = float(actions_vals[2]) if len(actions_vals) > 2 else 0.0
-            q_margin = calculate_action_value_margin(actions_vals)
-            vol_w = [float(x) for x in volatility_weights]
-            slope_w = [float(x) for x in slope_weights]
-            avail_actions = (
-                str([int(x) for x in info["avaliable_action"]])
-                if "avaliable_action" in info
-                else "[]"
-            )
-            pred = PredictionRecord(
-                prediction_id=pred_id,
-                decision_id=dec_id,
-                run_id=run_id,
-                model_id=str(self.model_id),
-                feature_version=str(self.feature_version),
-                parameter_version=str(self.parameter_version),
-                contract=contract,
-                step_index=step_i,
-                event_time=event_time,
-                trading_day=trading_day,
-                market_index=int(step_i),
-                routing_slot=int(self.selected_agent_index),
-                routing_evidence=json.dumps({"volatility": vol_w, "slope": slope_w}),
-                action_value_short=q_short,
-                action_value_flat=q_flat,
-                action_value_long=q_long,
-                action_value_margin=q_margin,
-                available_actions=avail_actions,
-                selected_action=int(candidate_action),
-            )
-            self.audit_predictions.append(pred.to_dict())
-            self.last_prediction_id = pred_id
 
-        return candidate_action
+        return final_action
 
     def agent_act(self, state, info):
         # low level agent
@@ -2033,11 +2427,18 @@ class vae_risk_aware_routing:
             ) as f:
                 json.dump(
                     {
+                        "audit_schema_version": "1.1.0",
                         "run_id": run_id,
                         "model_id": str(self.model_id),
                         "feature_version": str(self.feature_version),
                         "parameter_version": str(self.parameter_version),
                         "contract": contract,
+                        "high_level_gating_stack": str(
+                            getattr(self, "high_level_gating_stack", "legacy")
+                        ),
+                        "utility_runtime_artifact_id": getattr(
+                            self, "utility_runtime_artifact_id", None
+                        ),
                     },
                     f,
                     indent=2,

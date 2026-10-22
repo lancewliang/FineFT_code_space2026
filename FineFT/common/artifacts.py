@@ -74,6 +74,7 @@ class ActionDecisionReasons(IntEnum):
     STOP_LOSS_COOLDOWN = 6
     CIRCUIT_BREAKER_SUSPENSION = 7
     WARM_UP = 8
+    UTILITY_REJECTION = 9
 
 
 class AuditArtifactNames:
