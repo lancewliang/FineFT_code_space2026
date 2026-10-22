@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Sequence
 
@@ -162,6 +163,19 @@ def train_prequential_from_candidate_csv(
             fdr_alpha=protocol.fdr_alpha,
             minimum_spearman=protocol.minimum_spearman,
         ),
+    )
+    eligibility = replace(
+        eligibility,
+        evidence_metadata={
+            "outer_fold_count": 2,
+            "calibration_source": result.final_calibration_source,
+            "calibrator": "isotonic_utility_plus_platt_win_probability",
+            "lambda_cvar": result.final_lambda_cvar,
+            "lambda_mae": result.final_lambda_mae,
+            "protocol_fingerprint": result.protocol_manifest[
+                "protocol_fingerprint"
+            ],
+        },
     )
     eligibility_manifest = eligibility.save(target / "eligibility")
     protocol_manifest = {

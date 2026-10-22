@@ -8,6 +8,7 @@ import pytest
 
 from RL.DiHFT.high_level.trading_utility.prequential import (
     PrequentialProtocol,
+    _purge_contract_tails,
     run_strict_prequential,
 )
 
@@ -137,3 +138,27 @@ def test_frozen_protocol_change_invalidates_fingerprint() -> None:
     changed = PrequentialProtocol(ood_recover_threshold=0.02)
 
     assert baseline.fingerprint != changed.fingerprint
+
+
+def test_embargo_removes_all_candidates_from_each_tail_decision_step() -> None:
+    frame = pd.DataFrame(
+        {
+            "contract": ["fu"] * 6,
+            "trading_day": pd.to_datetime(
+                [
+                    "2025-01-01",
+                    "2025-01-01",
+                    "2025-01-02",
+                    "2025-01-02",
+                    "2025-01-03",
+                    "2025-01-03",
+                ]
+            ),
+            "step_index": [10, 10, 11, 11, 12, 12],
+            "candidate_id": ["a", "b"] * 3,
+        }
+    )
+
+    purged = _purge_contract_tails(frame, embargo_steps=2)
+
+    assert purged["step_index"].tolist() == [10, 10]

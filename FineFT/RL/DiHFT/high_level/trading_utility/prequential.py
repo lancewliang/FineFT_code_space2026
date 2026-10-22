@@ -279,7 +279,16 @@ def _purge_contract_tails(frame: pd.DataFrame, embargo_steps: int) -> pd.DataFra
     keep = np.ones(len(frame), dtype=bool)
     for indices in frame.groupby("contract", sort=False).indices.values():
         ordered = np.asarray(indices, dtype=int)
-        keep[ordered[-embargo_steps:]] = False
+        group = frame.iloc[ordered]
+        if "step_index" in group.columns:
+            decision_keys = group["step_index"].drop_duplicates().to_numpy()
+            embargoed = set(decision_keys[-embargo_steps:].tolist())
+            remove = group["step_index"].isin(embargoed).to_numpy()
+        else:
+            decision_keys = group["trading_day"].drop_duplicates().to_numpy()
+            embargoed = set(decision_keys[-embargo_steps:].tolist())
+            remove = group["trading_day"].isin(embargoed).to_numpy()
+        keep[ordered[remove]] = False
     return frame.loc[keep].reset_index(drop=True)
 
 

@@ -1849,11 +1849,12 @@ class vae_risk_aware_routing:
         self.latest_utility_admission_decision = None
         market_decision = None
         if getattr(self, "high_level_gating_stack", "legacy") == "tri_module":
-            if self.tri_module_stack is None:
+            active_stack = getattr(self, "active_high_level_gating_stack", None)
+            if active_stack is None:
                 return self._apply_defensive_action(
                     info, current_pos_float, current_leverage
                 )
-            market_decision = self.tri_module_stack.evaluate_market(
+            market_decision = active_stack.evaluate_market(
                 volatility_weights=volatility_weights,
                 slope_weights=slope_weights,
                 input_validity=self._tri_module_input_validity(info, s),
@@ -1893,7 +1894,10 @@ class vae_risk_aware_routing:
             slope_index = market_decision.route.slope_index
             slot_id = market_decision.route.slot_id
         else:
-            decision = self.gating_strategy.decide(
+            active_stack = getattr(
+                self, "active_high_level_gating_stack", self.gating_strategy
+            )
+            decision = active_stack.decide(
                 volatility_weights, slope_weights, current_position=current_pos_float
             )
             if decision.is_defensive:
@@ -2035,7 +2039,7 @@ class vae_risk_aware_routing:
             )
             direction = 1 if target_position >= 0.0 else -1
             try:
-                utility_decision = self.tri_module_stack.utility_gate.decide(
+                utility_decision = self.active_high_level_gating_stack.utility_gate.decide(
                     slot_id=slot_id,
                     direction=direction,
                     features=self._utility_feature_values(

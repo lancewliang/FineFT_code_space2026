@@ -19,12 +19,28 @@ class _StaticUtilityGate:
     def decide(self, **kwargs) -> UtilityAdmissionDecision:
         if self.raises:
             raise ValueError("feature schema mismatch")
-        final_action = kwargs["candidate_action"] if self.admitted else kwargs["flat_action"]
+        current = float(kwargs["current_position"])
+        target = float(kwargs["target_position"])
+        if current == 0.0 and target != 0.0:
+            transition = "open"
+            denied_action = kwargs["flat_action"]
+        elif current * target < 0.0:
+            transition = "reversal"
+            denied_action = kwargs["flat_action"]
+        elif current * target > 0.0 and abs(target) > abs(current):
+            transition = "same_direction_add"
+            denied_action = kwargs["hold_action"]
+        else:
+            transition = "no_risk_increase"
+            denied_action = kwargs["candidate_action"]
+        final_action = (
+            kwargs["candidate_action"] if self.admitted else denied_action
+        )
         return UtilityAdmissionDecision(
             admitted=self.admitted,
-            transition="open",
+            transition=transition,
             candidate_action=kwargs["candidate_action"],
-            denied_baseline_action=kwargs["flat_action"],
+            denied_baseline_action=denied_action,
             final_action=final_action,
             channel_eligible=True,
             reject_stage=None if self.admitted else "utility_lower_bound",
@@ -54,8 +70,8 @@ def _router(gate: _StaticUtilityGate):
         utility_gate=gate,
         recovery_steps=2,
     )
-    router.high_level_gating_stack = "tri_module"
     router.active_high_level_gating_stack = router.tri_module_stack
+    router.high_level_gating_stack = "tri_module"
     router.utility_runtime_artifact_id = "runtime-1"
     router.gating_strategy = create_gating_strategy(
         "absolute", slope_threshold=0.2, volatility_threshold=0.2
@@ -179,6 +195,7 @@ def test_tri_module_null_candidate_is_audited_without_utility_call() -> None:
         utility_gate=gate,
         recovery_steps=2,
     )
+    router.active_high_level_gating_stack = router.tri_module_stack
 
     action = router.get_action(_info(), np.asarray([0.25]), 0.0, 5)
 
@@ -187,3 +204,32 @@ def test_tri_module_null_candidate_is_audited_without_utility_call() -> None:
     assert record["candidate_kind"] == "null_candidate"
     assert record["candidate_id"] is None
     assert record["candidate_action"] is None
+
+
+def test_online_rejected_reversal_closes_to_symbolic_flat() -> None:
+    router = _router(_StaticUtilityGate(admitted=False))
+    router.agent_act = lambda state, info: 0
+
+    action = router.get_action(_info(), np.asarray([0.25]), 1.0, 5)
+
+    assert action == router.flat_action == 1
+    decision = router.latest_utility_admission_decision
+    assert decision.transition == "reversal"
+    assert router.audit_predictions[-1]["denied_baseline_action"] == 1
+
+
+def test_online_rejected_add_holds_existing_position() -> None:
+    router = _router(_StaticUtilityGate(admitted=False))
+    router.position_list = [-2.0, -1.0, 0.0, 1.0, 2.0]
+    router.zero_position_action = 2
+    router.flat_action = 2
+    router.current_action = 3
+    router.agent_act = lambda state, info: 4
+    info = {"avaliable_action": np.ones(5, dtype=int)}
+
+    action = router.get_action(info, np.asarray([0.25]), 1.0, 5)
+
+    assert action == 3
+    decision = router.latest_utility_admission_decision
+    assert decision.transition == "same_direction_add"
+    assert router.audit_predictions[-1]["final_action"] == 3

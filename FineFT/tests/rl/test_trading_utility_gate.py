@@ -172,3 +172,20 @@ def test_non_risk_increase_bypasses_utility_model() -> None:
     assert decision.admitted is True
     assert decision.transition == "no_risk_increase"
     assert decision.utility_lower_bps is None
+
+
+def test_zero_lower_bound_and_short_open_are_rejected_strictly() -> None:
+    decision = _gate(1.0).decide(
+        slot_id=2,
+        direction=-1,
+        features={"signal": -1.0},
+        candidate_action=0,
+        flat_action=4,
+        hold_action=4,
+        current_position=0.0,
+        target_position=-1.0,
+    )
+
+    assert decision.admitted is False
+    assert decision.utility_lower_bps == 0.0
+    assert decision.final_action == 4

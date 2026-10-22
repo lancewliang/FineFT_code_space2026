@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +57,7 @@ class ChannelEligibility:
 class EligibilityReport:
     channels: dict[str, ChannelEligibility]
     policy: EligibilityPolicy
+    evidence_metadata: dict[str, Any] = field(default_factory=dict)
 
     def save(self, output_dir: str | Path) -> Path:
         target = Path(output_dir)
@@ -71,6 +72,7 @@ class EligibilityReport:
             "residual_definition": "realized_net_pnl_bps_minus_calibrated_utility_bps",
             "bootstrap_block": "contract_x_TradingDay",
             "multiple_testing": "Benjamini-Hochberg FDR",
+            "evidence_metadata": dict(self.evidence_metadata),
         }
         artifact_id = hashlib.sha256(
             json.dumps(core, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -104,7 +106,11 @@ class EligibilityReport:
             )
             for key, value in payload["channels"].items()
         }
-        return cls(channels=channels, policy=policy)
+        return cls(
+            channels=channels,
+            policy=policy,
+            evidence_metadata=dict(payload.get("evidence_metadata", {})),
+        )
 
 
 def evaluate_channel_eligibility(
