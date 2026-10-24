@@ -6,6 +6,10 @@
 
 accepted
 
+## 后续演进：ADR-0062
+
+2026-10-24 的[ADR-0062](0062-stateful-expert-routing-hysteresis-and-frozen-score-calibration.md)仅对新增 expert_hysteresis 策略的普通专家路径修订本 ADR：保持专家意味着每步重新决策，不再使用“非防御持续期跳过网络推断”。历史策略的动作持续性、风险抢占与归因记录保留；空槽位仍按 ADR-0061 的 No New Risk 与有限缓冲退出处理。本条是设计演进记录，不表示对应代码已经实现。
+
 ## Context
 
 在目前的 FineFT 交易系统中：

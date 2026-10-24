@@ -6,6 +6,10 @@
 
 accepted
 
+## 后续演进：ADR-0062
+
+2026-10-24 的[ADR-0062](0062-stateful-expert-routing-hysteresis-and-frozen-score-calibration.md)仅在新增 expert_hysteresis 策略中修订高层门控：按当前专家身份而非是否持仓选择保持/进入门槛，并对同一 Slot 增加领先幅度和连续确认。已有退出比率表达可复用，正式新策略满足保持门槛严格低于进入门槛；低层换手 Reward Shaping、DP Q 表与物理账本语义不变，历史门控策略仍可用于对照。本条不宣称新策略已经实现或已获得回测改善。
+
 ## Context
 
 在 DiHFT 算法针对燃料油 10 分钟验证集（`fu/10min_parallel`）的 200 次 Optuna 寻优产出的全局最优解（Trial 0）回测诊断中发现：
