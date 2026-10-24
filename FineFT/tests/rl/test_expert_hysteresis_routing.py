@@ -30,7 +30,11 @@ def act(router, vol=(0.1, 0.8, 0.2), slope=(0.1, 0.2, 0.6), position=0.0, info=N
     router.calculate_axis_window_result = lambda axis: {"volatility": vol, "slope": slope}[axis]
     router.step_idx += 1
     return router.get_action(
-        info or {"previous_action": router.action, "avaliable_action": [1, 1, 1], "trading_info": [position]},
+        info or {
+            "previous_action": router.action,
+            "avaliable_action": [1, 1, 1],
+            "trading_info": [position],
+        },
         np.array([router.step_idx], dtype=float),
         position,
         1,
@@ -63,7 +67,9 @@ def test_entry_confirmation_without_runner_up_margin_and_fresh_flat_retention():
     assert seen[-1][1] == info
     assert [p["selected_action"] for p in router.audit_predictions] == [2, 1, 0]
     assert all(p["routing_slot"] == 5 for p in router.audit_predictions)
-    assert router.action_decision_reason_history[-3:] == [ActionDecisionReasons.POLICY_INFERENCE] * 3
+    assert router.action_decision_reason_history[-3:] == [
+        ActionDecisionReasons.POLICY_INFERENCE
+    ] * 3
 
 
 @pytest.mark.parametrize("axis", ["volatility", "slope"])
@@ -97,7 +103,10 @@ def test_changing_and_ineligible_candidates_restart_public_confirmation():
     assert act(router, [0.8, 0.1, 0.2]) == 2
 
 
-@pytest.mark.parametrize("bad", [[], [np.nan, 0.8, 0.2], [0.1, np.inf, 0.2], [-0.1, 0.8, 0.2], [0.1, 1.01, 0.2], [[0.1, 0.8, 0.2]], [0.1, 0.8]])
+@pytest.mark.parametrize("bad", [
+    [], [np.nan, 0.8, 0.2], [0.1, np.inf, 0.2], [-0.1, 0.8, 0.2],
+    [0.1, 1.01, 0.2], [[0.1, 0.8, 0.2]], [0.1, 0.8],
+])
 @pytest.mark.parametrize("axis", ["volatility", "slope"])
 def test_invalid_quantiles_fail_at_public_boundary(bad, axis):
     router = make_router()
@@ -122,7 +131,8 @@ def test_manifest_identity_change_aborts_public_run(mutation):
 
 @pytest.mark.parametrize("overrides", [
     {"slope_threshold": 0.0}, {"volatility_threshold": 1.01}, {"slope_threshold": np.nan},
-    {"hysteresis_exit_ratio": 0.0}, {"hysteresis_exit_ratio": 1.0}, {"hysteresis_exit_ratio": np.nan},
+    {"hysteresis_exit_ratio": 0.0}, {"hysteresis_exit_ratio": 1.0},
+    {"hysteresis_exit_ratio": np.nan},
     {"expert_switch_lead": -0.01}, {"expert_switch_lead": np.inf},
     {"expert_confirm_steps": 0}, {"expert_confirm_steps": 1.5}, {"expert_confirm_steps": True},
 ])
@@ -139,7 +149,9 @@ def test_reset_and_reconfigure_clear_ownership_and_candidate_evidence():
     assert act(router) == 2
     router.save_artifacts = False
     router._resolve_test_path = lambda args: "/unused"
-    args = vru.parser.parse_args(["--gating_strategy", "expert_hysteresis", "--expert_confirm_steps", "2"])
+    args = vru.parser.parse_args([
+        "--gating_strategy", "expert_hysteresis", "--expert_confirm_steps", "2"
+    ])
     vru.resolve_routing_parameters(args)
     args.slope_rule_base_threshold = 0.6
     args.volatility_rule_base_threshold = 0.8
@@ -163,7 +175,9 @@ def test_rollout_warmup_and_independent_contracts_do_not_share_confirmation(tmp_
     router.early_stop = 0
     router.initial_state = (100.0, 0.0, 0.0, 0.0, 1)
     router.order_book_depth = 5
-    router.calculate_axis_window_result = lambda axis: {"volatility": [0.1, 0.8, 0.2], "slope": [0.1, 0.2, 0.6]}[axis]
+    router.calculate_axis_window_result = lambda axis: {
+        "volatility": [0.1, 0.8, 0.2], "slope": [0.1, 0.2, 0.6]
+    }[axis]
     router.get_quantiles = lambda *args: None
     router._record_trade_audit = lambda **kwargs: None
     environments = []
@@ -172,7 +186,9 @@ def test_rollout_warmup_and_independent_contracts_do_not_share_confirmation(tmp_
         position = unrealized_pnl = 0.0
         current_markprice = 100.0
         leverage = 1
-        initial_margin_history = maintain_marigine_history = new_position_required_money_history = [0.0]
+        initial_margin_history = [0.0]
+        maintain_marigine_history = [0.0]
+        new_position_required_money_history = [0.0]
         unrealized_pnl_history = [0.0]
         wallet_balance_history = [100.0]
         account_audit_history = []
@@ -187,7 +203,10 @@ def test_rollout_warmup_and_independent_contracts_do_not_share_confirmation(tmp_
             self.micro_action_history.append(action)
             self.executed_position_history.append(0.0)
             self.margine_balance_history.append(100.0)
-            return np.array([0.0]), 0.0, len(self.micro_action_history) == 4, {"previous_action": action, "avaliable_action": [1, 1, 1]}
+            return (
+                np.array([0.0]), 0.0, len(self.micro_action_history) == 4,
+                {"previous_action": action, "avaliable_action": [1, 1, 1]},
+            )
 
     def environment(**kwargs):
         env = FakeEnv()
