@@ -39,3 +39,14 @@ class RoutingParamColumns:
 
     HYSTERESIS_EXIT_RATIO: str = "hysteresis_exit_ratio"
     PARAMS_HYSTERESIS_EXIT_RATIO: str = "params_hysteresis_exit_ratio"
+
+    STRATEGY_VERSION: str = "strategy_version"
+    PARAMS_STRATEGY_VERSION: str = "params_strategy_version"
+    EXPERT_SWITCH_LEAD: str = "expert_switch_lead"
+    PARAMS_EXPERT_SWITCH_LEAD: str = "params_expert_switch_lead"
+    EXPERT_CONFIRM_STEPS: str = "expert_confirm_steps"
+    PARAMS_EXPERT_CONFIRM_STEPS: str = "params_expert_confirm_steps"
+    SLOPE_HOLD_THRESHOLD: str = "slope_hold_threshold"
+    PARAMS_SLOPE_HOLD_THRESHOLD: str = "params_slope_hold_threshold"
+    VOLATILITY_HOLD_THRESHOLD: str = "volatility_hold_threshold"
+    PARAMS_VOLATILITY_HOLD_THRESHOLD: str = "params_volatility_hold_threshold"

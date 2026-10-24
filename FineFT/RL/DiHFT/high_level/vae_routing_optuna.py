@@ -194,7 +194,7 @@ parser_all.add_argument(
     "--gating_strategy",
     type=str,
     default="absolute",
-    choices=["absolute", "hierarchical"],
+    choices=["absolute", "hierarchical", "expert_hysteresis"],
     help="门控路由策略类型，可选绝对阈值门控（absolute）或分层门控（hierarchical）",
 )
 parser_all.add_argument(
@@ -293,6 +293,10 @@ def prepare_base_args(args_1, args_2):
     if not manifest.artifacts.model_assembly:
         raise ValueError("two-dimensional manifest has no model_assembly artifact")
     base_args.selection_manifest = manifest_path
+    if base_args.gating_strategy == "expert_hysteresis":
+        from RL.DiHFT.high_level.frozen_experiment import prepare_experiment
+
+        prepare_experiment(base_args, "calibration")
     return base_args
 
 
