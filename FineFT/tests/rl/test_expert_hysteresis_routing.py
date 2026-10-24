@@ -240,5 +240,7 @@ def test_rollout_warmup_and_independent_contracts_do_not_share_confirmation(tmp_
         router.run_single_valid_df(pd.DataFrame({"price": [100.0] * 5}), str(tmp_path), contract)
         # Two warm-up steps, then two ordinary entry confirmations.
         assert environments[-1].micro_action_history == [1, 1, 1, 2]
-        assert len(router.audit_predictions) == 1
-        assert router.audit_predictions[0]["contract"] == contract
+        # Lean trials expose the bounded latest decision, without retaining predictions.
+        assert router.audit_predictions == []
+        assert router.latest_routing_record["contract"] == contract
+        assert router.latest_routing_record["queried_slot"] == 5

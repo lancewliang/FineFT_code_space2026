@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Sequence
+
 import numpy as np
 
 
@@ -19,6 +20,10 @@ class GatingDecision:
     candidate_count: int = 0
     queried_slot: tuple[int, int] | None = None
     proposed_action: int | None = None
+    completed_candidate_slot: tuple[int, int] | None = None
+    completed_candidate_count: int = 0
+    incumbent_invalidated: bool = False
+    transition_reason: str = ""
 
 
 class BaseGatingStrategy(abc.ABC):

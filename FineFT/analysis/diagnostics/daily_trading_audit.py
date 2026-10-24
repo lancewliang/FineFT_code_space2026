@@ -29,6 +29,12 @@ from common.audit_records import (
     TradeRecord,
 )
 
+from common.routing_audit import (
+    ROUTING_RECORD_COLUMNS,
+    RoutingRecord,
+    validate_routing_evidence,
+)
+
 logger = logging.getLogger("DailyTradingAudit")
 
 
@@ -158,6 +164,8 @@ class DailyTradingAuditPublisher:
         all_predictions: list[PredictionRecord] = []
         all_trades: list[TradeRecord] = []
         all_accounts: list[AccountRecord] = []
+        all_routing: list[RoutingRecord] = []
+        action_positions: dict[str, list[float]] = {}
 
         global_meta: dict[str, Any] = {}
 
@@ -209,6 +217,23 @@ class DailyTradingAuditPublisher:
             with open(trade_path, encoding="utf-8") as f:
                 trade_data = json.load(f)
 
+            # Routing is mandatory only for new expert-strategy artifacts. Legacy
+            # three-record datasets remain readable without inferred route facts.
+            if c_meta.get("routing_schema_version"):
+                if c_meta["routing_schema_version"] != "1.0.0":
+                    raise ValueError("Unsupported routing metadata schema version")
+                routing_path = c_dir / AuditArtifactNames.AUDIT_ROUTING_JSON
+                if not routing_path.is_file():
+                    raise ValueError(f"Missing audit-grade input: {routing_path.name}")
+                with open(routing_path, encoding="utf-8") as file:
+                    routing_data = json.load(file)
+                action_positions[contract] = [float(value) for value in c_meta["action_positions"]]
+                for item in routing_data:
+                    step_idx = item.get("step_index", 0)
+                    if not item.get("trading_day") and step_idx < len(market_trading_days):
+                        item["trading_day"] = market_trading_days[step_idx]
+                    all_routing.append(RoutingRecord.from_dict(item))
+
             # Convert to typed records and assign trading_day if needed
             for item in pred_data:
                 step_idx = item.get("step_index", 0)
@@ -232,6 +257,8 @@ class DailyTradingAuditPublisher:
 
         # Perform strict validations
         self._validate(all_predictions, all_trades, all_accounts)
+        if action_positions:
+            validate_routing_evidence(all_routing, all_predictions, all_trades, action_positions)
 
         # Atomic publication via staging
         run_id = self.specified_run_id or global_meta.get("run_id", "unspecified_run")
@@ -244,6 +271,7 @@ class DailyTradingAuditPublisher:
             predictions=all_predictions,
             trades=all_trades,
             accounts=all_accounts,
+            routing=all_routing if action_positions else None,
         )
         return manifest_dict
 
@@ -363,6 +391,7 @@ class DailyTradingAuditPublisher:
         predictions: list[PredictionRecord],
         trades: list[TradeRecord],
         accounts: list[AccountRecord],
+        routing: list[RoutingRecord] | None = None,
     ) -> dict[str, Any]:
         # Create staging directory
         staging_dir = self.output_dir.parent / f".staging_{self.output_dir.name}_{uuid.uuid4().hex[:8]}"
@@ -374,6 +403,10 @@ class DailyTradingAuditPublisher:
             pred_by_day: dict[str, list[PredictionRecord]] = {}
             trade_by_day: dict[str, list[TradeRecord]] = {}
             acc_by_day: dict[str, list[AccountRecord]] = {}
+            routing_by_day: dict[str, list[RoutingRecord]] = {}
+            for record in routing or []:
+                days_set.add(record.trading_day)
+                routing_by_day.setdefault(record.trading_day, []).append(record)
 
             for p in predictions:
                 days_set.add(p.trading_day)
@@ -414,15 +447,27 @@ class DailyTradingAuditPublisher:
                     day_dir / AuditArtifactNames.ACCOUNT_RECORDS_CSV, index=False
                 )
 
+                day_routing = sorted(
+                    routing_by_day.get(day, []), key=lambda row: (row.contract, row.step_index)
+                )
+                if routing is not None:
+                    route_dicts = [record.to_dict() for record in day_routing]
+                    for row in route_dicts:
+                        for key in ("volatility_scores", "slope_scores"):
+                            row[key] = json.dumps(row[key])
+                    pd.DataFrame(route_dicts, columns=ROUTING_RECORD_COLUMNS).to_csv(
+                        day_dir / AuditArtifactNames.ROUTING_RECORDS_CSV, index=False
+                    )
                 partitions[str(day)] = {
                     "prediction_count": len(day_preds),
                     "trade_count": len(day_trades),
                     "account_count": len(day_accs),
+                    **({"routing_count": len(day_routing)} if routing is not None else {}),
                 }
 
             # Create AuditManifest
             manifest = AuditManifest(
-                schema_version="1.0.0",
+                schema_version="1.1.0" if routing is not None else "1.0.0",
                 run_id=run_id,
                 model_id=model_id,
                 feature_version=feature_version,
@@ -437,6 +482,7 @@ class DailyTradingAuditPublisher:
                     "prediction_records": len(predictions),
                     "trade_records": len(trades),
                     "account_records": len(accounts),
+                    **({"routing_records": len(routing)} if routing is not None else {}),
                 },
                 validation_status="passed",
                 created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
