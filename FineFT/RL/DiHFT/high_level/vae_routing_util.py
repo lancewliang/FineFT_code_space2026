@@ -31,7 +31,7 @@ from env.env_class.futures_util import (
     rule_based_close,
 )
 from RL.DiHFT.VAE.vae import MLP_VAE, analyze_single_sample, gaussian_nll, softclip
-from RL.DiHFT.high_level.gating import create_gating_strategy
+from RL.DiHFT.high_level.gating import ExpertHysteresisGating, create_gating_strategy
 
 from analysis.pick_agent.FineFT_two_dimensional_agent_selector import (
     TwoDimensionalSelectionManifest,
@@ -377,9 +377,11 @@ parser.add_argument(
     "--gating_strategy",
     type=str,
     default="absolute",
-    choices=["absolute", "hierarchical"],
+    choices=["absolute", "hierarchical", "expert_hysteresis"],
     help="门控路由策略类型，可选绝对阈值门控（absolute）或分层门控（hierarchical）",
 )
+parser.add_argument("--expert_switch_lead", type=float, default=0.0)
+parser.add_argument("--expert_confirm_steps", type=int, default=1)
 parser.add_argument(
     "--ood_threshold",
     type=float,
@@ -904,6 +906,8 @@ class vae_risk_aware_routing:
             ood_threshold=args.ood_threshold,
             slope_margin_threshold=args.slope_margin_threshold,
             volatility_margin_threshold=args.volatility_margin_threshold,
+            expert_switch_lead=getattr(args, "expert_switch_lead", 0.0),
+            expert_confirm_steps=getattr(args, "expert_confirm_steps", 1),
         )
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
         self.base_path = args.base_path
@@ -1177,6 +1181,8 @@ class vae_risk_aware_routing:
         return repr_str
 
     def reset_routing_state(self):
+        if isinstance(getattr(self, "gating_strategy", None), ExpertHysteresisGating):
+            self.gating_strategy.reset()
         self.quantiles = {
             axis: [
                 deque(maxlen=self.axis_window_lengths[axis])
@@ -1300,6 +1306,8 @@ class vae_risk_aware_routing:
             ood_threshold=args.ood_threshold,
             slope_margin_threshold=args.slope_margin_threshold,
             volatility_margin_threshold=args.volatility_margin_threshold,
+            expert_switch_lead=getattr(args, "expert_switch_lead", 0.0),
+            expert_confirm_steps=getattr(args, "expert_confirm_steps", 1),
         )
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
         self.enable_non_main_contract_defense = bool(args.enable_non_main_contract_defense)
@@ -1448,6 +1456,13 @@ class vae_risk_aware_routing:
         current_markprice: float = 0.0,
     ) -> int:
         current_pos_float = float(current_position)
+        expert_hysteresis = isinstance(self.gating_strategy, ExpertHysteresisGating)
+        if expert_hysteresis:
+            self.gating_strategy.bind_manifest(self.selection_manifest)
+            volatility_weights = self.calculate_axis_window_result("volatility")
+            slope_weights = self.calculate_axis_window_result("slope")
+            # Invalid scoring inputs fail even when risk would otherwise preempt.
+            self.gating_strategy.validate_scores(volatility_weights, slope_weights)
 
         # 0. Trade lifecycle tracking: detect trade exit and reset consecutive stop-out streak
         if self.previous_step_position == 0.0 and current_pos_float != 0.0:
@@ -1530,8 +1545,9 @@ class vae_risk_aware_routing:
                 )
             is_downgraded_hold = True
 
-        volatility_weights = self.calculate_axis_window_result("volatility")
-        slope_weights = self.calculate_axis_window_result("slope")
+        if not expert_hysteresis:
+            volatility_weights = self.calculate_axis_window_result("volatility")
+            slope_weights = self.calculate_axis_window_result("slope")
         decision = self.gating_strategy.decide(
             volatility_weights, slope_weights, current_position=current_pos_float
         )
@@ -1575,7 +1591,10 @@ class vae_risk_aware_routing:
         self.macro_action_history.append(slot_id)
 
         # 4. Candidate Action Query
-        if self.remaining_persist > 0 and not bool(
+        if expert_hysteresis:
+            candidate_action = self.agent_act(s, info)
+            candidate_reason = ActionDecisionReasons.POLICY_INFERENCE
+        elif self.remaining_persist > 0 and not bool(
             info["avaliable_action"][self.current_action]
         ):
             self.remaining_persist = 0
@@ -1742,6 +1761,8 @@ class vae_risk_aware_routing:
         return action
 
     def run_single_valid_df(self, df, save_path, contract_name: str | None = None):
+        if isinstance(getattr(self, "gating_strategy", None), ExpertHysteresisGating):
+            self.reset_routing_state()
         self.df = df
         self.current_contract_name = contract_name or "default_contract"
         self.audit_predictions = []
