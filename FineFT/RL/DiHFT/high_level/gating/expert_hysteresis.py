@@ -122,9 +122,9 @@ class ExpertHysteresisGating(BaseGatingStrategy):
                 raise ValueError(f"{axis} scores must be finite and in [0, 1]")
         lengths = tuple(len(x) for x in arrays)
         if self._axis_lengths is not None and lengths != self._axis_lengths:
-                raise ValueError(
-                    "expert_hysteresis score axis dimensions changed or mismatch manifest"
-                )
+            raise ValueError(
+                "expert_hysteresis score axis dimensions changed or mismatch manifest"
+            )
         self._axis_lengths = lengths
         return arrays
 
