@@ -18,4 +18,4 @@
 - [x] 相同输入和最优配置下，轻量 Trial 与完整回放使用相同的 `router.test()` 目标函数、冻结评分缓存与执行配置；受控入口覆盖确保最优参数没有在回放时丢失。真实策略数值比较留待具备独立资产后的 07。
 - [x] 历史 absolute、hierarchical 的搜索及回放回归场景继续通过；本票不触发模型重训或自动启动大规模研究实验。实际独立历史评估及结论由 07 交付。
 
-**Evidence:** `FineFT/tests/rl/test_frozen_expert_experiment.py::test_public_expert_calibration_search_replays_selected_policy_once` 覆盖公开入口、五维搜索、固定评分、轻量 trial、冻结导出和一次完整回放；定向回归 65 passed。全量 suite 为 689 passed / 13 failed，失败均位于既有低层 curriculum、缺失脚本/数据或历史路径断言，未涉及本票文件。
+**Evidence:** `FineFT/tests/rl/test_frozen_expert_experiment.py::test_public_expert_calibration_search_replays_selected_policy_once` 覆盖公开入口、五维搜索、固定评分、轻量 trial、冻结导出和一次完整回放；`test_expert_tuning_preparation_rejects_missing_search_bounds` 确认无效配置在评分前拒绝。定向回归 66 passed。全量 suite 在新增该断言前为 689 passed / 13 failed，失败均位于既有低层 curriculum、缺失脚本/数据或历史路径断言，未涉及本票文件。
