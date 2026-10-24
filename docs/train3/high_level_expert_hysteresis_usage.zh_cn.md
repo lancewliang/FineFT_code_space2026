@@ -57,7 +57,34 @@ export PYTHONPATH="$PWD:$PWD/FineFT"
 
 公开基础 parser 接受 `--gating_strategy expert_hysteresis`、`--strategy_version expert_hysteresis.v1`、两轴 `--*_rule_base_threshold`（E）、`--hysteresis_exit_ratio`、`--expert_switch_lead`（Δ）、`--expert_confirm_steps`（K），以及两轴 `--*_window_length`、`--*_gamma`。新策略要求明确两轴 E 与评分设置。H 由 `exit_ratio × E` 派生并写入配置；合法关系为 `0 <= H < E <= 1`、`0 < exit_ratio < 1`、有限非负 Δ、正整数 K。
 
-公共调参准备入口 `vae_routing_optuna.prepare_base_args(base_args, search_args)` 会调用 `prepare_experiment(args, phase="calibration")`，验证证据、时间、版本及固定评分。随后只允许校准路由门槛与确认参数。自动搜索及搜索边界由配套校准入口提供。
+公共调参准备入口 `vae_routing_optuna.prepare_base_args(base_args, search_args)` 会调用 `prepare_experiment(args, phase="calibration")`，验证证据、时间、版本及固定评分。`expert_hysteresis` 的公开调参入口只采样五个策略维度：两轴 E、`exit_ratio`、共享 `Δ` 和正整数 `K`。两轴评分窗口和 gamma、模型、参考分布、缓存、账户及执行/风控设置在 trial 间保持不变。每个轻量 trial 将策略版本、固定评分及派生 H 写入 Optuna user attributes；它不会写完整轨迹或日度审计。
+
+新策略必须明确给出五个维度的搜索边界，避免把历史 absolute 的评分搜索误用于迟滞校准。以下命令中的上下界均为待研究者依据独立校准设计提供的占位符，并非推荐或已验证的数值：
+
+```bash
+python -u FineFT/RL/DiHFT/high_level/vae_routing_optuna.py \
+  --gating_strategy expert_hysteresis \
+  --experiment_manifest /absolute/path/experiment.json \
+  --selection_manifest /absolute/path/two_dimensional_selection_manifest.json \
+  --slope_window_length FIXED_SLOPE_WINDOW \
+  --volatility_window_length FIXED_VOLATILITY_WINDOW \
+  --slope_gamma FIXED_SLOPE_GAMMA \
+  --volatility_gamma FIXED_VOLATILITY_GAMMA \
+  --slope_rule_base_threshold FIXED_INITIAL_SLOPE_E \
+  --volatility_rule_base_threshold FIXED_INITIAL_VOLATILITY_E \
+  --expert_slope_entry_threshold_min CALIBRATION_SLOPE_E_MIN \
+  --expert_slope_entry_threshold_max CALIBRATION_SLOPE_E_MAX \
+  --expert_volatility_entry_threshold_min CALIBRATION_VOLATILITY_E_MIN \
+  --expert_volatility_entry_threshold_max CALIBRATION_VOLATILITY_E_MAX \
+  --hysteresis_exit_ratio_min CALIBRATION_RATIO_MIN \
+  --hysteresis_exit_ratio_max CALIBRATION_RATIO_MAX \
+  --expert_switch_lead_min CALIBRATION_DELTA_MIN \
+  --expert_switch_lead_max CALIBRATION_DELTA_MAX \
+  --expert_confirm_steps_min CALIBRATION_K_MIN \
+  --expert_confirm_steps_max CALIBRATION_K_MAX
+```
+
+入口拒绝缺失或非法边界：两轴 E 必须满足 `0 < min <= max <= 1`，ratio 满足 `0 < min <= max < 1`，Δ 满足 `0 <= min <= max`，K 为正整数且 `min <= max`。完成搜索后，入口将最优 trial 的全部五个值重新应用到新路由实例，先写入不可覆盖的 `selected_expert_hysteresis_config.json`，再在校准段执行恰好一次带完整产物的回放。该回放是校准证据，不是最终测试；最终测试仍须用下面的冻结配置重载入口。
 
 选定参数后，先应用最优参数，再调用：
 

@@ -4,7 +4,7 @@
 
 **Blocked by:** 06 — 接入固定评分下的轻量校准与最优回放。
 
-**Status:** ready-for-agent
+**Status:** needs-info
 
 依据本功能实施规格与 ADR-0062；遵守 ADR-0060 的数据边界、账户和计量契约。本票描述后续实际研究交付，本次生成 tickets 不执行训练、校准、回测或部署。
 
@@ -17,3 +17,5 @@
 - [ ] 指标可回溯到逐步路由、Prediction Record、实际执行与账户证据；相同配置重复回放得到一致路由，并通过相关账本及审计一致性检查。
 - [ ] 输出对照表和解释性报告，区分行为契约是否满足与绩效是否改善；允许结果显示等待成本、收益下降或回撤恶化，不预设改善幅度或收益保证。
 - [ ] 不在本票悄悄重训专家、修改选拔门槛、费用、Reward Shaping、DP Q 表或账户语义。若独立实验缺乏必要数据或模型，明确保留未完成项，不能用受污染结果替代验收。
+
+**Blocked evidence (2026-10-24):** 现有 `dataset/10min/fu` 的 train/valid 边界复用了 TradingDay 20240723，专家选择又使用了完整 valid；现有模型和评分缓存没有修正分区后的重训与来源证明，且当前执行账户为 independent-contract wallet，不满足 ADR-0060 的共享账户契约。详见 [`evidence/07-independent-evaluation-feasibility.md`](../evidence/07-independent-evaluation-feasibility.md)。需要实验负责人提供 TradingDay-atomic 的新数据/切分证据、在该切分上重训并哈希锁定的专家与 VAE 资产、独立 calibration/final 段，以及符合 ADR-0060 的账户执行证据后，才能完成本票的真实对照报告。

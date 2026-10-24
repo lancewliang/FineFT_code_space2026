@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
+from common import RoutingParamColumns
 from RL.DiHFT.high_level import frozen_experiment as frozen
 from RL.DiHFT.high_level import vae_routing_final_result_macro_action as final
 from RL.DiHFT.high_level import vae_routing_optuna as tuning
@@ -505,3 +506,164 @@ def test_negative_boolean_override_cannot_change_frozen_risk_controls(experiment
     selected = frozen.export_frozen_experiment(args, tmp_path / "selected.json")
     with pytest.raises(ValueError, match="override frozen"):
         final.parse_and_prepare_args(["--frozen_config", selected, "--no-enable_mdd_penalty"])
+
+
+def test_public_expert_calibration_search_replays_selected_policy_once(
+    experiment, tmp_path, monkeypatch
+):
+    """The public tuner varies only the five policy controls before one full replay."""
+    args, _, _ = experiment
+    search = tuning.parser_all.parse_args(
+        [
+            "--dataset_name",
+            "fu",
+            "--experiment_name",
+            "fixture",
+            "--selection_manifest",
+            args.selection_manifest,
+            "--gating_strategy",
+            "expert_hysteresis",
+            "--hysteresis_exit_ratio_min",
+            "0.4",
+            "--hysteresis_exit_ratio_max",
+            "0.6",
+            "--expert_slope_entry_threshold_min",
+            "0.5",
+            "--expert_slope_entry_threshold_max",
+            "0.7",
+            "--expert_volatility_entry_threshold_min",
+            "0.7",
+            "--expert_volatility_entry_threshold_max",
+            "0.9",
+            "--expert_switch_lead_min",
+            "0.1",
+            "--expert_switch_lead_max",
+            "0.2",
+            "--expert_confirm_steps_min",
+            "2",
+            "--expert_confirm_steps_max",
+            "3",
+            "--n_trials",
+            "1",
+            "--n_workers",
+            "1",
+        ]
+    )
+    selected_values = {
+        "slope_rule_base_threshold": 0.7,
+        "volatility_rule_base_threshold": 0.9,
+        "hysteresis_exit_ratio": 0.6,
+        "expert_switch_lead": 0.2,
+        "expert_confirm_steps": 3,
+    }
+    observed = {"trial": None, "replays": []}
+
+    class ControlledTrial:
+        def __init__(self):
+            self.params = {}
+            self.user_attrs = {}
+
+        def suggest_float(self, name, low, high, log=False):
+            del low, log
+            self.params[name] = high
+            return high
+
+        def suggest_int(self, name, low, high):
+            del low
+            self.params[name] = high
+            return high
+
+        def suggest_categorical(self, name, choices):
+            self.params[name] = choices[0]
+            return choices[0]
+
+        def set_user_attr(self, name, value):
+            self.user_attrs[name] = value
+
+    class ControlledBestTrial:
+        def __init__(self):
+            self.number = 0
+            self.params = {}
+
+    class ControlledStudy:
+        def __init__(self):
+            self.best_trial = ControlledBestTrial()
+            self.trials = [object()]
+
+        def trials_dataframe(self):
+            return pd.DataFrame([self.best_trial.params])
+
+    study = ControlledStudy()
+
+    class ControlledOptuna:
+        @staticmethod
+        def create_study(**kwargs):
+            del kwargs
+            return study
+
+        @staticmethod
+        def load_study(**kwargs):
+            del kwargs
+            return study
+
+    def controlled_worker(base_args, search_args, study_name, storage_url, n_trials):
+        del study_name, storage_url
+        assert n_trials == 1
+        trial_args = copy.deepcopy(base_args)
+        trial_args.save_artifacts = False
+        trial = ControlledTrial()
+        tuning.suggest_trial_parameters(trial, trial_args, search_args)
+        observed["trial"] = (trial_args, trial)
+        study.best_trial.params = trial.params
+
+    class ControlledReplay:
+        def __init__(self, replay_args):
+            self.args = replay_args
+
+        def test(self):
+            observed["replays"].append(copy.deepcopy(self.args))
+            return 0.123
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(tuning, "optuna", ControlledOptuna)
+    monkeypatch.setattr(tuning, "make_rdb_storage", lambda _: None)
+    monkeypatch.setattr(
+        tuning, "ensure_precomputed_vae_quantiles", lambda _: str(tmp_path / "cache")
+    )
+    monkeypatch.setattr(tuning, "run_optuna_worker", controlled_worker)
+    monkeypatch.setattr(tuning, "vae_risk_aware_routing", ControlledReplay)
+    tuning.tune(args, search)
+
+    trial_args, trial = observed["trial"]
+    assert trial_args.save_artifacts is False
+    assert {
+        RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD,
+        RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD,
+        RoutingParamColumns.HYSTERESIS_EXIT_RATIO,
+        RoutingParamColumns.EXPERT_SWITCH_LEAD,
+        RoutingParamColumns.EXPERT_CONFIRM_STEPS,
+    }.issubset(trial.params)
+    assert {
+        RoutingParamColumns.SLOPE_WINDOW_LENGTH,
+        RoutingParamColumns.VOLATILITY_WINDOW_LENGTH,
+        RoutingParamColumns.SLOPE_GAMMA,
+        RoutingParamColumns.VOLATILITY_GAMMA,
+    }.isdisjoint(trial.params)
+    assert trial.user_attrs["strategy_version"] == "expert_hysteresis.v1"
+    assert trial.user_attrs["slope_window_length"] == args.slope_window_length
+    assert trial.user_attrs["volatility_gamma"] == args.volatility_gamma
+    assert len(observed["replays"]) == 1
+    replay = observed["replays"][0]
+    assert replay.save_artifacts is True
+    for field, value in selected_values.items():
+        assert getattr(replay, field) == value
+    selected = (
+        tmp_path
+        / "result/DiHFT/high_level/fu/fixture/vae_risk_aware_routing_optuna"
+        / "selected_expert_hysteresis_config.json"
+    )
+    configuration = json.loads(selected.read_text())["configuration"]
+    for field, value in selected_values.items():
+        assert configuration[field] == value
+    assert configuration["slope_window_length"] == args.slope_window_length
+    assert configuration["volatility_gamma"] == args.volatility_gamma

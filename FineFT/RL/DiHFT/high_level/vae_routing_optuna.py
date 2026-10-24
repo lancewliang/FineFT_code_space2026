@@ -1,5 +1,5 @@
-import copy
 import argparse
+import copy
 import multiprocessing
 import os
 import random
@@ -10,13 +10,13 @@ os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
-import numpy as np  # noqa: E402
-import optuna  # noqa: E402
-import torch  # noqa: E402
+import numpy as np
+import optuna
+import torch
 
 sys.path.append(".")
 from common import ArtifactNames, RoutingParamColumns
-from RL.DiHFT.high_level.vae_routing_util import (  # noqa: E402
+from RL.DiHFT.high_level.vae_routing_util import (
     ensure_precomputed_vae_quantiles,
     load_two_dimensional_selection_manifest,
     vae_risk_aware_routing,
@@ -239,6 +239,43 @@ parser_all.add_argument(
     default=0.80,
     help="绝对门控策略中迟滞退出比率（hysteresis exit ratio）的搜索上限",
 )
+for _axis in ("slope", "volatility"):
+    parser_all.add_argument(
+        f"--expert_{_axis}_entry_threshold_min",
+        type=float,
+        default=None,
+        help=f"专家迟滞策略 {_axis} 轴入场阈值 E 的校准下限",
+    )
+    parser_all.add_argument(
+        f"--expert_{_axis}_entry_threshold_max",
+        type=float,
+        default=None,
+        help=f"专家迟滞策略 {_axis} 轴入场阈值 E 的校准上限",
+    )
+parser_all.add_argument(
+    "--expert_switch_lead_min",
+    type=float,
+    default=None,
+    help="专家迟滞策略共享切换领先值 Δ 的校准下限",
+)
+parser_all.add_argument(
+    "--expert_switch_lead_max",
+    type=float,
+    default=None,
+    help="专家迟滞策略共享切换领先值 Δ 的校准上限",
+)
+parser_all.add_argument(
+    "--expert_confirm_steps_min",
+    type=int,
+    default=None,
+    help="专家迟滞策略确认步数 K 的校准下限",
+)
+parser_all.add_argument(
+    "--expert_confirm_steps_max",
+    type=int,
+    default=None,
+    help="专家迟滞策略确认步数 K 的校准上限",
+)
 
 
 def default_selection_manifest_path(args):
@@ -258,7 +295,9 @@ def prepare_base_args(args_1, args_2):
 
     base_args = copy.deepcopy(args_1)
     base_args.dataset_name = args_2.dataset_name
-    base_args.max_holding_number = getattr(args_2, "max_holding_number", getattr(args_1, "max_holding_number", 1))
+    base_args.max_holding_number = getattr(
+        args_2, "max_holding_number", getattr(args_1, "max_holding_number", 1)
+    )
     if hasattr(args_2, "position_choices") and args_2.position_choices is not None:
         base_args.position_choices = args_2.position_choices
     if hasattr(args_2, "leverage_choices") and args_2.leverage_choices is not None:
@@ -266,12 +305,9 @@ def prepare_base_args(args_1, args_2):
     if hasattr(args_2, "initial_leverage") and args_2.initial_leverage is not None:
         base_args.initial_leverage = args_2.initial_leverage
     base_args.order_book_depth = args_2.order_book_depth
-    base_args.experiment_name = (
-        args_2.experiment_name or base_args.experiment_name
-    )
+    base_args.experiment_name = args_2.experiment_name or base_args.experiment_name
     base_args.enable_non_main_contract_defense = (
-        args_2.enable_non_main_contract_defense
-        or base_args.enable_non_main_contract_defense
+        args_2.enable_non_main_contract_defense or base_args.enable_non_main_contract_defense
     )
     base_args.non_main_defense_mode = args_2.non_main_defense_mode
     base_args.enable_mdd_penalty = args_2.enable_mdd_penalty
@@ -300,8 +336,90 @@ def prepare_base_args(args_1, args_2):
     return base_args
 
 
+def _expert_search_bounds(search_args):
+    """Validate the explicitly supplied five-dimensional expert search domain."""
+    bounds = {}
+    for axis in ("slope", "volatility"):
+        low = getattr(search_args, f"expert_{axis}_entry_threshold_min")
+        high = getattr(search_args, f"expert_{axis}_entry_threshold_max")
+        if low is None or high is None or not 0 < low <= high <= 1:
+            raise ValueError(
+                f"expert {axis} entry threshold bounds must satisfy 0 < min <= max <= 1"
+            )
+        bounds[axis] = (float(low), float(high))
+    ratio_low = search_args.hysteresis_exit_ratio_min
+    ratio_high = search_args.hysteresis_exit_ratio_max
+    if not 0 < ratio_low <= ratio_high < 1:
+        raise ValueError("expert hysteresis exit ratio bounds must satisfy 0 < min <= max < 1")
+    lead_low = search_args.expert_switch_lead_min
+    lead_high = search_args.expert_switch_lead_max
+    if lead_low is None or lead_high is None or not 0 <= lead_low <= lead_high:
+        raise ValueError("expert switch lead bounds must satisfy 0 <= min <= max")
+    confirm_low = search_args.expert_confirm_steps_min
+    confirm_high = search_args.expert_confirm_steps_max
+    if (
+        isinstance(confirm_low, bool)
+        or isinstance(confirm_high, bool)
+        or not isinstance(confirm_low, int)
+        or not isinstance(confirm_high, int)
+        or not 1 <= confirm_low <= confirm_high
+    ):
+        raise ValueError("expert confirmation bounds must be positive integers with min <= max")
+    return bounds
+
+
+def _record_expert_trial_configuration(trial, args):
+    """Keep fixed scoring and derived holding thresholds beside a lean trial."""
+    if not hasattr(trial, "set_user_attr"):
+        return
+    for field in (
+        "strategy_version",
+        "slope_window_length",
+        "volatility_window_length",
+        "slope_gamma",
+        "volatility_gamma",
+        "slope_hold_threshold",
+        "volatility_hold_threshold",
+    ):
+        trial.set_user_attr(field, getattr(args, field))
+
+
 def suggest_trial_parameters(trial, trial_args, search_args):
     """Apply independent slope and volatility parameters to one trial."""
+
+    trial_args.gating_strategy = search_args.gating_strategy
+    if search_args.gating_strategy == "expert_hysteresis":
+        from RL.DiHFT.high_level.frozen_experiment import resolve_expert_parameters
+
+        trial.suggest_categorical(
+            RoutingParamColumns.GATING_STRATEGY,
+            [search_args.gating_strategy],
+        )
+        bounds = _expert_search_bounds(search_args)
+        trial_args.slope_rule_base_threshold = trial.suggest_float(
+            RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD, *bounds["slope"]
+        )
+        trial_args.volatility_rule_base_threshold = trial.suggest_float(
+            RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD, *bounds["volatility"]
+        )
+        trial_args.hysteresis_exit_ratio = trial.suggest_float(
+            RoutingParamColumns.HYSTERESIS_EXIT_RATIO,
+            search_args.hysteresis_exit_ratio_min,
+            search_args.hysteresis_exit_ratio_max,
+        )
+        trial_args.expert_switch_lead = trial.suggest_float(
+            RoutingParamColumns.EXPERT_SWITCH_LEAD,
+            search_args.expert_switch_lead_min,
+            search_args.expert_switch_lead_max,
+        )
+        trial_args.expert_confirm_steps = trial.suggest_int(
+            RoutingParamColumns.EXPERT_CONFIRM_STEPS,
+            search_args.expert_confirm_steps_min,
+            search_args.expert_confirm_steps_max,
+        )
+        resolve_expert_parameters(trial_args)
+        _record_expert_trial_configuration(trial, trial_args)
+        return trial_args
 
     trial_args.slope_window_length = trial.suggest_int(
         RoutingParamColumns.SLOPE_WINDOW_LENGTH,
@@ -330,12 +448,10 @@ def suggest_trial_parameters(trial, trial_args, search_args):
         trial_args.volatility_window_length,
     )
     trial_args.gamma = trial_args.slope_gamma
-    trial_args.gating_strategy = search_args.gating_strategy
     trial.suggest_categorical(
         RoutingParamColumns.GATING_STRATEGY,
         [search_args.gating_strategy],
     )
-
     if search_args.gating_strategy == "hierarchical":
         trial_args.ood_threshold = trial.suggest_float(
             RoutingParamColumns.OOD_THRESHOLD,
@@ -383,31 +499,49 @@ def suggest_trial_parameters(trial, trial_args, search_args):
     return trial_args
 
 
-
-
 def apply_best_trial_parameters(trial_args, best_params, search_args):
     """Apply best Optuna parameters to trial_args for canonical replay."""
-    trial_args.slope_window_length = int(
-        best_params[RoutingParamColumns.SLOPE_WINDOW_LENGTH]
-    )
+    trial_args.gating_strategy = search_args.gating_strategy
+    if search_args.gating_strategy == "expert_hysteresis":
+        from RL.DiHFT.high_level.frozen_experiment import resolve_expert_parameters
+
+        required = (
+            RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD,
+            RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD,
+            RoutingParamColumns.HYSTERESIS_EXIT_RATIO,
+            RoutingParamColumns.EXPERT_SWITCH_LEAD,
+            RoutingParamColumns.EXPERT_CONFIRM_STEPS,
+        )
+        missing = [field for field in required if field not in best_params]
+        if missing:
+            raise ValueError(f"best expert trial is missing parameters: {', '.join(missing)}")
+        trial_args.slope_rule_base_threshold = float(
+            best_params[RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD]
+        )
+        trial_args.volatility_rule_base_threshold = float(
+            best_params[RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD]
+        )
+        trial_args.hysteresis_exit_ratio = float(
+            best_params[RoutingParamColumns.HYSTERESIS_EXIT_RATIO]
+        )
+        trial_args.expert_switch_lead = float(best_params[RoutingParamColumns.EXPERT_SWITCH_LEAD])
+        trial_args.expert_confirm_steps = int(best_params[RoutingParamColumns.EXPERT_CONFIRM_STEPS])
+        resolve_expert_parameters(trial_args)
+        return trial_args
+
+    trial_args.slope_window_length = int(best_params[RoutingParamColumns.SLOPE_WINDOW_LENGTH])
     trial_args.volatility_window_length = int(
         best_params[RoutingParamColumns.VOLATILITY_WINDOW_LENGTH]
     )
     trial_args.slope_gamma = float(best_params[RoutingParamColumns.SLOPE_GAMMA])
-    trial_args.volatility_gamma = float(
-        best_params[RoutingParamColumns.VOLATILITY_GAMMA]
-    )
+    trial_args.volatility_gamma = float(best_params[RoutingParamColumns.VOLATILITY_GAMMA])
     trial_args.window_length = max(
         trial_args.slope_window_length,
         trial_args.volatility_window_length,
     )
     trial_args.gamma = trial_args.slope_gamma
-    trial_args.gating_strategy = search_args.gating_strategy
-
     if search_args.gating_strategy == "hierarchical":
-        trial_args.ood_threshold = float(
-            best_params[RoutingParamColumns.OOD_THRESHOLD]
-        )
+        trial_args.ood_threshold = float(best_params[RoutingParamColumns.OOD_THRESHOLD])
         trial_args.slope_margin_threshold = float(
             best_params[RoutingParamColumns.SLOPE_MARGIN_THRESHOLD]
         )
@@ -426,9 +560,7 @@ def apply_best_trial_parameters(trial_args, best_params, search_args):
             best_params[RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD]
         )
         trial_args.hysteresis_exit_ratio = float(
-            best_params[RoutingParamColumns.HYSTERESIS_EXIT_RATIO]
-            if RoutingParamColumns.HYSTERESIS_EXIT_RATIO in best_params
-            else 0.65
+            best_params.get(RoutingParamColumns.HYSTERESIS_EXIT_RATIO, 0.65)
         )
         trial_args.ood_threshold = 0.005
         trial_args.slope_margin_threshold = 0.12
@@ -531,19 +663,12 @@ def tune(args_1, args_2):
     n_workers = min(args_2.n_workers, args_2.n_trials)
     base_count, extra = divmod(args_2.n_trials, n_workers)
     worker_trial_counts = [
-        base_count + (1 if worker_index < extra else 0)
-        for worker_index in range(n_workers)
+        base_count + (1 if worker_index < extra else 0) for worker_index in range(n_workers)
     ]
-    print(
-        "launching {} worker processes for {} trials".format(
-            n_workers, args_2.n_trials
-        )
-    )
+    print(f"launching {n_workers} worker processes for {args_2.n_trials} trials")
 
     if n_workers == 1:
-        run_optuna_worker(
-            base_args, args_2, study_name, storage_url, worker_trial_counts[0]
-        )
+        run_optuna_worker(base_args, args_2, study_name, storage_url, worker_trial_counts[0])
     else:
         spawn_context = multiprocessing.get_context("spawn")
         processes = [
@@ -574,12 +699,17 @@ def tune(args_1, args_2):
     best_args = copy.deepcopy(base_args)
     best_args.save_artifacts = True
     best_args.trial_number = study.best_trial.number
-    best_args = apply_best_trial_parameters(
-        best_args, study.best_trial.params, args_2
-    )
+    best_args = apply_best_trial_parameters(best_args, study.best_trial.params, args_2)
+    if best_args.gating_strategy == "expert_hysteresis":
+        from RL.DiHFT.high_level.frozen_experiment import export_frozen_experiment
+
+        export_frozen_experiment(
+            best_args,
+            os.path.join(optunal_path, "selected_expert_hysteresis_config.json"),
+        )
     best_router = vae_risk_aware_routing(best_args)
     best_return_rate = best_router.test()
-    print("Best trial evaluation completed with return rate: {:.6f}".format(best_return_rate))
+    print(f"Best trial evaluation completed with return rate: {best_return_rate:.6f}")
 
 
 if __name__ == "__main__":
