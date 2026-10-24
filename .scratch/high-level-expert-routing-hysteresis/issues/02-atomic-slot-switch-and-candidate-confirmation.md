@@ -4,16 +4,24 @@
 
 **Blocked by:** 01 — 接通专家进入、保持与规则恢复。
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
 依据本功能实施规格与 ADR-0062；继续使用原始双轴平滑分位分数，不引入联合盈利分数或跨专家 Q 值比较。
 
-- [ ] 从两轴最高分集合的笛卡尔积确定最高分 Slot 集合；优先有效当前专家，其次仍在集合中的已有候选，最后按稳定 Slot 顺序确定候选。
-- [ ] 当前专家并列最高时保持专家；已有较高 ID 候选被较低 ID Slot 追平时不丢失证据；无历史状态的并列按稳定顺序选择。相同输入、配置和初始状态产生相同外部决策。
-- [ ] 替换候选的两个轴均须达到各自 E；每个变化轴均须相对当前专家对应轴严格领先且差值至少为共享 Δ。不变轴不与自身比较优势，但仍须达到进入阈值。
-- [ ] 覆盖仅斜率变化、仅波动率变化和双轴变化：任一必需轴未达进入阈值或优势要求均不能累计替换确认；两个轴不能独立累计后拼接 Slot。
-- [ ] 初次进入、规则恢复、普通替换共用 K。同一合格候选连续累计，候选改变从 1 重计，条件中断清零；不同候选不得共享确认次数。
-- [ ] 第 K 个合格步骤原子切换，完成后清除待确认状态。确认未完成时，有有效当前专家则继续由该专家每步推断，否则使用规则分支。
-- [ ] 当前专家普通失效时，只要同一候选本步仍合格就延续此前证据；已有 K-1 步且本步合格时当步接管，不插入强制规则动作。失效后按无有效当前专家的进入条件评估，不额外要求第二名差距。
-- [ ] 对 H、E、Δ 附近作数值边界验证：等于 H 仍有效、等于 E 可确认、正领先等于 Δ 可确认；Δ = 0 仍要求严格领先，同分不能替换当前专家。
-- [ ] 通过公开 get_action 输入固定分数序列和可变假专家输出，验证所选 Slot、最终动作与公开归因；覆盖候选改变、中断、失效前后连续性及同一步完成接管，不依赖内部容器布局断言。
+- [x] 从两轴最高分集合的笛卡尔积确定最高分 Slot 集合；优先有效当前专家，其次仍在集合中的已有候选，最后按稳定 Slot 顺序确定候选。
+- [x] 当前专家并列最高时保持专家；已有较高 ID 候选被较低 ID Slot 追平时不丢失证据；无历史状态的并列按稳定顺序选择。相同输入、配置和初始状态产生相同外部决策。
+- [x] 替换候选的两个轴均须达到各自 E；每个变化轴均须相对当前专家对应轴严格领先且差值至少为共享 Δ。不变轴不与自身比较优势，但仍须达到进入阈值。
+- [x] 覆盖仅斜率变化、仅波动率变化和双轴变化：任一必需轴未达进入阈值或优势要求均不能累计替换确认；两个轴不能独立累计后拼接 Slot。
+- [x] 初次进入、规则恢复、普通替换共用 K。同一合格候选连续累计，候选改变从 1 重计，条件中断清零；不同候选不得共享确认次数。
+- [x] 第 K 个合格步骤原子切换，完成后清除待确认状态。确认未完成时，有有效当前专家则继续由该专家每步推断，否则使用规则分支。
+- [x] 当前专家普通失效时，只要同一候选本步仍合格就延续此前证据；已有 K-1 步且本步合格时当步接管，不插入强制规则动作。失效后按无有效当前专家的进入条件评估，不额外要求第二名差距。
+- [x] 对 H、E、Δ 附近作数值边界验证：等于 H 仍有效、等于 E 可确认、正领先等于 Δ 可确认；Δ = 0 仍要求严格领先，同分不能替换当前专家。
+- [x] 通过公开 get_action 输入固定分数序列和可变假专家输出，验证所选 Slot、最终动作与公开归因；覆盖候选改变、中断、失效前后连续性及同一步完成接管，不依赖内部容器布局断言。
+
+## Implementation evidence
+
+- Public `GatingDecision` exposes dominant/active/candidate Slot identities and pending count without changing historical strategy defaults.
+- Atomic replacement uses the two-axis highest-set Cartesian product, tied incumbent/candidate priority, independent changed-axis strict lead plus shared Delta, and shared K. Still-eligible evidence survives ordinary invalidation and can complete on the same step.
+- Public `get_action` sequences assert expert identity, changed final actions and genuine prediction provenance for slope-only, volatility-only and two-axis replacement; interruption/restart, ties, recovery and exact/adjacent-float H/E/Delta boundaries are covered.
+- Validation: 105 routing/gating/risk/cache/final-result tests passed with `conda activate finetf`. Ruff check/format passed for the new strategy and routing test modules; pyright reports zero errors for the strategy module.
+- Expanded risk interruption handling remains ticket 03; detailed persisted audit remains ticket 04.

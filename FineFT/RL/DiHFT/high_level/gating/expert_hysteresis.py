@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
+from dataclasses import replace
 from numbers import Integral
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING
 
 import numpy as np
-
 from RL.DiHFT.high_level.gating.base import BaseGatingStrategy, GatingDecision
 
 if TYPE_CHECKING:
@@ -85,9 +86,7 @@ class ExpertHysteresisGating(BaseGatingStrategy):
         if manifest.slot_index_formula != "volatility_index * num_labels + slope_index":
             raise ValueError("expert_hysteresis manifest Slot mapping formula is incompatible")
         for slot_id, slot in enumerate(manifest.slots):
-            if slot.get("slot_id") != slot_id or slot.get("kind") not in (
-                "model", "empty_model"
-            ):
+            if slot.get("slot_id") != slot_id or slot.get("kind") not in ("model", "empty_model"):
                 raise ValueError("expert_hysteresis manifest Slot mapping is incompatible")
         identity = json.dumps(
             {"volatility": vol_labels, "slope": slope_labels, "slots": manifest.slots},
@@ -120,11 +119,9 @@ class ExpertHysteresisGating(BaseGatingStrategy):
                 raise ValueError(f"{axis} scores must be a nonempty vector")
             if not np.all(np.isfinite(values)) or np.any((values < 0.0) | (values > 1.0)):
                 raise ValueError(f"{axis} scores must be finite and in [0, 1]")
-        lengths = tuple(len(x) for x in arrays)
+        lengths = (len(arrays[0]), len(arrays[1]))
         if self._axis_lengths is not None and lengths != self._axis_lengths:
-            raise ValueError(
-                "expert_hysteresis score axis dimensions changed or mismatch manifest"
-            )
+            raise ValueError("expert_hysteresis score axis dimensions changed or mismatch manifest")
         self._axis_lengths = lengths
         return arrays
 
@@ -141,18 +138,19 @@ class ExpertHysteresisGating(BaseGatingStrategy):
         vol, slope = self.validate_scores(volatility_weights, slope_weights)
         holding_vol = self.volatility_threshold * self.hysteresis_exit_ratio
         holding_slope = self.slope_threshold * self.hysteresis_exit_ratio
+        active_before = self.active_slot
         active_valid = self.active_slot is not None and (
-            vol[self.active_slot[0]] >= holding_vol
-            and slope[self.active_slot[1]] >= holding_slope
+            vol[self.active_slot[0]] >= holding_vol and slope[self.active_slot[1]] >= holding_slope
         )
+        incumbent = active_before if active_valid else None
         highest = [
             (int(v), int(s))
             for v in np.flatnonzero(vol == np.max(vol))
             for s in np.flatnonzero(slope == np.max(slope))
         ]
-        if active_valid and self.active_slot in highest:
-            dominant = self.active_slot
-        elif self.candidate_slot in highest:
+        if incumbent is not None and incumbent in highest:
+            dominant = incumbent
+        elif self.candidate_slot is not None and self.candidate_slot in highest:
             dominant = self.candidate_slot
         else:
             dominant = highest[0]
@@ -162,25 +160,31 @@ class ExpertHysteresisGating(BaseGatingStrategy):
             "effective_volatility_threshold": (
                 holding_vol if active_valid else self.volatility_threshold
             ),
-            "effective_slope_threshold": (
-                holding_slope if active_valid else self.slope_threshold
-            ),
+            "effective_slope_threshold": (holding_slope if active_valid else self.slope_threshold),
         }
         # Empty Slots retain their existing runtime rule/finite exit handling.
         if dominant in self._empty_slots:
             self.active_slot = None
             self.clear_candidate()
-            decision = GatingDecision(False, *dominant, "empty_model", metrics)
-        elif active_valid:
-            # Atomic replacement confirmation is added by the switching ticket.
+            decision = GatingDecision(False, dominant[0], dominant[1], "empty_model", metrics)
+        elif active_valid and dominant == self.active_slot:
             self.clear_candidate()
-            decision = GatingDecision(False, *self.active_slot, "expert_retained", metrics)
+            decision = GatingDecision(False, dominant[0], dominant[1], "expert_retained", metrics)
         else:
-            self.active_slot = None
+            if not active_valid:
+                self.active_slot = None
             eligible = (
                 vol[dominant[0]] >= self.volatility_threshold
                 and slope[dominant[1]] >= self.slope_threshold
             )
+            if incumbent is not None:
+                # Every changed axis must independently justify the atomic Slot
+                # transition. An unchanged axis only has to clear entry E.
+                for axis, candidate_index, active_index in zip((vol, slope), dominant, incumbent):
+                    if candidate_index != active_index:
+                        lead = float(axis[candidate_index] - axis[active_index])
+                        eligible = eligible and lead > 0.0 and lead >= self.expert_switch_lead
+            confirmed = False
             if eligible:
                 self.candidate_count = (
                     self.candidate_count + 1 if self.candidate_slot == dominant else 1
@@ -189,12 +193,26 @@ class ExpertHysteresisGating(BaseGatingStrategy):
                 if self.candidate_count >= self.expert_confirm_steps:
                     self.active_slot = dominant
                     self.clear_candidate()
+                    confirmed = True
             else:
                 self.clear_candidate()
-            if self.active_slot is None:
+            if confirmed:
+                reason = "expert_entered" if active_before is None else "expert_replaced"
+                decision = GatingDecision(False, dominant[0], dominant[1], reason, metrics)
+            elif self.active_slot is None:
                 reason = "entry_confirmation" if eligible else "entry_threshold"
                 decision = GatingDecision(True, -1, -1, reason, metrics)
             else:
-                decision = GatingDecision(False, *self.active_slot, "expert_entered", metrics)
+                reason = "switch_confirmation" if eligible else "expert_retained"
+                decision = GatingDecision(
+                    False, self.active_slot[0], self.active_slot[1], reason, metrics
+                )
+        decision = replace(
+            decision,
+            dominant_slot=dominant,
+            active_slot=self.active_slot,
+            candidate_slot=self.candidate_slot,
+            candidate_count=self.candidate_count,
+        )
         self.last_decision = decision
         return decision
