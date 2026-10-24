@@ -171,6 +171,22 @@ def test_public_tuning_preparation_and_final_snapshot_roundtrip(experiment, tmp_
             "expert_hysteresis",
             "--hysteresis_exit_ratio",
             "0.5",
+            "--expert_slope_entry_threshold_min",
+            "0.5",
+            "--expert_slope_entry_threshold_max",
+            "0.7",
+            "--expert_volatility_entry_threshold_min",
+            "0.7",
+            "--expert_volatility_entry_threshold_max",
+            "0.9",
+            "--expert_switch_lead_min",
+            "0.1",
+            "--expert_switch_lead_max",
+            "0.2",
+            "--expert_confirm_steps_min",
+            "1",
+            "--expert_confirm_steps_max",
+            "2",
         ]
     )
     prepared = tuning.prepare_base_args(args, search)
@@ -195,6 +211,24 @@ def test_public_tuning_preparation_and_final_snapshot_roundtrip(experiment, tmp_
     )
     assert base_reloaded.gating_strategy == "expert_hysteresis"
     assert base_reloaded.expert_confirm_steps == prepared.expert_confirm_steps
+
+
+def test_expert_tuning_preparation_rejects_missing_search_bounds(experiment):
+    args, _, _ = experiment
+    search = tuning.parser_all.parse_args(
+        [
+            "--dataset_name",
+            "fu",
+            "--experiment_name",
+            "fixture",
+            "--selection_manifest",
+            args.selection_manifest,
+            "--gating_strategy",
+            "expert_hysteresis",
+        ]
+    )
+    with pytest.raises(ValueError, match="entry threshold bounds"):
+        tuning.prepare_base_args(args, search)
 
 
 @pytest.mark.parametrize(

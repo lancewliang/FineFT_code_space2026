@@ -332,6 +332,7 @@ def prepare_base_args(args_1, args_2):
     if base_args.gating_strategy == "expert_hysteresis":
         from RL.DiHFT.high_level.frozen_experiment import prepare_experiment
 
+        _expert_search_bounds(args_2)
         prepare_experiment(base_args, "calibration")
     return base_args
 
