@@ -4,6 +4,7 @@ from typing import Any
 from RL.DiHFT.high_level.gating.base import BaseGatingStrategy
 from RL.DiHFT.high_level.gating.absolute_gating import AbsoluteThresholdGating
 from RL.DiHFT.high_level.gating.hierarchical_gating import HierarchicalDualGating
+from RL.DiHFT.high_level.gating.expert_hysteresis import ExpertHysteresisGating
 
 
 def create_gating_strategy(
@@ -15,10 +16,21 @@ def create_gating_strategy(
     ood_threshold: float = 0.005,
     slope_margin_threshold: float = 0.12,
     volatility_margin_threshold: float = 0.12,
+    expert_switch_lead: float = 0.0,
+    expert_confirm_steps: int = 1,
     **kwargs: Any,
 ) -> BaseGatingStrategy:
     """Factory function to instantiate a gating strategy by canonical name."""
     normalized_type = strategy_type.strip().lower()
+
+    if normalized_type == "expert_hysteresis":
+        return ExpertHysteresisGating(
+            slope_threshold=slope_threshold,
+            volatility_threshold=volatility_threshold,
+            hysteresis_exit_ratio=hysteresis_exit_ratio,
+            expert_switch_lead=expert_switch_lead,
+            expert_confirm_steps=expert_confirm_steps,
+        )
 
     if normalized_type == "absolute":
         st = kwargs["slope_rule_base_threshold"] if "slope_rule_base_threshold" in kwargs else slope_threshold
@@ -38,5 +50,5 @@ def create_gating_strategy(
         )
 
     raise ValueError(
-        f"Unknown gating strategy type: {strategy_type!r}. Supported strategies: ['absolute', 'hierarchical']"
+        f"Unknown gating strategy type: {strategy_type!r}. Supported strategies: ['absolute', 'hierarchical', 'expert_hysteresis']"
     )

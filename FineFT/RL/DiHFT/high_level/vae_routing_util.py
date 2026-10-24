@@ -3,6 +3,7 @@
 import argparse
 from collections import deque
 from typing import Any
+import hashlib
 import json
 import logging
 import os
@@ -31,7 +32,15 @@ from env.env_class.futures_util import (
     rule_based_close,
 )
 from RL.DiHFT.VAE.vae import MLP_VAE, analyze_single_sample, gaussian_nll, softclip
-from RL.DiHFT.high_level.gating import create_gating_strategy
+from RL.DiHFT.high_level.gating import ExpertHysteresisGating, create_gating_strategy
+from RL.DiHFT.high_level.frozen_experiment import (
+    FrozenRoutingArgumentParser,
+    load_frozen_experiment,
+    prepare_experiment,
+    resolve_expert_parameters,
+    validate_quantile_cache,
+    write_quantile_cache_manifest,
+)
 
 from analysis.pick_agent.FineFT_two_dimensional_agent_selector import (
     TwoDimensionalSelectionManifest,
@@ -54,6 +63,7 @@ from common.audit_records import (
     build_trade_id,
     calculate_action_value_margin,
 )
+from common.routing_audit import RoutingRecord
 from model.low_level import ensemble_Qnet
 from model.high_level import RankBasedQNetwork
 from RL.util.update import disable_gradients, get_rank
@@ -66,7 +76,7 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["F_ENABLE_ONEDNN_OPTS"] = "0"
-parser = argparse.ArgumentParser()
+parser = FrozenRoutingArgumentParser()
 # * Env setting
 parser.add_argument(
     "--base_path",
@@ -377,9 +387,14 @@ parser.add_argument(
     "--gating_strategy",
     type=str,
     default="absolute",
-    choices=["absolute", "hierarchical"],
+    choices=["absolute", "hierarchical", "expert_hysteresis"],
     help="门控路由策略类型，可选绝对阈值门控（absolute）或分层门控（hierarchical）",
 )
+parser.add_argument("--expert_switch_lead", type=float, default=0.0)
+parser.add_argument("--expert_confirm_steps", type=int, default=1)
+parser.add_argument("--strategy_version", type=str, default=None)
+parser.add_argument("--experiment_manifest", type=str, default=None)
+parser.add_argument("--frozen_config", type=str, default=None)
 parser.add_argument(
     "--ood_threshold",
     type=float,
@@ -494,6 +509,9 @@ def ensure_precomputed_vae_quantiles(args) -> str:
     Runs in a single process (optionally GPU or CPU batch) before worker processes
     are launched, saving (T, 2*num_labels) float32 arrays into analysis_result/...
     """
+    expert_experiment = getattr(args, "gating_strategy", None) == "expert_hysteresis"
+    if expert_experiment:
+        prepare_experiment(args, "calibration" if args.eval_stage == "valid" else "final")
     target_dir = args.precomputed_quantiles_dir or default_precomputed_quantiles_dir(
         args.dataset_name, args.experiment_name, args.eval_stage
     )
@@ -522,12 +540,19 @@ def ensure_precomputed_vae_quantiles(args) -> str:
         for contract, _ in contract_files
     )
     if all_exist:
+        if expert_experiment:
+            validate_quantile_cache(args, target_dir)
         logger.info(
             "Found complete precomputed VAE quantiles in %s for %d contracts",
             target_dir,
             len(contract_files),
         )
         return target_dir
+
+    if expert_experiment:
+        if any(name.endswith(".npy") for name in os.listdir(target_dir)):
+            raise ValueError("partial quantile cache cannot establish frozen scoring provenance")
+        seed_torch(args.scoring_protocol["seed"])
 
     logger.info(
         "Precomputing VAE quantiles for %d contracts into %s ...",
@@ -606,7 +631,10 @@ def ensure_precomputed_vae_quantiles(args) -> str:
                 model = vae_models[axis][label_idx]
                 sorted_base = sorted_bases[axis][label_idx]
 
-                losses = compute_vae_losses_batch(model, axis_data, device)
+                losses = compute_vae_losses_batch(
+                    model, axis_data, device,
+                    batch_size=args.scoring_protocol["batch_size"] if expert_experiment else 512,
+                )
                 quantiles = np.searchsorted(sorted_base, losses, side="right") / float(
                     len(sorted_base)
                 )
@@ -626,12 +654,22 @@ def ensure_precomputed_vae_quantiles(args) -> str:
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
+    if expert_experiment:
+        write_quantile_cache_manifest(args, target_dir)
     logger.info("All precomputed VAE quantiles ready in %s", target_dir)
     return target_dir
 
 
 def resolve_routing_parameters(args):
     """Resolve dual-axis routing parameters and gating strategy from CLI arguments, para_file, or optuna_csv."""
+    if getattr(args, "frozen_config", None):
+        if args.para_file or args.optuna_csv:
+            raise ValueError("frozen_config cannot be combined with legacy para_file/optuna_csv")
+        return load_frozen_experiment(args, args.frozen_config)
+    if args.gating_strategy == "expert_hysteresis":
+        if args.para_file or args.optuna_csv:
+            raise ValueError("expert_hysteresis uses frozen_config; legacy para/CSV cannot supply it")
+        return resolve_expert_parameters(args, require_explicit=False)
     slope_window_length = args.slope_window_length
     volatility_window_length = args.volatility_window_length
     slope_gamma = args.slope_gamma
@@ -752,6 +790,8 @@ def resolve_routing_parameters(args):
     args.volatility_window_length = volatility_window_length if volatility_window_length is not None else base_window
     args.slope_gamma = slope_gamma if slope_gamma is not None else base_gamma
     args.volatility_gamma = volatility_gamma if volatility_gamma is not None else base_gamma
+    if gating_strategy == "expert_hysteresis" or "strat_expert_hysteresis" in para_str:
+        raise ValueError("expert_hysteresis requires a complete frozen_config snapshot")
     args.gating_strategy = gating_strategy
     args.ood_threshold = ood_threshold
     args.slope_margin_threshold = slope_margin_threshold
@@ -851,10 +891,16 @@ class vae_risk_aware_routing:
     latest_action_values: list[float] = [0.0, 0.0, 0.0]
     audit_predictions: list[dict[str, Any]] = []
     audit_trades: list[dict[str, Any]] = []
+    audit_routing: list[dict[str, Any]]
+    latest_routing_record: dict[str, Any] | None = None
     df: pd.DataFrame | None = None
     is_terminal_defense_step: np.ndarray | None = None
 
     def __init__(self, args) -> None:
+        if args.gating_strategy == "expert_hysteresis":
+            prepare_experiment(args, "calibration" if args.eval_stage == "valid" else "final")
+            self.frozen_experiment_identity = args.frozen_experiment_identity
+            self._frozen_scoring_settings = dict(args.scoring_protocol)
         # device
         if torch.cuda.is_available():
             self.device = "cuda:{}".format(args.gpu_index)
@@ -904,6 +950,8 @@ class vae_risk_aware_routing:
             ood_threshold=args.ood_threshold,
             slope_margin_threshold=args.slope_margin_threshold,
             volatility_margin_threshold=args.volatility_margin_threshold,
+            expert_switch_lead=getattr(args, "expert_switch_lead", 0.0),
+            expert_confirm_steps=getattr(args, "expert_confirm_steps", 1),
         )
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
         self.base_path = args.base_path
@@ -1126,11 +1174,15 @@ class vae_risk_aware_routing:
         self.action = self.zero_position_action
         self.macro_action_history = []
         self.run_id = f"run_{self.experiment_name}_{int(time.time())}"
+        self._set_expert_run_identity(args)
         self.current_contract_name = "default_contract"
         self.model_id = "dihft_high_level_vae_routing"
         self.feature_version = "v1"
         self.parameter_version = "v1"
         self.step_idx = 0
+        self.audit_routing = []
+        self.latest_routing_record = None
+        self._audit_expert_has_entered = False
         self.audit_predictions = []
         self.audit_trades = []
         self.last_prediction_id = ""
@@ -1177,6 +1229,8 @@ class vae_risk_aware_routing:
         return repr_str
 
     def reset_routing_state(self):
+        if isinstance(getattr(self, "gating_strategy", None), ExpertHysteresisGating):
+            self.gating_strategy.reset()
         self.quantiles = {
             axis: [
                 deque(maxlen=self.axis_window_lengths[axis])
@@ -1200,6 +1254,9 @@ class vae_risk_aware_routing:
         self.previous_step_position = 0.0
         self.active_trade_stopped = False
         self.step_idx = 0
+        self.audit_routing = []
+        self.latest_routing_record = None
+        self._audit_expert_has_entered = False
         self.audit_predictions = []
         self.audit_trades = []
         self.last_prediction_id = ""
@@ -1220,6 +1277,11 @@ class vae_risk_aware_routing:
 
     def _resolve_precomputed_quantiles_dir(self, args) -> str | None:
         target_dir = args.precomputed_quantiles_dir
+        if getattr(args, "gating_strategy", None) == "expert_hysteresis":
+            target_dir = target_dir or default_precomputed_quantiles_dir(
+                self.dataset_name, self.experiment_name, self.eval_stage,
+            )
+            return validate_quantile_cache(args, target_dir)
         if target_dir:
             if os.path.isdir(target_dir):
                 return target_dir
@@ -1273,6 +1335,16 @@ class vae_risk_aware_routing:
         trials; only windows/gammas/thresholds, the output path and the
         routing deques change from trial to trial.
         """
+        if getattr(args, "gating_strategy", None) == "expert_hysteresis":
+            resolve_expert_parameters(args)
+            frozen = getattr(self, "_frozen_scoring_settings", None)
+            if frozen is not None and any(
+                getattr(args, key) != frozen[key]
+                for key in ("slope_window_length", "volatility_window_length", "slope_gamma", "volatility_gamma")
+            ):
+                raise ValueError("trial reconfiguration cannot change frozen scoring settings")
+            if frozen is not None and args.frozen_experiment_identity != self.frozen_experiment_identity:
+                raise ValueError("trial reconfiguration cannot change frozen experiment identity")
         self.action_persistence = int(args.action_persistence)
         if self.action_persistence <= 0:
             raise ValueError("action_persistence must be positive")
@@ -1300,6 +1372,8 @@ class vae_risk_aware_routing:
             ood_threshold=args.ood_threshold,
             slope_margin_threshold=args.slope_margin_threshold,
             volatility_margin_threshold=args.volatility_margin_threshold,
+            expert_switch_lead=getattr(args, "expert_switch_lead", 0.0),
+            expert_confirm_steps=getattr(args, "expert_confirm_steps", 1),
         )
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
         self.enable_non_main_contract_defense = bool(args.enable_non_main_contract_defense)
@@ -1318,6 +1392,7 @@ class vae_risk_aware_routing:
         self.test_path = self._resolve_test_path(args)
         if self.save_artifacts and not os.path.exists(self.test_path):
             os.makedirs(self.test_path, exist_ok=True)
+        self._set_expert_run_identity(args)
         self.reset_routing_state()
 
     def find_contract_files(self):
@@ -1438,6 +1513,68 @@ class vae_risk_aware_routing:
         else:
             self.remaining_persist = 0
 
+    def _set_expert_run_identity(self, args) -> None:
+        """Reuse frozen run identity or fingerprint this explicit expert experiment."""
+        if not isinstance(getattr(self, "gating_strategy", None), ExpertHysteresisGating):
+            return
+        frozen_identity = getattr(args, "frozen_configuration_identity", None)
+        identity_fields = (
+            "experiment_name",
+            "dataset_name",
+            "eval_stage",
+            "selection_manifest",
+            "base_path",
+            "vae_path",
+            "slope_window_length",
+            "volatility_window_length",
+            "slope_gamma",
+            "volatility_gamma",
+            "slope_rule_base_threshold",
+            "volatility_rule_base_threshold",
+            "hysteresis_exit_ratio",
+            "expert_switch_lead",
+            "expert_confirm_steps",
+            "stop_loss_return_threshold",
+            "stop_loss_cooldown_steps",
+            "circuit_breaker_consecutive_stops",
+            "circuit_breaker_cooling_steps",
+            "initial_wallet_balance",
+            "initial_margin",
+            "initial_unrealized_pnL",
+            "initial_position",
+            "initial_leverage",
+            "long_estimated_rate",
+            "short_estimated_rate",
+            "order_book_depth",
+            "early_stop",
+            "action_persistence",
+            "max_holding_number",
+            "position_choices",
+            "leverage_choices",
+            "transcation_cost",
+            "enable_non_main_contract_defense",
+            "non_main_defense_mode",
+        )
+        payload = {key: getattr(args, key, None) for key in identity_fields}
+        payload["manifest"] = {
+            "axes": {
+                "volatility": self.selection_manifest.axes.volatility,
+                "slope": self.selection_manifest.axes.slope,
+            },
+            "slots": self.selection_manifest.slots,
+            "model_assembly": self.selection_manifest.artifacts.model_assembly,
+        }
+        fingerprint = (
+            frozen_identity
+            or hashlib.sha256(
+                json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+            ).hexdigest()
+        )
+        self.run_id = f"run_expert_hysteresis_{fingerprint}"
+        self.routing_configuration_identity = fingerprint
+        self.routing_experiment_identity = getattr(args, "frozen_experiment_identity", "")
+        self.routing_experiment_id = getattr(args, "experiment_id", "")
+
     def get_action(
         self,
         info,
@@ -1447,7 +1584,139 @@ class vae_risk_aware_routing:
         current_unrealized_pnl: float = 0.0,
         current_markprice: float = 0.0,
     ) -> int:
+        """Choose an action and expose one immutable expert routing audit snapshot."""
+        gate = getattr(self, "gating_strategy", None)
+        if not isinstance(gate, ExpertHysteresisGating):
+            return self._get_action(
+                info,
+                s,
+                current_position,
+                current_leverage,
+                current_unrealized_pnl,
+                current_markprice,
+            )
+        before = (gate.active_slot, gate.candidate_slot, gate.candidate_count)
+        action = self._get_action(
+            info,
+            s,
+            current_position,
+            current_leverage,
+            current_unrealized_pnl,
+            current_markprice,
+        )
+        decision = gate.last_decision
+        if decision is None:
+            raise RuntimeError("expert decision completed without routing evidence")
+        vol = [float(value) for value in self.calculate_axis_window_result("volatility")]
+        slope = [float(value) for value in self.calculate_axis_window_result("slope")]
+        # queried_slot/proposed_action survive post-inference risk interception.
+        # Record that real inference, independently of the final action reason.
+        if decision.queried_slot is not None:
+            if self.save_artifacts:
+                self._record_prediction(info, decision.proposed_action, vol, slope)
+            else:
+                self.last_prediction_id = build_prediction_id(
+                    self.run_id, self.current_contract_name, self.step_idx
+                )
+        self._record_expert_routing(action, before, vol, slope)
+        if gate.active_slot is not None:
+            self._audit_expert_has_entered = True
+        return action
+
+    def _record_expert_routing(self, action, before, vol, slope, *, warm_up=False):
+        gate = getattr(self, "gating_strategy", None)
+        if not isinstance(gate, ExpertHysteresisGating):
+            return
+        decision = None if warm_up else gate.last_decision
+
+        def flatten(slot: tuple[int, int] | None) -> int | None:
+            return None if slot is None else slot[0] * self.num_labels + slot[1]
+
+        row = min(int(self.step_idx), len(self.df) - 1) if self.df is not None else 0
+        event_time = (
+            str(self.df["timestamp"].iloc[row])
+            if (self.df is not None and "timestamp" in self.df.columns)
+            else ""
+        )
+        trading_day = (
+            str(self.df["trading_day"].iloc[row])
+            if (self.df is not None and "trading_day" in self.df.columns)
+            else ""
+        )
+        completed = decision.completed_candidate_slot if decision else None
+        admission = ""
+        if completed is not None:
+            admission = (
+                "replacement"
+                if before[0] is not None
+                else (
+                    "recovery"
+                    if getattr(self, "_audit_expert_has_entered", False)
+                    else "first_entry"
+                )
+            )
+        record = RoutingRecord(
+            schema_version="1.0.0",
+            decision_id=build_decision_id(self.run_id, self.current_contract_name, self.step_idx),
+            run_id=self.run_id,
+            contract=self.current_contract_name,
+            step_index=int(self.step_idx),
+            event_time=event_time,
+            trading_day=trading_day,
+            strategy_version=gate.strategy_version,
+            dominant_slot=flatten(decision.dominant_slot) if decision else None,
+            active_slot_before=flatten(before[0]),
+            active_slot_after=flatten(gate.active_slot),
+            candidate_slot_before=flatten(before[1]),
+            candidate_slot_after=flatten(gate.candidate_slot),
+            candidate_count_before=int(before[2]),
+            candidate_count_after=int(gate.candidate_count),
+            completed_candidate_slot=flatten(completed),
+            completed_candidate_count=decision.completed_candidate_count if decision else 0,
+            incumbent_invalidated=decision.incumbent_invalidated if decision else False,
+            routing_reason=decision.reject_reason if decision else "warm_up",
+            transition_reason=decision.transition_reason if decision else "warm_up",
+            admission_kind=admission,
+            action_reason=ActionDecisionReasons(self.action_decision_reason_history[-1]).name,
+            queried_slot=flatten(decision.queried_slot) if decision else None,
+            proposed_action=decision.proposed_action if decision else None,
+            final_action=int(action),
+            prediction_id=self.last_prediction_id if decision else "",
+            volatility_scores=vol,
+            slope_scores=slope,
+            volatility_entry_threshold=gate.volatility_threshold,
+            slope_entry_threshold=gate.slope_threshold,
+            volatility_holding_threshold=gate.volatility_threshold * gate.hysteresis_exit_ratio,
+            slope_holding_threshold=gate.slope_threshold * gate.hysteresis_exit_ratio,
+            hysteresis_exit_ratio=gate.hysteresis_exit_ratio,
+            expert_switch_lead=gate.expert_switch_lead,
+            expert_confirm_steps=gate.expert_confirm_steps,
+        ).to_dict()
+        self.latest_routing_record = record
+        if self.save_artifacts:
+            if "audit_routing" not in self.__dict__:
+                self.audit_routing = []
+            self.audit_routing.append(record)
+
+    def _get_action(
+        self,
+        info,
+        s,
+        current_position,
+        current_leverage,
+        current_unrealized_pnl: float = 0.0,
+        current_markprice: float = 0.0,
+    ) -> int:
         current_pos_float = float(current_position)
+        expert_hysteresis = isinstance(getattr(self, "gating_strategy", None), ExpertHysteresisGating)
+        previous_active_expert = self.gating_strategy.active_slot if expert_hysteresis else None
+        if expert_hysteresis:
+            self.last_prediction_id = ""
+            self.gating_strategy.bind_manifest(self.selection_manifest)
+            volatility_weights = self.calculate_axis_window_result("volatility")
+            slope_weights = self.calculate_axis_window_result("slope")
+            # Invalid scoring inputs fail even when risk would otherwise preempt.
+            self.gating_strategy.validate_scores(volatility_weights, slope_weights)
 
         # 0. Trade lifecycle tracking: detect trade exit and reset consecutive stop-out streak
         if self.previous_step_position == 0.0 and current_pos_float != 0.0:
@@ -1462,6 +1731,13 @@ class vae_risk_aware_routing:
 
         # 1. Tier 3: Contract-Level Circuit Breaker Suspension
         if self.circuit_breaker_remaining_steps != 0:
+            if expert_hysteresis:
+                self.gating_strategy.interrupt(
+                    "circuit_breaker_suspension",
+                    volatility_weights,
+                    slope_weights,
+                    previous_active_expert,
+                )
             if self.circuit_breaker_remaining_steps > 0:
                 self.circuit_breaker_remaining_steps -= 1
             if self.cooldown_remaining_steps > 0:
@@ -1493,6 +1769,13 @@ class vae_risk_aware_routing:
             and current_pos_float != 0.0
             and loss_rate >= self.stop_loss_return_threshold
         ):
+            if expert_hysteresis:
+                self.gating_strategy.interrupt(
+                    "hard_stop_loss",
+                    volatility_weights,
+                    slope_weights,
+                    previous_active_expert,
+                )
             self.active_trade_stopped = True
             self.last_stopped_position = current_pos_float
             self.hard_stop_loss_count += 1
@@ -1525,13 +1808,21 @@ class vae_risk_aware_routing:
         ):
             mode = self.non_main_defense_mode
             if mode == "strict_instant_close" or current_pos_float == 0.0:
+                if expert_hysteresis:
+                    self.gating_strategy.interrupt(
+                        "non_main_contract",
+                        volatility_weights,
+                        slope_weights,
+                        previous_active_expert,
+                    )
                 return self._apply_defensive_action(
                     info, current_pos_float, current_leverage
                 )
             is_downgraded_hold = True
 
-        volatility_weights = self.calculate_axis_window_result("volatility")
-        slope_weights = self.calculate_axis_window_result("slope")
+        if not expert_hysteresis:
+            volatility_weights = self.calculate_axis_window_result("volatility")
+            slope_weights = self.calculate_axis_window_result("slope")
         decision = self.gating_strategy.decide(
             volatility_weights, slope_weights, current_position=current_pos_float
         )
@@ -1575,7 +1866,11 @@ class vae_risk_aware_routing:
         self.macro_action_history.append(slot_id)
 
         # 4. Candidate Action Query
-        if self.remaining_persist > 0 and not bool(
+        if expert_hysteresis:
+            candidate_action = self.agent_act(s, info)
+            self.gating_strategy.record_inference(candidate_action)
+            candidate_reason = ActionDecisionReasons.POLICY_INFERENCE
+        elif self.remaining_persist > 0 and not bool(
             info["avaliable_action"][self.current_action]
         ):
             self.remaining_persist = 0
@@ -1588,6 +1883,31 @@ class vae_risk_aware_routing:
             candidate_action = self.agent_act(s, info)
             candidate_reason = ActionDecisionReasons.POLICY_INFERENCE
 
+        if expert_hysteresis and (
+            not isinstance(candidate_action, (int, np.integer))
+            or not 0 <= candidate_action < len(info["avaliable_action"])
+        ):
+            raise ValueError("expert returned an action outside the configured action space")
+        if expert_hysteresis and not bool(info["avaliable_action"][candidate_action]):
+            self.gating_strategy.interrupt(
+                "action_unavailable",
+                volatility_weights,
+                slope_weights,
+                previous_active_expert,
+                after_inference=True,
+            )
+            self.remaining_persist = 0
+            if self.cooldown_remaining_steps > 0:
+                self.cooldown_remaining_steps -= 1
+            action = self._defensive_action(info, current_pos_float, current_leverage)
+            self.current_action = action
+            self.action_decision_reason_history.append(
+                ActionDecisionReasons.ACTION_UNAVAILABLE_BREAK
+            )
+            self.action = action
+            self.previous_step_position = current_pos_float
+            return action
+
         # 5. Tier 2: Directional Cooldown Lockout Interception
         if self.cooldown_remaining_steps > 0:
             self.cooldown_remaining_steps -= 1
@@ -1595,6 +1915,14 @@ class vae_risk_aware_routing:
                 candidate_action, self.leverage_choices, self.position_list
             )
             if target_pos * self.last_stopped_position > 0:
+                if expert_hysteresis:
+                    self.gating_strategy.interrupt(
+                        "stop_loss_cooldown",
+                        volatility_weights,
+                        slope_weights,
+                        previous_active_expert,
+                        after_inference=True,
+                    )
                 self.remaining_persist = 0
                 action = self._defensive_action(info, current_pos_float, current_leverage)
                 self.current_action = action
@@ -1612,6 +1940,14 @@ class vae_risk_aware_routing:
                 candidate_action, self.leverage_choices, self.position_list
             )
             if target_pos * current_pos_float < 0:
+                if expert_hysteresis:
+                    self.gating_strategy.interrupt(
+                        "non_main_reversal",
+                        volatility_weights,
+                        slope_weights,
+                        previous_active_expert,
+                        after_inference=True,
+                    )
                 self.remaining_persist = 0
                 action = self._defensive_action(info, current_pos_float, current_leverage)
                 self.current_action = action
@@ -1622,6 +1958,14 @@ class vae_risk_aware_routing:
                 self.previous_step_position = current_pos_float
                 return action
             elif abs(target_pos) > abs(current_pos_float):
+                if expert_hysteresis:
+                    self.gating_strategy.interrupt(
+                        "non_main_expansion",
+                        volatility_weights,
+                        slope_weights,
+                        previous_active_expert,
+                        after_inference=True,
+                    )
                 self.remaining_persist = 0
                 action = map_position_leverage_to_action(
                     current_pos_float, current_leverage, self.leverage_choices, self.position_list
@@ -1644,63 +1988,67 @@ class vae_risk_aware_routing:
         self.action = candidate_action
         self.previous_step_position = current_pos_float
 
-        if candidate_reason in (
+        if not expert_hysteresis and candidate_reason in (
             ActionDecisionReasons.POLICY_INFERENCE,
             ActionDecisionReasons.ACTION_UNAVAILABLE_BREAK,
         ):
-            step_i = int(self.step_idx)
-            run_id = str(self.run_id)
-            contract = str(self.current_contract_name)
-            pred_id = build_prediction_id(run_id, contract, step_i)
-            dec_id = build_decision_id(run_id, contract, step_i)
-            row_idx = min(step_i, len(self.df) - 1) if self.df is not None else 0
-            event_time = (
-                str(self.df["timestamp"].iloc[row_idx])
-                if self.df is not None and "timestamp" in self.df.columns
-                else ""
-            )
-            trading_day = (
-                str(self.df["trading_day"].iloc[row_idx])
-                if self.df is not None and "trading_day" in self.df.columns
-                else ""
-            )
-            actions_vals = self.latest_action_values
-            q_short = float(actions_vals[0]) if len(actions_vals) > 0 else 0.0
-            q_flat = float(actions_vals[1]) if len(actions_vals) > 1 else 0.0
-            q_long = float(actions_vals[2]) if len(actions_vals) > 2 else 0.0
-            q_margin = calculate_action_value_margin(actions_vals)
-            vol_w = [float(x) for x in volatility_weights]
-            slope_w = [float(x) for x in slope_weights]
-            avail_actions = (
-                str([int(x) for x in info["avaliable_action"]])
-                if "avaliable_action" in info
-                else "[]"
-            )
-            pred = PredictionRecord(
-                prediction_id=pred_id,
-                decision_id=dec_id,
-                run_id=run_id,
-                model_id=str(self.model_id),
-                feature_version=str(self.feature_version),
-                parameter_version=str(self.parameter_version),
-                contract=contract,
-                step_index=step_i,
-                event_time=event_time,
-                trading_day=trading_day,
-                market_index=int(step_i),
-                routing_slot=int(self.selected_agent_index),
-                routing_evidence=json.dumps({"volatility": vol_w, "slope": slope_w}),
-                action_value_short=q_short,
-                action_value_flat=q_flat,
-                action_value_long=q_long,
-                action_value_margin=q_margin,
-                available_actions=avail_actions,
-                selected_action=int(candidate_action),
-            )
-            self.audit_predictions.append(pred.to_dict())
-            self.last_prediction_id = pred_id
+            self._record_prediction(info, candidate_action, volatility_weights, slope_weights)
 
         return candidate_action
+
+    def _record_prediction(self, info, candidate_action, volatility_weights, slope_weights):
+        """Preserve the action actually inferred, even when risk later intercepts it."""
+        step_i = int(self.step_idx)
+        run_id = str(self.run_id)
+        contract = str(self.current_contract_name)
+        pred_id = build_prediction_id(run_id, contract, step_i)
+        dec_id = build_decision_id(run_id, contract, step_i)
+        row_idx = min(step_i, len(self.df) - 1) if self.df is not None else 0
+        event_time = (
+            str(self.df["timestamp"].iloc[row_idx])
+            if self.df is not None and "timestamp" in self.df.columns
+            else ""
+        )
+        trading_day = (
+            str(self.df["trading_day"].iloc[row_idx])
+            if self.df is not None and "trading_day" in self.df.columns
+            else ""
+        )
+        actions_vals = self.latest_action_values
+        q_short = float(actions_vals[0]) if len(actions_vals) > 0 else 0.0
+        q_flat = float(actions_vals[1]) if len(actions_vals) > 1 else 0.0
+        q_long = float(actions_vals[2]) if len(actions_vals) > 2 else 0.0
+        q_margin = calculate_action_value_margin(actions_vals)
+        vol_w = [float(x) for x in volatility_weights]
+        slope_w = [float(x) for x in slope_weights]
+        avail_actions = (
+            str([int(x) for x in info["avaliable_action"]])
+            if "avaliable_action" in info
+            else "[]"
+        )
+        pred = PredictionRecord(
+            prediction_id=pred_id,
+            decision_id=dec_id,
+            run_id=run_id,
+            model_id=str(self.model_id),
+            feature_version=str(self.feature_version),
+            parameter_version=str(self.parameter_version),
+            contract=contract,
+            step_index=step_i,
+            event_time=event_time,
+            trading_day=trading_day,
+            market_index=int(step_i),
+            routing_slot=int(self.selected_agent_index),
+            routing_evidence=json.dumps({"volatility": vol_w, "slope": slope_w}),
+            action_value_short=q_short,
+            action_value_flat=q_flat,
+            action_value_long=q_long,
+            action_value_margin=q_margin,
+            available_actions=avail_actions,
+            selected_action=int(candidate_action),
+        )
+        self.audit_predictions.append(pred.to_dict())
+        self.last_prediction_id = pred_id
 
     def agent_act(self, state, info):
         # low level agent
@@ -1742,8 +2090,13 @@ class vae_risk_aware_routing:
         return action
 
     def run_single_valid_df(self, df, save_path, contract_name: str | None = None):
+        if isinstance(getattr(self, "gating_strategy", None), ExpertHysteresisGating):
+            self.reset_routing_state()
         self.df = df
         self.current_contract_name = contract_name or "default_contract"
+        self.audit_routing = []
+        self.latest_routing_record = None
+        self._audit_expert_has_entered = False
         self.audit_predictions = []
         self.audit_trades = []
         self.last_prediction_id = ""
@@ -1814,6 +2167,8 @@ class vae_risk_aware_routing:
             )
             pred_id = (
                 self.last_prediction_id
+                if isinstance(getattr(self, "gating_strategy", None), ExpertHysteresisGating)
+                else self.last_prediction_id
                 if reason in (
                     ActionDecisionReasons.POLICY_INFERENCE,
                     ActionDecisionReasons.ACTION_UNAVAILABLE_BREAK,
@@ -1957,7 +2312,7 @@ class vae_risk_aware_routing:
                     "reward": 0.0,
                 }
             ]
-        for k, snap in enumerate(acc_history):
+        for k, snap in enumerate(acc_history if self.save_artifacts else []):
             if k == 0:
                 snap_id = build_account_snapshot_id(run_id, contract, 0, "initial")
                 snap_type = "initial"
@@ -2008,6 +2363,13 @@ class vae_risk_aware_routing:
             audit_accounts.append(acc_rec.to_dict())
 
         if self.save_artifacts:
+            if isinstance(getattr(self, "gating_strategy", None), ExpertHysteresisGating):
+                with open(
+                    os.path.join(save_path, AuditArtifactNames.AUDIT_ROUTING_JSON),
+                    "w",
+                    encoding="utf-8",
+                ) as file:
+                    json.dump(self.audit_routing, file, indent=2)
             with open(
                 os.path.join(save_path, AuditArtifactNames.AUDIT_PREDICTIONS_JSON),
                 "w",
@@ -2038,6 +2400,40 @@ class vae_risk_aware_routing:
                         "feature_version": str(self.feature_version),
                         "parameter_version": str(self.parameter_version),
                         "contract": contract,
+                        **(
+                            {
+                                "routing_schema_version": "1.0.0",
+                                "configuration_identity": getattr(
+                                    self, "routing_configuration_identity", ""
+                                ),
+                                "experiment_identity": getattr(
+                                    self, "routing_experiment_identity", ""
+                                ),
+                                "experiment_id": getattr(self, "routing_experiment_id", ""),
+                                "gating_strategy": "expert_hysteresis",
+                                "strategy_version": self.gating_strategy.strategy_version,
+                                "slot_order": "volatility_index * num_labels + slope_index",
+                                "action_positions": [
+                                    float(
+                                        map_action_to_position_leverage(
+                                            index, self.leverage_choices, self.position_list
+                                        )[0]
+                                    )
+                                    for index in range(
+                                        (len(self.position_list) - 1) * len(self.leverage_choices)
+                                        + 1
+                                    )
+                                ],
+                                "axes": {
+                                    "volatility": self.selection_manifest.axes.volatility,
+                                    "slope": self.selection_manifest.axes.slope,
+                                },
+                            }
+                            if isinstance(
+                                getattr(self, "gating_strategy", None), ExpertHysteresisGating
+                            )
+                            else {}
+                        ),
                     },
                     f,
                     indent=2,
@@ -2331,6 +2727,7 @@ class vae_risk_aware_routing:
             self.action_decision_reason_history.append(
                 ActionDecisionReasons.WARM_UP
             )
+            self._record_expert_routing(action, (None, None, 0), [], [], warm_up=True)
             s, r, done, info = env.step(action)
             self._record_trade_audit(
                 env=env,
@@ -2360,6 +2757,10 @@ class vae_risk_aware_routing:
         decision_reason: int,
         prediction_id: str,
     ) -> None:
+        if not self.save_artifacts and isinstance(
+            getattr(self, "gating_strategy", None), ExpertHysteresisGating
+        ):
+            return
         run_id = str(self.run_id)
         contract = str(self.current_contract_name)
         decision_id = build_decision_id(run_id, contract, step_index)
