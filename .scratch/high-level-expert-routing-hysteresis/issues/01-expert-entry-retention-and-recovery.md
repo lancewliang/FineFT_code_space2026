@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** completed
+**Status:** ready-for-human
 
 依据本功能实施规格与 ADR-0062；复用既有双轴门控工厂及公共决策契约。必要的契约适配随本票完成，不另开纯接口重构票。
 

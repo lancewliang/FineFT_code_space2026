@@ -129,6 +129,66 @@ class ExpertHysteresisGating(BaseGatingStrategy):
         self.candidate_slot = None
         self.candidate_count = 0
 
+    def record_inference(self, action: int) -> None:
+        """Retain the actual queried expert even if later risk rejects its action."""
+        if self.last_decision is None or self.active_slot is None:
+            raise ValueError("ordinary expert inference requires an active routing decision")
+        self.last_decision = replace(
+            self.last_decision, queried_slot=self.active_slot, proposed_action=int(action)
+        )
+
+    def interrupt(
+        self,
+        reason: str,
+        volatility_weights: Sequence[float] | np.ndarray,
+        slope_weights: Sequence[float] | np.ndarray,
+        previous_active: tuple[int, int] | None,
+        *,
+        after_inference: bool = False,
+    ) -> None:
+        """Reject this qualifying step and any provisional admission it produced.
+
+        Only an already confirmed incumbent that still clears its own H may
+        retain identity. A replacement queried on its Kth step is provisional
+        until the resulting action passes the router's execution constraints.
+        """
+        vol, slope = self.validate_scores(volatility_weights, slope_weights)
+        if previous_active is not None and (
+            vol[previous_active[0]] < self.volatility_threshold * self.hysteresis_exit_ratio
+            or slope[previous_active[1]] < self.slope_threshold * self.hysteresis_exit_ratio
+        ):
+            previous_active = None
+        previous_decision = self.last_decision if after_inference else None
+        highest = [
+            (int(v), int(s))
+            for v in np.flatnonzero(vol == np.max(vol))
+            for s in np.flatnonzero(slope == np.max(slope))
+        ]
+        if previous_decision is not None:
+            dominant = previous_decision.dominant_slot
+        elif previous_active in highest:
+            dominant = previous_active
+        elif self.candidate_slot in highest:
+            dominant = self.candidate_slot
+        else:
+            dominant = highest[0]
+        self.active_slot = previous_active
+        self.clear_candidate()
+        self.last_decision = GatingDecision(
+            is_defensive=True,
+            volatility_index=-1,
+            slope_index=-1,
+            reject_reason=reason,
+            metrics={
+                "max_volatility_weight": float(np.max(vol)),
+                "max_slope_weight": float(np.max(slope)),
+            },
+            dominant_slot=dominant,
+            active_slot=self.active_slot,
+            queried_slot=previous_decision.queried_slot if previous_decision else None,
+            proposed_action=previous_decision.proposed_action if previous_decision else None,
+        )
+
     def decide(
         self,
         volatility_weights: Sequence[float] | np.ndarray,
