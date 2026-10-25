@@ -203,7 +203,7 @@ def test_eval_stage_test_loads_contracts_from_test_directory(tmp_path, monkeypat
     assert (tmp_path / "result" / "final_result" / "trading_info.npy").exists()
 
 
-def test_vae_routing_final_result_macro_action_entrypoint(tmp_path, monkeypatch):
+def test_final_result_rejects_legacy_parameter_entrypoint(tmp_path, monkeypatch):
     from RL.DiHFT.high_level import vae_routing_final_result_macro_action as vrf
 
     dataset_root = tmp_path / "dataset" / "30min" / "fu"
@@ -302,16 +302,8 @@ def test_vae_routing_final_result_macro_action_entrypoint(tmp_path, monkeypatch)
     ]
     monkeypatch.setattr("sys.argv", test_args)
 
-    args = vrf.parse_and_prepare_args()
-
-    assert args.eval_stage == "test"
-    assert args.slope_window_length == 50
-    assert args.volatility_window_length == 60
-    assert args.slope_gamma == pytest.approx(0.95)
-    assert args.volatility_gamma == pytest.approx(0.96)
-    assert args.slope_rule_base_threshold == pytest.approx(0.25)
-    assert args.volatility_rule_base_threshold == pytest.approx(0.30)
-    assert args.selection_manifest == str(manifest_path)
+    with pytest.raises(ValueError, match="requires frozen_config"):
+        vrf.parse_and_prepare_args()
 
 
 

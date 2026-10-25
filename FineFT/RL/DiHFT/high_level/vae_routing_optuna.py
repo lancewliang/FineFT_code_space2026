@@ -16,6 +16,10 @@ import torch  # noqa: E402
 
 sys.path.append(".")
 from common import ArtifactNames, RoutingParamColumns
+from RL.DiHFT.high_level.frozen_experiment import (
+    prepare_experiment,
+    validate_trial_configuration,
+)
 from RL.DiHFT.high_level.vae_routing_util import (  # noqa: E402
     ensure_precomputed_vae_quantiles,
     load_two_dimensional_selection_manifest,
@@ -193,9 +197,9 @@ parser_all.add_argument(
 parser_all.add_argument(
     "--gating_strategy",
     type=str,
-    default="absolute",
-    choices=["absolute", "hierarchical"],
-    help="门控路由策略类型，可选绝对阈值门控（absolute）或分层门控（hierarchical）",
+    default="expert_hysteresis",
+    choices=["expert_hysteresis"],
+    help="版本化高层专家迟滞路由策略",
 )
 parser_all.add_argument(
     "--ood_threshold_min",
@@ -293,6 +297,8 @@ def prepare_base_args(args_1, args_2):
     if not manifest.artifacts.model_assembly:
         raise ValueError("two-dimensional manifest has no model_assembly artifact")
     base_args.selection_manifest = manifest_path
+    if base_args.gating_strategy == "expert_hysteresis":
+        prepare_experiment(base_args, "calibration", validate_trial=False)
     return base_args
 
 
@@ -399,6 +405,31 @@ def apply_best_trial_parameters(trial_args, best_params, search_args):
     )
     trial_args.gamma = trial_args.slope_gamma
     trial_args.gating_strategy = search_args.gating_strategy
+
+    if search_args.gating_strategy == "expert_hysteresis":
+        trial_args.slope_rule_base_threshold = float(
+            best_params[RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD]
+        )
+        trial_args.volatility_rule_base_threshold = float(
+            best_params[RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD]
+        )
+        trial_args.hysteresis_exit_ratio = float(
+            best_params[RoutingParamColumns.HYSTERESIS_EXIT_RATIO]
+        )
+        trial_args.expert_switch_lead = float(
+            best_params[RoutingParamColumns.EXPERT_SWITCH_LEAD]
+        )
+        trial_args.expert_confirm_steps = int(
+            best_params[RoutingParamColumns.EXPERT_CONFIRM_STEPS]
+        )
+        trial_args.ood_threshold = 0.005
+        trial_args.slope_margin_threshold = 0.12
+        trial_args.volatility_margin_threshold = 0.12
+        trial_args.rule_base_threshold = min(
+            trial_args.slope_rule_base_threshold,
+            trial_args.volatility_rule_base_threshold,
+        )
+        return validate_trial_configuration(trial_args)
 
     if search_args.gating_strategy == "hierarchical":
         trial_args.ood_threshold = float(
