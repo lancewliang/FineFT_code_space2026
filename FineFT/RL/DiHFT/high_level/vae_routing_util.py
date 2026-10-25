@@ -376,9 +376,9 @@ parser.add_argument(
 parser.add_argument(
     "--gating_strategy",
     type=str,
-    default="absolute",
-    choices=["absolute", "hierarchical", "expert_hysteresis"],
-    help="门控路由策略类型，可选绝对阈值门控（absolute）或分层门控（hierarchical）",
+    default="expert_hysteresis",
+    choices=["expert_hysteresis"],
+    help="高层专家迟滞路由策略（expert_hysteresis）",
 )
 parser.add_argument("--expert_switch_lead", type=float, default=0.0)
 parser.add_argument("--expert_confirm_steps", type=int, default=1)
@@ -903,11 +903,8 @@ class vae_risk_aware_routing:
             slope_threshold=self.axis_thresholds["slope"],
             volatility_threshold=self.axis_thresholds["volatility"],
             hysteresis_exit_ratio=self.hysteresis_exit_ratio,
-            ood_threshold=args.ood_threshold,
-            slope_margin_threshold=args.slope_margin_threshold,
-            volatility_margin_threshold=args.volatility_margin_threshold,
-            expert_switch_lead=getattr(args, "expert_switch_lead", 0.0),
-            expert_confirm_steps=getattr(args, "expert_confirm_steps", 1),
+            expert_switch_lead=args.expert_switch_lead,
+            expert_confirm_steps=args.expert_confirm_steps,
         )
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
         self.base_path = args.base_path
@@ -1303,11 +1300,8 @@ class vae_risk_aware_routing:
             slope_threshold=self.axis_thresholds["slope"],
             volatility_threshold=self.axis_thresholds["volatility"],
             hysteresis_exit_ratio=self.hysteresis_exit_ratio,
-            ood_threshold=args.ood_threshold,
-            slope_margin_threshold=args.slope_margin_threshold,
-            volatility_margin_threshold=args.volatility_margin_threshold,
-            expert_switch_lead=getattr(args, "expert_switch_lead", 0.0),
-            expert_confirm_steps=getattr(args, "expert_confirm_steps", 1),
+            expert_switch_lead=args.expert_switch_lead,
+            expert_confirm_steps=args.expert_confirm_steps,
         )
         self.initial_rollout_window_length = max(self.axis_window_lengths.values())
         self.enable_non_main_contract_defense = bool(args.enable_non_main_contract_defense)

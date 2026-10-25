@@ -6,11 +6,34 @@ import pytest
 
 from common import ActionDecisionReasons
 from RL.DiHFT.high_level import vae_routing_util as vru
-from tests.rl.test_vae_routing_action_persistence import _create_test_router
+from analysis.pick_agent.FineFT_two_dimensional_agent_selector import (
+    TwoDimensionalSelectionManifest,
+)
+from tests.rl.test_vae_routing_action_persistence import _sample_manifest_payload
 
 
 def make_router(confirm_steps=2, **kwargs):
-    router = _create_test_router(action_persistence=5)
+    router = vru.vae_risk_aware_routing.__new__(vru.vae_risk_aware_routing)
+    router.num_labels = 3
+    router.slot_count = 9
+    router.rule_base_threshold = 0.2
+    router.axis_thresholds = {"volatility": 0.8, "slope": 0.6}
+    router.selection_manifest = TwoDimensionalSelectionManifest.from_dict(
+        _sample_manifest_payload(num_labels=3)
+    )
+    router.enable_non_main_contract_defense = False
+    router.role_tier_index = None
+    router.zero_position_action = 1
+    router.flat_action = 1
+    router.action_persistence = 5
+    router.remaining_persist = 0
+    router.current_action = 1
+    router.action_decision_reason_history = []
+    router.action = 1
+    router.macro_action_history = []
+    router.leverage_choices = [1]
+    router.position_list = [-1.0, 0.0, 1.0]
+    router._defensive_action = lambda info, pos, lev: 1
     router.gating_strategy = vru.create_gating_strategy(
         "expert_hysteresis",
         slope_threshold=0.6,
@@ -139,6 +162,18 @@ def test_manifest_identity_change_aborts_public_run(mutation):
 def test_invalid_public_configuration_is_rejected(overrides):
     with pytest.raises(ValueError):
         vru.create_gating_strategy("expert_hysteresis", **overrides)
+
+
+@pytest.mark.parametrize("legacy_strategy", ["absolute", "hierarchical"])
+def test_public_factory_rejects_legacy_strategies(legacy_strategy):
+    with pytest.raises(ValueError, match="requires 'expert_hysteresis'"):
+        vru.create_gating_strategy(legacy_strategy)
+
+
+def test_public_parser_selects_only_expert_hysteresis():
+    assert vru.parser.parse_args([]).gating_strategy == "expert_hysteresis"
+    with pytest.raises(SystemExit):
+        vru.parser.parse_args(["--gating_strategy", "absolute"])
 
 
 def test_reset_and_reconfigure_clear_ownership_and_candidate_evidence():
