@@ -4,7 +4,9 @@
 
 推荐串联运行顺序：
 
-`main_fu_10.sh` -> `commodity_data_handler_fu_10.sh` -> `train_commodity_fu_10.sh` -> `test_util_fu_10.sh` -> `low_level_fu_10.sh` -> `VAE_util_fu_10.sh` -> `vae_optuna_fu_10.sh` -> `high_level_heurstic_fu_10.sh` -> `final_result_fu_10.sh`
+`main_fu_10.sh` -> `commodity_data_handler_fu_10.sh` -> `train_commodity_fu_10.sh` -> `test_util_fu_10.sh` -> `low_level_fu_10.sh` -> `VAE_util_fu_10.sh` -> `vae_optuna_fu_10.sh` -> `high_level_heurstic_fu_10.sh` -> `final_result_fu_10_main_sub.sh` -> `final_result_fu_10.sh`
+
+> **2026-10-25 步骤 7–10 升级决定（实现尚未执行）**：解除原文件冻结，四个原入口统一升级为 expert_hysteresis，不保留旧策略或旧配置兼容路径。步骤 7 固定模型和参考分布，联合搜索两轴窗口、两轴 gamma 与迟滞参数，共九维，选定最佳 Trial 后冻结并导出完整配置；步骤 8 沿用该 Trial，只校验、导出和可视化；步骤 9 做主副合约时间同步诊断；步骤 10 在 test 上评估相同冻结配置。各阶段统一资金/费用/风控，输出按阶段及用途隔离。完整要求以[实施规格](.scratch/high-level-expert-routing-hysteresis/spec.md)和 [ADR-0063](docs/adr/0063-in-place-expert-routing-pipeline-upgrade.md)为准；下面标记的实现快照用于定位现有代码，旧目录、参数文本和默认值不作为新版契约。
 
 > **提示**：10min 并行专属脚本（`train_commodity_fu_10.sh`、`test_util_fu_10.sh`、`low_level_fu_10.sh`、`VAE_util_fu_10.sh`、`vae_optuna_fu_10.sh`、`high_level_heurstic_fu_10.sh`、`final_result_fu_10.sh`）内部默认的 `EXPERIMENT_NAME` 均为 `10min_parallel`，保证了实验路径的一致性。
 
@@ -241,7 +243,7 @@
     - `log/DiHFT/fu/VAE/10min_parallel/{slope,volatility}/train_label_{label_index}.log`（各 Label 环境并行训练及测试合约 OOD 分析日志）
 - **位置**：按 README 的 Stage II 流程放在筛选之后。
 
-## 7. 高层 VAE 路由 Optuna 优化与分析 (并行寻优)
+## 7. 高层 VAE 路由 Optuna 优化与分析（升级前实现快照）
 
 ### `FineFT/script/test/DiHFT/high_level/vae_optuna_fu_10.sh`
 
@@ -280,7 +282,7 @@
     - `log/DiHFT/fu/high_level/optuna/10min_parallel/optuna.log`（Optuna 搜索过程、多 Worker 调度及各个 Trial 运行状态日志）
 - **位置**：完成高层 VAE 路由与超参寻优。
 
-## 8. 高层启发式路由策略筛选与分析
+## 8. 高层路由筛选与可视化（升级前实现快照）
 
 ### `FineFT/script/analysis/pick_agent/high_level_heurstic_fu_10.sh`
 
@@ -313,7 +315,16 @@
     - `log/analysis/pick_agent/DiHFT/fu/high_level_heurstic/10min_parallel.log`（筛选与画图控制台日志）
 - **位置**：完成高层路由策略筛选与分析评估。
 
-## 9. 高层路由测试集最终回测与评估 (Final Result)
+## 9. 主副合约时间同步评估（升级目标）
+
+### `FineFT/script/test/DiHFT/high_level/final_result_fu_10_main_sub.sh`
+
+- **输入**：步骤 8 无损发布的同一完整冻结配置、对应模型/Manifest 与指定阶段数据；不从旧参数目录名重新猜测配置。
+- **职责**：默认在指定校准/验证段做主/次主力准入、降级、真实执行、路由候选及确认状态的同步诊断。显式运行 test 时同样禁止反馈选参。
+- **产出**：按实验、阶段与 main_sub 用途隔离的组合收益/风险汇总、动作和路由时间线、诊断图表及日度审计；valid 与 test 不覆盖同一目录。
+- **一致性**：与步骤 7、10 共用资金、费用、硬止损、冷静期、断路器和非主力协议；原脚本默认值不能覆盖冻结配置。详见[实施票 09](.scratch/high-level-expert-routing-hysteresis/issues/09-upgrade-main-sub-and-final-evaluation.md)。
+
+## 10. 高层路由测试集最终回测与评估（升级前实现快照）
 
 ### `FineFT/script/test/DiHFT/high_level/final_result_fu_10.sh`
 
@@ -364,6 +375,7 @@
 | **4. 低层 Agent 并行测试** | `test_util_fu_10.sh` | 步骤 3 产出的 `trained_model.pkl` + 步骤 2 产出的 `valid/` 数据 | `result/DiHFT/low_level/fu/10min_parallel/weights_advantage_pretrain/epoch_{epoch}/{slope,volatility}/`<br>(`analysis_result.csv`, `trading_action_detail_*.csv`, `analysis_result.npy`) |
 | **5. 低层 Agent 二维筛选** | `low_level_fu_10.sh` | 步骤 4 产出的 `analysis_result.csv` + 步骤 2 产出的 `valid/` 数据 | `analysis_result/DiHFT/low_level/fu/10min_parallel/two_dimensional_selection/`<br>(`two_dimensional_selection_manifest.json`, `marginal_metrics.csv`, `joint_metrics.csv`, `candidate_rankings.csv`, `selected_slots.csv`) |
 | **6. VAE 并行训练与评估** | `VAE_util_fu_10.sh` | 步骤 2 产出的 `VAE_data/{slope,volatility}/<contract>/label_*.npy` + 步骤 5 的 Label 划分 | `result/DiHFT/vae_results/fu/10min_parallel/{slope,volatility}/`<br>(`label_*/model_latest.pth`, `summary.json`, `ood_logpx_*.csv`, `routing_summary.json`) |
-| **7. 高层 Optuna 并行寻优** | `vae_optuna_fu_10.sh` | 步骤 3/5 筛选的 Agent 模型 + 步骤 6 的 VAE 模型 + 步骤 2 的 `valid/` 数据 | `result/DiHFT/high_level/fu/10min_parallel/`<br>(`vae_risk_aware_routing_optuna/optuna_results.csv`, `vae_risk_aware_routing/.../contract_results.csv`, `trading_info.npy`, `macro_action.npy`) |
-| **8. 高层路由筛选与可视化** | `high_level_heurstic_fu_10.sh` | 步骤 7 产出的 `vae_risk_aware_routing/` 诊断数据 + 步骤 2 的 `valid/*.feather` | `analysis_result/DiHFT/high_level_heurstic/fu/10min_parallel/`<br>(`result.csv`, `best_result.csv`, `best_result_*.png/pdf`)<br>`result/DiHFT/final_result/fu/10min_parallel/`<br>(`high_level_agent_para.txt`, 最终路由诊断向量 `.npy`/`.csv`) |
-| **9. 最终测试与评估** | `final_result_fu_10.sh` | 步骤 8 产出的 `high_level_agent_para.txt` + 步骤 7 产出的 `optuna_results.csv` + 步骤 5 的 `two_dimensional_selection_manifest.json` + 步骤 2 的 `test/*.feather` | `result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/`<br>(`contract_results.csv`, `trading_info.npy`, `contracts/<contract>/` 轨迹向量)<br>`log/DiHFT/${DATASET_NAME}/high_level/final_result/${EXPERIMENT_NAME}/final_result.log` |
+| **7. 高层 Optuna 并行寻优（升级目标）** | `vae_optuna_fu_10.sh` | 冻结 Agent/VAE/Manifest/参考分布 + 独立校准区段；两轴窗口/gamma 与迟滞参数九维联合搜索 | 最佳 Trial 的冻结完整配置、study/目标证据、轻量 Trial 汇总与一次最佳完整回放；新实验空间 |
+| **8. 高层路由筛选与可视化（升级目标）** | `high_level_heurstic_fu_10.sh` | 步骤 7 已选最佳 Trial、完整配置及回放 + 同阶段行情 | 同一配置的校验发布、收益/B&H/风险/摩擦与迟滞图表；不重新选参，不向 test 目录复制 valid 轨迹 |
+| **9. 主副合约时间同步评估（升级目标）** | `final_result_fu_10_main_sub.sh` | 步骤 8 冻结配置 + 指定阶段数据 | 分阶段 main_sub 组合绩效、动作/路由时间线、图表与审计；保持冻结资金/费用/风控 |
+| **10. 最终测试与评估（升级目标）** | `final_result_fu_10.sh` | 步骤 8 相同冻结配置 + test 行情、模型与 Manifest | test/final 独立结果、轨迹、绩效与审计；不重新选参，不覆盖 valid 或 main_sub 产物 |
