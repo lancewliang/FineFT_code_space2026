@@ -1451,7 +1451,13 @@ class vae_risk_aware_routing:
     ) -> int:
         current_pos_float = float(current_position)
         expert_hysteresis = isinstance(self.gating_strategy, ExpertHysteresisGating)
+        previous_active_expert = (
+            self.gating_strategy.active_slot if expert_hysteresis else None
+        )
         if expert_hysteresis:
+            # A rule/empty-Slot step must never inherit prediction provenance
+            # from the previous ordinary expert decision.
+            self.last_prediction_id = ""
             self.gating_strategy.bind_manifest(self.selection_manifest)
             volatility_weights = self.calculate_axis_window_result("volatility")
             slope_weights = self.calculate_axis_window_result("slope")
@@ -1471,6 +1477,13 @@ class vae_risk_aware_routing:
 
         # 1. Tier 3: Contract-Level Circuit Breaker Suspension
         if self.circuit_breaker_remaining_steps != 0:
+            if expert_hysteresis:
+                self.gating_strategy.interrupt(
+                    "circuit_breaker_suspension",
+                    volatility_weights,
+                    slope_weights,
+                    previous_active_expert,
+                )
             if self.circuit_breaker_remaining_steps > 0:
                 self.circuit_breaker_remaining_steps -= 1
             if self.cooldown_remaining_steps > 0:
@@ -1502,6 +1515,13 @@ class vae_risk_aware_routing:
             and current_pos_float != 0.0
             and loss_rate >= self.stop_loss_return_threshold
         ):
+            if expert_hysteresis:
+                self.gating_strategy.interrupt(
+                    "hard_stop_loss",
+                    volatility_weights,
+                    slope_weights,
+                    previous_active_expert,
+                )
             self.active_trade_stopped = True
             self.last_stopped_position = current_pos_float
             self.hard_stop_loss_count += 1
@@ -1534,6 +1554,13 @@ class vae_risk_aware_routing:
         ):
             mode = self.non_main_defense_mode
             if mode == "strict_instant_close" or current_pos_float == 0.0:
+                if expert_hysteresis:
+                    self.gating_strategy.interrupt(
+                        "non_main_contract",
+                        volatility_weights,
+                        slope_weights,
+                        previous_active_expert,
+                    )
                 return self._apply_defensive_action(
                     info, current_pos_float, current_leverage
                 )
@@ -1577,6 +1604,11 @@ class vae_risk_aware_routing:
                     self.previous_step_position = current_pos_float
                     return hold_action
                 self.remaining_persist = 0
+            elif current_pos_float == 0.0:
+                # Flat empty-Slot observations are No New Risk decisions, not
+                # preemptions of a position merely because a prior expert had
+                # armed a persistence buffer.
+                self.remaining_persist = 0
             return self._apply_defensive_action(
                 info, current_pos_float, current_leverage
             )
@@ -1601,6 +1633,36 @@ class vae_risk_aware_routing:
             candidate_action = self.agent_act(s, info)
             candidate_reason = ActionDecisionReasons.POLICY_INFERENCE
 
+        if expert_hysteresis and (
+            not isinstance(candidate_action, (int, np.integer))
+            or not 0 <= candidate_action < len(info["avaliable_action"])
+        ):
+            raise ValueError(
+                "expert returned an action outside the configured action space"
+            )
+        if expert_hysteresis and not bool(
+            info["avaliable_action"][candidate_action]
+        ):
+            self.gating_strategy.interrupt(
+                "action_unavailable",
+                volatility_weights,
+                slope_weights,
+                previous_active_expert,
+            )
+            self.remaining_persist = 0
+            if self.cooldown_remaining_steps > 0:
+                self.cooldown_remaining_steps -= 1
+            action = self._defensive_action(
+                info, current_pos_float, current_leverage
+            )
+            self.current_action = action
+            self.action_decision_reason_history.append(
+                ActionDecisionReasons.ACTION_UNAVAILABLE_BREAK
+            )
+            self.action = action
+            self.previous_step_position = current_pos_float
+            return action
+
         # 5. Tier 2: Directional Cooldown Lockout Interception
         if self.cooldown_remaining_steps > 0:
             self.cooldown_remaining_steps -= 1
@@ -1608,6 +1670,13 @@ class vae_risk_aware_routing:
                 candidate_action, self.leverage_choices, self.position_list
             )
             if target_pos * self.last_stopped_position > 0:
+                if expert_hysteresis:
+                    self.gating_strategy.interrupt(
+                        "stop_loss_cooldown",
+                        volatility_weights,
+                        slope_weights,
+                        previous_active_expert,
+                    )
                 self.remaining_persist = 0
                 action = self._defensive_action(info, current_pos_float, current_leverage)
                 self.current_action = action
@@ -1625,6 +1694,13 @@ class vae_risk_aware_routing:
                 candidate_action, self.leverage_choices, self.position_list
             )
             if target_pos * current_pos_float < 0:
+                if expert_hysteresis:
+                    self.gating_strategy.interrupt(
+                        "non_main_reversal",
+                        volatility_weights,
+                        slope_weights,
+                        previous_active_expert,
+                    )
                 self.remaining_persist = 0
                 action = self._defensive_action(info, current_pos_float, current_leverage)
                 self.current_action = action
@@ -1635,14 +1711,27 @@ class vae_risk_aware_routing:
                 self.previous_step_position = current_pos_float
                 return action
             elif abs(target_pos) > abs(current_pos_float):
+                if expert_hysteresis:
+                    self.gating_strategy.interrupt(
+                        "non_main_expansion",
+                        volatility_weights,
+                        slope_weights,
+                        previous_active_expert,
+                    )
                 self.remaining_persist = 0
-                action = map_position_leverage_to_action(
+                hold_action = map_position_leverage_to_action(
                     current_pos_float, current_leverage, self.leverage_choices, self.position_list
                 )
+                if bool(info["avaliable_action"][hold_action]):
+                    action = hold_action
+                    reason = ActionDecisionReasons.ACTION_PERSISTENCE
+                else:
+                    action = self._defensive_action(
+                        info, current_pos_float, current_leverage
+                    )
+                    reason = ActionDecisionReasons.DEFENSIVE_RULE_CLOSE
                 self.current_action = action
-                self.action_decision_reason_history.append(
-                    ActionDecisionReasons.ACTION_PERSISTENCE
-                )
+                self.action_decision_reason_history.append(reason)
                 self.action = action
                 self.previous_step_position = current_pos_float
                 return action
