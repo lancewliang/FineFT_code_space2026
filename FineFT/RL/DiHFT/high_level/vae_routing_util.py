@@ -32,6 +32,15 @@ from env.env_class.futures_util import (
 )
 from RL.DiHFT.VAE.vae import MLP_VAE, analyze_single_sample, gaussian_nll, softclip
 from RL.DiHFT.high_level.gating import ExpertHysteresisGating, create_gating_strategy
+from RL.DiHFT.high_level.frozen_experiment import (
+    FrozenRoutingArgumentParser,
+    load_frozen_experiment,
+    prepare_experiment,
+    resolve_expert_parameters,
+    validate_trial_configuration,
+    validate_quantile_cache,
+    write_quantile_cache_manifest,
+)
 
 from analysis.pick_agent.FineFT_two_dimensional_agent_selector import (
     TwoDimensionalSelectionManifest,
@@ -66,7 +75,7 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["F_ENABLE_ONEDNN_OPTS"] = "0"
-parser = argparse.ArgumentParser()
+parser = FrozenRoutingArgumentParser()
 # * Env setting
 parser.add_argument(
     "--base_path",
@@ -251,6 +260,19 @@ parser.add_argument(
     help="高层路由策略测试结果与日志的存储路径",
 )
 parser.add_argument(
+    "--strategy_position_unit",
+    type=str,
+    default="tonne",
+    choices=["tonne"],
+    help="策略仓位数量口径；当前 fu 研究固定为吨",
+)
+parser.add_argument(
+    "--diagnostic_contract_unit",
+    type=float,
+    default=1.0,
+    help="最终诊断中将策略数量映射到名义金额的单位系数",
+)
+parser.add_argument(
     "--output_sub_dir",
     type=str,
     default=None,
@@ -382,6 +404,9 @@ parser.add_argument(
 )
 parser.add_argument("--expert_switch_lead", type=float, default=0.0)
 parser.add_argument("--expert_confirm_steps", type=int, default=1)
+parser.add_argument("--strategy_version", type=str, default=None)
+parser.add_argument("--experiment_manifest", type=str, default=None)
+parser.add_argument("--frozen_config", type=str, default=None)
 parser.add_argument(
     "--ood_threshold",
     type=float,
@@ -490,14 +515,46 @@ def default_precomputed_quantiles_dir(
     )
 
 
+def default_expert_quantiles_dir(
+    dataset_name: str,
+    experiment_name: str,
+    eval_stage: str,
+) -> str:
+    """Return the isolated raw-score cache namespace for the upgraded strategy."""
+    return os.path.join(
+        "analysis_result",
+        "DiHFT",
+        "high_level",
+        dataset_name,
+        experiment_name,
+        "expert_hysteresis",
+        "raw_quantiles",
+        eval_stage,
+    )
+
+
 def ensure_precomputed_vae_quantiles(args) -> str:
     """Precompute VAE routing quantiles for all contracts in stage if missing.
 
     Runs in a single process (optionally GPU or CPU batch) before worker processes
     are launched, saving (T, 2*num_labels) float32 arrays into analysis_result/...
     """
-    target_dir = args.precomputed_quantiles_dir or default_precomputed_quantiles_dir(
-        args.dataset_name, args.experiment_name, args.eval_stage
+    expert_experiment = getattr(args, "gating_strategy", None) == "expert_hysteresis"
+    if expert_experiment:
+        prepare_experiment(
+            args,
+            "calibration" if args.eval_stage == "valid" else "final",
+            validate_trial=False,
+        )
+    default_cache = (
+        default_expert_quantiles_dir
+        if expert_experiment
+        else default_precomputed_quantiles_dir
+    )
+    target_dir = args.precomputed_quantiles_dir or default_cache(
+        args.dataset_name,
+        args.experiment_name,
+        args.eval_stage,
     )
     os.makedirs(target_dir, exist_ok=True)
 
@@ -524,12 +581,21 @@ def ensure_precomputed_vae_quantiles(args) -> str:
         for contract, _ in contract_files
     )
     if all_exist:
+        if expert_experiment:
+            validate_quantile_cache(args, target_dir)
         logger.info(
             "Found complete precomputed VAE quantiles in %s for %d contracts",
             target_dir,
             len(contract_files),
         )
         return target_dir
+
+    if expert_experiment:
+        if any(name.endswith(".npy") for name in os.listdir(target_dir)):
+            raise ValueError(
+                "partial quantile cache cannot establish frozen scoring provenance"
+            )
+        seed_torch(args.raw_scoring_protocol["seed"])
 
     logger.info(
         "Precomputing VAE quantiles for %d contracts into %s ...",
@@ -608,7 +674,16 @@ def ensure_precomputed_vae_quantiles(args) -> str:
                 model = vae_models[axis][label_idx]
                 sorted_base = sorted_bases[axis][label_idx]
 
-                losses = compute_vae_losses_batch(model, axis_data, device)
+                losses = compute_vae_losses_batch(
+                    model,
+                    axis_data,
+                    device,
+                    batch_size=(
+                        args.raw_scoring_protocol["batch_size"]
+                        if expert_experiment
+                        else 512
+                    ),
+                )
                 quantiles = np.searchsorted(sorted_base, losses, side="right") / float(
                     len(sorted_base)
                 )
@@ -628,12 +703,22 @@ def ensure_precomputed_vae_quantiles(args) -> str:
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
+    if expert_experiment:
+        write_quantile_cache_manifest(args, target_dir)
     logger.info("All precomputed VAE quantiles ready in %s", target_dir)
     return target_dir
 
 
 def resolve_routing_parameters(args):
     """Resolve dual-axis routing parameters and gating strategy from CLI arguments, para_file, or optuna_csv."""
+    if getattr(args, "frozen_config", None):
+        if args.para_file or args.optuna_csv:
+            raise ValueError("frozen_config cannot be combined with legacy para_file/optuna_csv")
+        return load_frozen_experiment(args, args.frozen_config)
+    if args.gating_strategy == "expert_hysteresis":
+        if args.para_file or args.optuna_csv:
+            raise ValueError("expert_hysteresis uses frozen_config; legacy para/CSV cannot supply it")
+        return resolve_expert_parameters(args, require_explicit=False)
     slope_window_length = args.slope_window_length
     volatility_window_length = args.volatility_window_length
     slope_gamma = args.slope_gamma
@@ -754,6 +839,8 @@ def resolve_routing_parameters(args):
     args.volatility_window_length = volatility_window_length if volatility_window_length is not None else base_window
     args.slope_gamma = slope_gamma if slope_gamma is not None else base_gamma
     args.volatility_gamma = volatility_gamma if volatility_gamma is not None else base_gamma
+    if gating_strategy == "expert_hysteresis" or "strat_expert_hysteresis" in para_str:
+        raise ValueError("expert_hysteresis requires a complete frozen_config snapshot")
     args.gating_strategy = gating_strategy
     args.ood_threshold = ood_threshold
     args.slope_margin_threshold = slope_margin_threshold
@@ -857,6 +944,10 @@ class vae_risk_aware_routing:
     is_terminal_defense_step: np.ndarray | None = None
 
     def __init__(self, args) -> None:
+        if args.gating_strategy == "expert_hysteresis":
+            prepare_experiment(args, "calibration" if args.eval_stage == "valid" else "final")
+            self.frozen_experiment_identity = args.frozen_experiment_identity
+            self._raw_scoring_protocol = dict(args.raw_scoring_protocol)
         # device
         if torch.cuda.is_available():
             self.device = "cuda:{}".format(args.gpu_index)
@@ -1223,6 +1314,11 @@ class vae_risk_aware_routing:
 
     def _resolve_precomputed_quantiles_dir(self, args) -> str | None:
         target_dir = args.precomputed_quantiles_dir
+        if getattr(args, "gating_strategy", None) == "expert_hysteresis":
+            target_dir = target_dir or default_expert_quantiles_dir(
+                self.dataset_name, self.experiment_name, self.eval_stage,
+            )
+            return validate_quantile_cache(args, target_dir)
         if target_dir:
             if os.path.isdir(target_dir):
                 return target_dir
@@ -1276,6 +1372,19 @@ class vae_risk_aware_routing:
         trials; only windows/gammas/thresholds, the output path and the
         routing deques change from trial to trial.
         """
+        if getattr(args, "gating_strategy", None) == "expert_hysteresis":
+            if hasattr(self, "frozen_experiment_identity"):
+                validate_trial_configuration(args)
+                if args.frozen_experiment_identity != self.frozen_experiment_identity:
+                    raise ValueError(
+                        "trial reconfiguration cannot change frozen experiment identity"
+                    )
+                if args.raw_scoring_protocol != self._raw_scoring_protocol:
+                    raise ValueError("trial reconfiguration cannot change raw scoring sources")
+            else:
+                # Lightweight routers built at the public test seam have no
+                # experiment files, but still exercise the same state reset.
+                resolve_expert_parameters(args)
         self.action_persistence = int(args.action_persistence)
         if self.action_persistence <= 0:
             raise ValueError("action_persistence must be positive")
