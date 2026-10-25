@@ -2,6 +2,8 @@
 
 状态：设计已确认并同步到目标项目；实现与数值参数校准尚未执行。日期：2026-10-24。
 
+2026-10-25 Shell 维护补充：用户明确列出的三个高层 shell 与第 10 步 `FineFT/script/test/DiHFT/high_level/final_result_fu_10.sh` 均维护升级，并将包含所列三行的 `run_fu_10min_pipeline.sh` 总控纳入交付。用户确认总控无参数默认执行 1–10，只跑验证时显式指定 `1-9`；四个子 shell 统一以前台完成态返回，需要后台运行时从外部启动整个总控或整个子 shell，内部并行 worker 仍必须等待并核验终态。核心设计决定不变；本轮无剩余待决项，详见[实施票 10](../../.scratch/high-level-expert-routing-hysteresis/issues/10-upgrade-shell-entrypoints-and-pipeline.md)。此补充仅为文档，不表示脚本已经升级。
+
 2026-10-25 最新范围：用户要求步骤 7–10 全面升级、不再向后兼容，并确认“解除冻结，原文件直接升级”；此前旧文件冻结、禁止导入、现有生产源码不改与必须另建 expert 三文件方案已撤销。步骤 8 已确认沿用步骤 7 的最佳 Trial，只校验、导出与可视化。既有 Q1–Q11 迟滞语义不重开；新版实施边界见 [ADR-0063](../adr/0063-in-place-expert-routing-pipeline-upgrade.md)。
 
 同日评分参数更正：使用到的两轴窗口与两轴 gamma 与迟滞参数联合搜索。此要求取代原 Q9 的固定窗口/衰减限制；模型与参考分布仍固定，最佳 Trial 选定后再冻结全部参数，不重新打开其他迟滞行为决定。

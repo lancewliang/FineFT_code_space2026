@@ -14,6 +14,7 @@ date: 2026-10-25
 ## 决定
 
 - 原步骤 7 `vae_optuna_fu_10.sh`、8 `high_level_heurstic_fu_10.sh`、9 `final_result_fu_10_main_sub.sh`、10 `final_result_fu_10.sh` 全部纳入验收，同一执行链与配置契约贯穿寻优、可视化及最终评估。文件名含 vae 不代表保留旧行为，因为评分仍使用 VAE。
+- 用户进一步确认四个 shell 及总控 `run_fu_10min_pipeline.sh` 同步维护升级。总控无参数默认执行 1–10，只跑验证时显式指定 `1-9`；四个子 shell 等待完整任务及必需诊断/审计完成后返回，需要后台运行时从外部启动整个总控或整个子 shell，内部 worker 并行仍须等待并核验终态。这会将原九步默认流程扩展至最终 test；其配置必须先冻结，test 结果不反馈选参。总控步骤解析、日志、预览、错误/中断传播及操作说明同步验收，见实施票 10。
 - 统一版本化的完整已解析实验配置及其哈希，记录策略、H/E、退出比率、Δ/K、每个 Trial 的两轴窗口/gamma 与预热规则、模型/数据边界、资金/费用/风险以及 study/Trial/目标身份。CSV 和可读参数文本仅作投影；缺字段、旧 schema、身份不匹配明确失败，不补默认值继续评估。
 - 2026-10-25 用户追加：策略使用的两轴窗口、两轴 gamma 继续与迟滞参数一起搜索，取代原“校准期间固定评分参数”的设计。模型/Manifest/参考分布固定，九维搜索选定最佳 Trial 后才冻结其完整评分与路由配置。搜索维度增加会增加校准成本，报告应将其标为联合优化结果，不把评分协议变化的效果全部归于迟滞。
 - 用户确认步骤 8 沿用步骤 7 按预先固定目标选出的最佳 Trial，只校验、导出并可视化。其他绩效仅作诊断，不再次选参；lean trials 与一次最佳完整回放继续适用。需区分含惩罚目标与原始绩效，不依赖扫描已落盘轨迹挑候选。
@@ -27,4 +28,4 @@ date: 2026-10-25
 
 验收覆盖全部四个入口、选定 Trial 与配置无损传递、目标/绩效区分、资金风险一致性、valid/test 与 main_sub/final 隔离、旧 schema 拒绝、迟滞图表和审计对齐；实际独立研究评估在实现集成后执行。本轮仅确认设计并更新文档，不代表代码已升级或已经运行校准。
 
-完整规格见[本地实施规格](../../.scratch/high-level-expert-routing-hysteresis/spec.md)，下游实现票为 [08](../../.scratch/high-level-expert-routing-hysteresis/issues/08-upgrade-selection-and-visualization.md)、[09](../../.scratch/high-level-expert-routing-hysteresis/issues/09-upgrade-main-sub-and-final-evaluation.md)。
+完整规格见[本地实施规格](../../.scratch/high-level-expert-routing-hysteresis/spec.md)，下游实现票为 [08](../../.scratch/high-level-expert-routing-hysteresis/issues/08-upgrade-selection-and-visualization.md)、[09](../../.scratch/high-level-expert-routing-hysteresis/issues/09-upgrade-main-sub-and-final-evaluation.md)、[10](../../.scratch/high-level-expert-routing-hysteresis/issues/10-upgrade-shell-entrypoints-and-pipeline.md)。

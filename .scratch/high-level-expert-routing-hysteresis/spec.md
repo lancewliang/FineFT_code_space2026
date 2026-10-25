@@ -121,10 +121,28 @@ Design: [详细设计与 Q1–Q11 共识](../../docs/train3/high_level_routing_h
 
 阶段约束：步骤 9 默认用于已指定校准/验证段的主副合约同步诊断；如显式运行 test，同样只能读取冻结配置并输出独立的 test/main_sub 证据，不成为步骤 10 之前的第二次调参机会。
 
+### 2026-10-25 Shell 与总控维护补充
+
+用户再次明确列出的 `vae_optuna_fu_10.sh`、`high_level_heurstic_fu_10.sh`、`final_result_fu_10_main_sub.sh` 都是必须维护升级的操作入口，连同已确认的 `final_result_fu_10.sh` 一起验收。所列“名称|脚本|日志”三行来自根目录 `run_fu_10min_pipeline.sh`，该总控的步骤清单、调用、日志提示和帮助文档也纳入维护范围，不能只升级 Python。
+
+本轮用户进一步明确“第10步 FineFT/script/test/DiHFT/high_level/final_result_fu_10.sh 也需要升级”，并接受 Q2 推荐：四个子 shell 统一以前台完成态返回，需要后台运行时由使用者从外部启动整个总控或整个子 shell。
+
+已核实的维护缺口与实施要求：
+
+- 总控目前只有九步，且步骤/区间解析限定单个数字。用户已确认升级后无参数默认执行 1–10；只跑验证时显式指定 `1-9`。总控须能显式调用第 10 步，并支持 `7-10`、`-s 7,8,9,10`；帮助、步骤清单和 README 同步说明该默认行为。步骤 10 仍只消费冻结配置，最终 test 不反馈选参。
+- 总控当前默认导出 `FOREGROUND=1`，但可被环境覆盖；步骤 8 的后台分支启动后立即返回，总控的同步 `bash` 调用不能据此判断实际完成。按已确认 Q2，升级后四个子 shell 统一等待寻优、配置发布、评估及必需诊断/审计完成，再返回真实状态；不保留仅启动内部后台任务便成功退出的分支。内部 worker 并行可保留，但必须等待并核验其终态；失败或中断不能继续消费旧产物。
+- 总控日志清单写死 `fu/10min_parallel` 和 `final_result_valid.log`，Optuna 子脚本日志还写死品种 `fu`；步骤 8 前台分支没有写入其清单所示日志。运行输出和清单必须使用同一解析后的实验、阶段、用途与日志路径，遵守已有新产物隔离约束，不能指向旧路径或另一阶段。
+- 子 shell 与总控必须实际使用 `finetf` 环境；环境不可用时明确失败，不吞掉激活错误后调用其他 Python。参数应无损传递，包含空格的路径在前台/后台执行时不能因字符串拼接改变含义。
+- 总控须获得真实任务终态及失败状态，INT/TERM 后终止并回收本次启动的任务，不留下仍在写产物的后台子进程；必需审计缺失不算完整成功。
+- `--list` 与 `--dry-run` 不启动任务、不修改执行权限或实验产物；解析并展示真实计划、输入配置、阶段与目标日志。按步骤续跑要验证前置配置和产物身份，不自动补跑训练或选择现存旧结果。
+
+本节仅补充设计与实施票。核心迟滞及 01–09 的已确认决定保持有效；第 10 步升级范围、总控默认执行 1–10 及 Q2 运行方式均已确认，规格与 [10: Shell 与总控升级](issues/10-upgrade-shell-entrypoints-and-pipeline.md) 恢复 ready-for-agent，实施依赖保持不变。本轮访谈无剩余待决项；未修改 shell/Python 或启动任何实验。
+
 ## Testing Decisions
 
 - The main business test seam is the upgraded router's public get_action entry point. Use fixed dual-axis score sequences, a controlled account and changing fake specialist outputs; assert the selected expert, returned action and public audit artifacts. This follows the already discussed fixed-score and end-to-end validation plan.
 - Exercise all four existing shell entry points through controlled integration scenarios and verify that each calls the upgraded implementation, reloads the same complete config and uses the intended stage and isolated output destination. Existing filenames are not evidence of legacy behavior or correctness.
+- Exercise the controller's default 1–10 execution, explicit 1-9 validation-only selection, step 10, ranges/lists, log resolution and read-only preview with controlled command substitutes. Verify each child shell waits for completion, and delayed completion, failure, interruption or missing required evidence cannot be reported as success or start a dependent step. External background launch must preserve these semantics.
 - Verify legacy/incomplete schemas, missing Δ/K, config hash or study/Trial mismatches and old strategy settings fail explicitly; do not maintain fallback parsing or require historical strategy execution regressions.
 - Verify expert valid/test outputs, Optuna storage/study, best parameters, logs and audit artifacts use isolated destinations. Exercise a conflicting output/storage configuration and verify it fails before deleting or writing old artifacts. Verify shared frozen models and matched caches are read-only and unchanged; cache identity mismatch must not overwrite the old cache.
 - Prefer the existing router, action-persistence, gating, non-main-defense, quantile-cache and final-result fixtures. Do not introduce a new private-helper test seam merely to check counters.
@@ -165,6 +183,6 @@ The single-axis H/E/Δ/K discussion has been projected onto existing per-axis th
 
 The implementation starts with a public-router tracer scenario proving fresh decisions under retained expert identity, then completes state/risk behavior, configuration/calibration/replay integration, downstream publication/evaluation, and finally independent retrospective research.
 
-当前实施依赖为 01 → 02 → 03 → 04；05 在 01 后提供统一配置；06 在 04/05 后交付步骤 7；08 在 06 后交付步骤 8；09 在 08 后交付步骤 9–10；07 最后执行实际独立研究评估。新增 08/09 不代表提前运行回测。
+当前实施依赖为 01 → 02 → 03 → 04；05 在 01 后提供统一配置；06 在 04/05 后交付步骤 7；08 在 06 后交付步骤 8；09 在 08 后交付步骤 9–10；10 在 09 后完成四个 shell 与总控联调验收；07 最后执行实际独立研究评估。实施票 10 的编号不等于流水线第 10 步。新增票不代表提前运行回测。
 
 Formal parameter values, calibration outcome and performance are not yet available. The Q1–Q11 behavior and the latest in-place, non-backward-compatible upgrade of steps 7–10 are the current scope. Documentation status does not imply completed code, successful calibration or approval for live use.
