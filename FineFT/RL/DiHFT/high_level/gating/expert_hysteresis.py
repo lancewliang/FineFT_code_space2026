@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from numbers import Integral
 from typing import TYPE_CHECKING, Sequence
 
@@ -141,17 +142,19 @@ class ExpertHysteresisGating(BaseGatingStrategy):
         vol, slope = self.validate_scores(volatility_weights, slope_weights)
         holding_vol = self.volatility_threshold * self.hysteresis_exit_ratio
         holding_slope = self.slope_threshold * self.hysteresis_exit_ratio
-        active_valid = self.active_slot is not None and (
-            vol[self.active_slot[0]] >= holding_vol
-            and slope[self.active_slot[1]] >= holding_slope
+        active_before = self.active_slot
+        active_valid = active_before is not None and (
+            vol[active_before[0]] >= holding_vol
+            and slope[active_before[1]] >= holding_slope
         )
+        incumbent = active_before if active_valid else None
         highest = [
             (int(v), int(s))
             for v in np.flatnonzero(vol == np.max(vol))
             for s in np.flatnonzero(slope == np.max(slope))
         ]
-        if active_valid and self.active_slot in highest:
-            dominant = self.active_slot
+        if incumbent is not None and incumbent in highest:
+            dominant = incumbent
         elif self.candidate_slot in highest:
             dominant = self.candidate_slot
         else:
@@ -171,16 +174,31 @@ class ExpertHysteresisGating(BaseGatingStrategy):
             self.active_slot = None
             self.clear_candidate()
             decision = GatingDecision(False, *dominant, "empty_model", metrics)
-        elif active_valid:
-            # Atomic replacement confirmation is added by the switching ticket.
+        elif active_valid and dominant == incumbent:
             self.clear_candidate()
-            decision = GatingDecision(False, *self.active_slot, "expert_retained", metrics)
+            decision = GatingDecision(False, *incumbent, "expert_retained", metrics)
         else:
-            self.active_slot = None
+            if not active_valid:
+                self.active_slot = None
             eligible = (
                 vol[dominant[0]] >= self.volatility_threshold
                 and slope[dominant[1]] >= self.slope_threshold
             )
+            if incumbent is not None:
+                # A replacement is a single Slot transition. Every changed
+                # axis must independently lead its incumbent counterpart; an
+                # unchanged axis still has to clear its entry threshold.
+                for scores, candidate_index, active_index in zip(
+                    (vol, slope), dominant, incumbent
+                ):
+                    if candidate_index != active_index:
+                        lead = float(scores[candidate_index] - scores[active_index])
+                        eligible = (
+                            eligible
+                            and lead > 0.0
+                            and lead >= self.expert_switch_lead
+                        )
+            confirmed = False
             if eligible:
                 self.candidate_count = (
                     self.candidate_count + 1 if self.candidate_slot == dominant else 1
@@ -189,12 +207,24 @@ class ExpertHysteresisGating(BaseGatingStrategy):
                 if self.candidate_count >= self.expert_confirm_steps:
                     self.active_slot = dominant
                     self.clear_candidate()
+                    confirmed = True
             else:
                 self.clear_candidate()
-            if self.active_slot is None:
+            if confirmed:
+                reason = "expert_entered" if active_before is None else "expert_replaced"
+                decision = GatingDecision(False, *dominant, reason, metrics)
+            elif self.active_slot is None:
                 reason = "entry_confirmation" if eligible else "entry_threshold"
                 decision = GatingDecision(True, -1, -1, reason, metrics)
             else:
-                decision = GatingDecision(False, *self.active_slot, "expert_entered", metrics)
+                reason = "switch_confirmation" if eligible else "expert_retained"
+                decision = GatingDecision(False, *self.active_slot, reason, metrics)
+        decision = replace(
+            decision,
+            dominant_slot=dominant,
+            active_slot=self.active_slot,
+            candidate_slot=self.candidate_slot,
+            candidate_count=self.candidate_count,
+        )
         self.last_decision = decision
         return decision

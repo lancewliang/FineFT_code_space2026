@@ -13,6 +13,10 @@ class GatingDecision:
     slope_index: int
     reject_reason: str
     metrics: dict[str, float] = field(default_factory=dict)
+    dominant_slot: tuple[int, int] | None = None
+    active_slot: tuple[int, int] | None = None
+    candidate_slot: tuple[int, int] | None = None
+    candidate_count: int = 0
 
 
 class BaseGatingStrategy(abc.ABC):
