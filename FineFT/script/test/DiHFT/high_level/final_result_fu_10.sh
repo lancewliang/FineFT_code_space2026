@@ -1,96 +1,54 @@
 #!/usr/bin/env bash
 
+# Step 10: final holdout replay. The frozen selected configuration is the
+# sole source of scoring, routing, execution, fee, and risk settings.
 set -euo pipefail
 
 ROOTPATH=${ROOTPATH:-$(pwd)}
 cd "$ROOTPATH"
 
+if command -v conda >/dev/null 2>&1; then
+    source "$(conda info --base)/etc/profile.d/conda.sh" 2>/dev/null || true
+fi
+conda activate finetf
+export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
+
 DATASET_NAME=${DATASET_NAME:-fu}
 BASE_PATH=${BASE_PATH:-dataset/10min}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-10min_parallel}
-MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-1}
-POSITION_CHOICES=${POSITION_CHOICES:-3}
-LEVERAGE_CHOICES=${LEVERAGE_CHOICES:-1}
-INITIAL_LEVERAGE=${INITIAL_LEVERAGE:-1}
-CONTRACT_UNIT=${CONTRACT_UNIT:-1.0}
-ORDER_BOOK_DEPTH=${ORDER_BOOK_DEPTH:-5}
-TRANSACTION_COST=${TRANSACTION_COST:-0.0003}
-ACTION_PERSISTENCE=${ACTION_PERSISTENCE:-3}
-STOP_LOSS_RETURN_THRESHOLD=${STOP_LOSS_RETURN_THRESHOLD:-0.015}
-STOP_LOSS_COOLDOWN_STEPS=${STOP_LOSS_COOLDOWN_STEPS:-12}
-CIRCUIT_BREAKER_CONSECUTIVE_STOPS=${CIRCUIT_BREAKER_CONSECUTIVE_STOPS:-2}
-CIRCUIT_BREAKER_COOLING_STEPS=${CIRCUIT_BREAKER_COOLING_STEPS:-72}
+FROZEN_CONFIG=${FROZEN_CONFIG:?Set FROZEN_CONFIG to the step-8 published frozen_config.json}
 
-PARA_FILE="result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/high_level_agent_para.txt"
-OPTUNA_CSV="result/DiHFT/high_level/${DATASET_NAME}/${EXPERIMENT_NAME}/vae_risk_aware_routing_optuna/optuna_results.csv"
-SELECTION_MANIFEST="analysis_result/DiHFT/low_level/${DATASET_NAME}/${EXPERIMENT_NAME}/two_dimensional_selection/two_dimensional_selection_manifest.json"
+if [[ ! -f "$FROZEN_CONFIG" ]]; then
+    echo "FROZEN_CONFIG does not exist: $FROZEN_CONFIG" >&2
+    exit 2
+fi
 
-LOG_DIR="log/DiHFT/${DATASET_NAME}/high_level/final_result/${EXPERIMENT_NAME}"
-mkdir -p "${LOG_DIR}"
+CONFIG_HASH=$(python -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["config_hash"])' "$FROZEN_CONFIG")
+RESULT_DIR="result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/expert_hysteresis/${CONFIG_HASH}/test/final"
+LOG_DIR="log/DiHFT/${DATASET_NAME}/high_level/final_result/${EXPERIMENT_NAME}/${CONFIG_HASH}/test"
+LOG_FILE="${LOG_DIR}/final_result.log"
+mkdir -p "$LOG_DIR"
 
-source "$(conda info --base)/etc/profile.d/conda.sh" 2>/dev/null || true
-conda activate finetf 2>/dev/null || true
-export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
-
+echo "Running final test replay for frozen expert_hysteresis configuration."
 python -u FineFT/RL/DiHFT/high_level/vae_routing_final_result_macro_action.py \
-    --base_path "${BASE_PATH}" \
-    --dataset_name "${DATASET_NAME}" \
-    --experiment_name "${EXPERIMENT_NAME}" \
-    --selection_manifest "${SELECTION_MANIFEST}" \
-    --para_file "${PARA_FILE}" \
-    --optuna_csv "${OPTUNA_CSV}" \
+    --frozen_config "$FROZEN_CONFIG" \
     --eval_stage test \
-    --max_holding_number "${MAX_HOLDING_NUMBER}" \
-    --initial_wallet_balance 5000 \
-    --position_choices "${POSITION_CHOICES}" \
-    --leverage_choices "${LEVERAGE_CHOICES}" \
-    --initial_leverage "${INITIAL_LEVERAGE}" \
-    --order_book_depth "${ORDER_BOOK_DEPTH}" \
-    --transcation_cost "${TRANSACTION_COST}" \
-    --short_estimated_rate 0 \
-    --long_estimated_rate 0 \
-    --enable_non_main_contract_defense \
-    --action_persistence "${ACTION_PERSISTENCE}" \
-    --stop_loss_return_threshold "${STOP_LOSS_RETURN_THRESHOLD}" \
-    --stop_loss_cooldown_steps "${STOP_LOSS_COOLDOWN_STEPS}" \
-    --circuit_breaker_consecutive_stops "${CIRCUIT_BREAKER_CONSECUTIVE_STOPS}" \
-    --circuit_breaker_cooling_steps "${CIRCUIT_BREAKER_COOLING_STEPS}" \
-    >"${LOG_DIR}/final_result.log" 2>&1
+    --evaluation_purpose final \
+    --result_path result/DiHFT/final_result \
+    2>&1 | tee "$LOG_FILE"
 
-python -u FineFT/analysis/diagnostics/trading_diagnostics.py \
-    --result_dir "result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}" \
-    --data_dir "${BASE_PATH}/${DATASET_NAME}/test" \
-    --output_dir "result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/diagnostics" \
-    --initial_wallet_balance 5000 \
-    --commission_rate "${TRANSACTION_COST}" \
-    --contract_unit "${CONTRACT_UNIT}" \
-    >>"${LOG_DIR}/final_result.log" 2>&1
-
-ENABLE_AUDIT=${ENABLE_AUDIT:-1}
-AUDIT_OUTPUT_DIR=${AUDIT_OUTPUT_DIR:-analysis_result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/daily_trading_audit}
-TRADING_DAY_MAPPING=${TRADING_DAY_MAPPING:-}
-if [ -z "${TRADING_DAY_MAPPING}" ] && [ -f "${BASE_PATH}/${DATASET_NAME}/trading_day_mapping.json" ]; then
-    TRADING_DAY_MAPPING="${BASE_PATH}/${DATASET_NAME}/trading_day_mapping.json"
+AUDIT_OUTPUT_DIR="analysis_result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/expert_hysteresis/${CONFIG_HASH}/test/final/daily_trading_audit"
+AUDIT_ARGS=(
+    --result_dir "$RESULT_DIR"
+    --market_data_dir "${BASE_PATH}/${DATASET_NAME}/test"
+    --output_dir "$AUDIT_OUTPUT_DIR"
+)
+if [[ -n "${TRADING_DAY_MAPPING:-}" ]]; then
+    AUDIT_ARGS+=(--trading_day_mapping "$TRADING_DAY_MAPPING")
 fi
-RUN_ID=${RUN_ID:-}
-
-if [ "${ENABLE_AUDIT}" = "1" ]; then
-    AUDIT_CMD_ARGS=(
-        --result_dir "result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}"
-        --market_data_dir "${BASE_PATH}/${DATASET_NAME}/test"
-        --output_dir "${AUDIT_OUTPUT_DIR}"
-    )
-    if [ -n "${TRADING_DAY_MAPPING}" ]; then
-        AUDIT_CMD_ARGS+=(--trading_day_mapping "${TRADING_DAY_MAPPING}")
-    fi
-    if [ -n "${RUN_ID}" ]; then
-        AUDIT_CMD_ARGS+=(--run_id "${RUN_ID}")
-    fi
-    if [ -f "result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/audit_metadata.json" ] || \
-       ls result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/contracts/*/audit_metadata.json >/dev/null 2>&1; then
-        python -u FineFT/analysis/diagnostics/daily_trading_audit.py \
-            --skip-missing-input \
-            "${AUDIT_CMD_ARGS[@]}" \
-            >>"${LOG_DIR}/final_result.log" 2>&1
-    fi
+if [[ -n "${RUN_ID:-}" ]]; then
+    AUDIT_ARGS+=(--run_id "$RUN_ID")
 fi
+python -u FineFT/analysis/diagnostics/daily_trading_audit.py "${AUDIT_ARGS[@]}" 2>&1 | tee -a "$LOG_FILE"
+
+echo "Completed: $RESULT_DIR"
