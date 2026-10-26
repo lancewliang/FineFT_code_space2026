@@ -866,6 +866,15 @@ def tune(args_1, args_2):
         "best_replay",
         f"trial_{best_trial.number}",
     )
+    # The replay's audit metadata must carry the exact frozen configuration
+    # identity that downstream publication verifies.  Exporting before replay is
+    # safe: the selected Trial/configuration are already final, and the export
+    # rejects any later attempt to replace different evidence.
+    frozen_path = export_frozen_experiment(
+        best_args,
+        calibration_path / FROZEN_CONFIG_FILENAME,
+    )
+    best_args.frozen_configuration_identity = best_args.frozen_config_hash
     best_router = vae_risk_aware_routing(best_args)
     best_return_rate = float(best_router.test())
     if not np.isclose(best_return_rate, float(best_trial.value), rtol=1e-12, atol=1e-12):
@@ -873,10 +882,6 @@ def tune(args_1, args_2):
             "best replay objective differs from the selected lean Trial: "
             f"lean={best_trial.value}, replay={best_return_rate}"
         )
-    frozen_path = export_frozen_experiment(
-        best_args,
-        calibration_path / FROZEN_CONFIG_FILENAME,
-    )
     evidence = _selection_evidence(
         best_args,
         best_trial,
