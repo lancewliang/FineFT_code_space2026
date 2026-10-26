@@ -1,7 +1,7 @@
 # FU 10-minute expert-hysteresis independent-evaluation preflight
 
-**Date:** 2026-10-26  
-**Ticket:** `07-independent-retrospective-evaluation`  
+**Date:** 2026-10-26
+**Ticket:** `07-independent-retrospective-evaluation`
 **Decision:** **BLOCKED — do not run calibration, replay, or report performance.**
 
 This is a read-only preflight against the available FU 10-minute inputs. It is
