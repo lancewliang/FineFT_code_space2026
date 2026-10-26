@@ -77,6 +77,8 @@ class ActionDecisionReasons(IntEnum):
 
 
 class AuditArtifactNames:
+    AUDIT_ROUTING_JSON: str = "audit_routing.json"
+    ROUTING_RECORDS_CSV: str = "routing_records.csv"
     PREDICTION_RECORDS_CSV: str = "prediction_records.csv"
     TRADE_RECORDS_CSV: str = "trade_records.csv"
     ACCOUNT_RECORDS_CSV: str = "account_records.csv"

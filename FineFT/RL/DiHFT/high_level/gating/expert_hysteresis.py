@@ -133,12 +133,24 @@ class ExpertHysteresisGating(BaseGatingStrategy):
         self.candidate_slot = None
         self.candidate_count = 0
 
+    def record_inference(self, action: int) -> None:
+        """Attach genuine expert inference to the current routing decision."""
+        if self.last_decision is None or self.active_slot is None:
+            raise ValueError("ordinary expert inference requires an active routing decision")
+        self.last_decision = replace(
+            self.last_decision,
+            queried_slot=self.active_slot,
+            proposed_action=int(action),
+        )
+
     def interrupt(
         self,
         reason: str,
         volatility_weights: Sequence[float] | np.ndarray,
         slope_weights: Sequence[float] | np.ndarray,
         previous_active: tuple[int, int] | None,
+        *,
+        after_inference: bool = False,
     ) -> None:
         """Interrupt candidate evidence without reviving an invalid incumbent.
 
@@ -149,6 +161,7 @@ class ExpertHysteresisGating(BaseGatingStrategy):
         applicable incumbent keeps its ownership for the next decision.
         """
         vol, slope = self.validate_scores(volatility_weights, slope_weights)
+        original_active = previous_active
         holding_vol = self.volatility_threshold * self.hysteresis_exit_ratio
         holding_slope = self.slope_threshold * self.hysteresis_exit_ratio
         if previous_active is not None and (
@@ -157,20 +170,18 @@ class ExpertHysteresisGating(BaseGatingStrategy):
         ):
             previous_active = None
 
+        previous_decision = self.last_decision if after_inference else None
         highest = [
             (int(v), int(s))
             for v in np.flatnonzero(vol == np.max(vol))
             for s in np.flatnonzero(slope == np.max(slope))
         ]
-        if previous_active in highest:
+        if previous_decision is not None:
+            dominant = previous_decision.dominant_slot
+        elif previous_active in highest:
             dominant = previous_active
         elif self.candidate_slot in highest:
             dominant = self.candidate_slot
-        elif (
-            self.last_decision is not None
-            and self.last_decision.dominant_slot in highest
-        ):
-            dominant = self.last_decision.dominant_slot
         else:
             dominant = highest[0]
         self.active_slot = previous_active
@@ -186,6 +197,26 @@ class ExpertHysteresisGating(BaseGatingStrategy):
             },
             dominant_slot=dominant,
             active_slot=self.active_slot,
+            queried_slot=(
+                previous_decision.queried_slot if previous_decision is not None else None
+            ),
+            proposed_action=(
+                previous_decision.proposed_action if previous_decision is not None else None
+            ),
+            completed_candidate_slot=(
+                previous_decision.completed_candidate_slot
+                if previous_decision is not None
+                else None
+            ),
+            completed_candidate_count=(
+                previous_decision.completed_candidate_count
+                if previous_decision is not None
+                else 0
+            ),
+            incumbent_invalidated=original_active is not None and previous_active is None,
+            transition_reason=(
+                previous_decision.reject_reason if previous_decision is not None else reason
+            ),
         )
 
     def decide(
@@ -198,6 +229,8 @@ class ExpertHysteresisGating(BaseGatingStrategy):
         holding_vol = self.volatility_threshold * self.hysteresis_exit_ratio
         holding_slope = self.slope_threshold * self.hysteresis_exit_ratio
         active_before = self.active_slot
+        completed_candidate: tuple[int, int] | None = None
+        completed_count = 0
         active_valid = active_before is not None and (
             vol[active_before[0]] >= holding_vol
             and slope[active_before[1]] >= holding_slope
@@ -261,6 +294,8 @@ class ExpertHysteresisGating(BaseGatingStrategy):
                 self.candidate_slot = dominant
                 if self.candidate_count >= self.expert_confirm_steps:
                     self.active_slot = dominant
+                    completed_candidate = dominant
+                    completed_count = self.candidate_count
                     self.clear_candidate()
                     confirmed = True
             else:
@@ -280,6 +315,10 @@ class ExpertHysteresisGating(BaseGatingStrategy):
             active_slot=self.active_slot,
             candidate_slot=self.candidate_slot,
             candidate_count=self.candidate_count,
+            completed_candidate_slot=completed_candidate,
+            completed_candidate_count=completed_count,
+            incumbent_invalidated=active_before is not None and not active_valid,
+            transition_reason=decision.reject_reason,
         )
         self.last_decision = decision
         return decision
