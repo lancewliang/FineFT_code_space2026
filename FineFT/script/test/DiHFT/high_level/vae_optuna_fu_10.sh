@@ -5,9 +5,17 @@ set -euo pipefail
 ROOTPATH=${ROOTPATH:-$(pwd)}
 cd "$ROOTPATH"
 
+# shellcheck source=FineFT/script/lib/require_finetf.sh
+source "${ROOTPATH}/FineFT/script/lib/require_finetf.sh"
+# shellcheck source=FineFT/script/lib/foreground_task.sh
+source "${ROOTPATH}/FineFT/script/lib/foreground_task.sh"
+require_finetf
+install_task_signal_traps
+
 DATASET_NAME=${DATASET_NAME:-fu}
 BASE_PATH=${BASE_PATH:-dataset/10min}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-10min_parallel}
+HIGH_LEVEL_RESULT_PATH=${HIGH_LEVEL_RESULT_PATH:-result/DiHFT/high_level}
 EXPERIMENT_MANIFEST=${EXPERIMENT_MANIFEST:?set EXPERIMENT_MANIFEST to the validated expert experiment manifest}
 CALIBRATION_RUN_ID=${CALIBRATION_RUN_ID:?set CALIBRATION_RUN_ID to a new step-7 run identifier}
 MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-1}
@@ -32,22 +40,22 @@ SELECTION_MANIFEST=${SELECTION_MANIFEST:-analysis_result/DiHFT/low_level/${DATAS
 N_TRIALS=${N_TRIALS:-400}
 N_WORKERS=${N_WORKERS:-60}
 
-LOG_DIR="log/DiHFT/fu/high_level/expert_hysteresis/${EXPERIMENT_NAME}/${CALIBRATION_RUN_ID}"
-mkdir -p "${LOG_DIR}"
-
-if command -v conda >/dev/null 2>&1; then
-    source "$(conda info --base)/etc/profile.d/conda.sh"
-    conda activate finetf
-elif [ -f "${HOME}/miniconda3/etc/profile.d/conda.sh" ]; then
-    source "${HOME}/miniconda3/etc/profile.d/conda.sh"
-    conda activate finetf
-else
-    echo "conda is required; activate the finetf environment before step 7" >&2
-    exit 1
-fi
 export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
 # CPU-only inference: batch-1 MLP forwards are latency-bound, GPUs stay idle
 export CUDA_VISIBLE_DEVICES=""
+
+if [[ ! -f "${EXPERIMENT_MANIFEST}" ]]; then
+    echo "EXPERIMENT_MANIFEST does not exist: ${EXPERIMENT_MANIFEST}" >&2
+    exit 2
+fi
+if [[ ! -f "${SELECTION_MANIFEST}" ]]; then
+    echo "SELECTION_MANIFEST does not exist: ${SELECTION_MANIFEST}" >&2
+    exit 2
+fi
+
+LOG_DIR="log/DiHFT/${DATASET_NAME}/high_level/expert_hysteresis/${EXPERIMENT_NAME}/valid/calibration/${CALIBRATION_RUN_ID}"
+LOG_FILE="${LOG_DIR}/optuna.log"
+mkdir -p "${LOG_DIR}"
 
 DEFENSE_ARGS=()
 if [[ "${ENABLE_NON_MAIN_DEFENSE}" == "1" || "${ENABLE_NON_MAIN_DEFENSE}" == "true" ]]; then
@@ -67,29 +75,34 @@ else
     DEFENSE_ARGS+=(--no-enable_mdd_penalty)
 fi
 
-python -u FineFT/RL/DiHFT/high_level/vae_routing_optuna.py \
-    --base_path "${BASE_PATH}" \
-    --dataset_name "${DATASET_NAME}" \
-    --experiment_name "${EXPERIMENT_NAME}" \
-    --max_holding_number "${MAX_HOLDING_NUMBER}" \
-    --initial_wallet_balance "${INITIAL_WALLET_BALANCE}" \
-    --position_choices "${POSITION_CHOICES}" \
-    --leverage_choices "${LEVERAGE_CHOICES}" \
-    --initial_leverage "${INITIAL_LEVERAGE}" \
-    --order_book_depth "${ORDER_BOOK_DEPTH}" \
-    --selection_manifest "${SELECTION_MANIFEST}" \
-    --experiment_manifest "${EXPERIMENT_MANIFEST}" \
-    --calibration_run_id "${CALIBRATION_RUN_ID}" \
-    --gating_strategy expert_hysteresis \
-    --n_workers "${N_WORKERS}" \
-    --transcation_cost "${TRANSACTION_COST}" \
-    --short_estimated_rate 0 \
-    --long_estimated_rate 0 \
-    --n_trials "${N_TRIALS}" \
-    --action_persistence "${ACTION_PERSISTENCE}" \
-    --stop_loss_return_threshold "${STOP_LOSS_RETURN_THRESHOLD}" \
-    --stop_loss_cooldown_steps "${STOP_LOSS_COOLDOWN_STEPS}" \
-    --circuit_breaker_consecutive_stops "${CIRCUIT_BREAKER_CONSECUTIVE_STOPS}" \
-    --circuit_breaker_cooling_steps "${CIRCUIT_BREAKER_COOLING_STEPS}" \
-    "${DEFENSE_ARGS[@]}" \
-    >"${LOG_DIR}/optuna.log" 2>&1
+command=(
+    python -u FineFT/RL/DiHFT/high_level/vae_routing_optuna.py
+    --base_path "${BASE_PATH}"
+    --result_path "${HIGH_LEVEL_RESULT_PATH}"
+    --dataset_name "${DATASET_NAME}"
+    --experiment_name "${EXPERIMENT_NAME}"
+    --max_holding_number "${MAX_HOLDING_NUMBER}"
+    --initial_wallet_balance "${INITIAL_WALLET_BALANCE}"
+    --position_choices "${POSITION_CHOICES}"
+    --leverage_choices "${LEVERAGE_CHOICES}"
+    --initial_leverage "${INITIAL_LEVERAGE}"
+    --order_book_depth "${ORDER_BOOK_DEPTH}"
+    --selection_manifest "${SELECTION_MANIFEST}"
+    --experiment_manifest "${EXPERIMENT_MANIFEST}"
+    --calibration_run_id "${CALIBRATION_RUN_ID}"
+    --gating_strategy expert_hysteresis
+    --n_workers "${N_WORKERS}"
+    --transcation_cost "${TRANSACTION_COST}"
+    --short_estimated_rate 0
+    --long_estimated_rate 0
+    --n_trials "${N_TRIALS}"
+    --action_persistence "${ACTION_PERSISTENCE}"
+    --stop_loss_return_threshold "${STOP_LOSS_RETURN_THRESHOLD}"
+    --stop_loss_cooldown_steps "${STOP_LOSS_COOLDOWN_STEPS}"
+    --circuit_breaker_consecutive_stops "${CIRCUIT_BREAKER_CONSECUTIVE_STOPS}"
+    --circuit_breaker_cooling_steps "${CIRCUIT_BREAKER_COOLING_STEPS}"
+    "${DEFENSE_ARGS[@]}"
+)
+
+echo "Step 7 calibration log: ${LOG_FILE}"
+run_logged_foreground "${LOG_FILE}" "${command[@]}"
