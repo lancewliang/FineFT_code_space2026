@@ -99,8 +99,11 @@ def _create_e2e_router(
         "volatility": [0.1, 0.8, 0.2],
         "slope": [0.1, 0.2, 0.9],
     }[axis]
+    router.axis_window_lengths = {"volatility": 1, "slope": 1}
     router.gating_strategy = vru.create_gating_strategy(
-        "absolute", slope_threshold=0.2, volatility_threshold=0.2
+        "expert_hysteresis",
+        slope_threshold=0.2,
+        volatility_threshold=0.2,
     )
     router._defensive_action = lambda info, pos, lev: 1
     router.save_artifacts = True
@@ -110,6 +113,7 @@ def _create_e2e_router(
     router.tech_indicator_list = ["mark_price"]
     router.max_holding_number = 1
     router.position_choices = 3
+    router.N_ACTIONS = 3
     router.long_estimated_rate = 0.0
     router.short_estimated_rate = 0.0
     router.transcation_cost = 0.0001
@@ -187,6 +191,7 @@ def test_high_level_backtest_to_daily_audit_e2e(tmp_path: Path):
     assert (contract_result_dir / AuditArtifactNames.AUDIT_TRADES_JSON).is_file()
     assert (contract_result_dir / AuditArtifactNames.AUDIT_ACCOUNT_SNAPSHOTS_JSON).is_file()
     assert (contract_result_dir / AuditArtifactNames.AUDIT_METADATA_JSON).is_file()
+    assert (contract_result_dir / AuditArtifactNames.AUDIT_ROUTING_JSON).is_file()
 
     # Read the audit artifacts
     with open(contract_result_dir / AuditArtifactNames.AUDIT_PREDICTIONS_JSON, encoding="utf-8") as f:
@@ -206,12 +211,11 @@ def test_high_level_backtest_to_daily_audit_e2e(tmp_path: Path):
     assert preds[0]["action_value_margin"] == pytest.approx(1.8 - 0.5)
     assert trades[1]["prediction_id"] == preds[0]["prediction_id"]
 
-    # 3. At step 2, action persistence was active (persistence=2)
-    assert trades[2]["decision_reason"] == "ACTION_PERSISTENCE"
-    assert trades[2]["prediction_id"] == preds[0]["prediction_id"]
-    # No new prediction record created for step 2
+    # 3. The retained expert performs genuine fresh inference on every step.
+    assert trades[2]["decision_reason"] == "POLICY_INFERENCE"
     pred_steps = [p["step_index"] for p in preds]
-    assert 2 not in pred_steps
+    assert pred_steps == [1, 2, 3, 4]
+    assert trades[2]["prediction_id"] == preds[1]["prediction_id"]
 
     # 4. Account snapshots: 1 initial + 5 post_step = 6 snapshots
     assert len(accounts) == n_steps + 1
@@ -232,3 +236,5 @@ def test_high_level_backtest_to_daily_audit_e2e(tmp_path: Path):
     assert (day_dir / AuditArtifactNames.PREDICTION_RECORDS_CSV).is_file()
     assert (day_dir / AuditArtifactNames.TRADE_RECORDS_CSV).is_file()
     assert (day_dir / AuditArtifactNames.ACCOUNT_RECORDS_CSV).is_file()
+    assert (day_dir / AuditArtifactNames.ROUTING_RECORDS_CSV).is_file()
+    assert manifest["schema_version"] == "1.1.0"
