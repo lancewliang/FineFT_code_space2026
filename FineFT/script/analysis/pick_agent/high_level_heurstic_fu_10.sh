@@ -7,8 +7,12 @@ set -euo pipefail
 ROOTPATH=${ROOTPATH:-$(pwd)}
 cd "$ROOTPATH"
 
-source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate finetf
+# shellcheck source=FineFT/script/lib/require_finetf.sh
+source "${ROOTPATH}/FineFT/script/lib/require_finetf.sh"
+# shellcheck source=FineFT/script/lib/foreground_task.sh
+source "${ROOTPATH}/FineFT/script/lib/foreground_task.sh"
+require_finetf
+install_task_signal_traps
 export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
 
 BASE_PATH=${BASE_PATH:-dataset/10min}
@@ -19,6 +23,22 @@ MARKET_DATA_DIR=${MARKET_DATA_DIR:-"${BASE_PATH}/${DATASET_NAME}/valid"}
 PUBLICATION_DIR=${PUBLICATION_DIR:-"${SAVE_PATH}/${DATASET_NAME}/${EXPERIMENT_NAME}/selected_trial_publication"}
 
 : "${SELECTION_EVIDENCE:?SELECTION_EVIDENCE must name step-7 selection_evidence.json}"
+if [[ ! -f "${SELECTION_EVIDENCE}" ]]; then
+    echo "SELECTION_EVIDENCE does not exist: ${SELECTION_EVIDENCE}" >&2
+    exit 2
+fi
+if [[ -n "${FROZEN_CONFIG:-}" && ! -f "${FROZEN_CONFIG}" ]]; then
+    echo "FROZEN_CONFIG does not exist: ${FROZEN_CONFIG}" >&2
+    exit 2
+fi
+if [[ -n "${BEST_REPLAY:-}" && ! -d "${BEST_REPLAY}" ]]; then
+    echo "BEST_REPLAY does not exist: ${BEST_REPLAY}" >&2
+    exit 2
+fi
+
+LOG_DIR="log/DiHFT/${DATASET_NAME}/high_level/expert_hysteresis/${EXPERIMENT_NAME}/valid/selected_trial_publication"
+LOG_FILE="${LOG_DIR}/publication.log"
+mkdir -p "${LOG_DIR}"
 
 command=(
     python -u FineFT/analysis/pick_agent/DiHFT_high_level_heurstic.py
@@ -34,4 +54,5 @@ if [[ -n "${BEST_REPLAY:-}" ]]; then
     command+=(--best-replay "$BEST_REPLAY")
 fi
 
-"${command[@]}"
+echo "Step 8 publication log: ${LOG_FILE}"
+run_logged_foreground "${LOG_FILE}" "${command[@]}"

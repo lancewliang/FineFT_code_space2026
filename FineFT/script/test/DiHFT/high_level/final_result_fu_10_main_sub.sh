@@ -7,10 +7,12 @@ set -euo pipefail
 ROOTPATH=${ROOTPATH:-$(pwd)}
 cd "$ROOTPATH"
 
-if command -v conda >/dev/null 2>&1; then
-    source "$(conda info --base)/etc/profile.d/conda.sh" 2>/dev/null || true
-fi
-conda activate finetf
+# shellcheck source=FineFT/script/lib/require_finetf.sh
+source "${ROOTPATH}/FineFT/script/lib/require_finetf.sh"
+# shellcheck source=FineFT/script/lib/foreground_task.sh
+source "${ROOTPATH}/FineFT/script/lib/foreground_task.sh"
+require_finetf
+install_task_signal_traps
 export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
 
 DATASET_NAME=${DATASET_NAME:-fu}
@@ -35,12 +37,12 @@ LOG_FILE="${LOG_DIR}/final_result.log"
 mkdir -p "$LOG_DIR"
 
 echo "Running frozen expert_hysteresis main/sub evaluation: ${EVAL_STAGE}"
-python -u FineFT/RL/DiHFT/high_level/vae_routing_final_result_macro_action.py \
+run_logged_foreground "${LOG_FILE}" \
+    python -u FineFT/RL/DiHFT/high_level/vae_routing_final_result_macro_action.py \
     --frozen_config "$FROZEN_CONFIG" \
     --eval_stage "$EVAL_STAGE" \
     --evaluation_purpose main_sub \
-    --result_path result/DiHFT/final_result \
-    2>&1 | tee "$LOG_FILE"
+    --result_path result/DiHFT/final_result
 
 AUDIT_OUTPUT_DIR="analysis_result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/expert_hysteresis/${CONFIG_HASH}/${EVAL_STAGE}/main_sub/daily_trading_audit"
 AUDIT_ARGS=(
@@ -54,6 +56,6 @@ fi
 if [[ -n "${RUN_ID:-}" ]]; then
     AUDIT_ARGS+=(--run_id "$RUN_ID")
 fi
-python -u FineFT/analysis/diagnostics/daily_trading_audit.py "${AUDIT_ARGS[@]}" 2>&1 | tee -a "$LOG_FILE"
+run_logged_foreground "${LOG_FILE}" python -u FineFT/analysis/diagnostics/daily_trading_audit.py "${AUDIT_ARGS[@]}"
 
 echo "Completed: $RESULT_DIR"

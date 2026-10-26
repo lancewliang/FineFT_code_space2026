@@ -6,7 +6,24 @@
 
 `main_fu_10.sh` -> `commodity_data_handler_fu_10.sh` -> `train_commodity_fu_10.sh` -> `test_util_fu_10.sh` -> `low_level_fu_10.sh` -> `VAE_util_fu_10.sh` -> `vae_optuna_fu_10.sh` -> `high_level_heurstic_fu_10.sh` -> `final_result_fu_10_main_sub.sh` -> `final_result_fu_10.sh`
 
-> **2026-10-25 步骤 7–10 升级决定（实现尚未执行）**：解除原文件冻结，四个原入口统一升级为 expert_hysteresis，不保留旧策略或旧配置兼容路径。步骤 7 固定模型和参考分布，联合搜索两轴窗口、两轴 gamma 与迟滞参数，共九维，选定最佳 Trial 后冻结并导出完整配置；步骤 8 沿用该 Trial，只校验、导出和可视化；步骤 9 做主副合约时间同步诊断；步骤 10 在 test 上评估相同冻结配置。各阶段统一资金/费用/风控，输出按阶段及用途隔离。完整要求以[实施规格](.scratch/high-level-expert-routing-hysteresis/spec.md)和 [ADR-0063](docs/adr/0063-in-place-expert-routing-pipeline-upgrade.md)为准；下面标记的实现快照用于定位现有代码，旧目录、参数文本和默认值不作为新版契约。
+> **2026-10-25 步骤 7–10 升级决定**：解除原文件冻结，四个原入口统一升级为 expert_hysteresis，不保留旧策略或旧配置兼容路径。步骤 7 固定模型和参考分布，联合搜索两轴窗口、两轴 gamma 与迟滞参数，共九维，选定最佳 Trial 后冻结并导出完整配置；步骤 8 沿用该 Trial，只校验、导出和可视化；步骤 9 做主副合约时间同步诊断；步骤 10 在 test 上评估相同冻结配置。各阶段统一资金/费用/风控，输出按阶段及用途隔离。完整要求以[实施规格](.scratch/high-level-expert-routing-hysteresis/spec.md)和 [ADR-0063](docs/adr/0063-in-place-expert-routing-pipeline-upgrade.md)为准；下面标记的实现快照用于定位现有代码，旧目录、参数文本和默认值不作为新版契约。
+
+## 运行步骤 7–10
+
+`run_fu_10min_pipeline.sh` 无参数会按顺序执行 1–10；只跑验证链时必须显式指定 `-s 1-9`。可用 `-s 7-10` 或 `-s 7,8,9,10` 运行高层链，`--list` 查看动态日志路径，`--dry-run` 仅预览计划而不激活环境、启动任务、修改权限或写入产物。第 10 步始终只读取冻结配置并在 test 段评估，绝不从 test 结果重新选参。
+
+四个高层入口和总控均会先激活 `finetf`，激活失败即停止。入口在内部 worker、发布、评估和必需审计结束后才返回；若需要后台运行，请从外部后台启动整个总控或整个入口。INT/TERM 会终止并回收本次启动的任务组。
+
+步骤 7 需要显式提供独立实验身份和上游选择清单，例如：
+
+```bash
+EXPERIMENT_MANIFEST='/absolute/path/experiment_manifest.json' \
+CALIBRATION_RUN_ID='20261026-a' \
+SELECTION_MANIFEST='/absolute/path/two_dimensional_selection_manifest.json' \
+./run_fu_10min_pipeline.sh -s 7-10
+```
+
+总控由步骤 7 的 manifest `experiment_id` 和 `CALIBRATION_RUN_ID` 推导并传递同一份 `SELECTION_EVIDENCE` 与 `FROZEN_CONFIG`。它会在步骤 7 后确认两份文件已生成，并在步骤 8 后确认 `step8_publication_receipt.json` 已生成；缺失、失败或中断时不会推进到步骤 9/10，也不会扫描历史目录来伪造成功。独立续跑步骤 8–10 时必须显式传入对应的 `SELECTION_EVIDENCE`、`FROZEN_CONFIG` 和包含发布回执的 `PUBLICATION_DIR`。
 
 > **提示**：10min 并行专属脚本（`train_commodity_fu_10.sh`、`test_util_fu_10.sh`、`low_level_fu_10.sh`、`VAE_util_fu_10.sh`、`vae_optuna_fu_10.sh`、`high_level_heurstic_fu_10.sh`、`final_result_fu_10.sh`）内部默认的 `EXPERIMENT_NAME` 均为 `10min_parallel`，保证了实验路径的一致性。
 
