@@ -944,6 +944,7 @@ class vae_risk_aware_routing:
     audit_trades: list[dict[str, Any]] = []
     audit_routing: list[dict[str, Any]] = []
     latest_routing_record: dict[str, Any] | None = None
+    last_objective_metrics: dict[str, float | int]
     df: pd.DataFrame | None = None
     is_terminal_defense_step: np.ndarray | None = None
 
@@ -1001,7 +1002,17 @@ class vae_risk_aware_routing:
             expert_switch_lead=args.expert_switch_lead,
             expert_confirm_steps=args.expert_confirm_steps,
         )
-        self.initial_rollout_window_length = max(self.axis_window_lengths.values())
+        self.initial_rollout_window_length = (
+            int(
+                getattr(
+                    args,
+                    "calibration_warmup_steps",
+                    max(self.axis_window_lengths.values()),
+                )
+            )
+            if args.gating_strategy == "expert_hysteresis"
+            else max(self.axis_window_lengths.values())
+        )
         self.base_path = args.base_path
         self.dataset_name = args.dataset_name
         self.experiment_name = args.experiment_name
@@ -1347,6 +1358,16 @@ class vae_risk_aware_routing:
 
     def _resolve_test_path(self, args):
         sub_dir = args.output_sub_dir
+        if args.gating_strategy == "expert_hysteresis" and self.eval_stage == "valid":
+            base = os.path.join(
+                args.result_path,
+                args.dataset_name,
+                self.experiment_name,
+                "expert_hysteresis",
+                args.experiment_id,
+                "valid",
+            )
+            return os.path.join(base, sub_dir) if sub_dir else base
         if self.eval_stage == "test" or args.result_path.endswith("final_result"):
             base = os.path.join(
                 args.result_path,
@@ -1423,7 +1444,17 @@ class vae_risk_aware_routing:
             expert_switch_lead=args.expert_switch_lead,
             expert_confirm_steps=args.expert_confirm_steps,
         )
-        self.initial_rollout_window_length = max(self.axis_window_lengths.values())
+        self.initial_rollout_window_length = (
+            int(
+                getattr(
+                    args,
+                    "calibration_warmup_steps",
+                    max(self.axis_window_lengths.values()),
+                )
+            )
+            if args.gating_strategy == "expert_hysteresis"
+            else max(self.axis_window_lengths.values())
+        )
         self.enable_non_main_contract_defense = bool(args.enable_non_main_contract_defense)
         self.stop_loss_return_threshold = float(args.stop_loss_return_threshold)
         if self.stop_loss_return_threshold < 0:
@@ -2655,6 +2686,12 @@ class vae_risk_aware_routing:
                 self.return_rate = score
             else:
                 self.return_rate = result["return_rate"]
+            self.last_objective_metrics = {
+                "objective_value": float(self.return_rate),
+                "raw_return_rate": float(result["return_rate"]),
+                "portfolio_mdd": float(result.get("mdd", 0.0)),
+                "total_trades": int(result.get("trades", 0)),
+            }
             logger.info(
                 "[Test End] Single dataset test completed | return_rate: %.6f | artifacts: %s",
                 self.return_rate,
@@ -2789,6 +2826,15 @@ class vae_risk_aware_routing:
             trade_guard = 1.0
             self.return_rate = base_objective
             aggregation_mode = "option2_portfolio_return_times_win_rate"
+
+        self.last_objective_metrics = {
+            "objective_value": float(self.return_rate),
+            "raw_return_rate": float(portfolio_return_rate),
+            "portfolio_mdd": float(portfolio_mdd),
+            "total_trades": int(total_trades),
+            "mdd_factor": float(mdd_factor),
+            "trade_guard": float(trade_guard),
+        }
 
         if self.save_artifacts:
             trading_info = {

@@ -8,6 +8,8 @@ cd "$ROOTPATH"
 DATASET_NAME=${DATASET_NAME:-fu}
 BASE_PATH=${BASE_PATH:-dataset/10min}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-10min_parallel}
+EXPERIMENT_MANIFEST=${EXPERIMENT_MANIFEST:?set EXPERIMENT_MANIFEST to the validated expert experiment manifest}
+CALIBRATION_RUN_ID=${CALIBRATION_RUN_ID:?set CALIBRATION_RUN_ID to a new step-7 run identifier}
 MAX_HOLDING_NUMBER=${MAX_HOLDING_NUMBER:-1}
 POSITION_CHOICES=${POSITION_CHOICES:-3}
 LEVERAGE_CHOICES=${LEVERAGE_CHOICES:-1}
@@ -27,15 +29,21 @@ STOP_LOSS_COOLDOWN_STEPS=${STOP_LOSS_COOLDOWN_STEPS:-12}
 CIRCUIT_BREAKER_CONSECUTIVE_STOPS=${CIRCUIT_BREAKER_CONSECUTIVE_STOPS:-3}
 CIRCUIT_BREAKER_COOLING_STEPS=${CIRCUIT_BREAKER_COOLING_STEPS:-24}
 SELECTION_MANIFEST=${SELECTION_MANIFEST:-analysis_result/DiHFT/low_level/${DATASET_NAME}/${EXPERIMENT_NAME}/two_dimensional_selection/two_dimensional_selection_manifest.json}
+N_TRIALS=${N_TRIALS:-400}
+N_WORKERS=${N_WORKERS:-60}
 
-mkdir -p "log/DiHFT/fu/high_level/optuna/${EXPERIMENT_NAME}"
+LOG_DIR="log/DiHFT/fu/high_level/expert_hysteresis/${EXPERIMENT_NAME}/${CALIBRATION_RUN_ID}"
+mkdir -p "${LOG_DIR}"
 
 if command -v conda >/dev/null 2>&1; then
-    source "$(conda info --base)/etc/profile.d/conda.sh" 2>/dev/null || true
-    conda activate finetf 2>/dev/null || true
+    source "$(conda info --base)/etc/profile.d/conda.sh"
+    conda activate finetf
 elif [ -f "${HOME}/miniconda3/etc/profile.d/conda.sh" ]; then
-    source "${HOME}/miniconda3/etc/profile.d/conda.sh" 2>/dev/null || true
-    conda activate finetf 2>/dev/null || true
+    source "${HOME}/miniconda3/etc/profile.d/conda.sh"
+    conda activate finetf
+else
+    echo "conda is required; activate the finetf environment before step 7" >&2
+    exit 1
 fi
 export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
 # CPU-only inference: batch-1 MLP forwards are latency-bound, GPUs stay idle
@@ -70,17 +78,18 @@ python -u FineFT/RL/DiHFT/high_level/vae_routing_optuna.py \
     --initial_leverage "${INITIAL_LEVERAGE}" \
     --order_book_depth "${ORDER_BOOK_DEPTH}" \
     --selection_manifest "${SELECTION_MANIFEST}" \
-    --n_workers "${N_WORKERS:-60}" \
+    --experiment_manifest "${EXPERIMENT_MANIFEST}" \
+    --calibration_run_id "${CALIBRATION_RUN_ID}" \
+    --gating_strategy expert_hysteresis \
+    --n_workers "${N_WORKERS}" \
     --transcation_cost "${TRANSACTION_COST}" \
     --short_estimated_rate 0 \
     --long_estimated_rate 0 \
-    --n_trials 400 \
-    --rule_base_threshold_min 0.2 \
-    --rule_base_threshold_max 0.45 \
+    --n_trials "${N_TRIALS}" \
     --action_persistence "${ACTION_PERSISTENCE}" \
     --stop_loss_return_threshold "${STOP_LOSS_RETURN_THRESHOLD}" \
     --stop_loss_cooldown_steps "${STOP_LOSS_COOLDOWN_STEPS}" \
     --circuit_breaker_consecutive_stops "${CIRCUIT_BREAKER_CONSECUTIVE_STOPS}" \
     --circuit_breaker_cooling_steps "${CIRCUIT_BREAKER_COOLING_STEPS}" \
     "${DEFENSE_ARGS[@]}" \
-    >"log/DiHFT/fu/high_level/optuna/${EXPERIMENT_NAME}/optuna.log" 2>&1
+    >"${LOG_DIR}/optuna.log" 2>&1
