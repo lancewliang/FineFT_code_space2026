@@ -73,7 +73,38 @@ class ExpertHysteresisGating(BaseGatingStrategy):
         self._axis_lengths: tuple[int, int] | None = None
         self._manifest_identity: str | None = None
         self._empty_slots: set[tuple[int, int]] = set()
+        self._decision_sequence = 0
         self.last_decision: GatingDecision | None = None
+
+    def _with_identity(self, decision: GatingDecision) -> GatingDecision:
+        """Attach immutable gate-local identity before exposing a decision."""
+        self._decision_sequence += 1
+        selected = decision.active_slot
+        selected_agent_id = (
+            "rule" if selected is None else f"slot:{selected[0]}:{selected[1]}"
+        )
+        return replace(
+            decision,
+            decision_id=f"expert-hysteresis-{self._decision_sequence:08d}",
+            selected_agent_id=selected_agent_id,
+            gate_version=self.strategy_version,
+            regime="defensive" if selected is None else selected_agent_id,
+        )
+
+    def bind_audit_identity(
+        self, decision_id: str, selected_agent_id: str, regime: str
+    ) -> GatingDecision:
+        """Bind the public decision to the controller's audit identity."""
+        if self.last_decision is None:
+            raise ValueError("cannot bind identity without a routing decision")
+        self.last_decision = replace(
+            self.last_decision,
+            decision_id=decision_id,
+            selected_agent_id=selected_agent_id,
+            regime=regime,
+            gate_version=self.strategy_version,
+        )
+        return self.last_decision
 
     def bind_manifest(self, manifest: TwoDimensionalSelectionManifest) -> None:
         """Reject changed axis order or Slot mapping within a rollout."""
@@ -186,7 +217,7 @@ class ExpertHysteresisGating(BaseGatingStrategy):
             dominant = highest[0]
         self.active_slot = previous_active
         self.clear_candidate()
-        self.last_decision = GatingDecision(
+        self.last_decision = self._with_identity(GatingDecision(
             is_defensive=True,
             volatility_index=-1,
             slope_index=-1,
@@ -217,7 +248,7 @@ class ExpertHysteresisGating(BaseGatingStrategy):
             transition_reason=(
                 previous_decision.reject_reason if previous_decision is not None else reason
             ),
-        )
+        ))
 
     def decide(
         self,
@@ -256,6 +287,8 @@ class ExpertHysteresisGating(BaseGatingStrategy):
             "effective_slope_threshold": (
                 holding_slope if active_valid else self.slope_threshold
             ),
+            "dominant_volatility_score": float(vol[dominant[0]]),
+            "dominant_slope_score": float(slope[dominant[1]]),
         }
         # Empty Slots retain their existing runtime rule/finite exit handling.
         if dominant in self._empty_slots:
@@ -320,5 +353,5 @@ class ExpertHysteresisGating(BaseGatingStrategy):
             incumbent_invalidated=active_before is not None and not active_valid,
             transition_reason=decision.reject_reason,
         )
-        self.last_decision = decision
-        return decision
+        self.last_decision = self._with_identity(decision)
+        return self.last_decision

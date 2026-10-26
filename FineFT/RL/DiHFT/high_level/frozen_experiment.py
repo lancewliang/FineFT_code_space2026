@@ -638,6 +638,9 @@ def load_frozen_experiment(
     args.experiment_manifest = document["experiment_manifest"]
     args.frozen_config = str(Path(path).resolve())
     args.frozen_config_hash = identity
+    # The frozen hash is the final replay/audit identity.  It must not be
+    # replaced by a partial projection of runtime flags or output purpose.
+    args.frozen_configuration_identity = identity
     args.frozen_selection = dict(selection)
     prepare_experiment(args, phase)
     if document["experiment_identity"] != args.frozen_experiment_identity:
@@ -709,6 +712,13 @@ def write_evaluation_receipt(args: Namespace, directory: str | Path) -> str:
     cache = Path(args.precomputed_quantiles_dir) / "quantile_cache_manifest.json"
     validate_quantile_cache(args, cache.parent)
     target = Path(directory)
+    protected = (
+        target / "frozen_evaluation_receipt.json",
+        target / "frozen_config.json",
+        target / "experiment_manifest.json",
+    )
+    if any(path.exists() for path in protected):
+        raise FileExistsError("refusing to overwrite frozen evaluation audit/config evidence")
     target.mkdir(parents=True, exist_ok=True)
     receipt = {
         "schema_version": SCHEMA_VERSION,

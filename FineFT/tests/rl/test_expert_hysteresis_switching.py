@@ -95,6 +95,20 @@ def test_candidate_changes_cannot_pool_axis_or_slot_confirmation():
     assert router.audit_predictions[-1]["routing_slot"] == 3
 
 
+def test_public_gate_decision_binds_audit_identity_and_freezes_metrics():
+    router = switching_router()
+    assert act(router, [0.75, 0.5, 0.1], [0.1, 0.1, 0.75]) == 2
+    decision = router.gating_strategy.last_decision
+    assert decision.decision_id.startswith("dec_")
+    assert decision.selected_agent_id == "slot:1:2"
+    assert decision.gate_version == "expert_hysteresis.v1"
+    assert decision.regime == "slot:1:2"
+    assert decision.metrics["dominant_volatility_score"] == pytest.approx(0.75)
+    assert decision.metrics["dominant_slope_score"] == pytest.approx(0.75)
+    with pytest.raises(TypeError):
+        decision.metrics["dominant_slope_score"] = 0.0
+
+
 def test_ineligible_step_interrupts_candidate_evidence():
     router = switching_router(k=3)
     vol, slope = [0.75, 0.5, 0.1], [0.1, 0.1, 0.75]
