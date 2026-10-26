@@ -98,6 +98,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
             "configuration_identity": config["config_hash"],
             "experiment_identity": "experiment-hash",
             "gating_strategy": "expert_hysteresis",
+            "action_positions": [0.0, 1.0, 2.0],
         },
     )
     np.save(replay / HistoryArtifactNames.REWARD_HISTORY_NPY, np.array([1.0, -0.5]))
@@ -147,6 +148,41 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
             }
         )
     _write_json(replay / AuditArtifactNames.AUDIT_ROUTING_JSON, records)
+    _write_json(replay / AuditArtifactNames.AUDIT_PREDICTIONS_JSON, [])
+    _write_json(
+        replay / AuditArtifactNames.AUDIT_TRADES_JSON,
+        [
+            {
+                "trade_id": f"trade_run_CU_{step:06d}_leg0",
+                "decision_id": f"dec_run_CU_{step:06d}",
+                "prediction_id": "",
+                "run_id": "run",
+                "contract": "CU",
+                "step_index": step,
+                "event_time": timestamp,
+                "trading_day": "20250101",
+                "leg_index": 0,
+                "event_type": "position_adjustment",
+                "execution_status": "filled",
+                "decision_reason": "POLICY_INFERENCE",
+                "requested_position": 1.0,
+                "executed_position": 1.0,
+                "requested_quantity": 0.0,
+                "executed_quantity": 0.0,
+                "remaining_quantity": 0.0,
+                "reference_price": 10.0,
+                "fill_price": 10.0,
+                "commission": 0.0,
+                "realized_pnl": 0.0,
+                "slippage": 0.0,
+                "pre_snapshot_id": "",
+                "post_snapshot_id": "",
+            }
+            for step, timestamp in enumerate(
+                ("2025-01-01 00:00:00+00:00", "2025-01-01 00:10:00+00:00")
+            )
+        ],
+    )
     market = tmp_path / "market"
     market.mkdir()
     pd.DataFrame(
@@ -188,7 +224,10 @@ def test_public_entry_publishes_selected_complete_trial_without_reselection(tmp_
     assert (output / "CU_routing_and_returns.png").is_file()
 
 
-@pytest.mark.parametrize("mutation", ["missing_replay", "config_hash", "missing_confirm_steps", "other_study"])
+@pytest.mark.parametrize(
+    "mutation",
+    ["missing_replay", "config_hash", "missing_confirm_steps", "other_study", "missing_execution"],
+)
 def test_public_entry_rejects_invalid_selected_evidence(tmp_path: Path, mutation: str) -> None:
     evidence, config, market = _fixture(tmp_path)
     if mutation == "missing_replay":
@@ -208,12 +247,15 @@ def test_public_entry_rejects_invalid_selected_evidence(tmp_path: Path, mutation
         evidence_payload["frozen_config"]["config_hash"] = payload["config_hash"]
         evidence_payload["evidence_hash"] = _identity({key: value for key, value in evidence_payload.items() if key != "evidence_hash"})
         _write_json(evidence, evidence_payload)
-    else:
+    elif mutation == "other_study":
         payload = json.loads(evidence.read_text())
         other = tmp_path / "other.sqlite3"
         optuna.create_study(study_name="other", storage=f"sqlite:///{other}")
         payload["study"]["storage_path"] = str(other.resolve())
         payload["evidence_hash"] = _identity({key: value for key, value in payload.items() if key != "evidence_hash"})
         _write_json(evidence, payload)
+    else:
+        replay = Path(json.loads(evidence.read_text())["best_replay"]["artifact_path"])
+        (replay / "contracts" / "CU" / AuditArtifactNames.AUDIT_TRADES_JSON).unlink()
     with pytest.raises((FileNotFoundError, ValueError)):
         main(["--selection-evidence", str(evidence), "--market-data-dir", str(market), "--output-dir", str(tmp_path / "out")])

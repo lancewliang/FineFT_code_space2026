@@ -210,6 +210,7 @@ def test_public_tuning_preparation_and_final_snapshot_roundtrip(experiment, tmp_
     assert restored.eval_stage == "test"
     assert restored.frozen_experiment_identity == prepared.frozen_experiment_identity
     assert restored.frozen_config_hash == prepared.frozen_config_hash
+    assert restored.frozen_configuration_identity == prepared.frozen_config_hash
     assert restored.frozen_selection["trial_number"] == 7
     assert restored.output_sub_dir == str(
         Path("expert_hysteresis")
@@ -562,6 +563,8 @@ def test_public_final_replay_preserves_snapshot_and_writes_receipt(
     assert (output / "frozen_config.json").read_bytes() == Path(selected).read_bytes()
     restored = final.parse_and_prepare_args(["--frozen_config", selected])
     restored.precomputed_quantiles_dir = str(cache)
+    with pytest.raises(FileExistsError, match="overwrite frozen evaluation"):
+        frozen.write_evaluation_receipt(restored, output)
     restored.expert_confirm_steps += 1
     with pytest.raises(ValueError, match="effective configuration changed"):
         frozen.write_evaluation_receipt(restored, output)

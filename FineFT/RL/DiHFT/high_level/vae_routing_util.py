@@ -1030,6 +1030,12 @@ class vae_risk_aware_routing:
         self.current_contract_quantiles = None
 
         self.test_path = self._resolve_test_path(args)
+        if self.save_artifacts and getattr(args, "frozen_config_hash", None):
+            if os.path.exists(self.test_path):
+                raise FileExistsError(
+                    "refusing to reuse frozen expert evaluation output namespace: "
+                    f"{self.test_path}"
+                )
         if self.save_artifacts and not os.path.exists(self.test_path):
             os.makedirs(self.test_path, exist_ok=True)
 
@@ -1719,6 +1725,20 @@ class vae_risk_aware_routing:
         decision = gate.last_decision
         if decision is None:
             raise RuntimeError("expert decision completed without routing evidence")
+        audit_decision_id = build_decision_id(
+            self.run_id, self.current_contract_name, self.step_idx
+        )
+        selected_slot = decision.active_slot
+        selected_agent_id = (
+            "rule"
+            if selected_slot is None
+            else f"slot:{selected_slot[0]}:{selected_slot[1]}"
+        )
+        decision = gate.bind_audit_identity(
+            audit_decision_id,
+            selected_agent_id,
+            "defensive" if selected_slot is None else selected_agent_id,
+        )
         volatility_scores = [
             float(value) for value in self.calculate_axis_window_result("volatility")
         ]

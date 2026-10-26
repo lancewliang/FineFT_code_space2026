@@ -27,7 +27,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 from common import ArtifactNames, AuditArtifactNames, HistoryArtifactNames
-from common.routing_audit import RoutingRecord
+from common.audit_records import PredictionRecord, TradeRecord
+from common.routing_audit import RoutingRecord, validate_routing_evidence
 from RL.DiHFT.high_level.frozen_experiment import (
     POLICY_FIELDS,
     RUNTIME_FIELDS,
@@ -170,6 +171,7 @@ def load_selected_replay(
         raise ValueError("selected Trial effective configuration is incomplete or changed")
     _validate_study(evidence, selection, config)
     _validate_replay_identity(replay_path, evidence, config_hash)
+    _validate_replay_evidence_join(replay_path)
     evidence["evidence_hash"] = evidence_hash
     return SelectedReplay(evidence_path, frozen_path, replay_path, evidence, config)
 
@@ -223,6 +225,32 @@ def _validate_replay_identity(replay_path: Path, evidence: dict[str, Any], confi
             raise ValueError(f"best replay experiment identity conflict: {path}")
         if metadata.get("gating_strategy") != "expert_hysteresis":
             raise ValueError(f"best replay strategy conflict: {path}")
+
+
+def _validate_replay_evidence_join(replay_path: Path) -> None:
+    """Require every selected replay route to join inference and execution."""
+    records: list[RoutingRecord] = []
+    predictions: list[PredictionRecord] = []
+    trades: list[TradeRecord] = []
+    action_positions: dict[str, list[float]] = {}
+    for contract, artifacts in _contracts(replay_path):
+        metadata = _read_json(artifacts / AuditArtifactNames.AUDIT_METADATA_JSON)
+        try:
+            positions = [float(value) for value in metadata["action_positions"]]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"selected replay lacks action positions for {contract}") from exc
+        if not positions or not all(math.isfinite(value) for value in positions):
+            raise ValueError(f"selected replay has invalid action positions for {contract}")
+        action_positions[contract] = positions
+        routing = _read_json_value(artifacts / AuditArtifactNames.AUDIT_ROUTING_JSON)
+        prediction = _read_json_value(artifacts / AuditArtifactNames.AUDIT_PREDICTIONS_JSON)
+        execution = _read_json_value(artifacts / AuditArtifactNames.AUDIT_TRADES_JSON)
+        if not all(isinstance(rows, list) for rows in (routing, prediction, execution)):
+            raise ValueError(f"selected replay has malformed routing evidence for {contract}")
+        records.extend(RoutingRecord.from_dict(row) for row in routing)
+        predictions.extend(PredictionRecord.from_dict(row) for row in prediction)
+        trades.extend(TradeRecord.from_dict(row) for row in execution)
+    validate_routing_evidence(records, predictions, trades, action_positions)
 
 
 def _contracts(replay_path: Path) -> list[tuple[str, Path]]:
@@ -308,6 +336,14 @@ def _contract_payload(
     baseline = prices / prices[0] - 1.0
     strategy = equities / equities[0] - 1.0
     drawdown = 1.0 - equities / np.maximum.accumulate(equities)
+    def slot_axis_score(record: RoutingRecord, slot: int | None, axis: str) -> float:
+        if slot is None:
+            return float("nan")
+        slope_count = len(record.slope_scores)
+        score_index = slot // slope_count if axis == "volatility" else slot % slope_count
+        scores = record.volatility_scores if axis == "volatility" else record.slope_scores
+        return float(scores[score_index])
+
     route = pd.DataFrame(
         {
             "timestamp": pd.to_datetime(market["timestamp"].iloc[indices[:-1]], utc=True).to_numpy(),
@@ -315,8 +351,18 @@ def _contract_payload(
             "active_slot": [row.active_slot_after for row in records],
             "candidate_slot": [row.candidate_slot_after for row in records],
             "candidate_count": [row.candidate_count_after for row in records],
-            "volatility_score": [max(row.volatility_scores, default=np.nan) for row in records],
-            "slope_score": [max(row.slope_scores, default=np.nan) for row in records],
+            "active_volatility_score": [
+                slot_axis_score(row, row.active_slot_after, "volatility") for row in records
+            ],
+            "active_slope_score": [
+                slot_axis_score(row, row.active_slot_after, "slope") for row in records
+            ],
+            "candidate_volatility_score": [
+                slot_axis_score(row, row.candidate_slot_after, "volatility") for row in records
+            ],
+            "candidate_slope_score": [
+                slot_axis_score(row, row.candidate_slot_after, "slope") for row in records
+            ],
             "volatility_entry": [row.volatility_entry_threshold for row in records],
             "slope_entry": [row.slope_entry_threshold for row in records],
             "volatility_hold": [row.volatility_holding_threshold for row in records],
@@ -369,8 +415,28 @@ def _plot_contract(contract: str, timeline: pd.DataFrame, destination: Path) -> 
     axes[1].set_ylabel("Routing state")
     axes[1].legend(ncol=2)
     axes[1].grid(alpha=0.3)
-    axes[2].plot(timeline["timestamp"], timeline["volatility_score"], label="Volatility score")
-    axes[2].plot(timeline["timestamp"], timeline["slope_score"], label="Slope score")
+    axes[2].plot(
+        timeline["timestamp"],
+        timeline["active_volatility_score"],
+        label="Active Slot volatility score",
+    )
+    axes[2].plot(
+        timeline["timestamp"],
+        timeline["active_slope_score"],
+        label="Active Slot slope score",
+    )
+    axes[2].plot(
+        timeline["timestamp"],
+        timeline["candidate_volatility_score"],
+        label="Candidate Slot volatility score",
+        alpha=0.65,
+    )
+    axes[2].plot(
+        timeline["timestamp"],
+        timeline["candidate_slope_score"],
+        label="Candidate Slot slope score",
+        alpha=0.65,
+    )
     axes[2].plot(timeline["timestamp"], timeline["volatility_entry"], label="Volatility E", linestyle="--")
     axes[2].plot(timeline["timestamp"], timeline["volatility_hold"], label="Volatility H", linestyle=":")
     axes[2].plot(timeline["timestamp"], timeline["slope_entry"], label="Slope E", linestyle="--")

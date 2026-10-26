@@ -67,12 +67,13 @@ def controlled_root(tmp_path: Path) -> tuple[Path, dict[str, str]]:
             body += (
                 "mkdir -p \"$(dirname \"$SELECTION_EVIDENCE\")\"\n"
                 "printf '{}' > \"$SELECTION_EVIDENCE\"\n"
-                "printf '{}' > \"$FROZEN_CONFIG\"\n"
+                "printf '%s\\n' '{\"experiment_identity\":\"controlled\",\"selection\":{\"trial_number\":0},\"config_hash\":\"90f0833dda6fd2421dc8f709ec010956564dd9f3163cb1f7455db9d1896c19cb\"}' > \"$FROZEN_CONFIG\"\n"
             )
         if number == 8:
             body += (
                 "mkdir -p \"$PUBLICATION_DIR\"\n"
-                "printf '{}' > \"$PUBLICATION_DIR/step8_publication_receipt.json\"\n"
+                "cp \"$FROZEN_CONFIG\" \"$PUBLICATION_DIR/frozen_config.json\"\n"
+                "printf '%s\\n' '{\"document_type\":\"expert_hysteresis_step8_publication_receipt\",\"experiment_identity\":\"controlled\",\"config_hash\":\"90f0833dda6fd2421dc8f709ec010956564dd9f3163cb1f7455db9d1896c19cb\",\"selected_trial\":{\"trial_number\":0}}' > \"$PUBLICATION_DIR/step8_publication_receipt.json\"\n"
             )
         _write(root / relative_path, body, executable=True)
 
@@ -272,8 +273,9 @@ def test_high_level_entrypoints_use_controlled_finetf_python_and_wait(
     filenames = (
         "experiment manifest.json",
         "selection manifest.json",
-        "selection evidence.json",
-        "frozen config.json",
+            "selection evidence.json",
+            "frozen config.json",
+            "step8_publication_receipt.json",
     )
     for filename in filenames:
         _write(inputs / filename, "{}\n")

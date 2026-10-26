@@ -20,6 +20,7 @@ BASE_PATH=${BASE_PATH:-dataset/10min}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-10min_parallel}
 EVAL_STAGE=${1:-${EVAL_STAGE:-valid}}
 FROZEN_CONFIG=${FROZEN_CONFIG:?Set FROZEN_CONFIG to the step-8 published frozen_config.json}
+STEP8_PUBLICATION_DIR=${STEP8_PUBLICATION_DIR:-$(dirname "$FROZEN_CONFIG")}
 
 if [[ ! -f "$FROZEN_CONFIG" ]]; then
     echo "FROZEN_CONFIG does not exist: $FROZEN_CONFIG" >&2
@@ -29,6 +30,29 @@ if [[ "$EVAL_STAGE" != "valid" && "$EVAL_STAGE" != "test" ]]; then
     echo "EVAL_STAGE must be valid or test, got: $EVAL_STAGE" >&2
     exit 2
 fi
+
+STEP8_RECEIPT="${STEP8_PUBLICATION_DIR}/step8_publication_receipt.json"
+if [[ ! -f "$STEP8_RECEIPT" ]]; then
+    echo "Step-8 publication receipt does not exist: $STEP8_RECEIPT" >&2
+    exit 2
+fi
+python - "$FROZEN_CONFIG" "$STEP8_RECEIPT" <<'PY'
+import hashlib
+import json
+import sys
+
+config_path, receipt_path = sys.argv[1:]
+config = json.load(open(config_path, encoding="utf-8"))
+receipt = json.load(open(receipt_path, encoding="utf-8"))
+identity = config.pop("config_hash", None)
+expected = hashlib.sha256(json.dumps(config, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+if identity != expected or receipt.get("document_type") != "expert_hysteresis_step8_publication_receipt":
+    raise SystemExit("invalid frozen config or Step-8 publication receipt")
+if receipt.get("config_hash") != identity or receipt.get("experiment_identity") != config.get("experiment_identity"):
+    raise SystemExit("Step-8 receipt does not bind this frozen configuration")
+if receipt.get("selected_trial") != config.get("selection"):
+    raise SystemExit("Step-8 receipt study/trial identity differs from frozen configuration")
+PY
 
 CONFIG_HASH=$(python -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["config_hash"])' "$FROZEN_CONFIG")
 RESULT_DIR="result/DiHFT/final_result/${DATASET_NAME}/${EXPERIMENT_NAME}/expert_hysteresis/${CONFIG_HASH}/${EVAL_STAGE}/main_sub"

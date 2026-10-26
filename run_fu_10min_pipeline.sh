@@ -182,8 +182,36 @@ configure_step7_outputs() {
     export SELECTION_EVIDENCE="${SELECTION_EVIDENCE:-${calibration_root}/selection_evidence.json}"
     export FROZEN_CONFIG="${FROZEN_CONFIG:-${calibration_root}/selected_expert_hysteresis_config.json}"
 }
-configure_publication_dir() { export PUBLICATION_DIR="${PUBLICATION_DIR:-${SAVE_PATH}/${DATASET_NAME}/${EXPERIMENT_NAME}/selected_trial_publication}"; }
-validate_publication_receipt() { require_dir_env PUBLICATION_DIR; [[ -f "${PUBLICATION_DIR}/step8_publication_receipt.json" ]] || { echo "Step 8 publication receipt is missing: ${PUBLICATION_DIR}/step8_publication_receipt.json" >&2; exit 2; }; }
+configure_publication_dir() {
+    if [[ -z "${PUBLICATION_DIR:-}" && -n "${FROZEN_CONFIG:-}" ]] && ! step_selected 8; then
+        export PUBLICATION_DIR="$(dirname "$FROZEN_CONFIG")"
+    else
+        export PUBLICATION_DIR="${PUBLICATION_DIR:-${SAVE_PATH}/${DATASET_NAME}/${EXPERIMENT_NAME}/selected_trial_publication}"
+    fi
+}
+validate_publication_receipt() {
+    require_dir_env PUBLICATION_DIR
+    local receipt="${PUBLICATION_DIR}/step8_publication_receipt.json"
+    [[ -f "$receipt" ]] || { echo "Step 8 publication receipt is missing: $receipt" >&2; exit 2; }
+    require_file_env FROZEN_CONFIG
+    python - "$FROZEN_CONFIG" "$receipt" <<'PY'
+import hashlib
+import json
+import sys
+
+config_path, receipt_path = sys.argv[1:]
+config = json.load(open(config_path, encoding="utf-8"))
+receipt = json.load(open(receipt_path, encoding="utf-8"))
+identity = config.pop("config_hash", None)
+expected = hashlib.sha256(json.dumps(config, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+if identity != expected or receipt.get("document_type") != "expert_hysteresis_step8_publication_receipt":
+    raise SystemExit("invalid frozen config or Step-8 publication receipt")
+if receipt.get("config_hash") != identity or receipt.get("experiment_identity") != config.get("experiment_identity"):
+    raise SystemExit("Step-8 receipt does not bind this frozen configuration")
+if receipt.get("selected_trial") != config.get("selection"):
+    raise SystemExit("Step-8 receipt study/trial identity differs from frozen configuration")
+PY
+}
 
 if step_selected 7; then
     require_file_env EXPERIMENT_MANIFEST
@@ -233,6 +261,9 @@ for step in "${SELECTED_STEPS[@]}"; do
         exit 1
     fi
     if [[ "$step" == 7 ]]; then require_file_env SELECTION_EVIDENCE; require_file_env FROZEN_CONFIG; fi
-    if [[ "$step" == 8 ]]; then validate_publication_receipt; fi
+    if [[ "$step" == 8 ]]; then
+        export FROZEN_CONFIG="${PUBLICATION_DIR}/frozen_config.json"
+        validate_publication_receipt
+    fi
     echo "Completed step $step: $title"
 done

@@ -2,17 +2,22 @@ from __future__ import annotations
 
 import abc
 from dataclasses import dataclass, field
-from typing import Sequence
+from types import MappingProxyType
+from typing import Mapping, Sequence
 import numpy as np
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class GatingDecision:
     is_defensive: bool
     volatility_index: int
     slope_index: int
     reject_reason: str
-    metrics: dict[str, float] = field(default_factory=dict)
+    metrics: Mapping[str, object] = field(default_factory=dict)
+    decision_id: str = ""
+    selected_agent_id: str = ""
+    gate_version: str = ""
+    regime: str = ""
     dominant_slot: tuple[int, int] | None = None
     active_slot: tuple[int, int] | None = None
     candidate_slot: tuple[int, int] | None = None
@@ -23,6 +28,10 @@ class GatingDecision:
     completed_candidate_count: int = 0
     incumbent_invalidated: bool = False
     transition_reason: str = ""
+
+    def __post_init__(self) -> None:
+        """Copy metrics into an immutable, slotted decision value."""
+        object.__setattr__(self, "metrics", MappingProxyType(dict(self.metrics)))
 
 
 class BaseGatingStrategy(abc.ABC):
