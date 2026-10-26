@@ -599,8 +599,15 @@ def export_frozen_experiment(args: Namespace, path: str | Path) -> str:
     return str(destination)
 
 
-def load_frozen_experiment(args: Namespace, path: str | Path) -> Namespace:
-    """Restore all selected values and reject explicit final-evaluation overrides."""
+def load_frozen_experiment(
+    args: Namespace,
+    path: str | Path,
+    *,
+    phase: str = "final",
+) -> Namespace:
+    """Restore a selected policy for its declared calibration or final replay phase."""
+    if phase not in ("calibration", "final"):
+        raise ValueError(f"unsupported frozen evaluation phase: {phase}")
     document = _read(path)
     identity = document.pop("config_hash", None)
     if (
@@ -632,7 +639,7 @@ def load_frozen_experiment(args: Namespace, path: str | Path) -> Namespace:
     args.frozen_config = str(Path(path).resolve())
     args.frozen_config_hash = identity
     args.frozen_selection = dict(selection)
-    prepare_experiment(args, "final")
+    prepare_experiment(args, phase)
     if document["experiment_identity"] != args.frozen_experiment_identity:
         raise ValueError("frozen experiment source identity changed")
     if document.get("search_space") != args.search_space:
@@ -688,14 +695,15 @@ def validate_quantile_cache(args: Namespace, directory: str | Path) -> str:
 
 
 def write_evaluation_receipt(args: Namespace, directory: str | Path) -> str:
-    """Persist final input identities after checking that replay changed no parameters."""
+    """Persist replay identities after checking that a selected policy did not change."""
     document = _read(args.frozen_config)
     identity = document.pop("config_hash", None)
     if identity != _identity(document):
         raise ValueError("frozen configuration changed during final evaluation")
     if any(getattr(args, field) != value for field, value in document["configuration"].items()):
         raise ValueError("effective configuration changed during final evaluation")
-    prepare_experiment(args, "final")
+    phase = "calibration" if args.eval_stage == "valid" else "final"
+    prepare_experiment(args, phase)
     if args.frozen_experiment_identity != document["experiment_identity"]:
         raise ValueError("experiment sources changed during final evaluation")
     cache = Path(args.precomputed_quantiles_dir) / "quantile_cache_manifest.json"
@@ -709,7 +717,8 @@ def write_evaluation_receipt(args: Namespace, directory: str | Path) -> str:
         "experiment_identity": args.frozen_experiment_identity,
         "config_hash": identity,
         "selection": document["selection"],
-        "eval_stage": "test",
+        "eval_stage": args.eval_stage,
+        "evaluation_purpose": getattr(args, "evaluation_purpose", "final"),
         "frozen_config": {"path": args.frozen_config, "sha256": file_sha256(args.frozen_config)},
         "score_cache_manifest": {"path": str(cache.resolve()), "sha256": file_sha256(cache)},
     }

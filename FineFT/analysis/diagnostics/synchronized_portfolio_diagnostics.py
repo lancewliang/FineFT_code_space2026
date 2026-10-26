@@ -82,6 +82,7 @@ class SynchronizedPortfolioCalculator:
         data_dir: str | Path,
         output_dir: str | Path | None = None,
         single_contract_capital: float = 6000.0,
+        portfolio_initial_capital: float | None = None,
         contract_unit: float = 1.0,
         commission_rate: float = 0.0003,
         freq: int = 12,
@@ -91,6 +92,11 @@ class SynchronizedPortfolioCalculator:
         self.data_dir = Path(data_dir)
         self.output_dir = Path(output_dir) if output_dir else self.result_dir
         self.single_contract_capital = float(single_contract_capital)
+        self.portfolio_initial_capital = (
+            float(portfolio_initial_capital)
+            if portfolio_initial_capital is not None
+            else self.single_contract_capital * 2.0
+        )
         self.contract_unit = float(contract_unit)
         self.commission_rate = float(commission_rate)
         self.freq = int(freq)
@@ -309,7 +315,7 @@ class SynchronizedPortfolioCalculator:
         )
 
         timeline_records = []
-        portfolio_initial_capital = self.single_contract_capital * 2.0
+        portfolio_initial_capital = self.portfolio_initial_capital
         cum_net_pnl = 0.0
 
         for ts in unique_timestamps:

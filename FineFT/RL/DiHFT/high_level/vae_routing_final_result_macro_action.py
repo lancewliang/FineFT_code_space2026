@@ -21,12 +21,26 @@ from RL.DiHFT.high_level.vae_routing_util import (
 )
 
 
+def _evaluation_phase(args) -> str:
+    """Map a declared data stage to the independently verified experiment phase."""
+    return "calibration" if args.eval_stage == "valid" else "final"
+
+
+def _validate_evaluation_purpose(args) -> None:
+    """Prevent valid/main-sub and test/final artifacts from sharing a namespace."""
+    if args.evaluation_purpose == "final" and args.eval_stage != "test":
+        raise ValueError("final evaluation_purpose requires eval_stage=test")
+    if args.evaluation_purpose == "main_sub" and args.eval_stage not in {"valid", "test"}:
+        raise ValueError("main_sub evaluation_purpose requires eval_stage=valid or test")
+
+
 def parse_and_prepare_args(args_list=None):
     """Parse and resolve configuration for final result evaluation."""
     parser = argparse.ArgumentParser(parents=[copy.deepcopy(base_parser)], add_help=False)
     parser.set_defaults(
         eval_stage="test",
         non_main_defense_mode="graceful_hold_exit",
+        evaluation_purpose="final",
     )
 
     if args_list is not None:
@@ -54,16 +68,20 @@ def parse_and_prepare_args(args_list=None):
     if args.frozen_config:
         if args.para_file or args.optuna_csv:
             raise ValueError("frozen_config cannot be combined with legacy para_file/optuna_csv")
-        args = load_frozen_experiment(args, args.frozen_config)
+        if "output_sub_dir" in args._explicit_routing_options:
+            raise ValueError("frozen evaluation rejects output_sub_dir; use evaluation_purpose")
+        _validate_evaluation_purpose(args)
+        args = load_frozen_experiment(args, args.frozen_config, phase=_evaluation_phase(args))
         if args.result_path == "result/DiHFT/high_level":
             args.result_path = "result/DiHFT/final_result"
-        if args.output_sub_dir is None:
-            args.output_sub_dir = os.path.join(
-                "expert_hysteresis",
-                args.frozen_config_hash,
-                "test",
-                "final_evaluation",
-            )
+        # Keep a readable projection for callers that inspected the historical
+        # field, while _resolve_test_path derives the authoritative namespace.
+        args.output_sub_dir = os.path.join(
+            "expert_hysteresis",
+            args.frozen_config_hash,
+            args.eval_stage,
+            "final_evaluation" if args.evaluation_purpose == "final" else "main_sub",
+        )
         return args
     if args.gating_strategy == "expert_hysteresis":
         raise ValueError("final expert_hysteresis evaluation requires frozen_config")
@@ -160,7 +178,7 @@ def main():
         result_dir=vae_routing.test_path,
         data_dir=data_dir,
         output_dir=vae_routing.test_path,
-        single_contract_capital=float(args.initial_wallet_balance),
+        portfolio_initial_capital=float(args.initial_wallet_balance),
         contract_unit=float(args.diagnostic_contract_unit),
         commission_rate=float(args.transcation_cost),
         freq=12,

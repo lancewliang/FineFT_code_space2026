@@ -840,6 +840,63 @@ def test_step7_shell_wires_frozen_experiment_and_expert_namespace():
 
 
 @pytest.mark.parametrize(
+    ("script_name", "purpose", "stage"),
+    [
+        ("final_result_fu_10_main_sub.sh", "main_sub", '"$EVAL_STAGE"'),
+        ("final_result_fu_10.sh", "final", "test"),
+    ],
+)
+def test_step9_and_step10_shells_only_replay_the_published_frozen_config(
+    script_name, purpose, stage
+):
+    script = Path("FineFT/script/test/DiHFT/high_level") / script_name
+    content = script.read_text()
+    assert 'FROZEN_CONFIG=${FROZEN_CONFIG:?' in content
+    assert f"--evaluation_purpose {purpose}" in content
+    assert f'--eval_stage {stage}' in content
+    assert "--para_file" not in content
+    assert "--optuna_csv" not in content
+    assert "--initial_wallet_balance" not in content
+    assert "--transcation_cost" not in content
+    assert "--stop_loss_return_threshold" not in content
+
+
+def test_main_sub_frozen_replay_uses_valid_namespace_without_mutating_policy(experiment, tmp_path):
+    args, _, _ = experiment
+    selected = frozen.export_frozen_experiment(args, tmp_path / "selected.json")
+
+    restored = final.parse_and_prepare_args(
+        [
+            "--frozen_config",
+            selected,
+            "--eval_stage",
+            "valid",
+            "--evaluation_purpose",
+            "main_sub",
+        ]
+    )
+
+    assert restored.eval_stage == "valid"
+    assert restored.evaluation_purpose == "main_sub"
+    assert restored.initial_wallet_balance == args.initial_wallet_balance
+    router = vru.vae_risk_aware_routing.__new__(vru.vae_risk_aware_routing)
+    router.dataset_name = restored.dataset_name
+    router.experiment_name = restored.experiment_name
+    router.eval_stage = restored.eval_stage
+    path = router._resolve_test_path(restored)
+    assert path.endswith(f"/{args.frozen_config_hash}/valid/main_sub")
+
+
+def test_final_purpose_rejects_valid_stage(experiment, tmp_path):
+    args, _, _ = experiment
+    selected = frozen.export_frozen_experiment(args, tmp_path / "selected.json")
+    with pytest.raises(ValueError, match="requires eval_stage=test"):
+        final.parse_and_prepare_args(
+            ["--frozen_config", selected, "--eval_stage", "valid", "--evaluation_purpose", "final"]
+        )
+
+
+@pytest.mark.parametrize(
     "field,low,high,match",
     [
         ("slope_window_length", 0, 10, "positive windows"),

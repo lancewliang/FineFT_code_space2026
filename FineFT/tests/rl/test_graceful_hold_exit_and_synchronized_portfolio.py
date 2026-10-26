@@ -195,6 +195,41 @@ def test_synchronized_portfolio_calculator_e2e(tmp_path):
     assert (df_t["holding_contract_count"] <= 2).all()
 
 
+def test_synchronized_portfolio_uses_explicit_frozen_account_total(tmp_path):
+    """A frozen replay must not silently create a second wallet per contract."""
+    result_dir = tmp_path / "result"
+    data_dir = tmp_path / "valid"
+    contracts_dir = result_dir / "contracts"
+    contracts_dir.mkdir(parents=True)
+    data_dir.mkdir()
+    for contract, reward in (("c1", 10.0), ("c2", 20.0)):
+        contract_dir = contracts_dir / contract
+        contract_dir.mkdir()
+        np.save(contract_dir / HistoryArtifactNames.EXECUTED_POSITION_HISTORY_NPY, np.array([0.0]))
+        np.save(contract_dir / HistoryArtifactNames.REWARD_HISTORY_NPY, np.array([reward]))
+        np.save(contract_dir / HistoryArtifactNames.MICRO_ACTION_HISTORY_NPY, np.array([1]))
+        np.save(contract_dir / HistoryArtifactNames.MACRO_ACTION_HISTORY_NPY, np.array([9]))
+        np.save(contract_dir / HistoryArtifactNames.ACTION_DECISION_REASON_HISTORY_NPY, np.array([3]))
+        pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2026-01-01", periods=2, freq="10min"),
+                "prev_day_contract_role_tier": [1.0, 1.0],
+                "mark_price": [100.0, 100.0],
+            }
+        ).to_feather(data_dir / f"{contract}.feather")
+
+    result = SynchronizedPortfolioCalculator(
+        result_dir=result_dir,
+        data_dir=data_dir,
+        single_contract_capital=6000.0,
+        portfolio_initial_capital=12_000.0,
+        freq=1,
+    ).run()
+
+    assert result["portfolio"]["initial_capital"] == 12_000.0
+    assert result["portfolio"]["tr"] == pytest.approx(30.0 / 12_000.0)
+
+
 def test_log_initialized_attributes_runs_cleanly(caplog):
     import logging
     router = _build_router(non_main_mode="graceful_hold_exit")

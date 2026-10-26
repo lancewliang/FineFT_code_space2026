@@ -281,6 +281,13 @@ parser.add_argument(
     help="结果保存的子目录名（例如 main_sub）",
 )
 parser.add_argument(
+    "--evaluation_purpose",
+    type=str,
+    default=None,
+    choices=["main_sub", "final"],
+    help="冻结专家配置评估用途；该值决定隔离的结果命名空间",
+)
+parser.add_argument(
     "--window_length",
     type=int,
     default=64,
@@ -716,7 +723,8 @@ def resolve_routing_parameters(args):
     if getattr(args, "frozen_config", None):
         if args.para_file or args.optuna_csv:
             raise ValueError("frozen_config cannot be combined with legacy para_file/optuna_csv")
-        return load_frozen_experiment(args, args.frozen_config)
+        phase = "calibration" if args.eval_stage == "valid" else "final"
+        return load_frozen_experiment(args, args.frozen_config, phase=phase)
     if args.gating_strategy == "expert_hysteresis":
         if args.para_file or args.optuna_csv:
             raise ValueError("expert_hysteresis uses frozen_config; legacy para/CSV cannot supply it")
@@ -1358,6 +1366,34 @@ class vae_risk_aware_routing:
 
     def _resolve_test_path(self, args):
         sub_dir = args.output_sub_dir
+        if (
+            args.gating_strategy == "expert_hysteresis"
+            and getattr(args, "frozen_config_hash", None)
+            and getattr(args, "evaluation_purpose", None) is not None
+        ):
+            purpose = getattr(args, "evaluation_purpose", "final")
+            expected_projection = os.path.join(
+                "expert_hysteresis",
+                args.frozen_config_hash,
+                self.eval_stage,
+                "final_evaluation" if purpose == "final" else "main_sub",
+            )
+            if sub_dir not in (None, expected_projection):
+                raise ValueError(
+                    "frozen expert evaluation does not accept output_sub_dir; "
+                    "use evaluation_purpose for an isolated output namespace"
+                )
+            if purpose not in ("main_sub", "final"):
+                raise ValueError(f"unsupported frozen evaluation purpose: {purpose}")
+            return os.path.join(
+                args.result_path,
+                args.dataset_name,
+                self.experiment_name,
+                "expert_hysteresis",
+                args.frozen_config_hash,
+                self.eval_stage,
+                purpose,
+            )
         if args.gating_strategy == "expert_hysteresis" and self.eval_stage == "valid":
             base = os.path.join(
                 args.result_path,
@@ -2769,7 +2805,13 @@ class vae_risk_aware_routing:
             logger.info("[Artifacts] Saved contract results summary to %s", csv_path)
 
         total_reward_sum = float(result_df[MetricColumns.REWARD_SUM].sum())
-        portfolio_capital = float(self.initial_wallet_balance * 2.0)
+        # A frozen experiment defines one account balance for the whole replay.
+        # Legacy results keep their historical per-contract-wallet denominator.
+        portfolio_capital = float(
+            self.initial_wallet_balance
+            if getattr(self, "frozen_experiment_identity", None)
+            else self.initial_wallet_balance * 2.0
+        )
         portfolio_return_rate = float(total_reward_sum / (portfolio_capital + 1e-12))
         win_rate = float((result_df[MetricColumns.RETURN_RATE] > 0).mean())
         base_objective = portfolio_return_rate
@@ -2796,7 +2838,11 @@ class vae_risk_aware_routing:
                 concat_pnls = np.concatenate(timeline_pnls)
                 timeline_df = pd.DataFrame({"ts": concat_ts, "pnl": concat_pnls})
                 step_pnls = timeline_df.groupby("ts")["pnl"].sum().sort_index().to_numpy()
-                portfolio_capital = self.initial_wallet_balance * 2.0
+                portfolio_capital = (
+                    self.initial_wallet_balance
+                    if getattr(self, "frozen_experiment_identity", None)
+                    else self.initial_wallet_balance * 2.0
+                )
                 equities = portfolio_capital + np.cumsum(step_pnls)
                 peaks = np.maximum.accumulate(equities)
                 portfolio_mdd = float(np.max((peaks - equities) / (peaks + 1e-12)))
@@ -2853,6 +2899,11 @@ class vae_risk_aware_routing:
                 "total_reward_sum": total_reward_sum,
                 "aggregation": aggregation_mode,
                 "contract_count": len(contract_results),
+                "account_scope": (
+                    "frozen_shared_portfolio_denominator"
+                    if getattr(self, "frozen_experiment_identity", None)
+                    else "legacy_independent_contract_wallets"
+                ),
             }
             trading_info_path = os.path.join(self.test_path, ArtifactNames.TRADING_INFO_NPY)
             np.save(trading_info_path, trading_info)
