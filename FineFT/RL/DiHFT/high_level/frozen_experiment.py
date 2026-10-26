@@ -95,6 +95,7 @@ RUNTIME_FIELDS = (
     "min_trades_guard",
     "early_stop",
     "candidate_slot_order",
+    "calibration_warmup_steps",
 )
 
 
@@ -290,6 +291,23 @@ def _validate_search_space(
             raise TypeError(f"search_space.{field} bounds must be numeric")
         if not math.isfinite(float(low)) or not math.isfinite(float(high)) or low > high:
             raise ValueError(f"search_space.{field} bounds are invalid")
+        if field in ("slope_window_length", "volatility_window_length") and low < 1:
+            raise ValueError(f"search_space.{field} requires positive windows")
+        if field == "expert_confirm_steps" and low < 1:
+            raise ValueError("search_space.expert_confirm_steps requires positive integers")
+        if field in (
+            "slope_gamma",
+            "volatility_gamma",
+            "slope_rule_base_threshold",
+            "volatility_rule_base_threshold",
+        ) and not 0 < low <= high <= 1:
+            raise ValueError(f"search_space.{field} bounds must lie in (0, 1]")
+        if field == "hysteresis_exit_ratio" and not 0 < low <= high < 1:
+            raise ValueError(
+                "search_space.hysteresis_exit_ratio bounds must satisfy 0 < low <= high < 1"
+            )
+        if field == "expert_switch_lead" and low < 0:
+            raise ValueError("search_space.expert_switch_lead must be non-negative")
         if args is not None:
             value = getattr(args, field)
             if value < low or value > high:
@@ -510,6 +528,10 @@ def prepare_experiment(
     # Keep this alias until cache generation is moved out of vae_routing_util.
     args.scoring_protocol = args.raw_scoring_protocol
     args.search_space = search_space
+    args.calibration_warmup_steps = max(
+        search_space["slope_window_length"]["high"],
+        search_space["volatility_window_length"]["high"],
+    )
     with Path(args.selection_manifest).open(encoding="utf-8") as source:
         selection = json.load(source)
     args.candidate_slot_order = [slot["slot_id"] for slot in selection["slots"]]

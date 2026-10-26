@@ -2,6 +2,7 @@
 
 import copy
 import json
+import types
 from argparse import Namespace
 from pathlib import Path
 
@@ -596,3 +597,264 @@ def test_negative_boolean_override_cannot_change_frozen_risk_controls(experiment
     selected = frozen.export_frozen_experiment(args, tmp_path / "selected.json")
     with pytest.raises(ValueError, match="override frozen"):
         final.parse_and_prepare_args(["--frozen_config", selected, "--no-enable_mdd_penalty"])
+
+
+def test_public_joint_search_freezes_and_replays_one_complete_trial(
+    experiment, tmp_path, monkeypatch
+):
+    args, _, _ = experiment
+    search = tuning.parser_all.parse_args(
+        [
+            "--dataset_name",
+            "fu",
+            "--experiment_name",
+            "fixture",
+            "--selection_manifest",
+            args.selection_manifest,
+            "--calibration_run_id",
+            "controlled-run",
+            "--n_trials",
+            "1",
+            "--n_workers",
+            "1",
+        ]
+    )
+    observed = {"trial": None, "replays": []}
+
+    class ControlledTrial:
+        def __init__(self):
+            self.params = {}
+            self.user_attrs = {}
+
+        def suggest_int(self, name, low, high):
+            value = low if name == "slope_window_length" else high
+            self.params[name] = value
+            return value
+
+        def suggest_float(self, name, low, high, log=False):
+            del log
+            value = low if name in {"slope_gamma", "expert_switch_lead"} else high
+            self.params[name] = value
+            return value
+
+        def set_user_attr(self, name, value):
+            self.user_attrs[name] = value
+
+    best_trial = types.SimpleNamespace(
+        number=0,
+        params={},
+        user_attrs={},
+        value=0.123,
+        state=types.SimpleNamespace(name="COMPLETE"),
+    )
+
+    class ControlledStudy:
+        def __init__(self, selected):
+            self._selected = selected
+            self.trials = [selected]
+
+        @property
+        def best_trial(self):
+            return self._selected
+
+        def trials_dataframe(self):
+            return pd.DataFrame(
+                [{**self._selected.params, "value": self._selected.value}]
+            )
+
+    study = ControlledStudy(best_trial)
+
+    class ControlledOptuna:
+        @staticmethod
+        def create_study(**kwargs):
+            assert kwargs["direction"] == "maximize"
+            assert kwargs["load_if_exists"] is False
+            return study
+
+        @staticmethod
+        def load_study(**kwargs):
+            del kwargs
+            return study
+
+    def controlled_worker(base_args, search_args, study_name, storage_url, n_trials):
+        del study_name, storage_url
+        assert n_trials == 1
+        trial_args = copy.deepcopy(base_args)
+        trial_args.save_artifacts = False
+        trial = ControlledTrial()
+        tuning.suggest_trial_parameters(trial, trial_args, search_args)
+        raw_metrics = {
+            "objective_value": 0.123,
+            "raw_return_rate": 0.15,
+            "portfolio_mdd": 0.02,
+            "total_trades": 8,
+        }
+        trial.set_user_attr("raw_metrics", raw_metrics)
+        best_trial.params = dict(trial.params)
+        best_trial.user_attrs = dict(trial.user_attrs)
+        observed["trial"] = trial_args, trial
+
+    class ControlledReplay:
+        def __init__(self, replay_args):
+            self.args = replay_args
+            self.test_path = str(tmp_path / "best-replay")
+            self.last_objective_metrics = {
+                "objective_value": 0.123,
+                "raw_return_rate": 0.15,
+                "portfolio_mdd": 0.02,
+                "total_trades": 8,
+            }
+
+        def test(self):
+            observed["replays"].append(copy.deepcopy(self.args))
+            return 0.123
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(tuning, "optuna", ControlledOptuna)
+    monkeypatch.setattr(tuning, "make_rdb_storage", lambda _: None)
+    monkeypatch.setattr(
+        tuning, "ensure_precomputed_vae_quantiles", lambda _: str(tmp_path / "raw-cache")
+    )
+    monkeypatch.setattr(tuning, "run_optuna_worker", controlled_worker)
+    monkeypatch.setattr(tuning, "vae_risk_aware_routing", ControlledReplay)
+
+    outcome = tuning.tune(args, search)
+
+    trial_args, trial = observed["trial"]
+    assert trial_args.save_artifacts is False
+    assert set(trial.params) == set(frozen.SEARCH_FIELDS)
+    assert trial_args.slope_window_length == 1
+    assert trial_args.volatility_window_length == 10
+    assert trial_args.slope_gamma == pytest.approx(0.5)
+    assert trial_args.volatility_gamma == pytest.approx(1.0)
+    assert trial_args.calibration_warmup_steps == 10
+    assert trial.user_attrs["effective_configuration"]["slope_hold_threshold"] == pytest.approx(
+        0.9
+    )
+    assert len(observed["replays"]) == 1
+    replay = observed["replays"][0]
+    assert replay.save_artifacts is True
+    assert frozen.effective_trial_configuration(replay) == trial.user_attrs[
+        "effective_configuration"
+    ]
+
+    frozen_document = json.loads(Path(outcome["frozen_config"]).read_text())
+    assert frozen_document["selection"] == {
+        "study_name": "expert_hysteresis_calibration.controlled-fixture.v1.controlled-run",
+        "study_storage_identity": replay.study_storage_identity,
+        "trial_number": 0,
+        "trial_state": "COMPLETE",
+        "objective_name": tuning.OBJECTIVE_NAME,
+        "objective_version": tuning.OBJECTIVE_VERSION,
+        "objective_direction": "maximize",
+        "objective_value": pytest.approx(0.123),
+    }
+    evidence = json.loads(Path(outcome["selection_evidence"]).read_text())
+    assert evidence["selected_trial"]["parameters"] == trial.params
+    assert evidence["selected_trial"]["raw_metrics"]["raw_return_rate"] == pytest.approx(0.15)
+    assert evidence["best_replay"]["matches_lean_trial"] is True
+    assert evidence["best_replay"]["objective_value"] == pytest.approx(0.123)
+    assert "expert_hysteresis" in outcome["frozen_config"]
+    assert "vae_risk_aware_routing_optuna" not in outcome["frozen_config"]
+
+
+def test_step7_rejects_cli_search_overrides_and_existing_study(experiment, tmp_path):
+    args, _, _ = experiment
+    search = tuning.parser_all.parse_args(
+        [
+            "--dataset_name",
+            "fu",
+            "--experiment_name",
+            "fixture",
+            "--selection_manifest",
+            args.selection_manifest,
+            "--calibration_run_id",
+            "same-run",
+            "--window_length_min",
+            "2",
+        ]
+    )
+    with pytest.raises(ValueError, match="experiment_manifest"):
+        tuning.prepare_base_args(args, search)
+
+    clean = tuning.parser_all.parse_args(
+        [
+            "--dataset_name",
+            "fu",
+            "--experiment_name",
+            "fixture",
+            "--selection_manifest",
+            args.selection_manifest,
+            "--calibration_run_id",
+            "same-run",
+        ]
+    )
+    prepared = tuning.prepare_base_args(args, clean)
+    prepared.result_path = str(tmp_path / "results")
+    storage_url = tuning.create_study_storage(prepared)
+    Path(tuning._storage_path(storage_url)).touch()
+    with pytest.raises(FileExistsError, match="refusing to replace"):
+        tuning.create_study_storage(prepared)
+
+
+def test_joint_search_uses_common_warmup_but_trial_specific_smoothing(experiment, tmp_path):
+    args, _, _ = experiment
+    frozen.prepare_experiment(args)
+    first = copy.deepcopy(args)
+    second = copy.deepcopy(args)
+    first.slope_window_length = 1
+    first.slope_gamma = 0.5
+    second.slope_window_length = 4
+    second.slope_gamma = 1.0
+    frozen.validate_trial_configuration(first)
+    frozen.validate_trial_configuration(second)
+    for candidate in (first, second):
+        candidate.save_artifacts = False
+        candidate.output_sub_dir = None
+        candidate.result_path = str(tmp_path)
+    first_router = make_router()
+    second_router = make_router()
+    for router in (first_router, second_router):
+        router.eval_stage = "valid"
+        router.dataset_name = "fu"
+        router.experiment_name = "fixture"
+        router.save_artifacts = False
+        router._set_expert_run_identity = lambda _: None
+    first_router.reconfigure_routing(first)
+    second_router.reconfigure_routing(second)
+    first_router.quantiles["slope"][0].extend([0.0, 0.0, 0.0, 1.0])
+    second_router.quantiles["slope"][0].extend([0.0, 0.0, 0.0, 1.0])
+    assert first_router.initial_rollout_window_length == 10
+    assert second_router.initial_rollout_window_length == 10
+    assert first_router.calculate_axis_window_result("slope")[0] == pytest.approx(1.0)
+    assert second_router.calculate_axis_window_result("slope")[0] == pytest.approx(0.25)
+
+
+def test_step7_shell_wires_frozen_experiment_and_expert_namespace():
+    script = Path("FineFT/script/test/DiHFT/high_level/vae_optuna_fu_10.sh").read_text()
+    assert '--experiment_manifest "${EXPERIMENT_MANIFEST}"' in script
+    assert '--calibration_run_id "${CALIBRATION_RUN_ID}"' in script
+    assert "--gating_strategy expert_hysteresis" in script
+    assert "rule_base_threshold_min" not in script
+    assert "high_level/expert_hysteresis" in script
+
+
+@pytest.mark.parametrize(
+    "field,low,high,match",
+    [
+        ("slope_window_length", 0, 10, "positive windows"),
+        ("slope_gamma", 0.0, 1.0, "bounds must lie"),
+        ("hysteresis_exit_ratio", 0.5, 1.0, "0 < low <= high < 1"),
+        ("expert_switch_lead", -0.1, 0.2, "non-negative"),
+        ("expert_confirm_steps", 0, 3, "positive integers"),
+    ],
+)
+def test_manifest_search_space_rejects_invalid_expert_bounds(
+    experiment, field, low, high, match
+):
+    args, document, _ = experiment
+    document["search_space"][field]["low"] = low
+    document["search_space"][field]["high"] = high
+    save_manifest(args, document)
+    with pytest.raises(ValueError, match=match):
+        frozen.prepare_experiment(args, validate_trial=False)
