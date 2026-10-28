@@ -94,27 +94,12 @@ def test_regime_stratified_buffer_routing_and_isolation():
     assert buffer.total_len() == 6
 
 
-def test_regime_stratified_buffer_priority_replacement():
-    buffer = RegimeStratifiedReplayBuffer(
-        total_buffer_size=900,
-        batch_size=32,
-        device="cpu",
-        seed=42,
-        num_grids=9,
-    )
-    t1 = _make_dummy_transition(0, grid_id=0, reward=1.0)
-    buffer.add_transition(t1, td_error=1.5)
-    assert buffer.get_grid_lengths()[0] == 1
-
-    t2 = _make_dummy_transition(0, grid_id=0, reward=2.0)
-    buffer.add_transition(t2, td_error=1.0)
-    assert buffer.get_grid_lengths()[0] == 1
-    assert buffer.slots[0][0][3] == 1.0
-
-    t3 = _make_dummy_transition(0, grid_id=0, reward=9.0)
-    buffer.add_transition(t3, td_error=3.0)
-    assert buffer.get_grid_lengths()[0] == 1
-    assert buffer.slots[0][0][3] == 9.0
+def test_regime_stratified_buffer_keeps_distinct_outcomes_independent_of_priority():
+    buffer = RegimeStratifiedReplayBuffer(total_buffer_size=900, batch_size=32)
+    for reward, td_error in [(1.0, 1.5), (2.0, 1.0), (9.0, 3.0)]:
+        buffer.add_transition(_make_dummy_transition(0, grid_id=0, reward=reward), td_error=td_error)
+    assert buffer.get_grid_lengths()[0] == 3
+    assert set(buffer.rewards[0][:3, 0].tolist()) == {1.0, 2.0, 9.0}
 
 
 def test_stratified_stacked_sampler_balanced_sampling():
@@ -197,18 +182,20 @@ def test_directional_regime_curriculum_rotation():
     assert get_active_grid_ids_for_epoch(10, block_epochs=3) == [0, 3, 6]
     assert get_active_grid_ids_for_epoch(11, block_epochs=3) == [0, 3, 6]
 
-    # Phase 4: 对角匹配体制 (s0v0, s1v1, s2v2 -> [0, 4, 8])
-    assert get_active_grid_ids_for_epoch(12, block_epochs=3) == [0, 4, 8]
-    assert get_active_grid_ids_for_epoch(13, block_epochs=3) == [0, 4, 8]
-    assert get_active_grid_ids_for_epoch(14, block_epochs=3) == [0, 4, 8]
+    # Phase 4: [6]
+    assert get_active_grid_ids_for_epoch(12, block_epochs=3) == [6]
+    assert get_active_grid_ids_for_epoch(13, block_epochs=3) == [6]
+    assert get_active_grid_ids_for_epoch(14, block_epochs=3) == [6]
 
-    # Phase 5: 全量经验抽取（覆盖全部 9 格）
-    assert get_active_grid_ids_for_epoch(15, block_epochs=3) == [0, 1, 2, 3, 4, 5, 6, 7, 8]
-    assert get_active_grid_ids_for_epoch(16, block_epochs=3) == [0, 1, 2, 3, 4, 5, 6, 7, 8]
-    assert get_active_grid_ids_for_epoch(17, block_epochs=3) == [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    # Phase 5: [6, 7, 8]
+    assert get_active_grid_ids_for_epoch(15, block_epochs=3) == [6, 7, 8]
+    assert get_active_grid_ids_for_epoch(16, block_epochs=3) == [6, 7, 8]
+    assert get_active_grid_ids_for_epoch(17, block_epochs=3) == [6, 7, 8]
 
-    # 周期轮转回到 Phase 0
-    assert get_active_grid_ids_for_epoch(18, block_epochs=3) == [8]
+    # Phase 6: all grids, then rotate back to phase 0.
+    assert get_active_grid_ids_for_epoch(18, block_epochs=3) == list(range(9))
+    assert get_active_grid_ids_for_epoch(20, block_epochs=3) == list(range(9))
+    assert get_active_grid_ids_for_epoch(21, block_epochs=3) == [8]
 
 
 def test_regime_stratified_buffer_create_sampler():
@@ -236,10 +223,12 @@ def test_regime_stratified_buffer_create_sampler():
     assert sampler_p3.active_grid_ids == [0, 3, 6]
 
     sampler_p4 = buffer.create_sampler(epoch_index=13, block_epochs=3)
-    assert sampler_p4.active_grid_ids == [0, 4, 8]
+    assert sampler_p4.active_grid_ids == [6]
 
     sampler_p5 = buffer.create_sampler(epoch_index=16, block_epochs=3)
-    assert sampler_p5.active_grid_ids == [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    assert sampler_p5.active_grid_ids == [6, 7, 8]
+    sampler_p6 = buffer.create_sampler(epoch_index=19, block_epochs=3)
+    assert sampler_p6.active_grid_ids == list(range(9))
 
 
 def test_regime_stratified_buffer_fifo_eviction_and_tensor_shapes():

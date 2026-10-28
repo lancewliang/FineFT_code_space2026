@@ -9,10 +9,13 @@ from RL.DiHFT.low_level.parallel_diverse_train import (
 from RL.util.regime_stratified_replay_buffer import RegimeStratifiedReplayBuffer
 
 
-def test_build_semantic_transition_key_ignores_qvalue_and_float_noise():
-    """语义键应对 q_value 差异与连续浮点数噪声（收益率、回撤）保持不变。"""
+def test_build_semantic_transition_key_ignores_qvalue_but_preserves_holding_state():
+    """教师意见不参与身份；模型可见的收益率和回撤差异必须保留。"""
     info_base = {
         "previous_action": 0,
+        "avaliable_action": np.ones(3),
+        "funding_count_down_hour": 0.0,
+        "funding_count_down_minute": 0.0,
         "q_value": np.array([100.0, 50.0, 10.0]),
         "trading_info": np.array([1.0, 0.001234, 0.00045, 0.05]),  # 1.0=多头, 收益0.0012, 回撤0.0004, 时间0.05
     }
@@ -27,6 +30,9 @@ def test_build_semantic_transition_key_ignores_qvalue_and_float_noise():
     # 1. 改变 q_value（例如不同的前序监督值或不同模型输出）
     info_different_q = {
         "previous_action": 0,
+        "avaliable_action": np.ones(3),
+        "funding_count_down_hour": 0.0,
+        "funding_count_down_minute": 0.0,
         "q_value": np.array([999.0, -10.0, 0.0]),
         "trading_info": np.array([1.0, 0.001234, 0.00045, 0.05]),
     }
@@ -40,6 +46,9 @@ def test_build_semantic_transition_key_ignores_qvalue_and_float_noise():
     # 2. 改变 trading_info 中的连续浮点收益率与回撤（路径历史噪声）
     info_different_floats = {
         "previous_action": 0,
+        "avaliable_action": np.ones(3),
+        "funding_count_down_hour": 0.0,
+        "funding_count_down_minute": 0.0,
         "q_value": np.array([100.0, 50.0, 10.0]),
         "trading_info": np.array([1.0, 0.008888, 0.00199, 0.05]),
     }
@@ -48,7 +57,7 @@ def test_build_semantic_transition_key_ignores_qvalue_and_float_noise():
         action=2,
         info=info_different_floats,
     )
-    assert key_base == key_floats
+    assert key_base != key_floats
 
 
 def test_build_semantic_transition_key_distinguishes_discrete_decisions():
@@ -56,6 +65,9 @@ def test_build_semantic_transition_key_distinguishes_discrete_decisions():
     state = np.array([1.0, 2.0])
     info = {
         "previous_action": 0,
+        "avaliable_action": np.ones(3),
+        "funding_count_down_hour": 0.0,
+        "funding_count_down_minute": 0.0,
         "trading_info": np.array([1.0, 0.001, 0.0, 0.05]),
     }
     base = build_semantic_transition_key(state=state, action=2, info=info)
@@ -65,10 +77,10 @@ def test_build_semantic_transition_key_distinguishes_discrete_decisions():
     # 不同的 action
     assert base != build_semantic_transition_key(state=state, action=0, info=info)
     # 不同的 previous_action
-    info_prev_act = {"previous_action": 1, "trading_info": np.array([1.0, 0.001, 0.0, 0.05])}
+    info_prev_act = {**info, "previous_action": 1, "trading_info": np.array([1.0, 0.001, 0.0, 0.05])}
     assert base != build_semantic_transition_key(state=state, action=2, info=info_prev_act)
     # 不同的持仓方向 (空头 -1.0 vs 多头 1.0)
-    info_short = {"previous_action": 0, "trading_info": np.array([-1.0, 0.001, 0.0, 0.05])}
+    info_short = {**info, "previous_action": 0, "trading_info": np.array([-1.0, 0.001, 0.0, 0.05])}
     assert base != build_semantic_transition_key(state=state, action=2, info=info_short)
 
 
@@ -124,8 +136,8 @@ def test_write_round_transitions_semantic_dedup_and_td_error_replacement():
     assert buffer.get_grid_lengths()[0] == 1
     assert buffer.slots[0][0][1]["tag"] == "first"
 
-    # 2. 遇到相同语义的经验（不同 q_val 与 float），但 td_error = 0.4（更低），应丢弃
-    t2 = make_transition("second_lower_td", q_val=999.0, pnl_float=0.009)
+    # 2. 遇到相同语义的经验（不同 q_val），但 td_error = 0.4（更低），应丢弃
+    t2 = make_transition("second_lower_td", q_val=999.0, pnl_float=0.001)
     round_2 = WorkerRoundResult(
         df_index=0,
         epoch_index=0,
@@ -143,7 +155,7 @@ def test_write_round_transitions_semantic_dedup_and_td_error_replacement():
     assert buffer.slots[0][0][1]["tag"] == "first"  # 保持原样
 
     # 3. 遇到相同语义的经验，但 td_error = 2.8（更高），应就地替换旧样本
-    t3 = make_transition("third_higher_td", q_val=-50.0, pnl_float=-0.002)
+    t3 = make_transition("third_higher_td", q_val=-50.0, pnl_float=0.001)
     round_3 = WorkerRoundResult(
         df_index=0,
         epoch_index=0,

@@ -179,7 +179,7 @@ def test_compute_epoch_schedules_phase_cyclic_decay():
     assert p4_end.epsilon == pytest.approx(0.1)
     assert p4_end.ada == pytest.approx(0.0)
 
-    # Phase 5: 全量经验抽取，reset to max at epoch 15, decay to min at epoch 17
+    # Phase 5: [6, 7, 8], reset at epoch 15, decay to min at epoch 17
     p5_start = pdt.compute_epoch_training_params(
         epoch_index=15, num_epoch=21, epsilon_init=1.0, epsilon_min=0.1,
         ada_init=256.0, ada_min=0.0, lr_init=0.005, lr_min=0.001, curriculum_block_epochs=3,
@@ -193,10 +193,10 @@ def test_compute_epoch_schedules_phase_cyclic_decay():
     assert p5_end.epsilon == pytest.approx(0.1)
     assert p5_end.ada == pytest.approx(0.0)
 
-    # Epoch 18-20: clamped to minimum
-    for ep in [18, 19, 20]:
+    # Phase 6 spans epochs 18-20; only subsequent epochs clamp to minimum.
+    for ep in [21, 22, 23]:
         p_late = pdt.compute_epoch_training_params(
-            epoch_index=ep, num_epoch=21, epsilon_init=1.0, epsilon_min=0.1,
+            epoch_index=ep, num_epoch=24, epsilon_init=1.0, epsilon_min=0.1,
             ada_init=256.0, ada_min=0.0, lr_init=0.005, lr_min=0.001, curriculum_block_epochs=3,
         )
         assert p_late.epsilon == pytest.approx(0.1)
@@ -1014,152 +1014,6 @@ def test_run_parallel_diverse_training_completes_exploration_before_training(
     assert events.count("update") == 2
 
 
-def test_run_parallel_diverse_training_skips_exploration_after_three_stale_epochs(
-    monkeypatch,
-):
-    import queue
-    import types
-    import numpy as np
-    from unittest.mock import MagicMock
-    from RL.DiHFT.low_level import parallel_diverse_train as pdt
-    from RL.util.regime_stratified_replay_buffer import RegimeStratifiedReplayBuffer
-
-    events = []
-
-    class DummyInputQueue:
-        def __init__(self, df_index, result_queue):
-            self.df_index = df_index
-            self.result_queue = result_queue
-
-        def put(self, message):
-            if type(message).__name__ == "ResetWorkerTask":
-                return
-            info3 = {
-                "previous_action": 0,
-                "regime_grid_id": 8,
-                "trading_info": np.zeros(4),
-                "avaliable_action": np.array([1, 1, 1]),
-                "funding_count_down_hour": 0.0,
-                "funding_count_down_minute": 0.0,
-                "q_value": np.array([1.0, 0.0, 0.0]),
-            }
-            transition = (
-                np.array([float(self.df_index)]),
-                info3,
-                1,
-                1.0,
-                np.array([float(self.df_index) + 0.5]),
-                dict(info3),
-                True,
-            )
-            self.result_queue.put(
-                pdt.WorkerRoundResult(
-                    df_index=self.df_index,
-                    epoch_index=message.epoch_index,
-                    context_index=message.context_index,
-                    initial_action=message.initial_action,
-                    round_counter=message.round_counter,
-                    worker_steps=1,
-                    transitions=[
-                        pdt.WorkerTransitionRecord(
-                            step_index=0,
-                            transition=transition,
-                        )
-                    ],
-                    rollout_metrics=[],
-                    done=True,
-                )
-            )
-
-    trainer = MagicMock()
-    trainer.total_df_index_length = 2
-    trainer.num_epoch = 5
-    trainer.N = 1
-    trainer.position_choices = 2
-    trainer.epsilon_init = 1.0
-    trainer.epsilon_min = 0.1
-    trainer.ada_init = 256.0
-    trainer.ada_min = 0.0
-    trainer.lr_init = 0.005
-    trainer.lr_min = 0.001
-    trainer.batch_size = 1
-    trainer.buffer_size = 10000
-    trainer.curriculum_block_epochs = 5
-    trainer.update_times = 1
-    trainer.n_step = 1
-    trainer.gamma = 0.99
-    trainer.update_counter = 0
-    trainer.optimizer = types.SimpleNamespace(param_groups=[{"lr": 0.0}])
-    trainer.writer = MagicMock()
-    trainer.tech_indicator_list = ["f1"]
-    trainer.N_ACTIONS = 3
-    trainer.hidden_nodes = 16
-    trainer.time_info_dim = 2
-    trainer.eval_net = pdt.ensemble_Qnet(
-        N_STATES=1,
-        N_ACTIONS=3,
-        hidden_nodes=16,
-        TIME_INFO_DIM=2,
-        ensemble_number=1,
-    )
-
-    monkeypatch.setattr(
-        pdt, "shutdown_exploration_workers", lambda tr: events.append("shutdown_workers")
-    )
-
-    def mock_start_workers(trainer, train_df_cache, env_kwargs, shared_model=None, shared_market_data=None):
-        events.append("start_workers")
-        trainer.worker_result_queue = queue.Queue()
-        trainer.worker_task_queue = queue.Queue()
-        trainer.worker_processes = [MagicMock()]
-        trainer.worker_input_queues = {
-            0: DummyInputQueue(0, trainer.worker_result_queue),
-            1: DummyInputQueue(1, trainer.worker_result_queue),
-        }
-
-    monkeypatch.setattr(pdt, "start_parallel_workers", mock_start_workers)
-    monkeypatch.setattr(pdt, "MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS", 3)
-
-    buffer_diverse = RegimeStratifiedReplayBuffer(
-        total_buffer_size=9000,
-        batch_size=1,
-        device="cpu",
-        seed=42,
-        num_grids=9,
-    )
-
-    def fake_update(tr, *args, **kwargs):
-        events.append("update")
-        tr.update_counter += 1
-        return (1.0, 0.5, 0.5)
-
-    monkeypatch.setattr(pdt, "update", fake_update)
-    monkeypatch.setattr(
-        pdt,
-        "save_parallel_epoch_model",
-        lambda tr, epoch_index: events.append(("save_model", epoch_index)),
-    )
-    monkeypatch.setattr(
-        pdt,
-        "save_diverse_buffer",
-        lambda buffer, model_path: events.append("save_buffer"),
-    )
-
-    final_steps = pdt.run_parallel_diverse_training(
-        trainer=trainer,
-        train_df_cache={},
-        env_kwargs={},
-        buffer_diverse=buffer_diverse,
-        step_counter_diverse=0,
-        diverse_rollout_latest_metrics_by_df={},
-    )
-
-    assert buffer_diverse.total_len() == 2
-    assert events.count("start_workers") == 1
-    assert events.count("shutdown_workers") == 1
-    assert events.count("save_buffer") == 4
-    assert events.count("update") == 5
-
 
 def test_is_buffer_full_detects_capacity_from_buffer_or_trainer():
     import numpy as np
@@ -1198,89 +1052,51 @@ def test_is_buffer_full_detects_capacity_from_buffer_or_trainer():
     assert pdt.is_buffer_full(buffer, trainer) is True
 
 
-def test_run_parallel_diverse_training_skips_exploration_when_buffer_full(monkeypatch):
-    """经验池已满时，直接跳过探索阶段，不启动任何 worker，直接执行训练。"""
-    import types
+@pytest.mark.parametrize("epoch_count", [2, 7])
+def test_run_parallel_diverse_training_refreshes_full_and_stale_buffer(monkeypatch, tmp_path, epoch_count):
+    """Full capacity must not prevent exploration with the next epoch's policy."""
+    from types import SimpleNamespace
     from unittest.mock import MagicMock
     from RL.DiHFT.low_level import parallel_diverse_train as pdt
 
-    events = []
-
     trainer = MagicMock()
-    trainer.total_df_index_length = 2
-    trainer.num_epoch = 2
-    trainer.N = 1
-    trainer.position_choices = 1
-    trainer.epsilon_init = 1.0
-    trainer.epsilon_min = 0.1
-    trainer.ada_init = 256.0
-    trainer.ada_min = 0.0
-    trainer.lr_init = 0.005
-    trainer.lr_min = 0.001
-    trainer.batch_size = 1
+    trainer.total_df_index_length = 1
+    trainer.tech_indicator_list = ["x"]
+    trainer.num_epoch = epoch_count
+    trainer.eval_interval = 1
     trainer.update_times = 1
-    trainer.n_step = 1
-    trainer.buffer_size = 10
-    trainer.curriculum_block_epochs = 3
-    trainer.update_counter = 0
-    trainer.optimizer = types.SimpleNamespace(param_groups=[{"lr": 0.0}])
-    trainer.writer = MagicMock()
+    trainer.model_path = str(tmp_path)
+    replay = MagicMock()
+    replay.__len__.return_value = 10
+    replay.total_added_count = 10
+    replay.retention_counts = {}
+    epochs = []
 
-    class FullBuffer:
-        def __len__(self):
-            return 10
+    def explore(tr, epoch, cache, kwargs, buf, steps, rounds, metrics, **extra):
+        epochs.append(epoch)
+        return [], steps + 1, rounds + 1
 
-        def create_sampler(self, epoch_index=0, block_epochs=3):
-            return FakeSampler(self, 1, "cpu")
-
-    buffer_diverse = FullBuffer()
-
-    monkeypatch.setattr(
-        pdt, "start_parallel_workers", lambda *args: events.append("start_workers")
+    monkeypatch.setattr(pdt, "SharedInferenceManager", MagicMock())
+    monkeypatch.setattr(pdt.SharedMarketDataPack, "from_dataframes", MagicMock(return_value={}))
+    monkeypatch.setattr(pdt, "PersistentRolloutPool", MagicMock())
+    evaluator = SimpleNamespace(
+        submit_evaluation=lambda **kwargs: None, should_early_stop=lambda: False,
+        wait_all=lambda: None, shutdown=lambda: None,
     )
-    monkeypatch.setattr(
-        pdt,
-        "shutdown_exploration_workers",
-        lambda *args: events.append("shutdown_workers"),
-    )
-    monkeypatch.setattr(
-        pdt, "save_diverse_buffer", lambda *args: events.append("save_buffer")
-    )
-
-    class FakeSampler:
-        def __init__(self, buffer, batch_size, device):
-            events.append("sampler_built")
-
-        def sample(self):
-            return ("s", {}, "a", "r", "s_", {}, "d")
-
-    monkeypatch.setattr(pdt, "StackedTransitionSampler", FakeSampler)
-    monkeypatch.setattr(pdt, "update", lambda *args, **kwargs: (1.0, 0.5, 0.5))
-    monkeypatch.setattr(
-        pdt,
-        "save_parallel_epoch_model",
-        lambda tr, epoch_index: events.append(("save_model", epoch_index)),
-    )
-
-    final_steps = pdt.run_parallel_diverse_training(
-        trainer=trainer,
-        train_df_cache={},
-        env_kwargs={},
-        buffer_diverse=buffer_diverse,
-        step_counter_diverse=0,
-        diverse_rollout_latest_metrics_by_df={},
-    )
-
-    # 经验池满：完全不启动 worker，不保存 buffer，只执行训练
-    assert events.count("start_workers") == 0
-    assert events.count("shutdown_workers") == 0
-    assert events.count("save_buffer") == 0
-    assert events.count("sampler_built") == 2
-    assert final_steps == 0
+    monkeypatch.setattr(pdt, "AsyncGreedyEvaluator", lambda **kwargs: evaluator)
+    monkeypatch.setattr(pdt, "apply_epoch_training_params", lambda *args: None)
+    monkeypatch.setattr(pdt, "run_epoch_exploration", explore)
+    monkeypatch.setattr(pdt, "save_diverse_buffer", lambda *args: None)
+    monkeypatch.setattr(pdt, "run_diverse_training_phase", lambda *args: (1.0, 0.5, 0.5))
+    monkeypatch.setattr(pdt, "save_parallel_epoch_model", lambda *args: None)
+    monkeypatch.setattr(pdt, "evaluate_parallel_diverse_model", lambda *args: [])
+    steps = pdt.run_parallel_diverse_training(trainer, {}, {}, replay, 0, {})
+    assert epochs == list(range(epoch_count))
+    assert steps == epoch_count
 
 
-def test_run_epoch_exploration_stops_early_when_buffer_becomes_full(monkeypatch):
-    """探索过程中经验池达到上限，提前终止本轮后续任务探索并安全退出。"""
+def test_run_epoch_exploration_collects_all_tasks_when_buffer_becomes_full(monkeypatch):
+    """容量满后继续收集任务，驻留记录仍受 FIFO 容量约束。"""
     import queue
     import numpy as np
     from unittest.mock import MagicMock
@@ -1370,11 +1186,11 @@ def test_run_epoch_exploration_stops_early_when_buffer_becomes_full(monkeypatch)
     )
 
     buffer = RegimeStratifiedReplayBuffer(
-        total_buffer_size=900,
+        total_buffer_size=2,
         batch_size=1,
         device="cpu",
         seed=42,
-        num_grids=9,
+        num_grids=1,
     )
     metrics, final_steps, round_counter = pdt.run_epoch_exploration(
         trainer=trainer,
@@ -1387,9 +1203,9 @@ def test_run_epoch_exploration_stops_early_when_buffer_becomes_full(monkeypatch)
         diverse_rollout_latest_metrics_by_df={},
     )
 
-    # 达到 buffer_size=2 后提前终止：只执行了前 2 个任务（共 6 个），收集 2 步
+    # 六个任务全部收集，只有两条最新经验驻留。
     assert len(buffer) == 2
-    assert final_steps == 2
+    assert final_steps == 6
     assert round_counter == 6
     assert events == ["shutdown_workers"]
 
@@ -1652,6 +1468,7 @@ def _make_parallel_update_trainer(pwap):
     trainer.N = 2
     trainer.N_ACTIONS = 3
     trainer.gamma = 0.99
+    trainer.n_step = 1
     trainer.if_use_hubber_loss = False
     trainer.neighbor_size = 1
     trainer.outer_bond = 4

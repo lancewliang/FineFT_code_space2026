@@ -122,7 +122,7 @@ def test_demo_env_qtable_identical_to_inplace_computation():
     np.testing.assert_allclose(env_with_shared.q_table, env_computed_inplace.q_table, rtol=1e-5, atol=1e-5)
 
 
-def test_default_diverse_num_workers_is_40():
+def test_default_workers_and_fu10_explicit_override():
     import argparse
     from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import parser
 
@@ -132,4 +132,4 @@ def test_default_diverse_num_workers_is_40():
 
     with open("FineFT/script/train/train_commodity_fu_10.sh", "r", encoding="utf-8") as f:
         sh_content = f.read()
-    assert "--diverse_num_workers 40" in sh_content
+    assert "--diverse_num_workers 32" in sh_content

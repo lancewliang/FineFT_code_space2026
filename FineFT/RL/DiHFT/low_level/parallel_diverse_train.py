@@ -18,8 +18,7 @@
 #      （StackedTransitionSampler 预堆叠采样，避免逐元素 np.stack）。
 #   5. 训练结束后进入下一轮探索（回到 1）。
 # 经验唯一性由内容指纹保证：已存在相同指纹的经验不会重复写入经验池。
-# 连续 MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS 个 epoch 探索均未新增任何
-# 经验后，后续 epoch 跳过探索阶段，仅执行训练。
+# 每轮探索完整任务集；经验池满时通过有界替换刷新记录。
 #
 # 依赖方向：本模块在顶层导入编排模块 parallel_weight_advantage_pretrain 的
 # 共享基础设施；编排模块改为在 df_rollout_worker 函数内部延迟导入本模块，
@@ -100,8 +99,6 @@ from RL.DiHFT.low_level.shared_model_manager import SharedInferenceManager
 from RL.DiHFT.low_level.persistent_pool import PersistentRolloutPool
 
 # 探索子进程池由 trainer.diverse_num_workers 配置（默认 96）
-# 连续多少个 epoch 探索未新增任何经验后，后续 epoch 不再探索（仅训练）
-MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS = 5
 # 关闭子进程时 join 的超时秒数；超时未退出的进程以 terminate 兜底
 WORKER_JOIN_TIMEOUT_SECONDS = 10
 
@@ -1824,10 +1821,8 @@ def run_epoch_exploration(
                 )
 
             micro_batch.append(result)
-            pending_steps = sum(r.worker_steps for r in micro_batch)
             if (
                 len(micro_batch) >= MICRO_BATCH_SIZE
-                or (len(buffer_diverse) + pending_steps >= trainer.buffer_size)
                 or trainer.worker_result_queue.empty()
                 or collected_count == total_tasks
             ):
@@ -1864,21 +1859,6 @@ def run_epoch_exploration(
                 context_metrics_by_context[metrics.context_index].append(metrics)
                 epoch_metrics.append(metrics)
 
-            if is_buffer_full(buffer_diverse, trainer):
-                _flush_micro_batch()
-                logger.info(
-                    "buffer full reached during exploration | buffer_size=%d | "
-                    "collected=%d/%d tasks",
-                    len(buffer_diverse),
-                    collected_count,
-                    total_tasks,
-                )
-                while not trainer.worker_task_queue.empty():
-                    try:
-                        trainer.worker_task_queue.get_nowait()
-                    except Exception:
-                        break
-                break
         _flush_micro_batch()
 
         for c in range(trainer.N):
@@ -1924,50 +1904,39 @@ def run_parallel_diverse_training(
     - 训练 -> 下一轮探索：本轮全部参数更新执行完毕并保存模型。
     经验按内容指纹去重，重复经验不会写入经验池。
     每次探索完成后将经验池快照保存到 model_path/buffer_diverse.pkl。
-    连续 MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS 个 epoch 探索均未新增任何
-    经验后，后续 epoch 跳过探索阶段（不再创建子进程），仅执行训练。
+    每轮仍探索完整任务集；容量仅限制驻留记录，满池后允许新经验替换旧经验。
     """
     if trainer.total_df_index_length <= 0:
         raise ValueError("parallel diverse training requires total_df_index_length > 0")
 
-
-    shared_market_data = None
-    initial_buffer_full = is_buffer_full(buffer_diverse, trainer)
-    if initial_buffer_full:
-        shared_manager = None
-        pool = None
-        skip_exploration = True
-    else:
-        shared_manager = SharedInferenceManager(
-            model_factory=create_parallel_worker_model,
-            model_kwargs={
-                "worker_config": {
-                    "state_dim": len(trainer.tech_indicator_list),
-                    "action_count": trainer.N_ACTIONS,
-                    "hidden_nodes": trainer.hidden_nodes,
-                    "time_info_dim": trainer.time_info_dim,
-                    "ensemble_number": trainer.N,
-                }
-            },
-            initial_state_dict=trainer.eval_net.state_dict(),
-        )
-        shared_market_data = SharedMarketDataPack.from_dataframes(
-            train_df_cache, env_kwargs, q_table_cache=q_table_cache
-        )
-        trainer.shared_market_data = shared_market_data
-        buffer_diverse.shared_market_data = shared_market_data
-        pool = PersistentRolloutPool(
-            trainer=trainer,
-            train_df_cache=None,
-            env_kwargs=env_kwargs,
-            shared_manager=shared_manager,
-            shared_market_data=shared_market_data,
-        )
+    shared_manager = SharedInferenceManager(
+        model_factory=create_parallel_worker_model,
+        model_kwargs={
+            "worker_config": {
+                "state_dim": len(trainer.tech_indicator_list),
+                "action_count": trainer.N_ACTIONS,
+                "hidden_nodes": trainer.hidden_nodes,
+                "time_info_dim": trainer.time_info_dim,
+                "ensemble_number": trainer.N,
+            }
+        },
+        initial_state_dict=trainer.eval_net.state_dict(),
+    )
+    shared_market_data = SharedMarketDataPack.from_dataframes(
+        train_df_cache, env_kwargs, q_table_cache=q_table_cache
+    )
+    trainer.shared_market_data = shared_market_data
+    buffer_diverse.shared_market_data = shared_market_data
+    pool = PersistentRolloutPool(
+        trainer=trainer,
+        train_df_cache=None,
+        env_kwargs=env_kwargs,
+        shared_manager=shared_manager,
+        shared_market_data=shared_market_data,
+    )
 
     round_counter = 0
     consecutive_no_new_experience_epochs = 0
-    if not initial_buffer_full:
-        skip_exploration = False
     best_loss = float("inf")
     best_model_file = None
     best_epoch_index = -1
@@ -1980,83 +1949,35 @@ def run_parallel_diverse_training(
     )
     try:
         for epoch_index in range(trainer.num_epoch):
-            phase_entry_epochs = tuple(
-                i * trainer.curriculum_block_epochs
-                for i in range(1, len(DIRECTIONAL_REGIME_PHASES))
-            )
-            is_new_phase_entry = epoch_index in phase_entry_epochs
-            if is_new_phase_entry:
-                consecutive_no_new_experience_epochs = 0
-                if not is_buffer_full(buffer_diverse, trainer):
-                    skip_exploration = False
-    
             apply_epoch_training_params(trainer, epoch_index)
-            buffer_full = is_buffer_full(buffer_diverse, trainer)
-            if skip_exploration or buffer_full:
-                skip_exploration = True
-                if pool is not None and not pool.is_shutdown:
-                    pool.shutdown()
-                logger.info(
-                    "epoch exploration skipped | epoch_index=%d | buffer_full=%s | "
-                    "buffer_size=%d | consecutive_no_new_experience_epochs=%d",
-                    epoch_index,
-                    buffer_full,
-                    len(buffer_diverse),
-                    consecutive_no_new_experience_epochs,
-                )
-                epoch_metrics = []
+            added_before = buffer_diverse.total_added_count
+            epoch_metrics, step_counter_diverse, round_counter = run_epoch_exploration(
+                trainer,
+                epoch_index,
+                train_df_cache,
+                env_kwargs,
+                buffer_diverse,
+                step_counter_diverse,
+                round_counter,
+                diverse_rollout_latest_metrics_by_df,
+                shared_market_data=shared_market_data,
+            )
+            save_diverse_buffer(buffer_diverse, trainer.model_path)
+            new_experience_count = buffer_diverse.total_added_count - added_before
+            if new_experience_count == 0:
+                consecutive_no_new_experience_epochs += 1
             else:
-                # 阶段一：完整探索 —— 本轮探索创建全新子进程（上限 20），结束即彻底关闭
-                added_before = buffer_diverse.total_added_count
-                epoch_metrics, step_counter_diverse, round_counter = run_epoch_exploration(
-                    trainer,
-                    epoch_index,
-                    train_df_cache,
-                    env_kwargs,
-                    buffer_diverse,
-                    step_counter_diverse,
-                    round_counter,
-                    diverse_rollout_latest_metrics_by_df,
-                    shared_market_data=shared_market_data,
-                )
-                # 阶段二：保存经验池 —— 探索完成且经验已全部写入后，落盘最新快照
-                save_diverse_buffer(buffer_diverse, trainer.model_path)
-                new_experience_count = buffer_diverse.total_added_count - added_before
-                if new_experience_count == 0:
-                    consecutive_no_new_experience_epochs += 1
-                else:
-                    consecutive_no_new_experience_epochs = 0
-                if is_buffer_full(buffer_diverse, trainer):
-                    skip_exploration = True
-                    if not pool.is_shutdown:
-                        pool.shutdown()
-                    logger.info(
-                        "buffer full reached | epoch_index=%d | buffer_size=%d | "
-                        "subsequent epochs will skip exploration",
-                        epoch_index,
-                        len(buffer_diverse),
-                    )
-                elif (
-                    consecutive_no_new_experience_epochs
-                    >= MAX_CONSECUTIVE_NO_NEW_EXPERIENCE_EPOCHS
-                ):
-                    skip_exploration = True
-                    if not pool.is_shutdown:
-                        pool.shutdown()
-                    logger.info(
-                        "exploration exhausted | epoch_index=%d | "
-                        "consecutive_no_new_experience_epochs=%d | "
-                        "subsequent epochs will skip exploration",
-                        epoch_index,
-                        consecutive_no_new_experience_epochs,
-                    )
-                log_diverse_rollout_latest_metrics(
-                    epoch_index + 1,
-                    diverse_rollout_latest_metrics_by_df,
-                    logger,
-                    trainer.epsilon,
-                )
-    
+                consecutive_no_new_experience_epochs = 0
+            logger.info(
+                "replay refresh | epoch_index=%d | writes=%d | buffer_size=%d | "
+                "consecutive_no_new_experience_epochs=%d | retention=%s",
+                epoch_index, new_experience_count, len(buffer_diverse),
+                consecutive_no_new_experience_epochs, buffer_diverse.retention_counts,
+            )
+            log_diverse_rollout_latest_metrics(
+                epoch_index + 1, diverse_rollout_latest_metrics_by_df, logger, trainer.epsilon,
+            )
+
             # 阶段三：完整训练 —— 经验池已冻结
             last_losses = run_diverse_training_phase(
                 trainer,
@@ -2293,7 +2214,9 @@ def update(
             assert next_sa_quantiles.shape == (trainer.batch_size, 1, trainer.N)
             target_sa_quantiles = (
                 rewards[..., None]
-                + (1.0 - dones[..., None]) * trainer.gamma * next_sa_quantiles
+                + (1.0 - dones[..., None])
+                * (trainer.gamma ** trainer.n_step)
+                * next_sa_quantiles
             )
             assert target_sa_quantiles.shape == (trainer.batch_size, 1, trainer.N)
         td_errors = target_sa_quantiles - current_sa_quantiles

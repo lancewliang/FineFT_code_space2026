@@ -759,7 +759,9 @@ def update_pretrain(
         assert next_sa_quantiles.shape == (trainer.batch_size, 1, trainer.N)
         target_sa_quantiles = (
             rewards[..., None]
-            + (1.0 - dones[..., None]) * trainer.gamma * next_sa_quantiles
+            + (1.0 - dones[..., None])
+            * (trainer.gamma ** trainer.n_step)
+            * next_sa_quantiles
         )
         target_sa_quantiles = target_sa_quantiles.permute(0, 2, 1)
         assert target_sa_quantiles.shape == (

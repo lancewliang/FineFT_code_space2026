@@ -229,23 +229,20 @@ def test_ipc_serialization_compression():
 
 
 def test_spatio_temporal_semantic_key_properties():
-    """验证时空决策去重键的唯一性与离散维度区分度。"""
-    key1 = build_spatio_temporal_semantic_key(df_index=0, step_index=10, previous_action=0, action=1, pos_dir=1, dur_bucket=2)
-    key2 = build_spatio_temporal_semantic_key(df_index=0, step_index=10, previous_action=0, action=1, pos_dir=1, dur_bucket=2)
-    assert key1 == key2
-
-    # 不同 df_index
-    assert key1 != build_spatio_temporal_semantic_key(df_index=1, step_index=10, previous_action=0, action=1, pos_dir=1, dur_bucket=2)
-    # 不同 step_index
-    assert key1 != build_spatio_temporal_semantic_key(df_index=0, step_index=11, previous_action=0, action=1, pos_dir=1, dur_bucket=2)
-    # 不同 previous_action
-    assert key1 != build_spatio_temporal_semantic_key(df_index=0, step_index=10, previous_action=2, action=1, pos_dir=1, dur_bucket=2)
-    # 不同 action
-    assert key1 != build_spatio_temporal_semantic_key(df_index=0, step_index=10, previous_action=0, action=2, pos_dir=1, dur_bucket=2)
-    # 不同 pos_dir
-    assert key1 != build_spatio_temporal_semantic_key(df_index=0, step_index=10, previous_action=0, action=1, pos_dir=-1, dur_bucket=2)
-    # 不同 dur_bucket
-    assert key1 != build_spatio_temporal_semantic_key(df_index=0, step_index=10, previous_action=0, action=1, pos_dir=1, dur_bucket=3)
+    info = {
+        "previous_action": 0, "trading_info": np.array([1.0, 0.01, 0.02, 0.05]),
+        "avaliable_action": np.ones(3),
+        "funding_count_down_hour": 0.0, "funding_count_down_minute": 0.0,
+    }
+    key = build_spatio_temporal_semantic_key(0, 10, 1, info)
+    assert key == build_spatio_temporal_semantic_key(0, 10, 1, dict(info))
+    assert key != build_spatio_temporal_semantic_key(1, 10, 1, info)
+    assert key != build_spatio_temporal_semantic_key(0, 11, 1, info)
+    assert key != build_spatio_temporal_semantic_key(0, 10, 2, info)
+    for index in range(4):
+        changed = dict(info, trading_info=info["trading_info"].copy())
+        changed["trading_info"][index] += 0.001
+        assert key != build_spatio_temporal_semantic_key(0, 10, 1, changed)
 
 
 def test_buffer_add_compact_records_bulk_with_shared_pack():
@@ -293,25 +290,25 @@ def test_buffer_add_compact_records_bulk_with_shared_pack():
     assert torch.allclose(buffer.states[0][0], shared_pack[0].state_tensor[5])
     assert np.isclose(buffer.rewards[0][0, 0].item(), 2.5)
 
-    # 2. 相同决策 (td_error = 0.5 较低)，应作为重复项丢弃
+    # 2. 相同决策的不同后续应保留，不因旧误差指标更低而丢弃。
     res2 = WorkerRoundResult(
         df_index=0, epoch_index=0, context_index=1, initial_action=1, round_counter=1,
         worker_steps=1, compact_trajectory=_make_compact(td_error=0.5, reward=9.9), done=True,
     )
     dup2 = write_round_transitions_to_buffer(buffer, [res2])
-    assert dup2 == 1
-    assert buffer.get_grid_lengths()[0] == 1
+    assert dup2 == 0
+    assert buffer.get_grid_lengths()[0] == 2
     assert np.isclose(buffer.rewards[0][0, 0].item(), 2.5)  # 保持原样
 
-    # 3. 相同决策 (td_error = 3.0 较高)，应择优就地覆写
+    # 3. 第三个不同后续同样独立保留。
     res3 = WorkerRoundResult(
         df_index=0, epoch_index=0, context_index=2, initial_action=2, round_counter=2,
         worker_steps=1, compact_trajectory=_make_compact(td_error=3.0, reward=7.7), done=True,
     )
     dup3 = write_round_transitions_to_buffer(buffer, [res3])
     assert dup3 == 0
-    assert buffer.get_grid_lengths()[0] == 1
-    assert np.isclose(buffer.rewards[0][0, 0].item(), 7.7)  # 覆写成功
+    assert buffer.get_grid_lengths()[0] == 3
+    assert np.isclose(buffer.rewards[0][2, 0].item(), 7.7)  # 覆写成功
 
 
 def test_run_epoch_exploration_micro_batched_ingestion(monkeypatch):
@@ -416,7 +413,7 @@ def test_update_supports_amp_mixed_precision_and_grad_step():
              'maintenance_margin_ratio_path': '/tmp/mmr.npy',
          }),          mock.patch('numpy.load', side_effect=lambda p, **kw: np.array([f'f{i}' for i in range(10)]) if 'sf' in str(p) else mock.MagicMock(item=lambda: {})):
         from RL.DiHFT.low_level.parallel_weight_advantage_pretrain import parser, Weighted_Contexts_DQN
-        args = parser.parse_args(['--base_path', '/tmp', '--dataset_name', 'fu', '--update_times', '5', '--batch_size', '4', '--num_epoch', '20'])
+        args = parser.parse_args(['--base_path', '/tmp', '--dataset_name', 'fu', '--update_times', '5', '--batch_size', '4', '--num_epoch', '21'])
         trainer = Weighted_Contexts_DQN(args)
 
     device = trainer.device

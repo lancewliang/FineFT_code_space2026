@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 from typing import Any
 import numpy as np
@@ -336,22 +335,45 @@ def accumulate_compact_trajectory_n_step(
     )
 
 
+def _float32_key(values: Any) -> bytes:
+    """Compare the finite values the learner actually consumes, including signed zero."""
+    array = np.asarray(values, dtype=np.float32).reshape(-1).copy()
+    if not np.isfinite(array).all():
+        raise ValueError("replay identity requires finite model inputs and rewards")
+    array[array == 0] = 0.0
+    return array.tobytes()
+
+
+def _observable_context_key(
+    previous_action: float,
+    trading_info: Any,
+    avaliable_action: Any,
+    hour: float,
+    minute: float,
+) -> bytes:
+    return _float32_key(np.concatenate((
+        np.asarray([previous_action, hour, minute], dtype=np.float32),
+        np.asarray(trading_info, dtype=np.float32).reshape(-1),
+        np.asarray(avaliable_action, dtype=np.float32).reshape(-1),
+    )))
+
+
+def _info_context_key(info: dict[str, Any]) -> bytes:
+    return _observable_context_key(
+        info["previous_action"], info["trading_info"], info["avaliable_action"],
+        info["funding_count_down_hour"], info["funding_count_down_minute"],
+    )
+
+
 def build_spatio_temporal_semantic_key(
     df_index: int,
     step_index: int,
-    previous_action: int,
     action: int,
-    pos_dir: int,
-    dur_bucket: int,
-) -> tuple[int, int, int, int, int, int]:
-    """提取经验的时空决策去重键：(df_index, step_index, previous_action, action, pos_dir, dur_bucket)。"""
+    info: dict[str, Any],
+) -> tuple[Any, ...]:
+    """Group an action by immutable market coordinates and its full holding context."""
     return (
-        int(df_index),
-        int(step_index),
-        int(previous_action),
-        int(action),
-        int(pos_dir),
-        int(dur_bucket),
+        "market_step", int(df_index), int(step_index), int(action), _info_context_key(info),
     )
 
 
@@ -359,26 +381,15 @@ def build_semantic_transition_key(
     state: np.ndarray,
     action: int,
     info: dict[str, Any],
-) -> tuple[int, int, int, int, int]:
-    """提取经验的语义决策键：(state_hash, previous_action, action, pos_dir, dur_bucket)。"""
-    state_arr = np.asarray(state)
-    state_hash = int.from_bytes(
-        hashlib.blake2b(state_arr.tobytes(), digest_size=8).digest(), "big"
-    )
-    previous_action = int(info["previous_action"])
-    trading_info = info["trading_info"]
-    pos_dir = int(np.round(float(trading_info[0])))
-    raw_steps = int(float(trading_info[3]) * 180)
-    if raw_steps <= 2:
-        dur_bucket = 0
-    elif raw_steps <= 12:
-        dur_bucket = 1
-    elif raw_steps <= 36:
-        dur_bucket = 2
-    else:
-        dur_bucket = 3
+) -> tuple[Any, ...]:
+    """Exact float32 model-visible decision identity; teacher opinions are not identity."""
+    return ("market_state", _float32_key(state), int(action), _info_context_key(info))
 
-    return (state_hash, previous_action, int(action), pos_dir, dur_bucket)
+
+def _outcome_key(
+    next_market: Any, reward: float, next_context: bytes, done: bool,
+) -> tuple[Any, ...]:
+    return (next_market, _float32_key([reward]), next_context, bool(done))
 
 
 class _GridSlotsProxy:
@@ -440,13 +451,27 @@ class RegimeStratifiedReplayBuffer:
         state_dim: int | None = None,
         action_dim: int | None = None,
         shared_market_data: Any | None = None,
+        max_outcomes_per_decision: int = 4,
     ) -> None:
+        if num_grids <= 0 or total_buffer_size < num_grids:
+            raise ValueError("replay capacity must provide at least one slot per grid")
+        if max_outcomes_per_decision <= 0:
+            raise ValueError("max_outcomes_per_decision must be positive")
         self.num_grids = num_grids
         self.grid_capacity = total_buffer_size // num_grids
         self.shared_market_data = shared_market_data
         self.batch_size = batch_size
         self.device = torch.device(device) if isinstance(device, str) else device
         self.seed = seed
+        self.max_outcomes_per_decision = int(max_outcomes_per_decision)
+        self._retention_rng = np.random.default_rng(seed)
+        self.decision_groups: dict[int, dict[Any, dict[Any, int]]] = {
+            g: {} for g in range(num_grids)
+        }
+        self.retention_counts = {
+            "duplicates_skipped": 0, "duplicate_refreshes": 0,
+            "group_replacements": 0, "fifo_evictions": 0,
+        }
 
         self.grid_sizes: dict[int, int] = {g: 0 for g in range(num_grids)}
         self.write_ptrs: dict[int, int] = {g: 0 for g in range(num_grids)}
@@ -550,51 +575,71 @@ class RegimeStratifiedReplayBuffer:
     def route_transition(self, info: dict[str, Any]) -> int:
         return int(info["regime_grid_id"])
 
+    def _evict_identity(self, grid_id: int, idx: int) -> None:
+        group_key, outcome = self.keys_by_idx[grid_id].pop(idx)
+        del self.seen_fingerprints[grid_id][(group_key, outcome)]
+        group = self.decision_groups[grid_id][group_key]
+        del group[outcome]
+        if not group:
+            del self.decision_groups[grid_id][group_key]
+
+    def _reserve_slot(
+        self, grid_id: int, group_key: Any, outcome: Any, td_error: float,
+    ) -> int | None:
+        """Bound identities by occupied slots; rotate excess outcomes without PnL ranking."""
+        tracker = self.seen_fingerprints[grid_id]
+        record_key = (group_key, outcome)
+        if record_key in tracker:
+            idx, old_td_error = tracker[record_key]
+            # Only refresh metadata for an identical learning transition. This proxy
+            # never chooses between different outcomes or different holding states.
+            if td_error > old_td_error:
+                tracker[record_key] = (idx, td_error)
+                self.total_added_count += 1
+                self.retention_counts["duplicate_refreshes"] += 1
+                return idx
+            self.retention_counts["duplicates_skipped"] += 1
+            return None
+
+        group = self.decision_groups[grid_id].get(group_key, {})
+        if len(group) >= self.max_outcomes_per_decision:
+            idx = int(self._retention_rng.choice(tuple(group.values())))
+            self._evict_identity(grid_id, idx)
+            self.retention_counts["group_replacements"] += 1
+        elif self.grid_sizes[grid_id] < self.grid_capacity:
+            idx = self.grid_sizes[grid_id]
+            self.grid_sizes[grid_id] += 1
+        else:
+            idx = self.write_ptrs[grid_id]
+            self._evict_identity(grid_id, idx)
+            self.write_ptrs[grid_id] = (idx + 1) % self.grid_capacity
+            self.retention_counts["fifo_evictions"] += 1
+
+        tracker[record_key] = (idx, td_error)
+        self.keys_by_idx[grid_id][idx] = record_key
+        self.decision_groups[grid_id].setdefault(group_key, {})[outcome] = idx
+        self.total_added_count += 1
+        return idx
+
     def add_transition(
         self,
         transition: tuple[Any, dict[str, Any], int, float, Any, dict[str, Any], bool],
         td_error: float = 0.0,
     ) -> int:
-        state = transition[0]
-        info = transition[1]
-        action = int(transition[2])
+        state, info, action, reward, next_state, next_info, done = transition
         grid_id = int(info["regime_grid_id"])
         if grid_id < 0 or grid_id >= self.num_grids:
             return -1
-
         if not self._initialized:
-            s_dim = int(np.asarray(state).reshape(-1).shape[0])
-            a_dim = int(len(info["avaliable_action"]))
-            self._init_tensors(s_dim, a_dim)
-
-        tracker = self.seen_fingerprints[grid_id]
-        semantic_key = build_semantic_transition_key(state, action, info)
-
-        if semantic_key in tracker:
-            old_idx, old_td_error = tracker[semantic_key]
-            if td_error > old_td_error:
-                self._write_slot(grid_id, old_idx, transition)
-                tracker[semantic_key] = (old_idx, td_error)
-                self.total_added_count += 1
-                return grid_id
+            self._init_tensors(int(np.asarray(state).size), len(info["avaliable_action"]))
+        group_key = build_semantic_transition_key(state, action, info)
+        outcome = _outcome_key(
+            _float32_key(next_state), reward, _info_context_key(next_info), done,
+        )
+        idx = self._reserve_slot(grid_id, group_key, outcome, float(td_error))
+        if idx is None:
             return -2
-
-        if self.grid_sizes[grid_id] < self.grid_capacity:
-            idx = self.grid_sizes[grid_id]
-            self.grid_sizes[grid_id] += 1
-            self._write_slot(grid_id, idx, transition)
-            tracker[semantic_key] = (idx, td_error)
-            self.keys_by_idx[grid_id][idx] = semantic_key
-        else:
-            idx = self.write_ptrs[grid_id]
-            old_key = self.keys_by_idx[grid_id][idx]
-            del tracker[old_key]
-            self._write_slot(grid_id, idx, transition)
-            tracker[semantic_key] = (idx, td_error)
-            self.keys_by_idx[grid_id][idx] = semantic_key
-            self.write_ptrs[grid_id] = (idx + 1) % self.grid_capacity
-
-        self.total_added_count += 1
+        self._write_slot(grid_id, idx, transition)
         return grid_id
 
     def add_round_records_bulk(self, round_records: list[Any]) -> int:
@@ -602,12 +647,14 @@ class RegimeStratifiedReplayBuffer:
         if not round_records:
             return 0
 
-        has_compact = (
-            self.shared_market_data is not None
-            and any(getattr(r, "compact_trajectory", None) is not None for r in round_records)
-        )
-        if has_compact:
-            return self._add_compact_records_bulk(round_records)
+        if self.shared_market_data is not None:
+            compact = [r for r in round_records if r.compact_trajectory is not None]
+            legacy = [r for r in round_records if r.compact_trajectory is None]
+            if compact:
+                skipped = self._add_compact_records_bulk(compact)
+                if legacy:
+                    skipped += self._add_legacy_records_bulk(legacy)
+                return skipped
         return self._add_legacy_records_bulk(round_records)
 
     def _add_compact_records_bulk(self, round_records: list[Any]) -> int:
@@ -647,57 +694,26 @@ class RegimeStratifiedReplayBuffer:
                     duplicate_count += 1
                     continue
 
-                action = int(ct.actions[i])
-                prev_action = int(ct.previous_actions[i])
-                pos_dir = int(np.round(float(ct.trading_infos[i, 0])))
-                raw_steps = int(float(ct.trading_infos[i, 3]) * 180)
-                if raw_steps <= 2:
-                    dur_bucket = 0
-                elif raw_steps <= 12:
-                    dur_bucket = 1
-                elif raw_steps <= 36:
-                    dur_bucket = 2
-                else:
-                    dur_bucket = 3
-
-                semantic_key = build_spatio_temporal_semantic_key(
-                    df_index=df_index,
-                    step_index=step_idx,
-                    previous_action=prev_action,
-                    action=action,
-                    pos_dir=pos_dir,
-                    dur_bucket=dur_bucket,
+                context = _observable_context_key(
+                    ct.previous_actions[i], ct.trading_infos[i], ct.avaliable_actions[i],
+                    ct.hours[i], ct.minutes[i],
                 )
-                td_error = float(ct.td_errors[i])
-                tracker = self.seen_fingerprints[grid_id]
-
-                if semantic_key in tracker:
-                    old_idx, old_td_error = tracker[semantic_key]
-                    if td_error > old_td_error:
-                        tracker[semantic_key] = (old_idx, td_error)
-                        pending_by_grid[grid_id][old_idx] = (pack, df_index, ct, i)
-                        self.total_added_count += 1
-                    else:
-                        duplicate_count += 1
-                    continue
-
-                if self.grid_sizes[grid_id] < self.grid_capacity:
-                    idx = self.grid_sizes[grid_id]
-                    self.grid_sizes[grid_id] += 1
-                    tracker[semantic_key] = (idx, td_error)
-                    self.keys_by_idx[grid_id][idx] = semantic_key
-                    pending_by_grid[grid_id][idx] = (pack, df_index, ct, i)
+                group_key = (
+                    "market_step", int(df_index), step_idx, int(ct.actions[i]), context,
+                )
+                next_context = _observable_context_key(
+                    ct.next_previous_actions[i], ct.next_trading_infos[i],
+                    ct.next_avaliable_actions[i], ct.next_hours[i], ct.next_minutes[i],
+                )
+                outcome = _outcome_key(
+                    (int(df_index), int(ct.next_step_indices[i])),
+                    ct.rewards[i], next_context, ct.dones[i],
+                )
+                idx = self._reserve_slot(grid_id, group_key, outcome, float(ct.td_errors[i]))
+                if idx is None:
+                    duplicate_count += 1
                 else:
-                    idx = self.write_ptrs[grid_id]
-                    old_key = self.keys_by_idx[grid_id][idx]
-                    if old_key in tracker:
-                        del tracker[old_key]
-                    tracker[semantic_key] = (idx, td_error)
-                    self.keys_by_idx[grid_id][idx] = semantic_key
                     pending_by_grid[grid_id][idx] = (pack, df_index, ct, i)
-                    self.write_ptrs[grid_id] = (idx + 1) % self.grid_capacity
-
-                self.total_added_count += 1
 
         device = self.device
         for g, pending in pending_by_grid.items():
@@ -791,35 +807,16 @@ class RegimeStratifiedReplayBuffer:
                 a_dim = int(len(info["avaliable_action"]))
                 self._init_tensors(s_dim, a_dim)
 
-            tracker = self.seen_fingerprints[grid_id]
-            semantic_key = build_semantic_transition_key(state, action, info)
-
-            if semantic_key in tracker:
-                old_idx, old_td_error = tracker[semantic_key]
-                if td_error > old_td_error:
-                    tracker[semantic_key] = (old_idx, td_error)
-                    pending_by_grid[grid_id][old_idx] = transition
-                    self.total_added_count += 1
-                else:
-                    duplicate_count += 1
-                continue
-
-            if self.grid_sizes[grid_id] < self.grid_capacity:
-                idx = self.grid_sizes[grid_id]
-                self.grid_sizes[grid_id] += 1
-                tracker[semantic_key] = (idx, td_error)
-                self.keys_by_idx[grid_id][idx] = semantic_key
-                pending_by_grid[grid_id][idx] = transition
+            group_key = build_semantic_transition_key(state, action, info)
+            outcome = _outcome_key(
+                _float32_key(transition[4]), transition[3],
+                _info_context_key(transition[5]), transition[6],
+            )
+            idx = self._reserve_slot(grid_id, group_key, outcome, td_error)
+            if idx is None:
+                duplicate_count += 1
             else:
-                idx = self.write_ptrs[grid_id]
-                old_key = self.keys_by_idx[grid_id][idx]
-                del tracker[old_key]
-                tracker[semantic_key] = (idx, td_error)
-                self.keys_by_idx[grid_id][idx] = semantic_key
                 pending_by_grid[grid_id][idx] = transition
-                self.write_ptrs[grid_id] = (idx + 1) % self.grid_capacity
-
-            self.total_added_count += 1
 
         for g, pending in pending_by_grid.items():
             if not pending:
@@ -942,6 +939,8 @@ class RegimeStratifiedReplayBuffer:
                     "trading_info": self.next_trading_infos[g][:n].cpu() if self._initialized else torch.empty((0,)),
                 },
                 "buffer_size": n,
+                "replay_semantics_version": 2,
+                "max_outcomes_per_decision": self.max_outcomes_per_decision,
             }
         return result
 
