@@ -160,10 +160,14 @@ def test_two_dimensional_routing_maps_axis_labels_to_slot():
         "volatility": [0.1, 0.8, 0.2],
         "slope": [0.1, 0.2, 0.9],
     }[axis]
-    routing.gating_strategy = vru.create_gating_strategy("absolute", slope_threshold=0.2, volatility_threshold=0.2)
+    routing.gating_strategy = vru.create_gating_strategy(
+        "expert_hysteresis", slope_threshold=0.2, volatility_threshold=0.2
+    )
     routing.agent_act = lambda state, info: 7
 
-    action = routing.get_action({}, np.array([0.0]), 0.0, 5)
+    action = routing.get_action(
+        {"avaliable_action": [1] * 20}, np.array([0.0]), 0.0, 5
+    )
 
     assert action == 7
     assert routing.selected_agent_index == 5
@@ -197,7 +201,9 @@ def test_two_dimensional_empty_slot_uses_defensive_action(monkeypatch):
     routing.macro_action_history = []
     routing.action_decision_reason_history = []
     routing.calculate_axis_window_result = lambda axis: [0.9, 0.1, 0.1]
-    routing.gating_strategy = vru.create_gating_strategy("absolute", slope_threshold=0.2, volatility_threshold=0.2)
+    routing.gating_strategy = vru.create_gating_strategy(
+        "expert_hysteresis", slope_threshold=0.2, volatility_threshold=0.2
+    )
     monkeypatch.setattr(vru, "rule_based_close", lambda *args: 4)
 
     def fail_if_model_is_called(state, info):
@@ -237,7 +243,9 @@ def test_two_dimensional_routing_applies_axis_specific_thresholds(monkeypatch):
         "volatility": [0.7, 0.1, 0.1],
         "slope": [0.1, 0.9, 0.1],
     }[axis]
-    routing.gating_strategy = vru.create_gating_strategy("absolute", slope_threshold=0.2, volatility_threshold=0.8)
+    routing.gating_strategy = vru.create_gating_strategy(
+        "expert_hysteresis", slope_threshold=0.2, volatility_threshold=0.8
+    )
     monkeypatch.setattr(vru, "rule_based_close", lambda *args: 4)
     routing.agent_act = lambda state, info: 7
 
@@ -296,240 +304,6 @@ def test_vae_routing_optuna_parser_configuration():
     assert args.selection_manifest == "manifest.json"
     assert args.n_trials == 7
     assert args.n_workers == 2
-
-
-def test_prepare_base_args_loads_two_dimensional_model_from_manifest(tmp_path):
-    manifest_path = tmp_path / "manifest.json"
-    manifest_path.write_text(
-        json.dumps(
-            _sample_manifest_payload(
-                artifacts={
-                    "model_assembly": "assembled/model.pth",
-                    "high_level_model_change": "not_performed",
-                }
-            )
-        ),
-        encoding="utf-8",
-    )
-    args_1 = types.SimpleNamespace(
-        dataset_name="BTCUSDT",
-        experiment_name="old",
-        max_holding_number=8,
-        order_book_depth=25,
-        enable_non_main_contract_defense=False,
-    )
-    args_2 = types.SimpleNamespace(
-        dataset_name="fu",
-        experiment_name="30min_multi",
-        max_holding_number=2,
-        order_book_depth=5,
-        enable_non_main_contract_defense=False,
-        selection_manifest=str(manifest_path),
-        gating_strategy="absolute",
-        action_persistence=3,
-        stop_loss_return_threshold=0.015,
-        stop_loss_cooldown_steps=12,
-        circuit_breaker_consecutive_stops=2,
-        circuit_breaker_cooling_steps=72,
-        hysteresis_exit_ratio=0.65,
-        non_main_defense_mode="strict_instant_close",
-        enable_mdd_penalty=True,
-        target_mdd=0.05,
-        mdd_penalty_weight=4.0,
-        min_trades_guard=60,
-    )
-
-    prepared = vro.prepare_base_args(args_1, args_2)
-
-    assert prepared.selection_manifest == str(manifest_path)
-
-
-def test_prepare_base_args_does_not_mutate_original_args(tmp_path):
-    manifest_path = tmp_path / "manifest.json"
-    manifest_path.write_text(
-        json.dumps(
-            _sample_manifest_payload(
-                artifacts={
-                    "model_assembly": "model.pth",
-                    "high_level_model_change": "not_performed",
-                }
-            )
-        ),
-        encoding="utf-8",
-    )
-    args_1 = types.SimpleNamespace(
-        dataset_name="old_dataset",
-        experiment_name="old_experiment",
-        max_holding_number=8,
-        order_book_depth=25,
-        enable_non_main_contract_defense=False,
-    )
-    args_2 = types.SimpleNamespace(
-        dataset_name="new_dataset",
-        experiment_name="new_experiment",
-        max_holding_number=2,
-        order_book_depth=5,
-        enable_non_main_contract_defense=False,
-        selection_manifest=str(manifest_path),
-        gating_strategy="absolute",
-        action_persistence=3,
-        stop_loss_return_threshold=0.015,
-        stop_loss_cooldown_steps=12,
-        circuit_breaker_consecutive_stops=2,
-        circuit_breaker_cooling_steps=72,
-        hysteresis_exit_ratio=0.65,
-        non_main_defense_mode="strict_instant_close",
-        enable_mdd_penalty=True,
-        target_mdd=0.05,
-        mdd_penalty_weight=4.0,
-        min_trades_guard=60,
-    )
-
-    prepared = vro.prepare_base_args(args_1, args_2)
-
-    assert prepared.dataset_name == "new_dataset"
-    assert prepared.experiment_name == "new_experiment"
-    assert args_1.dataset_name == "old_dataset"
-    assert args_1.experiment_name == "old_experiment"
-
-
-def test_prepare_base_args_rejects_missing_model_assembly(tmp_path):
-    manifest_path = tmp_path / "manifest.json"
-    manifest_path.write_text(
-        json.dumps(
-            _sample_manifest_payload(
-                artifacts={
-                    "model_assembly": "",
-                    "high_level_model_change": "not_performed",
-                }
-            )
-        ),
-        encoding="utf-8",
-    )
-    args_1 = types.SimpleNamespace(
-        dataset_name="BTCUSDT",
-        experiment_name="old",
-        max_holding_number=8,
-        order_book_depth=25,
-        enable_non_main_contract_defense=False,
-    )
-    args_2 = types.SimpleNamespace(
-        dataset_name="fu",
-        experiment_name="30min_multi",
-        max_holding_number=2,
-        order_book_depth=5,
-        enable_non_main_contract_defense=False,
-        selection_manifest=str(manifest_path),
-        gating_strategy="absolute",
-        action_persistence=3,
-        stop_loss_return_threshold=0.015,
-        stop_loss_cooldown_steps=12,
-        circuit_breaker_consecutive_stops=2,
-        circuit_breaker_cooling_steps=72,
-        hysteresis_exit_ratio=0.65,
-        non_main_defense_mode="strict_instant_close",
-        enable_mdd_penalty=True,
-        target_mdd=0.05,
-        mdd_penalty_weight=4.0,
-        min_trades_guard=60,
-    )
-    with pytest.raises(
-        ValueError, match="two-dimensional manifest has no model_assembly artifact"
-    ):
-        vro.prepare_base_args(args_1, args_2)
-
-
-def test_prepare_base_args_validates_manifest_contract(tmp_path):
-    manifest_path = tmp_path / "manifest.json"
-    invalid_payload = _sample_manifest_payload(slot_count=999)
-    manifest_path.write_text(json.dumps(invalid_payload), encoding="utf-8")
-    args_1 = types.SimpleNamespace(
-        dataset_name="BTCUSDT",
-        experiment_name="old",
-        max_holding_number=8,
-        order_book_depth=25,
-        enable_non_main_contract_defense=False,
-    )
-    args_2 = types.SimpleNamespace(
-        dataset_name="fu",
-        experiment_name="30min_multi",
-        max_holding_number=2,
-        order_book_depth=5,
-        enable_non_main_contract_defense=False,
-        selection_manifest=str(manifest_path),
-        gating_strategy="absolute",
-        action_persistence=3,
-        stop_loss_return_threshold=0.015,
-        stop_loss_cooldown_steps=12,
-        circuit_breaker_consecutive_stops=2,
-        circuit_breaker_cooling_steps=72,
-        hysteresis_exit_ratio=0.65,
-        non_main_defense_mode="strict_instant_close",
-        enable_mdd_penalty=True,
-        target_mdd=0.05,
-        mdd_penalty_weight=4.0,
-        min_trades_guard=60,
-    )
-    with pytest.raises(
-        ValueError, match="manifest slot_count does not match the two-dimensional axes"
-    ):
-        vro.prepare_base_args(args_1, args_2)
-
-
-def test_suggest_trial_parameters_uses_independent_axis_parameters():
-    class FakeTrial:
-        def __init__(self):
-            self.names = []
-
-        def suggest_int(self, name, low, high):
-            self.names.append(name)
-            return {"slope_window_length": 60, "volatility_window_length": 90}[name]
-
-        def suggest_float(self, name, low, high, log=False):
-            self.names.append(name)
-            return {
-                "slope_gamma": 0.93,
-                "volatility_gamma": 0.97,
-                "slope_rule_base_threshold": 0.25,
-                "volatility_rule_base_threshold": 0.45,
-                "hysteresis_exit_ratio": 0.65,
-            }[name]
-
-        def suggest_categorical(self, name, choices):
-            self.names.append(name)
-            return choices[0]
-
-    trial = FakeTrial()
-    trial_args = types.SimpleNamespace()
-    search_args = types.SimpleNamespace(
-        window_length_min=50,
-        window_length_max=150,
-        gamma_min=0.92,
-        gamma_max=0.98,
-        rule_base_threshold_min=0.2,
-        rule_base_threshold_max=0.5,
-        gating_strategy="absolute",
-        hysteresis_exit_ratio_min=0.50,
-        hysteresis_exit_ratio_max=0.80,
-    )
-
-    vro.suggest_trial_parameters(trial, trial_args, search_args)
-
-    assert trial.names == [
-        "slope_window_length",
-        "volatility_window_length",
-        "slope_gamma",
-        "volatility_gamma",
-        "gating_strategy",
-        "slope_rule_base_threshold",
-        "volatility_rule_base_threshold",
-        "hysteresis_exit_ratio",
-    ]
-    assert trial_args.window_length == 90
-    assert trial_args.gamma == 0.93
-    assert trial_args.rule_base_threshold == 0.25
-
-
 
 
 def test_vae_routing_test_uses_contract_level_valid_features(tmp_path, monkeypatch):

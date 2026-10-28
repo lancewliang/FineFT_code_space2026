@@ -159,6 +159,12 @@ def _write_downscaled_day(
         "BASE_TIME_FEATURE": base_time_df,
         "COMMODITY_QUOTE_FEATURE": downscale_quote_features(second, target_freq),
     }
+    # Keep the exchange business day on the reward-side snapshot.  It is
+    # provenance metadata, not a future/state feature, so it must not enter
+    # the shifted future stream in merge_concat.concat.
+    outputs["DOWNSCALE_ORDERBOOK_25"] = outputs["DOWNSCALE_ORDERBOOK_25"].with_columns(
+        pl.lit(str(trading_day)).alias("trading_day")
+    )
     output_name = _trading_day_output_name(trading_day)
     for folder, frame in outputs.items():
         DataQualityValidator.validate_no_illegal_values(

@@ -734,6 +734,14 @@ _Avoid_: 潜力模型、候选模型
 记录低层 agent 最终选择的 label、epoch、bin_index 和分数的 JSON 文件。
 _Avoid_: 选择清单、选择描述
 
+**Routing Search-Space Manifest (路由搜索空间清单)**:
+仅声明 `expert_hysteresis` Optuna 校准所需的九维 `search_space`、schema 版本和策略版本的 JSON 文件；数据文件、模型 artifact 与评分运行设置由运行时参数和既有目录结构解析。
+_Avoid_: 实验输入证据清单、数据 provenance manifest
+
+**三分区路由校准 (Three-Way Routing Calibration)**:
+在当前研究管线中使用 `train`、`valid`、`test` 三个数据分区：`train` 承担模型训练，`valid` 承担低层选择与高层路由校准，`test` 只承担冻结配置的最终评估；它不宣称低层选择与高层校准彼此独立。
+_Avoid_: 四段独立校准、独立 calibration period
+
 **非对称方向性调仓惩罚 (Asymmetric Directional Turnover Penalty)**:
 在低层强化学习奖励塑形与动态规划专家 Q 表求解中，根据当前市场宏观体制（上涨/震荡/下跌）与调仓方向的一致性动态施加差异化摩擦扣减的机制。顺势调仓与避险平仓施加基准费率，逆势翻转、恐慌早退与震荡市盲目开仓施加高倍阻尼惩罚，从源头锁定波段持仓惯性并压降无效换手。
 _Avoid_: 动态换手率、分片换手惩罚、经验池浮动摩擦

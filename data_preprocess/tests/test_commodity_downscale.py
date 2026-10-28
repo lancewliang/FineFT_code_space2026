@@ -979,6 +979,26 @@ def test_continuous_downscale_ignores_unused_second_level_null_columns(tmp_path)
     assert list(tmp_path.rglob("*.feather"))
 
 
+def test_continuous_downscale_preserves_trading_day_on_reward_snapshot(tmp_path):
+    raw = pl.read_csv(SAMPLE_PATH).head(2).with_columns(
+        pl.col("LastPrice").alias("LowPrice"),
+        pl.col("LastPrice").alias("HighPrice"),
+    )
+
+    _write_downscaled_day(raw, tmp_path, "5min", "fu", "fu2302", depth=5)
+
+    reward_snapshot = pl.read_ipc(
+        tmp_path
+        / "DOWNSCALE_ORDERBOOK_25"
+        / "fu"
+        / "fu2302"
+        / "5min"
+        / "2023-01-04.feather"
+    )
+
+    assert reward_snapshot["trading_day"].unique().to_list() == ["20230104"]
+
+
 def test_continuous_downscale_rejects_illegal_second_level_values(tmp_path, caplog):
     raw = pl.read_csv(SAMPLE_PATH).head(2).with_columns(
         pl.when(pl.int_range(pl.len()) == 0)

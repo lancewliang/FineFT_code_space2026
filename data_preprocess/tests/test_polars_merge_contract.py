@@ -16,6 +16,7 @@ def test_concat_concurrent_future_frames_preserves_shift_and_inner_join():
     concurrent = pl.DataFrame(
         {
             "timestamp": [1, 1, 2, 3],
+            "trading_day": ["2026-01-05", "2026-01-05", "2026-01-05", "2026-01-06"],
             "mark_price": [10.0, 11.0, 12.0, 13.0],
         }
     )
@@ -30,13 +31,20 @@ def test_concat_concurrent_future_frames_preserves_shift_and_inner_join():
 
     out = concat_concurrent_future_frames(concurrent, future)
 
-    assert out.columns == ["timestamp", "mark_price", "feature"]
+    assert out.columns == ["timestamp", "trading_day", "mark_price", "feature"]
     assert out["timestamp"].to_list() == [2, 3]
+    assert out["trading_day"].to_list() == ["2026-01-05", "2026-01-06"]
     assert out["feature"].to_list() == [100.0, 200.0]
 
 
 def test_build_daily_feature_frames_drops_derivative_symbol_from_reward():
-    snapshot = pl.DataFrame({"timestamp": [1], "ask1_price": [101.0]})
+    snapshot = pl.DataFrame(
+        {
+            "timestamp": [1],
+            "trading_day": ["2026-01-05"],
+            "ask1_price": [101.0],
+        }
+    )
     der = pl.DataFrame({"timestamp": [1], "symbol": ["BTCUSDT"], "mark_price": [100.0]})
     base = pl.DataFrame(
         {
@@ -60,6 +68,7 @@ def test_build_daily_feature_frames_drops_derivative_symbol_from_reward():
     )
 
     assert "symbol" not in reward.columns
+    assert reward["trading_day"].to_list() == ["2026-01-05"]
     assert future.columns[:3] == ["timestamp", "symbol", "exchange"]
 
 

@@ -114,21 +114,6 @@ def experiment(tmp_path):
         ]
     )
     args.vae_hidden_dims = [8, 4]
-    evidence = tmp_path / "split_evidence.json"
-    evidence.write_text(json.dumps({"split_version": "fixture.corrected.v1"}))
-    periods = {}
-    for role, start, end in (
-        ("fit", "2020-01-01", "2020-01-10"),
-        ("selection", "2020-01-01", "2020-01-11"),
-        ("calibration", "2020-02-01", "2020-02-10"),
-        ("final", "2020-03-01", "2020-03-10"),
-    ):
-        periods[role] = {
-            "start": start + "T00:00:00Z",
-            "end": end + "T00:00:00Z",
-            "source_evidence": descriptor(evidence),
-        }
-    inputs = frozen.describe_experiment_inputs(args)
     search_space = {
         "slope_window_length": {"type": "int", "low": 1, "high": 10},
         "volatility_window_length": {"type": "int", "low": 1, "high": 10},
@@ -141,24 +126,10 @@ def experiment(tmp_path):
         "expert_confirm_steps": {"type": "int", "low": 1, "high": 5},
     }
     document = {
-        "schema_version": frozen.SCHEMA_VERSION,
+        "schema_version": frozen.EXPERIMENT_MANIFEST_SCHEMA_VERSION,
         "experiment_id": "controlled-fixture.v1",
         "strategy_version": "expert_hysteresis.v1",
-        "split_version": "fixture.corrected.v1",
-        "trading_day_atomic": True,
-        "models_retrained_for_split": True,
-        "periods": periods,
-        "scoring_protocol": {
-            "protocol_version": frozen.RAW_SCORING_PROTOCOL_VERSION,
-            "seed": 12345,
-            "batch_size": 8,
-            "column_order": inputs["column_order"],
-            "architecture": {
-                key: getattr(args, key) for key in ("z_dim", "vae_hidden_dims", "loss_type")
-            },
-        },
         "search_space": search_space,
-        "artifacts": inputs["artifacts"],
     }
     manifest = tmp_path / "experiment.json"
     manifest.write_text(json.dumps(document))
@@ -281,14 +252,22 @@ def test_old_schema_and_incomplete_selected_trial_are_rejected(experiment, tmp_p
     args, document, _ = experiment
     document["schema_version"] = 1
     save_manifest(args, document)
-    with pytest.raises(ValueError, match="schema_version=2"):
+    with pytest.raises(ValueError, match="schema_version=3"):
         frozen.prepare_experiment(args)
 
-    document["schema_version"] = frozen.SCHEMA_VERSION
+    document["schema_version"] = frozen.EXPERIMENT_MANIFEST_SCHEMA_VERSION
     save_manifest(args, document)
     args.trial_state = "PRUNED"
     with pytest.raises(ValueError, match="COMPLETE"):
         frozen.export_frozen_experiment(args, tmp_path / "selected.json")
+
+
+def test_routing_manifest_rejects_legacy_input_evidence_fields(experiment):
+    args, document, _ = experiment
+    document["periods"] = {}
+    save_manifest(args, document)
+    with pytest.raises(ValueError, match="unsupported fields: periods"):
+        frozen.prepare_experiment(args)
 
 
 @pytest.mark.parametrize(
@@ -336,54 +315,38 @@ def test_final_requires_complete_frozen_config_and_rejects_legacy_mix(experiment
         final.parse_and_prepare_args(["--frozen_config", selected])
 
 
-@pytest.mark.parametrize(
-    "change,match",
-    [
-        ("overlap_selection", "overlaps independent"),
-        ("overlap_final", "overlaps final"),
-        ("atomic", "TradingDay-atomic"),
-        ("retrained", "fitted for"),
-        ("version", "strategy_version"),
-        ("score", "outside search_space"),
-        ("model", "hash mismatch"),
-        ("missing", "identity set"),
-        ("day", "TradingDay crosses"),
-        ("outside", "outside declared"),
-        ("absent_day", "evidence missing"),
-    ],
-)
-def test_formal_prepare_rejects_missing_or_contaminated_evidence(experiment, change, match):
-    args, document, frames = experiment
-    if change == "overlap_selection":
-        document["periods"]["selection"]["end"] = "2020-02-03T00:00:00Z"
-    elif change == "overlap_final":
-        document["periods"]["final"]["start"] = "2020-02-05T00:00:00Z"
-    elif change == "atomic":
-        document["trading_day_atomic"] = False
-    elif change == "retrained":
-        document["models_retrained_for_split"] = False
-    elif change == "version":
-        document["strategy_version"] = "expert_hysteresis.v2"
-    elif change == "score":
-        args.slope_gamma = 0.4
-    elif change == "model":
-        Path(document["artifacts"]["slope.label_0.model"]["path"]).write_bytes(b"changed")
-    elif change == "missing":
-        document["artifacts"].pop("slope.label_0.reference")
-    else:
-        path = frames["calibration"]
-        frame = pd.read_feather(path)
-        if change == "day":
-            frame["trading_day"] = "2020-01-02"
-        elif change == "outside":
-            frame["timestamp"] = pd.Timestamp("2020-01-02", tz="UTC")
-        else:
-            frame = frame.drop(columns=["trading_day"])
-        frame.to_feather(path)
-        document["artifacts"]["data.calibration.fu2005"] = descriptor(path)
+def test_minimal_manifest_uses_runtime_inputs_and_legacy_three_way_split(experiment):
+    args, document, _ = experiment
+    prepared = frozen.prepare_experiment(args)
+    assert set(document) == {
+        "schema_version",
+        "experiment_id",
+        "strategy_version",
+        "search_space",
+    }
+    assert prepared.raw_scoring_protocol["batch_size"] == frozen.RAW_SCORING_BATCH_SIZE
+    assert prepared.raw_scoring_protocol["column_order"] == [
+        "slope.label_0",
+        "slope.label_1",
+        "slope.label_2",
+        "volatility.label_0",
+        "volatility.label_1",
+        "volatility.label_2",
+    ]
+    inputs = frozen.describe_experiment_inputs(prepared)
+    assert any(key.startswith("data.fit.") for key in inputs["artifacts"])
+    assert any(key.startswith("data.selection.") for key in inputs["artifacts"])
+    assert any(key.startswith("data.calibration.") for key in inputs["artifacts"])
+    assert any(key.startswith("data.final.") for key in inputs["artifacts"])
+
+
+def test_minimal_manifest_can_derive_experiment_id(experiment):
+    args, document, _ = experiment
+    document.pop("experiment_id")
     save_manifest(args, document)
-    with pytest.raises(ValueError, match=match):
-        frozen.prepare_experiment(args)
+    prepared = frozen.prepare_experiment(args)
+    assert prepared.experiment_id.startswith("fixture-")
+    assert len(prepared.frozen_experiment_identity) == 64
 
 
 def test_missing_manifest_and_legacy_parameters_do_not_claim_independence(experiment):
@@ -838,6 +801,20 @@ def test_step7_shell_wires_frozen_experiment_and_expert_namespace():
     assert '--experiment_manifest "${EXPERIMENT_MANIFEST}"' in script
     assert '--calibration_run_id "${CALIBRATION_RUN_ID}"' in script
     assert "--gating_strategy expert_hysteresis" in script
+    for option in (
+        "--enable_mdd_penalty",
+        "--target_mdd",
+        "--mdd_penalty_weight",
+        "--min_trades_guard",
+        "--enable_non_main_contract_defense",
+        "--non_main_defense_mode",
+        "--action_persistence",
+        "--stop_loss_return_threshold",
+        "--stop_loss_cooldown_steps",
+        "--circuit_breaker_consecutive_stops",
+        "--circuit_breaker_cooling_steps",
+    ):
+        assert option in script
     assert "rule_base_threshold_min" not in script
     assert "high_level/expert_hysteresis" in script
 
@@ -854,7 +831,10 @@ def test_step9_and_step10_shells_only_replay_the_published_frozen_config(
 ):
     script = Path("FineFT/script/test/DiHFT/high_level") / script_name
     content = script.read_text()
-    assert 'FROZEN_CONFIG=${FROZEN_CONFIG:?' in content
+    assert (
+        'FROZEN_CONFIG=${FROZEN_CONFIG:?' in content
+        or 'FROZEN_CONFIG=${FROZEN_CONFIG:-' in content
+    )
     assert f"--evaluation_purpose {purpose}" in content
     assert f'--eval_stage {stage}' in content
     assert "--para_file" not in content

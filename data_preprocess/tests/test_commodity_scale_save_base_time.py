@@ -29,6 +29,7 @@ def test_scale_save_passthrough_base_time_features(tmp_path):
     n = 10
     df = pl.DataFrame({
         "timestamp": list(range(1, n + 1)),
+        "trading_day": ["2026-01-05"] * n,
         "contract": ["fu2601"] * n,
         "symbol": ["fu"] * n,
         "ask1_price": [100.0] * n,
@@ -99,6 +100,7 @@ def test_scale_save_passthrough_base_time_features(tmp_path):
     assert out_df["is_session_last_bar"].to_list() == [
         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0,
     ]
+    assert out_df["trading_day"].to_list() == ["2026-01-05"] * n
     assert np.allclose(out_df["contract_life_remaining_ratio"].to_list(), [0.8] * n)
     assert np.allclose(out_df["prev_day_contract_role_tier"].to_list(), [1.0] * n)
 

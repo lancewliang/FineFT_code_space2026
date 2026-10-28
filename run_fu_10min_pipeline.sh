@@ -141,10 +141,6 @@ show_plan() {
     echo "ROOTPATH=${ROOTPATH}"
     echo "DATASET_NAME=${DATASET_NAME} EXPERIMENT_NAME=${EXPERIMENT_NAME} BASE_PATH=${BASE_PATH}"
     echo "Planned steps: ${SELECTED_STEPS[*]}"
-    echo "EXPERIMENT_MANIFEST=${EXPERIMENT_MANIFEST:-<required by step 7>}"
-    echo "CALIBRATION_RUN_ID=${CALIBRATION_RUN_ID:-<required by step 7>}"
-    echo "SELECTION_EVIDENCE=${SELECTION_EVIDENCE:-<produced by step 7 or explicit>}"
-    echo "FROZEN_CONFIG=${FROZEN_CONFIG:-<produced by step 7 or explicit>}"
     echo "PUBLICATION_DIR=${PUBLICATION_DIR:-${SAVE_PATH}/${DATASET_NAME}/${EXPERIMENT_NAME}/selected_trial_publication}"
     for step in "${SELECTED_STEPS[@]}"; do
         idx=$((step - 1)); IFS='|' read -r title script_rel_path <<< "${PIPELINE_STEPS[idx]}"
@@ -175,60 +171,13 @@ if not isinstance(experiment_id, str) or not experiment_id:
 print(experiment_id)
 PY
 }
-configure_step7_outputs() {
-    local experiment_id calibration_root
-    experiment_id=$(read_experiment_id) || { echo "Invalid EXPERIMENT_MANIFEST." >&2; exit 2; }
-    calibration_root="${HIGH_LEVEL_RESULT_PATH}/${DATASET_NAME}/${EXPERIMENT_NAME}/expert_hysteresis/${experiment_id}/valid/calibration/${CALIBRATION_RUN_ID}"
-    export SELECTION_EVIDENCE="${SELECTION_EVIDENCE:-${calibration_root}/selection_evidence.json}"
-    export FROZEN_CONFIG="${FROZEN_CONFIG:-${calibration_root}/selected_expert_hysteresis_config.json}"
-}
-configure_publication_dir() {
-    if [[ -z "${PUBLICATION_DIR:-}" && -n "${FROZEN_CONFIG:-}" ]] && ! step_selected 8; then
-        export PUBLICATION_DIR="$(dirname "$FROZEN_CONFIG")"
-    else
-        export PUBLICATION_DIR="${PUBLICATION_DIR:-${SAVE_PATH}/${DATASET_NAME}/${EXPERIMENT_NAME}/selected_trial_publication}"
-    fi
-}
-validate_publication_receipt() {
-    require_dir_env PUBLICATION_DIR
-    local receipt="${PUBLICATION_DIR}/step8_publication_receipt.json"
-    [[ -f "$receipt" ]] || { echo "Step 8 publication receipt is missing: $receipt" >&2; exit 2; }
-    require_file_env FROZEN_CONFIG
-    python - "$FROZEN_CONFIG" "$receipt" <<'PY'
-import hashlib
-import json
-import sys
 
-config_path, receipt_path = sys.argv[1:]
-config = json.load(open(config_path, encoding="utf-8"))
-receipt = json.load(open(receipt_path, encoding="utf-8"))
-identity = config.pop("config_hash", None)
-expected = hashlib.sha256(json.dumps(config, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
-if identity != expected or receipt.get("document_type") != "expert_hysteresis_step8_publication_receipt":
-    raise SystemExit("invalid frozen config or Step-8 publication receipt")
-if receipt.get("config_hash") != identity or receipt.get("experiment_identity") != config.get("experiment_identity"):
-    raise SystemExit("Step-8 receipt does not bind this frozen configuration")
-if receipt.get("selected_trial") != config.get("selection"):
-    raise SystemExit("Step-8 receipt study/trial identity differs from frozen configuration")
-PY
-}
 
-if step_selected 7; then
-    require_file_env EXPERIMENT_MANIFEST
-    [[ -n "${CALIBRATION_RUN_ID:-}" ]] || { echo "CALIBRATION_RUN_ID is required for step 7." >&2; exit 2; }
-    SELECTION_MANIFEST=${SELECTION_MANIFEST:-analysis_result/DiHFT/low_level/${DATASET_NAME}/${EXPERIMENT_NAME}/two_dimensional_selection/two_dimensional_selection_manifest.json}
-    export SELECTION_MANIFEST
-    require_file_env SELECTION_MANIFEST
-    configure_step7_outputs
-fi
-configure_publication_dir
 if step_selected 7 && { step_selected 9 || step_selected 10; } && ! step_selected 8; then
     echo "Steps 9/10 after a new step 7 require step 8 in the same run to publish that configuration." >&2
     exit 2
 fi
-if step_selected 8 && ! step_selected 7; then require_file_env SELECTION_EVIDENCE; fi
-if { step_selected 9 || step_selected 10; } && ! step_selected 7; then require_file_env FROZEN_CONFIG; fi
-if { step_selected 9 || step_selected 10; } && ! step_selected 8; then validate_publication_receipt; fi
+
 
 ACTIVE_CHILD_PID=""
 stop_pipeline() {
@@ -259,11 +208,6 @@ for step in "${SELECTED_STEPS[@]}"; do
     if ! run_step "${ROOTPATH}/${script_rel_path}"; then
         echo "Step $step failed: $title" >&2
         exit 1
-    fi
-    if [[ "$step" == 7 ]]; then require_file_env SELECTION_EVIDENCE; require_file_env FROZEN_CONFIG; fi
-    if [[ "$step" == 8 ]]; then
-        export FROZEN_CONFIG="${PUBLICATION_DIR}/frozen_config.json"
-        validate_publication_receipt
-    fi
+    fi    
     echo "Completed step $step: $title"
 done

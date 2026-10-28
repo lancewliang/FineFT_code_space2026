@@ -73,7 +73,9 @@ def _create_mock_router(
     routing.slot_count = 9
     routing.rule_base_threshold = 0.2
     routing.axis_thresholds = {"volatility": 0.2, "slope": 0.2}
-    routing.gating_strategy = vru.create_gating_strategy("absolute", slope_threshold=0.2, volatility_threshold=0.2)
+    routing.gating_strategy = vru.create_gating_strategy(
+        "expert_hysteresis", slope_threshold=0.2, volatility_threshold=0.2
+    )
     routing.selection_manifest = TwoDimensionalSelectionManifest.from_dict(
         _sample_manifest_payload(num_labels=3)
     )
@@ -93,52 +95,6 @@ def _create_mock_router(
     return routing
 
 
-def test_prepare_base_args_forwards_enable_non_main_contract_defense(tmp_path):
-    manifest_path = tmp_path / "manifest.json"
-    manifest_path.write_text(
-        json.dumps(_sample_manifest_payload(num_labels=3)),
-        encoding="utf-8",
-    )
-    args_1 = types.SimpleNamespace(
-        dataset_name="BTCUSDT",
-        experiment_name="default",
-        max_holding_number=8.0,
-        order_book_depth=25,
-        selection_manifest=str(manifest_path),
-        enable_non_main_contract_defense=False,
-        gating_strategy="absolute",
-        action_persistence=3,
-        stop_loss_return_threshold=0.015,
-        stop_loss_cooldown_steps=12,
-        circuit_breaker_consecutive_stops=2,
-        circuit_breaker_cooling_steps=72,
-    )
-    args_2 = types.SimpleNamespace(
-        dataset_name="fu",
-        experiment_name="10min_parallel",
-        max_holding_number=1.0,
-        order_book_depth=5,
-        selection_manifest=str(manifest_path),
-        enable_non_main_contract_defense=True,
-        gating_strategy="absolute",
-        action_persistence=3,
-        stop_loss_return_threshold=0.015,
-        stop_loss_cooldown_steps=12,
-        circuit_breaker_consecutive_stops=2,
-        circuit_breaker_cooling_steps=72,
-        hysteresis_exit_ratio=0.65,
-        non_main_defense_mode="strict_instant_close",
-        enable_mdd_penalty=True,
-        target_mdd=0.05,
-        mdd_penalty_weight=4.0,
-        min_trades_guard=60,
-    )
-
-    base_args = vro.prepare_base_args(args_1, args_2)
-
-    assert base_args.enable_non_main_contract_defense is True
-
-
 def test_non_main_contract_defense_triggers_rule_based_close(monkeypatch):
     routing = _create_mock_router(enable_defense=True, role_tier_index=0)
     monkeypatch.setattr(vru, "rule_based_close", lambda *args: 4)
@@ -150,7 +106,7 @@ def test_non_main_contract_defense_triggers_rule_based_close(monkeypatch):
 
     # role_tier = 0.0 (non-main / cold-start)
     s = np.array([0.0, 100.0, 200.0])
-    action = routing.get_action({}, s, 1.0, 5)
+    action = routing.get_action({"avaliable_action": [1, 1, 1]}, s, 1.0, 5)
 
     assert action == 4
     assert routing.macro_action_history == [9]
@@ -162,7 +118,7 @@ def test_main_and_sub_main_contracts_route_normally(role_tier):
 
     # role_tier = 0.5 (sub-main) or 1.0 (main)
     s = np.array([role_tier, 100.0, 200.0])
-    action = routing.get_action({}, s, 0.0, 5)
+    action = routing.get_action({"avaliable_action": [1] * 20}, s, 0.0, 5)
 
     # normal routing selects slot 1 * 3 + 2 = 5, agent_act returns 7
     assert action == 7
@@ -175,7 +131,7 @@ def test_defense_disabled_by_default_routes_normally_on_non_main():
 
     # role_tier = 0.0, but defense is disabled (ablation baseline)
     s = np.array([0.0, 100.0, 200.0])
-    action = routing.get_action({}, s, 0.0, 5)
+    action = routing.get_action({"avaliable_action": [1] * 20}, s, 0.0, 5)
 
     assert action == 7
     assert routing.selected_agent_index == 5
@@ -187,7 +143,7 @@ def test_defense_gracefully_handles_none_role_tier_index():
 
     # role_tier_index is None, should route normally without error
     s = np.array([100.0, 200.0])
-    action = routing.get_action({}, s, 0.0, 5)
+    action = routing.get_action({"avaliable_action": [1] * 20}, s, 0.0, 5)
 
     assert action == 7
     assert routing.selected_agent_index == 5
@@ -208,7 +164,7 @@ def test_reconfigure_routing_preserves_defense_flag(monkeypatch):
         volatility_rule_base_threshold=0.25,
         trial_number=1,
         enable_non_main_contract_defense=True,
-        gating_strategy="absolute",
+        gating_strategy="expert_hysteresis",
         ood_threshold=0.005,
         slope_margin_threshold=0.12,
         volatility_margin_threshold=0.12,
@@ -218,6 +174,8 @@ def test_reconfigure_routing_preserves_defense_flag(monkeypatch):
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
         hysteresis_exit_ratio=0.65,
+        expert_switch_lead=0.0,
+        expert_confirm_steps=1,
     )
     monkeypatch.setattr(routing, "_resolve_test_path", lambda a: "/tmp/test_trial_1")
     monkeypatch.setattr(routing, "reset_routing_state", lambda: None)

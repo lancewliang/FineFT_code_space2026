@@ -10,6 +10,9 @@ from tests.rl.test_expert_hysteresis_routing import act, make_router
 
 def switching_router(k=2, lead=0.125):
     router = make_router()
+    # Switching tests isolate routing confirmation and atomic replacement;
+    # action persistence has its own expert-mode regression coverage.
+    router.action_persistence = 1
     router.gating_strategy = vru.create_gating_strategy(
         "expert_hysteresis",
         slope_threshold=0.5,
@@ -18,8 +21,8 @@ def switching_router(k=2, lead=0.125):
         expert_confirm_steps=k,
         expert_switch_lead=lead,
     )
-    # Different experts make observably different decisions. Each retained
-    # expert still runs on every step, so identity and action prove the source.
+    # Different experts make observably different decisions, so identity and
+    # action prove the source when a fresh inference is requested.
     router.agent_act = lambda state, info: 2 if router.selected_agent_index == 5 else 0
     for _ in range(k - 1):
         assert act(router) == 1

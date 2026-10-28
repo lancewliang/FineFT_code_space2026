@@ -12,7 +12,7 @@ from RL.DiHFT.high_level import vae_routing_util as vru
 from analysis.pick_agent.FineFT_two_dimensional_agent_selector import (
     TwoDimensionalSelectionManifest,
 )
-from common import ArtifactNames, MetricColumns, RoutingParamColumns
+from common import ArtifactNames
 from tests.rl.test_vae_routing_allow_reverse_position import _sample_manifest_payload
 
 
@@ -141,53 +141,6 @@ def test_vae_routing_get_quantiles_from_mmap():
     assert quants["slope"][1][-1] == pytest.approx(0.6)
     assert quants["volatility"][0][-1] == pytest.approx(0.7)
     assert quants["volatility"][1][-1] == pytest.approx(0.8)
-
-
-def test_apply_best_trial_parameters_hierarchical():
-    best_params = {
-        RoutingParamColumns.SLOPE_WINDOW_LENGTH: 50,
-        RoutingParamColumns.VOLATILITY_WINDOW_LENGTH: 80,
-        RoutingParamColumns.SLOPE_GAMMA: 0.95,
-        RoutingParamColumns.VOLATILITY_GAMMA: 0.92,
-        RoutingParamColumns.OOD_THRESHOLD: 0.01,
-        RoutingParamColumns.SLOPE_MARGIN_THRESHOLD: 0.15,
-        RoutingParamColumns.VOLATILITY_MARGIN_THRESHOLD: 0.18,
-    }
-    search_args = types.SimpleNamespace(gating_strategy="hierarchical")
-    trial_args = types.SimpleNamespace()
-
-    res = vro.apply_best_trial_parameters(trial_args, best_params, search_args)
-    assert res.slope_window_length == 50
-    assert res.volatility_window_length == 80
-    assert res.window_length == 80
-    assert res.slope_gamma == pytest.approx(0.95)
-    assert res.volatility_gamma == pytest.approx(0.92)
-    assert res.ood_threshold == pytest.approx(0.01)
-    assert res.slope_margin_threshold == pytest.approx(0.15)
-    assert res.volatility_margin_threshold == pytest.approx(0.18)
-
-
-def test_apply_best_trial_parameters_absolute():
-    best_params = {
-        RoutingParamColumns.SLOPE_WINDOW_LENGTH: 30,
-        RoutingParamColumns.VOLATILITY_WINDOW_LENGTH: 40,
-        RoutingParamColumns.SLOPE_GAMMA: 0.98,
-        RoutingParamColumns.VOLATILITY_GAMMA: 0.96,
-        RoutingParamColumns.SLOPE_RULE_BASE_THRESHOLD: 0.25,
-        RoutingParamColumns.VOLATILITY_RULE_BASE_THRESHOLD: 0.35,
-        RoutingParamColumns.HYSTERESIS_EXIT_RATIO: 0.70,
-    }
-    search_args = types.SimpleNamespace(gating_strategy="absolute")
-    trial_args = types.SimpleNamespace()
-
-    res = vro.apply_best_trial_parameters(trial_args, best_params, search_args)
-    assert res.slope_window_length == 30
-    assert res.volatility_window_length == 40
-    assert res.window_length == 40
-    assert res.slope_rule_base_threshold == pytest.approx(0.25)
-    assert res.volatility_rule_base_threshold == pytest.approx(0.35)
-    assert res.rule_base_threshold == pytest.approx(0.25)
-    assert res.hysteresis_exit_ratio == pytest.approx(0.70)
 
 
 def test_lean_rollout_skips_disk_artifacts(tmp_path, monkeypatch):

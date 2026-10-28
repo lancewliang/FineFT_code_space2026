@@ -114,6 +114,10 @@ def test_io_manager_load_and_write(tmp_path: Path):
     written_df = pl.read_ipc(outputs[0].output_path)
     assert "alpha" in written_df.columns
     assert "beta" not in written_df.columns
+    assert written_df["trading_day"].to_list() == [
+        "2026-01-01",
+        "2026-01-01",
+    ]
     assert "symbol" in written_df.columns
 
     # 4. save_selected_features

@@ -26,8 +26,8 @@ def test_single_contract_return_rate_eliminates_zero_denominator():
     assert return_rate_profit == pytest.approx(0.10)
 
 
-def test_portfolio_capital_fixed_at_12000_regardless_of_traded_contract_count(monkeypatch, tmp_path):
-    """Verify portfolio return rate and base objective use fixed 12000 capital, not traded_count * 6000."""
+def test_portfolio_capital_fixed_at_6000_regardless_of_replayed_contract_count(monkeypatch, tmp_path):
+    """Verify the one-slot strategy uses fixed 6000 capital, not replayed-file count."""
     monkeypatch.setattr(pd, "read_feather", lambda p: pd.DataFrame({"a": [1]}))
     routing = vru.vae_risk_aware_routing.__new__(vru.vae_risk_aware_routing)
     routing.initial_wallet_balance = 6000.0
@@ -35,6 +35,7 @@ def test_portfolio_capital_fixed_at_12000_regardless_of_traded_contract_count(mo
     routing.eval_stage = "valid"
     routing.save_artifacts = True
     routing.enable_mdd_penalty = False
+    routing.frozen_experiment_identity = "frozen-experiment"
 
     ts = pd.date_range("2024-01-01", periods=10, freq="10min")
 
@@ -76,8 +77,8 @@ def test_portfolio_capital_fixed_at_12000_regardless_of_traded_contract_count(mo
 
     score = routing.test()
 
-    # Portfolio capital must be 12000.0 (2 * 6000.0), NOT 1 * 6000.0 or 4 * 6000.0
-    expected_tr = 1200.0 / 12000.0  # 0.10 (10%)
+    # One active slot owns the account: 6000.0, not 1 * 6000.0 or 4 * 6000.0.
+    expected_tr = 1200.0 / 6000.0  # 0.20 (20%)
     assert score == pytest.approx(expected_tr)
     assert routing.return_rate == pytest.approx(expected_tr)
 

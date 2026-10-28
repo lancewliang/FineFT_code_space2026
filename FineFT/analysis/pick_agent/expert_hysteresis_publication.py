@@ -286,6 +286,17 @@ def _market_frame(market_data_dir: Path, contract: str) -> pd.DataFrame:
     return result
 
 
+def _canonical_event_time(value: object, *, context: str) -> str:
+    """Normalize equivalent naive/aware event-time strings to UTC text."""
+    try:
+        timestamp = pd.to_datetime(value, errors="raise", utc=True)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid event time for {context}: {value!r}") from exc
+    if pd.isna(timestamp):
+        raise ValueError(f"invalid event time for {context}: {value!r}")
+    return str(timestamp)
+
+
 def _array(path: Path, *, name: str, length: int | None = None) -> np.ndarray:
     if not path.is_file():
         raise FileNotFoundError(f"selected replay lacks {name}: {path}")
@@ -326,10 +337,26 @@ def _contract_payload(
     if not isinstance(routing_rows, list) or len(routing_rows) != steps:
         raise ValueError(f"routing audit must cover every replay step for {contract}")
     records = [RoutingRecord.from_dict(row) for row in routing_rows]
-    expected_times = pd.to_datetime(market["timestamp"].iloc[indices[:-1]], utc=True).astype(str).tolist()
+    expected_times = [
+        _canonical_event_time(
+            value,
+            context=f"market step {step} for {contract}",
+        )
+        for step, value in zip(
+            indices[:-1], market["timestamp"].iloc[indices[:-1]]
+        )
+    ]
     for step, record in enumerate(records):
         record.validate()
-        if record.contract != contract or record.step_index != step or record.event_time != expected_times[step]:
+        event_time = _canonical_event_time(
+            record.event_time,
+            context=f"routing step {step} for {contract}",
+        )
+        if (
+            record.contract != contract
+            or record.step_index != step
+            or event_time != expected_times[step]
+        ):
             raise ValueError(f"routing audit is not aligned to market step {step} for {contract}")
 
     prices = market["mark_price"].to_numpy(dtype=float)[indices]

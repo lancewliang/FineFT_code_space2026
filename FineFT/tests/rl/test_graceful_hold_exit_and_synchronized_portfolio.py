@@ -43,7 +43,9 @@ def _build_router(non_main_mode: str = "graceful_hold_exit") -> vru.vae_risk_awa
     r.slot_count = 9
     r.rule_base_threshold = 0.2
     r.axis_thresholds = {"volatility": 0.2, "slope": 0.2}
-    r.gating_strategy = vru.create_gating_strategy("absolute", slope_threshold=0.2, volatility_threshold=0.2)
+    r.gating_strategy = vru.create_gating_strategy(
+        "expert_hysteresis", slope_threshold=0.2, volatility_threshold=0.2
+    )
     r.selection_manifest = _sample_manifest(3)
     r.enable_non_main_contract_defense = True
     r.non_main_defense_mode = non_main_mode

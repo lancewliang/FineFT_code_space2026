@@ -180,7 +180,9 @@ def test_high_level_backtest_to_daily_audit_e2e(tmp_path: Path):
     result_dir = tmp_path / "result"
     contract_result_dir = result_dir / "contracts" / contract
 
-    router = _create_e2e_router(tmp_path, action_persistence=2)
+    # This E2E test checks one prediction/audit join per step.  Expert action
+    # persistence is covered by the focused routing regression test.
+    router = _create_e2e_router(tmp_path, action_persistence=1)
 
     # Run the high-level backtest
     res = router.run_single_valid_df(df, str(contract_result_dir), contract_name=contract)

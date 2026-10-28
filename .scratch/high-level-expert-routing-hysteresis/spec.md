@@ -51,7 +51,7 @@ Design: [详细设计与 Q1–Q11 共识](../../docs/train3/high_level_routing_h
 24. As a backtest operator, I want invalid scores and incompatible Slot mappings to stop the run, so that scoring failures cannot masquerade as low confidence.
 25. As a backtest operator, I want route state reset between independent contract runs, so that one contract cannot influence another's confirmation.
 26. As an experiment owner, I want the two scoring windows and two gamma values jointly searched with hysteresis parameters while model versions and reference distributions remain fixed, so that the selected trial contains the complete scoring and routing configuration actually used.
-27. As an experiment owner, I want calibration periods independent of model fitting and expert selection, so that parameter selection has a defensible temporal boundary.
+27. As an experiment owner, I want the current train/valid/test data contract to be explicit, so that valid-based joint selection and routing calibration are not mislabeled as independent periods.
 28. As an experiment owner, I want test parameters frozen, so that final performance is evaluated without further selection.
 29. As an experiment owner, I want quantile caches reused without sharing mutable route state, so that memory savings do not cause cross-run contamination.
 30. As an experiment owner, I want lean trials and one complete best-trial replay, so that calibration preserves the existing resource model.
@@ -81,9 +81,9 @@ Design: [详细设计与 Q1–Q11 共识](../../docs/train3/high_level_routing_h
 - Hard stops, circuit breakers, directional cooldown, unavailable-action handling and non-main restrictions retain their existing priority. No K-step wait delays their required action. Risk/empty-slot blocking does not count as a qualifying candidate step and cannot silently join confirmation streaks across the interruption.
 - Independent rollout initialization and reset clear route state. Existing score warm-up remains; after warm-up the initial candidate must complete normal entry confirmation.
 - Calibration freezes VAE and specialist versions, Selection Manifest and reference score distributions. Jointly search slope_window_length, volatility_window_length, slope_gamma, volatility_gamma, both axis entry thresholds, the exit ratio, Δ and K: nine effective dimensions. H is derived from E and the exit ratio, not sampled separately. The four scoring parameters must actually affect the trial's scoring/smoothing path; do not silently fix them or sample unused parameters. Search ranges and validity constraints are explicit configuration, not invented optimal values.
-- Split time chronologically between fitting/selection, calibration, and final evaluation. Reuse of a fitting or selection segment for calibration must be corrected before treating a result as independent. Final test outcomes cannot update chosen parameters.
+- Use the existing three-way contract: train for fitting, valid for low-level selection plus routing calibration, and test for frozen final evaluation. Do not describe the valid-based selection/calibration result as independent; final test outcomes cannot update chosen parameters.
 - Parameter parsing, trial records, best-parameter replay and final evaluation must preserve strategy identity/version, each trial's four scoring parameters, all thresholds, Δ and K without reverting to defaults. Once the best trial is selected, its complete scoring and routing settings are frozen for steps 8–10.
-- Reuse quantile caching, lean trials and best-trial replay. Calibration may suppress large histories, while the best-trial replay persists complete routing/audit evidence.
+- Reuse quantile caching, lean trials and best-trial replay. The routing search-space manifest declares only the nine search dimensions; runtime input discovery and internal source identity calculation remain in code. Calibration may suppress large histories, while the best-trial replay persists complete routing/audit evidence.
 - Extend existing routing attribution using the same Decision ID and Prediction Record rules. Record before/after active Slot, candidate, count before/after update, the just-completed candidate when count resets, per-axis scores, thresholds, event reason, genuine inference source and final action.
 - Distinguish observed dominant Slot from active expert and defensive state in the audit output. Do not count an expert switch as a trade, fabricate a Prediction Record during a rule-only step, or charge an additional switching fee outside actual simulated execution.
 - Persist candidate ordering and experiment identities so that fixed input replay is deterministic. Score generation variability must be controlled with the same cache or a frozen scoring protocol when comparing router variants.
@@ -117,7 +117,7 @@ Design: [详细设计与 Q1–Q11 共识](../../docs/train3/high_level_routing_h
 - 行情、收益与路由事件通过明确的合约、时间/步身份对齐；预热和尾部结算的差异需显式记录，不能用最短长度静默截断掩盖错位。诊断与审计使用实际阶段的行情及 TradingDay，资金、费率、合约单位来自冻结配置。
 - 冻结模型、Selection Manifest、参考分布及身份匹配的评分缓存继续只读复用，不共享路由状态；缓存缺失或不兼容时在新实验空间生成或明确失败，不覆盖历史缓存。
 - 当前缓存保存逐时点原始 VAE 分位数，窗口/gamma 平滑在各 rollout 内执行；来源身份一致时可以跨九维搜索的 Trials 只读复用原始缓存。不得共享平滑 deque 或其状态；若保存平滑结果，缓存身份还必须包含两轴窗口/gamma、平滑算法及边界规则。重配置时应用该 Trial 的窗口、权重与预热规则并清空平滑/路由状态，不能携带上一 Trial 的窗口或历史证据。
-- 原始缓存身份核验覆盖模型/参考分布、数据内容与时间顺序/阶段、特征/标签顺序、Manifest/Slot 映射及生成协议/schema，不能只凭缓存文件存在判定兼容。各 Trial 使用预先固定、可比的评价时间边界，并记录窗口相关的预热覆盖与有效计分区间，不把晚开始/少计分的差异隐入目标值。
+- 原始缓存身份核验覆盖运行时发现的模型/参考分布、数据内容、特征/标签顺序、Selection Manifest/Slot 映射及内部生成协议/schema，不能只凭缓存文件存在判定兼容。各 Trial 使用 valid 分区并记录窗口相关的预热覆盖，不把少计分的差异隐入目标值。
 
 阶段约束：步骤 9 默认用于已指定校准/验证段的主副合约同步诊断；如显式运行 test，同样只能读取冻结配置并输出独立的 test/main_sub 证据，不成为步骤 10 之前的第二次调参机会。
 

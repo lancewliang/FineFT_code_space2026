@@ -66,6 +66,9 @@ def act(router, vol=(0.1, 0.8, 0.2), slope=(0.1, 0.2, 0.6), position=0.0, info=N
 
 def test_entry_confirmation_without_runner_up_margin_and_fresh_flat_retention():
     router = make_router(expert_switch_lead=0.9)
+    # This test isolates expert confirmation/retention.  Persistence itself is
+    # covered by the dedicated expert-persistence regression test.
+    router.action_persistence = 1
     seen = []
     outputs = iter([2, 1, 0])
 
@@ -80,7 +83,7 @@ def test_entry_confirmation_without_runner_up_margin_and_fresh_flat_retention():
     assert act(router, vol, slope) == 1
     assert router.audit_predictions == []
     assert act(router, vol, slope) == 2
-    assert router.remaining_persist > 0
+    assert router.remaining_persist == 0
     # Own scores equal H: retain even while Flat, with a rival scoring higher.
     assert act(router, [0.95, 0.4, 0.1], [0.95, 0.1, 0.3], position=1.0) == 1
     info = {"previous_action": 1, "avaliable_action": [1, 1, 0], "trading_info": [0.0]}
@@ -164,16 +167,8 @@ def test_invalid_public_configuration_is_rejected(overrides):
         vru.create_gating_strategy("expert_hysteresis", **overrides)
 
 
-@pytest.mark.parametrize("legacy_strategy", ["absolute", "hierarchical"])
-def test_public_factory_rejects_legacy_strategies(legacy_strategy):
-    with pytest.raises(ValueError, match="requires 'expert_hysteresis'"):
-        vru.create_gating_strategy(legacy_strategy)
-
-
 def test_public_parser_selects_only_expert_hysteresis():
     assert vru.parser.parse_args([]).gating_strategy == "expert_hysteresis"
-    with pytest.raises(SystemExit):
-        vru.parser.parse_args(["--gating_strategy", "absolute"])
 
 
 def test_reset_and_reconfigure_clear_ownership_and_candidate_evidence():

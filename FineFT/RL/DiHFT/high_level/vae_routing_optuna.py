@@ -695,8 +695,6 @@ def _trial_state_name(trial):
 
 
 def _objective_definition(base_args):
-    with Path(base_args.experiment_manifest).open(encoding="utf-8") as source:
-        calibration_period = json.load(source)["periods"]["calibration"]
     return {
         "name": OBJECTIVE_NAME,
         "version": OBJECTIVE_VERSION,
@@ -716,8 +714,14 @@ def _objective_definition(base_args):
             ),
         },
         "evaluation_boundary": {
-            "period_start": calibration_period["start"],
-            "period_end": calibration_period["end"],
+            "dataset_split": base_args.eval_stage,
+            "data_root": str(
+                (
+                    Path(base_args.base_path)
+                    / base_args.dataset_name
+                    / base_args.eval_stage
+                ).resolve()
+            ),
             "warmup_steps": int(base_args.calibration_warmup_steps),
         },
     }

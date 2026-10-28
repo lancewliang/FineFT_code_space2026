@@ -40,6 +40,9 @@ def _market_frame(steps: int) -> pd.DataFrame:
 
 def _replay(tmp_path: Path):
     router = make_router(confirm_steps=1)
+    # Audit joins here validate one routing decision per step; persistence is
+    # verified separately by the action-persistence tests.
+    router.action_persistence = 1
     router.device = "cpu"
     router.axis_thresholds = {"volatility": 0.8, "slope": 0.6}
     router.axis_window_lengths = {"volatility": 1, "slope": 1}

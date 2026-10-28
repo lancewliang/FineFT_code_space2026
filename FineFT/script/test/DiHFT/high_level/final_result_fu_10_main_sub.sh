@@ -18,8 +18,12 @@ export PYTHONPATH="${ROOTPATH}:${ROOTPATH}/FineFT${PYTHONPATH:+:${PYTHONPATH}}"
 DATASET_NAME=${DATASET_NAME:-fu}
 BASE_PATH=${BASE_PATH:-dataset/10min}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-10min_parallel}
+# Keep the runtime input defaults aligned with vae_optuna_fu_10.sh.  The
+# frozen configuration remains authoritative for execution/risk parameters.
+EXPERIMENT_MANIFEST=${EXPERIMENT_MANIFEST:-${ROOTPATH}/FineFT/script/test/DiHFT/high_level/experiment_manifest_fu_10.json}
+SELECTION_MANIFEST=${SELECTION_MANIFEST:-analysis_result/DiHFT/low_level/${DATASET_NAME}/${EXPERIMENT_NAME}/two_dimensional_selection/two_dimensional_selection_manifest.json}
 EVAL_STAGE=${1:-${EVAL_STAGE:-valid}}
-FROZEN_CONFIG=${FROZEN_CONFIG:?Set FROZEN_CONFIG to the step-8 published frozen_config.json}
+FROZEN_CONFIG=${FROZEN_CONFIG:-analysis_result/DiHFT/high_level_heurstic/${DATASET_NAME}/${EXPERIMENT_NAME}/selected_trial_publication/frozen_config.json}
 STEP8_PUBLICATION_DIR=${STEP8_PUBLICATION_DIR:-$(dirname "$FROZEN_CONFIG")}
 
 if [[ ! -f "$FROZEN_CONFIG" ]]; then
@@ -36,12 +40,22 @@ if [[ ! -f "$STEP8_RECEIPT" ]]; then
     echo "Step-8 publication receipt does not exist: $STEP8_RECEIPT" >&2
     exit 2
 fi
-python - "$FROZEN_CONFIG" "$STEP8_RECEIPT" <<'PY'
+python - "$FROZEN_CONFIG" "$STEP8_RECEIPT" "$BASE_PATH" "$DATASET_NAME" \
+    "$EXPERIMENT_NAME" "$EXPERIMENT_MANIFEST" "$SELECTION_MANIFEST" <<'PY'
 import hashlib
 import json
+from pathlib import Path
 import sys
 
-config_path, receipt_path = sys.argv[1:]
+(
+    config_path,
+    receipt_path,
+    base_path,
+    dataset_name,
+    experiment_name,
+    experiment_manifest,
+    selection_manifest,
+) = sys.argv[1:]
 config = json.load(open(config_path, encoding="utf-8"))
 receipt = json.load(open(receipt_path, encoding="utf-8"))
 identity = config.pop("config_hash", None)
@@ -52,6 +66,18 @@ if receipt.get("config_hash") != identity or receipt.get("experiment_identity") 
     raise SystemExit("Step-8 receipt does not bind this frozen configuration")
 if receipt.get("selected_trial") != config.get("selection"):
     raise SystemExit("Step-8 receipt study/trial identity differs from frozen configuration")
+
+configuration = config.get("configuration", {})
+if (
+    configuration.get("dataset_name") != dataset_name
+    or configuration.get("experiment_name") != experiment_name
+    or Path(configuration.get("base_path", "")).resolve() != Path(base_path).resolve()
+):
+    raise SystemExit("runtime dataset/base/experiment variables differ from frozen configuration")
+if Path(config.get("experiment_manifest", "")).resolve() != Path(experiment_manifest).resolve():
+    raise SystemExit("EXPERIMENT_MANIFEST differs from frozen configuration")
+if Path(configuration.get("selection_manifest", "")).resolve() != Path(selection_manifest).resolve():
+    raise SystemExit("SELECTION_MANIFEST differs from frozen configuration")
 PY
 
 CONFIG_HASH=$(python -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["config_hash"])' "$FROZEN_CONFIG")

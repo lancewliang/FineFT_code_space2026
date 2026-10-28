@@ -190,10 +190,12 @@ def _merged_output_path(output_root, symbol, set_name):
 
 def _date_expr(df):
     if "trading_day" in df.columns:
-        return (
-            pl.col("trading_day")
-            .cast(pl.Utf8)
-            .str.strptime(pl.Date, "%Y-%m-%d", strict=False)
+        trading_day = pl.col("trading_day").cast(pl.Utf8)
+        return pl.coalesce(
+            [
+                trading_day.str.strptime(pl.Date, "%Y-%m-%d", strict=False),
+                trading_day.str.strptime(pl.Date, "%Y%m%d", strict=False),
+            ]
         )
     if "TradingDay" in df.columns:
         return (

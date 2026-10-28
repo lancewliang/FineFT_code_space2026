@@ -10,7 +10,11 @@ import optuna
 import pandas as pd
 import pytest
 
-from analysis.pick_agent.expert_hysteresis_publication import _identity, main
+from analysis.pick_agent.expert_hysteresis_publication import (
+    _contract_payload,
+    _identity,
+    main,
+)
 from common import AuditArtifactNames, HistoryArtifactNames
 from common.routing_audit import ROUTING_AUDIT_SCHEMA_VERSION
 from RL.DiHFT.high_level.frozen_experiment import (
@@ -222,6 +226,24 @@ def test_public_entry_publishes_selected_complete_trial_without_reselection(tmp_
     assert summary["contracts"][0]["tr"] == pytest.approx(0.005)
     assert summary["selection"]["objective_value"] == 1.23
     assert (output / "CU_routing_and_returns.png").is_file()
+
+
+def test_contract_payload_accepts_equivalent_naive_and_utc_event_times(
+    tmp_path: Path,
+) -> None:
+    _, _, market = _fixture(tmp_path)
+    replay = tmp_path / "best_replay" / "contracts" / "CU"
+    routing_path = replay / AuditArtifactNames.AUDIT_ROUTING_JSON
+    routing = json.loads(routing_path.read_text())
+    for record in routing:
+        record["event_time"] = record["event_time"].removesuffix("+00:00")
+    routing_path.write_text(json.dumps(routing))
+
+    market_frame = pd.read_csv(market / "CU.csv")
+    metrics, timeline = _contract_payload("CU", replay, market_frame)
+
+    assert metrics["steps"] == 2
+    assert len(timeline) == 3
 
 
 @pytest.mark.parametrize(

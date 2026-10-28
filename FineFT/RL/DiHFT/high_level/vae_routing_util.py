@@ -1976,7 +1976,7 @@ class vae_risk_aware_routing:
         if (
             self.enable_non_main_contract_defense
             and self.role_tier_index is not None
-            and float(s[self.role_tier_index]) < 0.5
+            and float(s[self.role_tier_index]) < 1
         ):
             mode = self.non_main_defense_mode
             if mode == "strict_instant_close" or current_pos_float == 0.0:
@@ -2043,19 +2043,24 @@ class vae_risk_aware_routing:
         self.macro_action_history.append(slot_id)
 
         # 4. Candidate Action Query
-        if expert_hysteresis:
-            candidate_action = self.agent_act(s, info)
-            self.gating_strategy.record_inference(candidate_action)
-            candidate_reason = ActionDecisionReasons.POLICY_INFERENCE
-        elif self.remaining_persist > 0 and not bool(
+        # Expert hysteresis owns routing decisions, but it still uses the same
+        # low-level action persistence contract as the other routing modes.
+        # Defensive branches above may clear the persistence buffer first.
+        if self.remaining_persist > 0 and not bool(
             info["avaliable_action"][self.current_action]
         ):
             self.remaining_persist = 0
             candidate_action = self.agent_act(s, info)
             candidate_reason = ActionDecisionReasons.ACTION_UNAVAILABLE_BREAK
+            if expert_hysteresis:
+                self.gating_strategy.record_inference(candidate_action)
         elif self.remaining_persist > 0:
             candidate_action = self.current_action
             candidate_reason = ActionDecisionReasons.ACTION_PERSISTENCE
+        elif expert_hysteresis:
+            candidate_action = self.agent_act(s, info)
+            self.gating_strategy.record_inference(candidate_action)
+            candidate_reason = ActionDecisionReasons.POLICY_INFERENCE
         else:
             candidate_action = self.agent_act(s, info)
             candidate_reason = ActionDecisionReasons.POLICY_INFERENCE
@@ -2825,13 +2830,10 @@ class vae_risk_aware_routing:
             logger.info("[Artifacts] Saved contract results summary to %s", csv_path)
 
         total_reward_sum = float(result_df[MetricColumns.REWARD_SUM].sum())
-        # A frozen experiment defines one account balance for the whole replay.
-        # Legacy results keep their historical per-contract-wallet denominator.
-        portfolio_capital = float(
-            self.initial_wallet_balance
-            if getattr(self, "frozen_experiment_identity", None)
-            else self.initial_wallet_balance * 2.0
-        )
+        # This strategy has one active position slot: only the current main
+        # contract may open a position.  Use that slot's fixed capital as the
+        # denominator, regardless of how many contract files are replayed.
+        portfolio_capital = float(self.initial_wallet_balance)
         portfolio_return_rate = float(total_reward_sum / (portfolio_capital + 1e-12))
         win_rate = float((result_df[MetricColumns.RETURN_RATE] > 0).mean())
         base_objective = portfolio_return_rate
@@ -2858,11 +2860,7 @@ class vae_risk_aware_routing:
                 concat_pnls = np.concatenate(timeline_pnls)
                 timeline_df = pd.DataFrame({"ts": concat_ts, "pnl": concat_pnls})
                 step_pnls = timeline_df.groupby("ts")["pnl"].sum().sort_index().to_numpy()
-                portfolio_capital = (
-                    self.initial_wallet_balance
-                    if getattr(self, "frozen_experiment_identity", None)
-                    else self.initial_wallet_balance * 2.0
-                )
+                portfolio_capital = float(self.initial_wallet_balance)
                 equities = portfolio_capital + np.cumsum(step_pnls)
                 peaks = np.maximum.accumulate(equities)
                 portfolio_mdd = float(np.max((peaks - equities) / (peaks + 1e-12)))

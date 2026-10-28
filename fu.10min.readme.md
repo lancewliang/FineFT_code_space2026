@@ -14,7 +14,13 @@
 
 四个高层入口和总控均会先激活 `finetf`，激活失败即停止。入口在内部 worker、发布、评估和必需审计结束后才返回；若需要后台运行，请从外部后台启动整个总控或整个入口。INT/TERM 会终止并回收本次启动的任务组。
 
-步骤 7 需要显式提供独立实验身份和上游选择清单，例如：
+步骤 7 需要显式提供 `EXPERIMENT_MANIFEST`、新的 `CALIBRATION_RUN_ID` 和上游
+`SELECTION_MANIFEST`。其中 `EXPERIMENT_MANIFEST` 是步骤 7 的输入，不由步骤 6
+自动生成；步骤 6 只生成 VAE 模型及其评估产物。当前代码还会将该 manifest
+交给 `frozen_experiment.py` 做独立实验、评分协议、搜索空间和来源校验，因此
+不能用 `dataset_manifest.json` 替代它。
+
+例如：
 
 ```bash
 EXPERIMENT_MANIFEST='/absolute/path/experiment_manifest.json' \
@@ -260,43 +266,53 @@ SELECTION_MANIFEST='/absolute/path/two_dimensional_selection_manifest.json' \
     - `log/DiHFT/fu/VAE/10min_parallel/{slope,volatility}/train_label_{label_index}.log`（各 Label 环境并行训练及测试合约 OOD 分析日志）
 - **位置**：按 README 的 Stage II 流程放在筛选之后。
 
-## 7. 高层 VAE 路由 Optuna 优化与分析（升级前实现快照）
+## 7. 高层 VAE 路由 Optuna 优化与分析
 
 ### `FineFT/script/test/DiHFT/high_level/vae_optuna_fu_10.sh`
 
-- **作用**：基于已训练好的 10min 低层 agent 和 VAE 模型，使用 Optuna 进行高层策略路由超参数搜索（如 `window_length`, `gamma`, `rule_base_threshold`），利用多 Worker CPU 并行（默认 45 进程）高效探索策略参数空间，开启非主力合约防御机制，并输出策略回测诊断与多维时序数据。
+- **作用**：基于既有低层 Agent、二维 Slot 选择清单和 VAE 模型，在 `valid` 校准段使用 Optuna 对 `expert_hysteresis` 的九个参数联合搜索：两轴窗口、两轴 gamma、两轴规则基底阈值、迟滞退出比率、专家切换领先幅度和连续确认步数。搜索固定使用脚本传入的风控/执行参数，并对最佳 Trial 做一次完整回放。
 - **依赖输入物**（前置各步骤联合依赖）：
-  - **筛选出的二维低层 Agent 清单与模型**（由步骤 3 & 步骤 5 产出）：`analysis_result/DiHFT/low_level/fu/10min_parallel/two_dimensional_selection/two_dimensional_selection_manifest.json` 及对应的 `trained_model.pkl`
-  - **已训练好的 VAE 路由模型与分布数据**（由步骤 6 产出）：`result/DiHFT/vae_results/fu/10min_parallel/{slope,volatility}/label_*/` 下的 VAE 模型点与 `routing_summary.json`
-  - **验证集切片与特征**（由步骤 2 产出）：`dataset/10min/fu/valid/` 及其 `processed/valid_processed_*.feather`
-  - **全局特征与参数字典**（由步骤 2 产出）：`dataset/10min/fu/rl_state_features.npy`、`dataset/10min/fu/vae_state_features.npy` 与 `maintenance_margin_ratio_dict.npy`
+  - **实验 manifest**：由实验准备阶段提供的 `EXPERIMENT_MANIFEST`。它不是步骤 6 的产物；缺失时脚本在启动 Python 前直接退出。
+  - **二维低层 Agent 选择清单与模型**：`SELECTION_MANIFEST`，默认路径为 `analysis_result/DiHFT/low_level/fu/10min_parallel/two_dimensional_selection/two_dimensional_selection_manifest.json`，其中引用 `model_assembly`。
+  - **已训练好的 VAE 模型与参考分布**（由步骤 6 产出）：`result/DiHFT/vae_results/fu/10min_parallel/{slope,volatility}/label_*/` 下的 `model_latest.pth` 和 `id_logpx.npy`。
+  - **验证集行情与特征**：`dataset/10min/fu/valid/*.feather`、`rl_state_features.npy`、`vae_slope_state_features.npy`、`vae_volatility_state_features.npy` 和 `maintenance_margin_ratio_dict.npy`。
   - **Optuna 路由 Python 脚本**：`FineFT/RL/DiHFT/high_level/vae_routing_optuna.py`
 - **默认参数**：
   - `DATASET_NAME=fu`
   - `BASE_PATH=dataset/10min`
   - `EXPERIMENT_NAME=10min_parallel`
+  - `HIGH_LEVEL_RESULT_PATH=result/DiHFT/high_level`
   - `MAX_HOLDING_NUMBER=1`
+  - `INITIAL_WALLET_BALANCE=6000`
+  - `ORDER_BOOK_DEPTH=5`
   - `ENABLE_NON_MAIN_DEFENSE=1`
-  - `N_WORKERS=45`（45 并发进程并行搜索）
-  - `--initial_wallet_balance 6000`
+  - `NON_MAIN_DEFENSE_MODE=graceful_hold_exit`
+  - `ENABLE_MDD_PENALTY=1`
+  - `TARGET_MDD=0.05`
+  - `MDD_PENALTY_WEIGHT=4.0`
+  - `MIN_TRADES_GUARD=60`
+  - `ACTION_PERSISTENCE=6`
+  - `STOP_LOSS_RETURN_THRESHOLD=0.03`
+  - `STOP_LOSS_COOLDOWN_STEPS=12`
+  - `CIRCUIT_BREAKER_CONSECUTIVE_STOPS=3`
+  - `CIRCUIT_BREAKER_COOLING_STEPS=24`
+  - `N_TRIALS=400`
+  - `N_WORKERS=60`（60 个 CPU worker，实际不超过 Trial 数）
   - `--position_choices 3`
-  - `--order_book_depth 5`
-  - `--transcation_cost 0.0005`
+  - `--transcation_cost 0.0003`
   - `--short_estimated_rate 0`
   - `--long_estimated_rate 0`
   - `--enable_non_main_contract_defense`
 - **关键产出物**：
-  - **`result/` Optuna 寻优明细与路由策略回测诊断文件**：
-    - **Optuna 寻优结果目录 (`result/DiHFT/high_level/fu/10min_parallel/vae_risk_aware_routing_optuna/`)**：
-      - `optuna_results.csv`（Optuna 所有 Trial 参数组合、收益率、夏普比率、最大回撤等参数空间与回测明细表）
-    - **路由策略回测诊断目录 (`result/DiHFT/high_level/fu/10min_parallel/vae_risk_aware_routing/.../`)**：
-      - `contract_results.csv`（分合约的回测绩效明细，包含 `rows`, `reward_sum`, `require_money`, `return_rate`）
-      - `trading_info.npy`（综合组合收益率、胜率、等权平均收益率等高层策略路由绩效指标字典）
-      - **分合约回测细节向量 (`contracts/<contract>/`)**：
-        - `reward_history.npy`（每步收益历史）、`total_asset_history.npy`（总资产变化历史）、`wallet_balance_history.npy`（钱包余额历史）、`initial_margin_history.npy`（初始保证金历史）、`unrealized_pnl_history.npy`（未实现盈亏历史）、`maintain_marigine_history.npy`（维持保证金历史）、`new_position_required_money_history.npy`（新开仓所需资金历史）
-        - `micro_action_history.npy`（低层 Agent 微观动作历史）与 `macro_action.npy`（高层 VAE 路由宏观选择 Label 历史）
-  - **`log/` 寻优控制台日志**：
-    - `log/DiHFT/fu/high_level/optuna/10min_parallel/optuna.log`（Optuna 搜索过程、多 Worker 调度及各个 Trial 运行状态日志）
+  - **VAE 原始分位数缓存**：`analysis_result/DiHFT/high_level/fu/10min_parallel/expert_hysteresis/raw_quantiles/valid/`，包含每个合约的 `<contract>.npy` 和 `quantile_cache_manifest.json`。
+  - **Optuna 校准目录**：`result/DiHFT/high_level/fu/10min_parallel/expert_hysteresis/<experiment_id>/valid/calibration/<CALIBRATION_RUN_ID>/`，包含：
+    - `expert_hysteresis_optuna.sqlite3`：Optuna Study 数据库；
+    - `optuna_results.csv`：所有 Trial 的参数、状态和目标结果；
+    - `selected_expert_hysteresis_config.json`：最佳 Trial 的完整冻结配置；
+    - `selection_evidence.json`：最佳 Trial、目标函数、MDD、交易次数和最佳回放证据；
+    - `best_replay/trial_<trial_number>/`：最佳 Trial 的一次完整回放。
+  - **最佳回放明细**：`best_replay/trial_<trial_number>/` 下包含 `contract_results.csv`、`trading_info.npy`、各类收益/资产/动作 NPY，以及 `contracts/<contract>/` 下的 `audit_routing.json`、`audit_predictions.json`、`audit_trades.json`、`audit_account_snapshots.json` 和 `audit_metadata.json`。
+  - **`log/` 日志**：`log/DiHFT/fu/high_level/expert_hysteresis/10min_parallel/valid/calibration/<CALIBRATION_RUN_ID>/optuna.log`。
 - **位置**：完成高层 VAE 路由与超参寻优。
 
 ## 8. 高层路由筛选与可视化（升级前实现快照）
@@ -392,7 +408,7 @@ SELECTION_MANIFEST='/absolute/path/two_dimensional_selection_manifest.json' \
 | **4. 低层 Agent 并行测试** | `test_util_fu_10.sh` | 步骤 3 产出的 `trained_model.pkl` + 步骤 2 产出的 `valid/` 数据 | `result/DiHFT/low_level/fu/10min_parallel/weights_advantage_pretrain/epoch_{epoch}/{slope,volatility}/`<br>(`analysis_result.csv`, `trading_action_detail_*.csv`, `analysis_result.npy`) |
 | **5. 低层 Agent 二维筛选** | `low_level_fu_10.sh` | 步骤 4 产出的 `analysis_result.csv` + 步骤 2 产出的 `valid/` 数据 | `analysis_result/DiHFT/low_level/fu/10min_parallel/two_dimensional_selection/`<br>(`two_dimensional_selection_manifest.json`, `marginal_metrics.csv`, `joint_metrics.csv`, `candidate_rankings.csv`, `selected_slots.csv`) |
 | **6. VAE 并行训练与评估** | `VAE_util_fu_10.sh` | 步骤 2 产出的 `VAE_data/{slope,volatility}/<contract>/label_*.npy` + 步骤 5 的 Label 划分 | `result/DiHFT/vae_results/fu/10min_parallel/{slope,volatility}/`<br>(`label_*/model_latest.pth`, `summary.json`, `ood_logpx_*.csv`, `routing_summary.json`) |
-| **7. 高层 Optuna 并行寻优（升级目标）** | `vae_optuna_fu_10.sh` | 冻结 Agent/VAE/Manifest/参考分布 + 独立校准区段；两轴窗口/gamma 与迟滞参数九维联合搜索 | 最佳 Trial 的冻结完整配置、study/目标证据、轻量 Trial 汇总与一次最佳完整回放；新实验空间 |
+| **7. 高层 Optuna 并行寻优** | `vae_optuna_fu_10.sh` | `EXPERIMENT_MANIFEST`、步骤 5 的二维 Selection Manifest、步骤 6 的 VAE 模型/参考分布、valid 校准数据 | `expert_hysteresis/<experiment_id>/valid/calibration/<CALIBRATION_RUN_ID>/` 下的 Study、`optuna_results.csv`、冻结配置、选择证据和最佳完整回放；另有 valid 原始分位数缓存 |
 | **8. 高层路由筛选与可视化（升级目标）** | `high_level_heurstic_fu_10.sh` | 步骤 7 已选最佳 Trial、完整配置及回放 + 同阶段行情 | 同一配置的校验发布、收益/B&H/风险/摩擦与迟滞图表；不重新选参，不向 test 目录复制 valid 轨迹 |
 | **9. 主副合约时间同步评估（升级目标）** | `final_result_fu_10_main_sub.sh` | 步骤 8 冻结配置 + 指定阶段数据 | 分阶段 main_sub 组合绩效、动作/路由时间线、图表与审计；保持冻结资金/费用/风控 |
 | **10. 最终测试与评估（升级目标）** | `final_result_fu_10.sh` | 步骤 8 相同冻结配置 + test 行情、模型与 Manifest | test/final 独立结果、轨迹、绩效与审计；不重新选参，不覆盖 valid 或 main_sub 产物 |

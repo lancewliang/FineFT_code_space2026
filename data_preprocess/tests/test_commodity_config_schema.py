@@ -121,6 +121,7 @@ def test_reward_execution_manifest_for_depth_five():
     assert columns.index("UpperLimitPrice") > columns.index("bid5_size")
     assert columns == [
         "timestamp",
+        "trading_day",
         "contract",
         "close",
         "volume",
@@ -136,7 +137,7 @@ def test_reward_execution_manifest_for_depth_five():
         "index_price",
         "mark_price",
     ]
-    assert len(columns) == 1 + 1 + 1 + 2 + 20 + 2 + len(PRICE_LIMIT_RATIO_FEATURE_COLUMNS) + len(LIFECYCLE_EXECUTION_COLUMNS) + 5
+    assert len(columns) == 1 + 1 + 1 + 1 + 2 + 20 + 2 + len(PRICE_LIMIT_RATIO_FEATURE_COLUMNS) + len(LIFECYCLE_EXECUTION_COLUMNS) + 5
 
 
 def test_resample_kwargs_are_right_closed_and_right_labeled():

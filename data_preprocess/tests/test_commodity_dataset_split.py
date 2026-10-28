@@ -67,7 +67,9 @@ def _write_scale_file(root: Path, contract: str, dates):
     return output
 
 
-def _write_all_feature_file(root: Path, contract: str, dates):
+def _write_all_feature_file(
+    root: Path, contract: str, dates, *, compact_trading_day=False
+):
     output = (
         root
         / "PREPROCESS_DATASET"
@@ -84,7 +86,10 @@ def _write_all_feature_file(root: Path, contract: str, dates):
             "timestamp": [
                 f"{date} 09:{index:02d}:00" for index, date in enumerate(dates)
             ],
-            "trading_day": dates,
+            "trading_day": [
+                date.replace("-", "") if compact_trading_day else date
+                for date in dates
+            ],
             "symbol": [contract] * len(dates),
             "feature_a": list(range(len(dates))),
         }
@@ -262,6 +267,40 @@ def test_run_dataset_split_reads_all_feature_date_range_file(tmp_path):
 
     assert manifest["sets"]["train"]["contracts"][0]["input_path"] == str(input_file)
     assert (tmp_path / "dataset/10min/fu/train/fu2305.feather").exists()
+
+
+def test_run_dataset_split_reads_compact_trading_day_values(tmp_path):
+    summary_path = tmp_path / "summary.json"
+    dates = [f"2023-01-{day:02d}" for day in range(1, 11)]
+    _write_summary(summary_path, [_contract("fu2305", dates)])
+    input_file = _write_all_feature_file(
+        tmp_path, "fu2305", dates, compact_trading_day=True
+    )
+
+    manifest = run_dataset_split(
+        summary_path=summary_path,
+        input_root=tmp_path / "PREPROCESS_DATASET/commodity-futures/ALL_FEATURE",
+        output_root=tmp_path / "dataset/10min",
+        symbol="fu",
+        target_freq="10min",
+        start_date="2023-01-01",
+        end_date="2026-03-01",
+    )
+
+    assert manifest["sets"]["train"]["contracts"][0]["input_path"] == str(
+        input_file
+    )
+    output_path = tmp_path / "dataset/10min/fu/train/fu2305.feather"
+    assert output_path.exists()
+    output = pl.read_ipc(output_path)
+    assert output.height == 5
+    assert output["trading_day"].to_list() == [
+        "20230101",
+        "20230102",
+        "20230103",
+        "20230104",
+        "20230105",
+    ]
 
 
 def test_run_dataset_split_fails_when_planned_input_file_is_missing(tmp_path):

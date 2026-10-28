@@ -22,7 +22,7 @@ SAVE_PATH=${SAVE_PATH:-analysis_result/DiHFT/high_level_heurstic}
 MARKET_DATA_DIR=${MARKET_DATA_DIR:-"${BASE_PATH}/${DATASET_NAME}/valid"}
 PUBLICATION_DIR=${PUBLICATION_DIR:-"${SAVE_PATH}/${DATASET_NAME}/${EXPERIMENT_NAME}/selected_trial_publication"}
 
-: "${SELECTION_EVIDENCE:?SELECTION_EVIDENCE must name step-7 selection_evidence.json}"
+SELECTION_EVIDENCE=${SELECTION_EVIDENCE:-"result/DiHFT/high_level/fu/10min_parallel/expert_hysteresis/fu-10min-expert-hysteresis-v1/valid/calibration/20261026/selection_evidence.json"}
 if [[ ! -f "${SELECTION_EVIDENCE}" ]]; then
     echo "SELECTION_EVIDENCE does not exist: ${SELECTION_EVIDENCE}" >&2
     exit 2

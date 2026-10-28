@@ -108,6 +108,9 @@ def test_post_inference_block_rolls_back_kth_admission(interruption):
     router, _ = prepared()
     assert invoke(router, NEW_VOL, NEW_SLOPE) == 2
     assert invoke(router, NEW_VOL, NEW_SLOPE) == 2
+    # Exercise the post-inference risk gate itself; the expert persistence
+    # contract is covered separately and must not hide the candidate query.
+    router.remaining_persist = 0
     kwargs = {}
     expected = 1
 
@@ -188,6 +191,7 @@ def test_cooldown_allows_opposite_direction_and_non_main_allows_hold_or_reductio
     allowed_action,
 ):
     router, _ = prepared(confirm_steps=2)
+    router.remaining_persist = 0
     router.cooldown_remaining_steps = 1
     router.last_stopped_position = 1.0
     router.agent_act = lambda state, info: 0
@@ -199,6 +203,7 @@ def test_cooldown_allows_opposite_direction_and_non_main_allows_hold_or_reductio
     router.position_list = [-1.0, -0.5, 0.0, 0.5, 1.0]
     router.zero_position_action = router.flat_action = 2
     router.agent_act = lambda state, info: allowed_action
+    router.remaining_persist = 0
     assert invoke(router, position=1.0, tier=0.0, mask=[1] * 5) == allowed_action
     assert router.gating_strategy.last_decision.active_slot == (1, 2)
 

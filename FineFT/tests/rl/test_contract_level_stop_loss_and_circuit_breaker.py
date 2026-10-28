@@ -72,6 +72,8 @@ def _create_test_router(
     routing = vru.vae_risk_aware_routing.__new__(vru.vae_risk_aware_routing)
     routing.num_labels = 3
     routing.slot_count = 9
+    routing.device = "cpu"
+    routing.agent_act = lambda state, info: 2
     routing.rule_base_threshold = 0.2
     routing.axis_window_lengths = {"volatility": 64, "slope": 64}
     routing.axis_thresholds = {"volatility": 0.2, "slope": 0.2}
@@ -95,7 +97,7 @@ def _create_test_router(
         "slope": [0.1, 0.2, 0.9],
     }[axis]
     routing.gating_strategy = vru.create_gating_strategy(
-        "absolute", slope_threshold=0.2, volatility_threshold=0.2
+        "expert_hysteresis", slope_threshold=0.2, volatility_threshold=0.2
     )
     routing._defensive_action = lambda info, pos, lev: 1
 
@@ -157,12 +159,6 @@ def test_risk_controls_cli_arguments_and_validation(monkeypatch):
     assert args_optuna_default.circuit_breaker_consecutive_stops == 2
     assert args_optuna_default.circuit_breaker_cooling_steps == 72
 
-    base_args = vro.prepare_base_args(args_default, args_custom)
-    assert base_args.stop_loss_return_threshold == 0.02
-    assert base_args.stop_loss_cooldown_steps == 6
-    assert base_args.circuit_breaker_consecutive_stops == 3
-    assert base_args.circuit_breaker_cooling_steps == 144
-
     # 4. Validation raises ValueError on negative thresholds/steps
     def _create_valid_args(**overrides):
         d = {
@@ -182,7 +178,7 @@ def test_risk_controls_cli_arguments_and_validation(monkeypatch):
             "volatility_gamma": 0.9,
             "slope_rule_base_threshold": 0.2,
             "volatility_rule_base_threshold": 0.2,
-            "gating_strategy": "absolute",
+            "gating_strategy": "expert_hysteresis",
             "ood_threshold": 0.005,
             "slope_margin_threshold": 0.12,
             "volatility_margin_threshold": 0.12,
@@ -195,12 +191,16 @@ def test_risk_controls_cli_arguments_and_validation(monkeypatch):
             "circuit_breaker_consecutive_stops": 2,
             "circuit_breaker_cooling_steps": 72,
             "hysteresis_exit_ratio": 0.65,
+            "expert_switch_lead": 0.0,
+            "expert_confirm_steps": 1,
         }
         d.update(overrides)
         return types.SimpleNamespace(**d)
 
     router = vru.vae_risk_aware_routing.__new__(vru.vae_risk_aware_routing)
     router.save_artifacts = False
+    router.agent_act = lambda state, info: 2
+    router.device = "cpu"
 
     with pytest.raises(ValueError, match="stop_loss_return_threshold must be non-negative"):
         router.reconfigure_routing(_create_valid_args(stop_loss_return_threshold=-0.01))
@@ -270,8 +270,8 @@ def test_hard_stop_loss_does_not_trigger_when_within_tolerance_or_disabled():
         current_markprice=3000.0,
     )
     assert action == 2
-    assert router.remaining_persist == 1
-    assert router.action_decision_reason_history[-1] == ActionDecisionReasons.ACTION_PERSISTENCE
+    assert router.remaining_persist == 2
+    assert router.action_decision_reason_history[-1] == ActionDecisionReasons.POLICY_INFERENCE
     assert router.hard_stop_loss_count == 0
 
     # 2. Disabled when threshold == 0.0
@@ -286,6 +286,7 @@ def test_hard_stop_loss_does_not_trigger_when_within_tolerance_or_disabled():
         current_markprice=3000.0,
     )
     assert action == 2
+    assert router.remaining_persist == 2
     assert router.hard_stop_loss_count == 0
 
     # 3. Flat position (position == 0) ignores unrealized pnl

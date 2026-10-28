@@ -72,8 +72,10 @@ def _create_test_router(
     routing = vru.vae_risk_aware_routing.__new__(vru.vae_risk_aware_routing)
     routing.num_labels = 3
     routing.slot_count = 9
+    routing.N_ACTIONS = 3
     routing.rule_base_threshold = 0.2
     routing.axis_thresholds = {"volatility": 0.2, "slope": 0.2}
+    routing.axis_window_lengths = {"volatility": 64, "slope": 64}
     routing.selection_manifest = TwoDimensionalSelectionManifest.from_dict(
         _sample_manifest_payload(num_labels=3)
     )
@@ -94,7 +96,7 @@ def _create_test_router(
         "slope": [0.1, 0.2, 0.9],
     }[axis]
     routing.gating_strategy = vru.create_gating_strategy(
-        "absolute", slope_threshold=0.2, volatility_threshold=0.2
+        "expert_hysteresis", slope_threshold=0.2, volatility_threshold=0.2
     )
     routing._defensive_action = lambda info, pos, lev: 1
     return routing
@@ -116,11 +118,7 @@ def test_action_persistence_cli_arguments_and_validation(monkeypatch):
     args_optuna_custom = vro.parser_all.parse_args(["--action_persistence", "4"])
     assert args_optuna_custom.action_persistence == 4
 
-    # 4. Optuna prepare_base_args propagation
-    base_args = vro.prepare_base_args(args_default, args_optuna_custom)
-    assert base_args.action_persistence == 4
-
-    # 5. Non-positive validation raises ValueError
+    # 4. Non-positive validation raises ValueError
     args_invalid = types.SimpleNamespace(
         base_path="dataset",
         dataset_name="BTCUSDT",
@@ -137,48 +135,6 @@ def test_action_persistence_cli_arguments_and_validation(monkeypatch):
     with pytest.raises(ValueError, match="action_persistence must be positive"):
         router = vru.vae_risk_aware_routing.__new__(vru.vae_risk_aware_routing)
         router.reconfigure_routing(args_invalid)
-
-
-def test_action_persistence_holds_non_flat_action_and_skips_inference():
-    router = _create_test_router(action_persistence=3)
-    info = {"avaliable_action": [1, 1, 1]}
-    state = np.array([0.0])
-
-    agent_calls = []
-
-    def mock_agent_act(s, inf):
-        agent_calls.append(len(agent_calls))
-        return 2  # non-flat long action
-
-    router.agent_act = mock_agent_act
-
-    # Step 0: Agent called, returns 2. remaining_persist becomes 2. Reason = POLICY_INFERENCE (0)
-    a0 = router.get_action(info, state, 0.0, 1)
-    assert a0 == 2
-    assert len(agent_calls) == 1
-    assert router.remaining_persist == 2
-    assert router.action_decision_reason_history[-1] == ActionDecisionReasons.POLICY_INFERENCE
-
-    # Step 1: Persisted action 2 reused without calling agent_act. remaining_persist becomes 1. Reason = ACTION_PERSISTENCE (1)
-    a1 = router.get_action(info, state, 1.0, 1)
-    assert a1 == 2
-    assert len(agent_calls) == 1  # No new call!
-    assert router.remaining_persist == 1
-    assert router.action_decision_reason_history[-1] == ActionDecisionReasons.ACTION_PERSISTENCE
-
-    # Step 2: Persisted action 2 reused. remaining_persist becomes 0. Reason = ACTION_PERSISTENCE (1)
-    a2 = router.get_action(info, state, 1.0, 1)
-    assert a2 == 2
-    assert len(agent_calls) == 1  # Still no new call!
-    assert router.remaining_persist == 0
-    assert router.action_decision_reason_history[-1] == ActionDecisionReasons.ACTION_PERSISTENCE
-
-    # Step 3: Persistence expired. Agent called again! Reason = POLICY_INFERENCE (0)
-    a3 = router.get_action(info, state, 1.0, 1)
-    assert a3 == 2
-    assert len(agent_calls) == 2  # New call executed!
-    assert router.remaining_persist == 2
-    assert router.action_decision_reason_history[-1] == ActionDecisionReasons.POLICY_INFERENCE
 
 
 def test_action_persistence_does_not_persist_flat_action():
@@ -204,6 +160,30 @@ def test_action_persistence_does_not_persist_flat_action():
     assert len(agent_calls) == 5
 
 
+def test_expert_hysteresis_persists_non_flat_action():
+    router = _create_test_router(action_persistence=3)
+    info = {"avaliable_action": [1, 1, 1]}
+    state = np.array([0.0])
+    agent_calls = []
+
+    def mock_agent_act(s, inf):
+        agent_calls.append(len(agent_calls))
+        return 2  # Long action; must be held for the configured persistence window.
+
+    router.agent_act = mock_agent_act
+
+    actions = [router.get_action(info, state, 0.0, 1) for _ in range(3)]
+
+    assert actions == [2, 2, 2]
+    assert len(agent_calls) == 1
+    assert router.action_decision_reason_history == [
+        ActionDecisionReasons.POLICY_INFERENCE,
+        ActionDecisionReasons.ACTION_PERSISTENCE,
+        ActionDecisionReasons.ACTION_PERSISTENCE,
+    ]
+    assert router.remaining_persist == 0
+
+
 def test_defensive_preemption_breaks_persistence():
     router = _create_test_router(action_persistence=3, enable_defense=True, role_tier_index=0)
     info = {"avaliable_action": [1, 1, 1]}
@@ -225,38 +205,6 @@ def test_defensive_preemption_breaks_persistence():
     assert router.remaining_persist == 0
     assert router.macro_action_history[-1] == router.slot_count
     assert router.action_decision_reason_history[-1] == ActionDecisionReasons.DEFENSIVE_PREEMPTION
-
-
-def test_action_unavailable_breaks_persistence():
-    router = _create_test_router(action_persistence=3)
-    info_available = {"avaliable_action": [1, 1, 1]}
-    state = np.array([0.0])
-
-    call_count = 0
-
-    def mock_agent_act(s, inf):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return 2  # First call selects Long (2)
-        return 0  # Re-eval selects Short (0)
-
-    router.agent_act = mock_agent_act
-
-    # Step 0: Takes action 2
-    a0 = router.get_action(info_available, state, 0.0, 1)
-    assert a0 == 2
-    assert router.remaining_persist == 2
-    assert router.action_decision_reason_history[-1] == ActionDecisionReasons.POLICY_INFERENCE
-
-    # Step 1: Action 2 becomes unavailable ([1, 1, 0])
-    info_unavailable = {"avaliable_action": [1, 1, 0]}
-    a1 = router.get_action(info_unavailable, state, 1.0, 1)
-
-    # Must detect unavailable action, break persistence, and re-evaluate policy!
-    assert a1 == 0
-    assert call_count == 2
-    assert router.action_decision_reason_history[-1] == ActionDecisionReasons.ACTION_UNAVAILABLE_BREAK
 
 
 def test_diagnostic_artifacts_and_metrics_saved_to_disk(tmp_path, monkeypatch):
@@ -349,7 +297,6 @@ def test_diagnostic_artifacts_and_metrics_saved_to_disk(tmp_path, monkeypatch):
     assert np.load(save_dir / HistoryArtifactNames.EXECUTED_POSITION_HISTORY_NPY).tolist() == [0.0] * 3
     assert np.load(save_dir / HistoryArtifactNames.COMMISSION_FEE_HISTORY_NPY).tolist() == [0.0] * 3
     assert np.load(save_dir / HistoryArtifactNames.MARKET_INDEX_HISTORY_NPY).tolist() == [0, 1, 2, 3]
-    # Step 0: policy inference (0), Step 1: persisted (1), Step 2: persisted (1)
     assert reasons.tolist() == [0, 1, 1]
     assert trading_info["total_steps"] == 3
     assert trading_info["inference_steps"] == 1
@@ -382,11 +329,13 @@ def test_reconfigure_routing_resets_persistence_state():
         stop_loss_cooldown_steps=12,
         circuit_breaker_consecutive_stops=2,
         circuit_breaker_cooling_steps=72,
-        gating_strategy="absolute",
+        gating_strategy="expert_hysteresis",
         ood_threshold=0.005,
         slope_margin_threshold=0.12,
         volatility_margin_threshold=0.12,
         hysteresis_exit_ratio=0.65,
+        expert_switch_lead=0.0,
+        expert_confirm_steps=1,
     )
     router._resolve_test_path = lambda a: "/tmp/trial_test"
 

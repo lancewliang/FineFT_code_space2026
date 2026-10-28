@@ -1,8 +1,8 @@
-"""Versioned, fail-closed preparation of independent expert-routing experiments.
+"""Versioned preparation of expert-routing calibration and frozen replay.
 
-The input manifest is evidence supplied by the experiment owner, not a claim that
-legacy data became independent. File hashes and observed time/TradingDay ranges
-are checked before calibration or final evaluation can use that evidence.
+The routing manifest declares the Optuna search space. Runtime arguments discover
+the existing train/valid/test inputs and model artifacts; their identities are
+computed internally for cache and frozen-replay consistency.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ import math
 import sys
 from argparse import ArgumentParser, Namespace
 from collections.abc import Iterable
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypeVar, overload
 
@@ -22,8 +21,11 @@ import pandas as pd
 from RL.DiHFT.high_level.gating.expert_hysteresis import ExpertHysteresisGating
 
 SCHEMA_VERSION = 2
+EXPERIMENT_MANIFEST_SCHEMA_VERSION = 3
 STRATEGY_VERSION = "expert_hysteresis.v1"
 RAW_SCORING_PROTOCOL_VERSION = "raw_vae_quantiles.v2"
+RAW_SCORING_SEED = 12345
+RAW_SCORING_BATCH_SIZE = 512
 SCORING_FIELDS = (
     "slope_window_length",
     "volatility_window_length",
@@ -167,27 +169,31 @@ def _identity(value: object) -> str:
     ).hexdigest()
 
 
-def _raw_score_source_identity(manifest: dict[str, Any]) -> str:
-    """Hash only immutable inputs that can change raw VAE quantiles."""
+def _raw_score_source_identity(
+    *,
+    artifacts: dict[str, Any],
+    scoring_protocol: dict[str, Any],
+) -> str:
+    """Hash runtime inputs that can change raw VAE quantiles.
+
+    The identity is computed from the files and runtime architecture; callers do
+    not need to enumerate those inputs in the routing search-space manifest.
+    """
     return _identity(
         {
-            "strategy_version": manifest.get("strategy_version"),
-            "split_version": manifest.get("split_version"),
-            "trading_day_atomic": manifest.get("trading_day_atomic"),
-            "models_retrained_for_split": manifest.get("models_retrained_for_split"),
-            "periods": manifest.get("periods"),
-            "scoring_protocol": manifest.get("scoring_protocol"),
-            "artifacts": manifest.get("artifacts"),
+            "strategy_version": STRATEGY_VERSION,
+            "scoring_protocol": scoring_protocol,
+            "artifacts": artifacts,
         }
     )
 
 
-def _read(path: str | Path) -> dict[str, Any]:
+def _read(path: str | Path, *, schema_version: int = SCHEMA_VERSION) -> dict[str, Any]:
     # Any is confined to the external JSON boundary, whose fields are validated below.
     with Path(path).open(encoding="utf-8") as source:
         value = json.load(source)
-    if not isinstance(value, dict) or value.get("schema_version") != SCHEMA_VERSION:
-        raise ValueError(f"experiment document requires schema_version={SCHEMA_VERSION}")
+    if not isinstance(value, dict) or value.get("schema_version") != schema_version:
+        raise ValueError(f"document requires schema_version={schema_version}")
     return value
 
 
@@ -200,14 +206,6 @@ def _checked_file(descriptor: dict[str, Any], expected_path: Path | None = None)
     if not path.is_file() or file_sha256(path) != descriptor["sha256"]:
         raise ValueError(f"artifact hash mismatch or missing file: {path}")
     return path
-
-
-def _instant(value: str) -> datetime:
-    # Python 3.10's ISO parser does not accept the UTC Z suffix.
-    result = datetime.fromisoformat(value.replace("Z", "+00:00"))  # noqa: FURB162
-    if result.tzinfo is None:
-        raise ValueError("experiment boundaries must include a timezone")
-    return result.astimezone(timezone.utc)  # noqa: UP017 -- runtime is Python 3.10
 
 
 def resolve_expert_parameters(args: Namespace, *, require_explicit: bool = True) -> Namespace:
@@ -336,30 +334,6 @@ def validate_trial_configuration(args: Namespace) -> Namespace:
     return args
 
 
-def _periods(manifest: dict[str, Any]) -> dict[str, tuple[datetime, datetime]]:
-    if not manifest.get("split_version"):
-        raise ValueError("experiment requires an explicit split_version")
-    if manifest.get("trading_day_atomic") is not True:
-        raise ValueError("independent experiment requires TradingDay-atomic source evidence")
-    if manifest.get("models_retrained_for_split") is not True:
-        raise ValueError("independent experiment requires models fitted for the declared split")
-    periods = {}
-    for role in ("fit", "selection", "calibration", "final"):
-        evidence = manifest["periods"][role]
-        _checked_file(evidence["source_evidence"])
-        start, end = _instant(evidence["start"]), _instant(evidence["end"])
-        if start >= end:
-            raise ValueError(f"empty or reversed {role} period")
-        periods[role] = (start, end)
-    # Fit and specialist selection may overlap each other. Both must precede
-    # calibration, and calibration must finish before the final holdout starts.
-    if max(periods["fit"][1], periods["selection"][1]) > periods["calibration"][0]:
-        raise ValueError("fitting/selection overlaps independent calibration")
-    if periods["calibration"][1] > periods["final"][0]:
-        raise ValueError("calibration overlaps final evaluation")
-    return periods
-
-
 def _contract_files(directory: Path) -> list[Path]:
     files = sorted(directory.glob("*.feather"))
     if not files:
@@ -405,11 +379,7 @@ def _artifacts(args: Namespace) -> tuple[dict[str, Path], dict[str, list[Path]],
 
 
 def describe_experiment_inputs(args: Namespace) -> dict[str, Any]:
-    """Inventory actual input files; this does not assert independent provenance.
-
-    The experiment owner must separately supply period and rebuilt-split evidence.
-    Returned hashes make writing the manifest mechanical without inventing facts.
-    """
+    """Inventory runtime inputs for internal identity and cache validation."""
     paths, _, columns = _artifacts(args)
     return {
         "artifacts": {
@@ -420,45 +390,17 @@ def describe_experiment_inputs(args: Namespace) -> dict[str, Any]:
     }
 
 
-def _validate_data(
-    data: dict[str, list[Path]],
-    periods: dict[str, tuple[datetime, datetime]],
-) -> None:
-    days: dict[str, set[str]] = {}
-    for role, files in data.items():
-        days[role] = set()
-        for path in files:
-            # Reading only the evidence columns keeps preparation independent of
-            # policy inference and avoids loading large feature matrices.
-            try:
-                frame = pd.read_feather(path, columns=["timestamp", "trading_day"])
-            except (KeyError, ValueError, OSError) as error:
-                raise ValueError(
-                    f"explicit timestamp/trading_day evidence missing: {path}"
-                ) from error
-            times = pd.to_datetime(frame["timestamp"], errors="raise")
-            if times.dt.tz is None:
-                raise ValueError(f"explicit timestamp timezone evidence missing: {path}")
-            times = times.dt.tz_convert("UTC")
-            if len(frame) == 0 or bool(frame[["timestamp", "trading_day"]].isna().to_numpy().any()):
-                raise ValueError(f"missing timestamps or TradingDay values: {path}")
-            start, end = periods[role]
-            if (times < start).any() or (times >= end).any():
-                raise ValueError(f"{role} data lies outside declared period: {path}")
-            compact_days = frame["trading_day"].astype(str).str.replace("-", "", regex=False)
-            if not compact_days.str.fullmatch(r"\d{8}").all():
-                raise ValueError(f"invalid explicit TradingDay values: {path}")
-            normalized_days = pd.to_datetime(compact_days, format="%Y%m%d", errors="raise")
-            days[role].update(normalized_days.dt.strftime("%Y-%m-%d"))
-    for left, right in (
-        ("fit", "calibration"),
-        ("selection", "calibration"),
-        ("fit", "final"),
-        ("selection", "final"),
-        ("calibration", "final"),
-    ):
-        if days[left] & days[right]:
-            raise ValueError(f"TradingDay crosses {left}/{right} boundary")
+def _runtime_scoring_protocol(args: Namespace, columns: list[str]) -> dict[str, Any]:
+    """Return the fixed legacy scoring settings without requiring manifest input."""
+    return {
+        "protocol_version": RAW_SCORING_PROTOCOL_VERSION,
+        "seed": RAW_SCORING_SEED,
+        "batch_size": RAW_SCORING_BATCH_SIZE,
+        "column_order": columns,
+        "architecture": {
+            field: getattr(args, field) for field in ("z_dim", "vae_hidden_dims", "loss_type")
+        },
+    }
 
 
 def prepare_experiment(
@@ -467,10 +409,10 @@ def prepare_experiment(
     *,
     validate_trial: bool = True,
 ) -> Namespace:
-    """Validate frozen sources and independent dates before any formal rollout.
+    """Validate routing search space and discover runtime inputs before rollout.
 
-    This function performs no training, scoring, cache writes, parameter selection,
-    or mutable route sharing.
+    The input manifest only declares the Optuna search space. Data files, model
+    artifacts, and scoring settings are resolved from the normal runtime arguments.
     """
     if args.gating_strategy != "expert_hysteresis":
         return args
@@ -482,49 +424,51 @@ def prepare_experiment(
         raise ValueError(f"unsupported expert strategy_version: {args.strategy_version}")
     manifest_path = getattr(args, "experiment_manifest", None)
     if not manifest_path:
-        raise ValueError("expert_hysteresis requires independent experiment_manifest evidence")
+        raise ValueError("expert_hysteresis requires an experiment_manifest search-space file")
     for field in ("base_path", "selection_manifest", "vae_path"):
         setattr(args, field, str(Path(getattr(args, field)).resolve()))
-    manifest = _read(manifest_path)
-    if manifest.get("strategy_version") != STRATEGY_VERSION or not manifest.get("experiment_id"):
-        raise ValueError("experiment identity or strategy_version is incompatible")
-    periods = _periods(manifest)
-    scoring = manifest.get("scoring_protocol")
-    if not isinstance(scoring, dict):
-        raise ValueError("experiment requires scoring_protocol source identity")
-    if scoring.get("protocol_version") != RAW_SCORING_PROTOCOL_VERSION:
-        raise ValueError("unsupported raw scoring protocol_version")
-    for field in ("seed", "batch_size"):
-        if isinstance(scoring.get(field), bool) or not isinstance(scoring.get(field), int):
-            raise TypeError(f"scoring protocol requires integer {field}")
-    if scoring["seed"] < 0 or scoring["batch_size"] <= 0:
-        raise ValueError("invalid scoring seed or batch_size")
-    architecture = {
-        field: getattr(args, field) for field in ("z_dim", "vae_hidden_dims", "loss_type")
+    manifest = _read(manifest_path, schema_version=EXPERIMENT_MANIFEST_SCHEMA_VERSION)
+    unsupported_fields = set(manifest) - {
+        "schema_version",
+        "experiment_id",
+        "strategy_version",
+        "search_space",
     }
-    if scoring.get("architecture") != architecture:
-        raise ValueError("fixed scoring model architecture changed")
-    paths, data, columns = _artifacts(args)
-    if scoring.get("column_order") != columns:
-        raise ValueError("frozen scoring axis/label order is incompatible")
+    if unsupported_fields:
+        raise ValueError(
+            "routing search-space manifest has unsupported fields: "
+            + ", ".join(sorted(unsupported_fields))
+        )
+    if manifest.get("strategy_version") != STRATEGY_VERSION:
+        raise ValueError("routing search-space strategy_version is incompatible")
     search_space = _validate_search_space(
         manifest.get("search_space"),
         args if validate_trial else None,
     )
-    expected = manifest["artifacts"]
-    if set(expected) != set(paths):
-        raise ValueError("experiment artifact identity set is incomplete or incompatible")
-    for name, path in paths.items():
-        _checked_file(expected[name], path)
-    _validate_data(data, periods)
+    inputs = describe_experiment_inputs(args)
+    columns = inputs["column_order"]
+    scoring = _runtime_scoring_protocol(args, columns)
+    source_identity = _raw_score_source_identity(
+        artifacts=inputs["artifacts"],
+        scoring_protocol=scoring,
+    )
     stage = "valid" if phase == "calibration" else "test"
     if args.eval_stage != stage:
         raise ValueError(f"{phase} must use eval_stage={stage}")
     args.experiment_manifest = str(Path(manifest_path).resolve())
-    args.experiment_id = manifest["experiment_id"]
-    args.frozen_experiment_identity = _identity(manifest)
-    args.raw_score_source_identity = _raw_score_source_identity(manifest)
-    args.raw_scoring_protocol = dict(scoring)
+    args.experiment_id = manifest.get("experiment_id") or (
+        f"{args.experiment_name}-{source_identity[:12]}"
+    )
+    args.raw_score_source_identity = source_identity
+    args.frozen_experiment_identity = _identity(
+        {
+            "experiment_id": args.experiment_id,
+            "strategy_version": STRATEGY_VERSION,
+            "search_space": search_space,
+            "raw_score_source_identity": source_identity,
+        }
+    )
+    args.raw_scoring_protocol = scoring
     # Keep this alias until cache generation is moved out of vae_routing_util.
     args.scoring_protocol = args.raw_scoring_protocol
     args.search_space = search_space

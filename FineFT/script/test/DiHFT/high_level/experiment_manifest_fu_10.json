@@ -1,0 +1,54 @@
+{
+  "schema_version": 3,
+  "experiment_id": "fu-10min-expert-hysteresis-v1",
+  "strategy_version": "expert_hysteresis.v1",
+  "search_space": {
+    "slope_window_length": {
+      "type": "int",
+      "low": 50,
+      "high": 100
+    },
+    "volatility_window_length": {
+      "type": "int",
+      "low": 50,
+      "high": 100
+    },
+    "slope_gamma": {
+      "type": "float",
+      "low": 0.92,
+      "high": 0.98,
+      "log": true
+    },
+    "volatility_gamma": {
+      "type": "float",
+      "low": 0.92,
+      "high": 0.98,
+      "log": true
+    },
+    "slope_rule_base_threshold": {
+      "type": "float",
+      "low": 0.2,
+      "high": 0.5
+    },
+    "volatility_rule_base_threshold": {
+      "type": "float",
+      "low": 0.2,
+      "high": 0.5
+    },
+    "hysteresis_exit_ratio": {
+      "type": "float",
+      "low": 0.5,
+      "high": 0.8
+    },
+    "expert_switch_lead": {
+      "type": "float",
+      "low": 0.0,
+      "high": 0.5
+    },
+    "expert_confirm_steps": {
+      "type": "int",
+      "low": 3,
+      "high": 8
+    }
+  }
+}
