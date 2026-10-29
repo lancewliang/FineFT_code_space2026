@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -25,22 +24,21 @@ if TYPE_CHECKING:
     )
     from RL.util.replay_buffer_DQN import Multi_step_ReplayBuffer_multi_info
 
-import torch.nn.functional as F
 from env.env_class.futures_util import get_dp_action_from_qtable
 from env.env_class.policy_util import get_close_element
+from RL.DiHFT.low_level.loss_nan_diagnostics import log_loss_nan_diagnostics
 from RL.DiHFT.low_level.pretrain_qtable_diagnostics import (
     build_initial_state,
     create_demo_env,
 )
+from RL.DiHFT.low_level.weight_advantage_pretrain import (
+    calculate_paper_supervisor_kl_loss,
+)
 from RL.util.update import (
     evaluate_quantile_at_action,
     recalculate_q_demonstration,
-    update_params,
     soft_copy_params,
-)
-from RL.DiHFT.low_level.loss_nan_diagnostics import log_loss_nan_diagnostics
-from RL.DiHFT.low_level.weight_advantage_pretrain import (
-    calculate_paper_supervisor_kl_loss,
+    update_params,
 )
 
 # Reuse the orchestrator's configured logger so all log output flows through
@@ -90,7 +88,7 @@ def select_pretrain_action(
     elif rollout_index == 3:
         action = (position_choices // 2) * len(leverage_choices)
         return get_close_element(action, avaliable_action_list)
-    raise ValueError("rollout_index must be in 0-3, got {}".format(rollout_index))
+    raise ValueError(f"rollout_index must be in 0-3, got {rollout_index}")
 
 
 class PretrainCollectRunner:
@@ -386,77 +384,54 @@ def extract_stacked_tensor_dict(buffer, chunk_size=50000):
 
 
 class StackedTransitionSampler:
-    """经验池预堆叠采样器。
+    """将经验张量一次性放到目标设备，以无放回均匀采样生成训练批次。
 
-    支持两种输入：
-    1. 张量化字典（{"states": tensor, ...}），无需重新堆叠，零额外内存开销；
-    2. 传统 buffer 对象（含 memory deque），按分块（chunk_size）预堆叠为张量，严格控制峰值内存。
-    采样语义与 Multi_step_ReplayBuffer_multi_info.sample() 一致：无放回均匀采样。
+    支持张量快照和传统经验池。CUDA 使用设备端随机排列和索引，CPU
+    保留 NumPy 随机索引序列；两者分布相同，但相同种子的跨设备序列不同。
     """
 
     def __init__(self, buffer, batch_size, device):
-        if isinstance(buffer, dict) and "states" in buffer:
-            self.n = buffer["buffer_size"] if "buffer_size" in buffer else buffer["states"].shape[0]
-            if self.n < batch_size:
-                raise ValueError(
-                    "buffer size ({}) is smaller than batch_size ({})".format(
-                        self.n, batch_size
-                    )
-                )
-            self.batch_size = batch_size
-            self.device = device
-            self.states = buffer["states"]
-            self.actions = buffer["actions"]
-            self.rewards = buffer["rewards"]
-            self.next_states = buffer["next_states"]
-            self.dones = buffer["dones"]
-            self.info_keys = list(buffer.get("infos", {}).keys())
-            self.infos = buffer.get("infos", {})
-            self.next_infos = buffer.get("next_infos", {})
-        else:
-            payload = extract_stacked_tensor_dict(buffer)
-            self.n = payload["buffer_size"]
-            if self.n < batch_size:
-                raise ValueError(
-                    "buffer size ({}) is smaller than batch_size ({})".format(
-                        self.n, batch_size
-                    )
-                )
-            self.batch_size = batch_size
-            self.device = device
-            self.states = payload["states"]
-            self.actions = payload["actions"]
-            self.rewards = payload["rewards"]
-            self.next_states = payload["next_states"]
-            self.dones = payload["dones"]
-            self.info_keys = payload["info_keys"]
-            self.infos = payload["infos"]
-            self.next_infos = payload["next_infos"]
+        payload = extract_stacked_tensor_dict(buffer)
+        self.n = payload.get("buffer_size", payload["states"].shape[0])
+        if self.n < batch_size:
+            raise ValueError(
+                f"buffer size ({self.n}) is smaller than batch_size ({batch_size})"
+            )
+        self.batch_size = batch_size
+        self.device = torch.device(device)
+        self.states = torch.as_tensor(payload["states"]).to(self.device, dtype=torch.float32)
+        self.actions = torch.as_tensor(payload["actions"]).to(self.device, dtype=torch.int64)
+        self.rewards = torch.as_tensor(payload["rewards"]).to(self.device, dtype=torch.float32)
+        self.next_states = torch.as_tensor(payload["next_states"]).to(
+            self.device, dtype=torch.float32
+        )
+        self.dones = torch.as_tensor(payload["dones"]).to(self.device, dtype=torch.float32)
+        self.infos = {
+            k: torch.as_tensor(v).to(self.device, dtype=torch.float32)
+            for k, v in payload.get("infos", {}).items()
+        }
+        self.next_infos = {
+            k: torch.as_tensor(v).to(self.device, dtype=torch.float32)
+            for k, v in payload.get("next_infos", {}).items()
+        }
+        self.info_keys = list(self.infos)
 
     def sample(self):
-        idx = np.random.choice(self.n, size=self.batch_size, replace=False)
-        states = (
-            torch.as_tensor(self.states[idx]).float().to(self.device)
+        if self.device.type == "cuda":
+            idx = torch.randperm(self.n, device=self.device)[:self.batch_size]
+        else:
+            idx = torch.from_numpy(
+                np.random.choice(self.n, size=self.batch_size, replace=False)
+            ).to(self.device)
+        return (
+            self.states.index_select(0, idx),
+            {k: v.index_select(0, idx) for k, v in self.infos.items()},
+            self.actions.index_select(0, idx),
+            self.rewards.index_select(0, idx),
+            self.next_states.index_select(0, idx),
+            {k: v.index_select(0, idx) for k, v in self.next_infos.items()},
+            self.dones.index_select(0, idx),
         )
-        infos = {
-            k: torch.as_tensor(v[idx]).float().to(self.device)
-            for k, v in self.infos.items()
-        }
-        actions = torch.as_tensor(self.actions[idx]).long().to(self.device)
-        rewards = (
-            torch.as_tensor(self.rewards[idx]).float().to(self.device)
-        )
-        next_states = (
-            torch.as_tensor(self.next_states[idx]).float().to(self.device)
-        )
-        next_infos = {
-            k: torch.as_tensor(v[idx]).float().to(self.device)
-            for k, v in self.next_infos.items()
-        }
-        dones = (
-            torch.as_tensor(self.dones[idx]).float().to(self.device)
-        )
-        return (states, infos, actions, rewards, next_states, next_infos, dones)
 
 
 def save_pretrain_buffer_file(buffer_pretrain: Multi_step_ReplayBuffer_multi_info | Any, buffer_path: str, step_counter: int):
@@ -589,13 +564,13 @@ def run_exhaustive_warmup(
                 trainer.initial_wallet_balance + 1e-12
             ) - 1
             trainer.writer.add_scalar(
-                tag="pretrain_return_rate_train_{}".format(result.rollout_index),
+                tag=f"pretrain_return_rate_train_{result.rollout_index}",
                 scalar_value=return_rate,
                 global_step=collected,
                 walltime=None,
             )
             trainer.writer.add_scalar(
-                tag="pretrain_reward_sum_train_{}".format(result.rollout_index),
+                tag=f"pretrain_reward_sum_train_{result.rollout_index}",
                 scalar_value=result.reward_sum,
                 global_step=collected,
                 walltime=None,
@@ -630,13 +605,10 @@ def run_exhaustive_warmup(
 
     update_count = 0
     eval_metrics = []
-    eval_interval = 30
     if trainer.pretrain_epoch > 0:
         if len(buffer_pretrain) < trainer.batch_size:
             raise ValueError(
-                "buffer_pretrain size ({}) is smaller than batch_size ({})".format(
-                    len(buffer_pretrain), trainer.batch_size
-                )
+                f"buffer_pretrain size ({len(buffer_pretrain)}) is smaller than batch_size ({trainer.batch_size})"
             )
         sampler = StackedTransitionSampler(
             buffer_pretrain, trainer.batch_size, trainer.device
@@ -735,14 +707,15 @@ def update_pretrain(
     )
     trading_info_ = info_["trading_info"].float().to(trainer.device)
 
+    predict_action_distrbution = trainer.eval_net(
+        state=states,
+        time=time_input,
+        previous_action=previous_action,
+        avaliable_action=avaliable_action,
+        trading_info=trading_info,
+    )
     current_sa_quantiles = evaluate_quantile_at_action(
-        trainer.eval_net(
-            state=states,
-            time=time_input,
-            previous_action=previous_action,
-            avaliable_action=avaliable_action,
-            trading_info=trading_info,
-        ),
+        predict_action_distrbution,
         actions,
     )
     assert current_sa_quantiles.shape == (bs, trainer.N, 1)
@@ -778,13 +751,6 @@ def update_pretrain(
         trainer.batch_size,
         trainer.N,
         device=trainer.device,
-    )
-    predict_action_distrbution = trainer.eval_net(
-        state=states,
-        time=time_input,
-        previous_action=previous_action,
-        avaliable_action=avaliable_action,
-        trading_info=trading_info,
     )
     assert predict_action_distrbution.shape == (
         trainer.batch_size,

@@ -746,9 +746,9 @@ class Base_Env(gym.Env):
                 "the current markprice is {}".format(self.current_markprice),
             )
             self.terminal = True
-            reward = (wallet_balance + unrealized_pnL) - (
+            reward = ((wallet_balance + unrealized_pnL) - (
                 self.wallet_balance + self.unrealized_pnl
-            )
+            ))/self.wallet_balance
             avaiable_position_choices, avaiable_leverage_choices = (
                 [0],
                 [self.leverage_choices[0]],
