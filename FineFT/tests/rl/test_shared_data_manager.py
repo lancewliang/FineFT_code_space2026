@@ -228,6 +228,7 @@ def test_zero_disk_artifacts_and_clean_pool_shutdown():
     trainer.gamma = 0.99
     trainer.n_step = 1
     trainer.action_persistence = 1
+    trainer.stop_loss_return_threshold = 0.03
 
     with PersistentRolloutPool(
         trainer=trainer,

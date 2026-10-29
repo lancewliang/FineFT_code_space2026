@@ -22,6 +22,9 @@ import torch.nn.functional as F
 # model
 from model.low_level import ensemble_Qnet
 from common import ArtifactNames
+from RL.DiHFT.low_level.evaluation_stop_loss import (
+    EvaluationStopLoss, add_argument, executed_position,
+)
 
 # env
 from env.env_initiate.base_initiate import initiate_base_env
@@ -44,6 +47,10 @@ parser = argparse.ArgumentParser()
 
 parser = argparse.ArgumentParser()
 # * Env setting
+add_argument(parser)
+parser.add_argument("--order_book_depth", type=int, default=25)
+parser.add_argument("--label_type", choices=["slope", "volatility"], default="volatility")
+parser.add_argument("--model_path", default=None, help="包含 epoch_N 检查点的目录")
 parser.add_argument(
     "--base_path",
     type=str,
@@ -188,9 +195,10 @@ class weighted_trader:
         else:
             self.device = "cpu"
         # log path
-        self.model_path = os.path.join(
+        self.model_path = args.model_path or os.path.join(
             args.result_path, args.dataset_name, "weights_advantage"
         )
+        self.stop_loss_return_threshold = args.stop_loss_return_threshold
         self.log_path = os.path.join(self.model_path, "log")
         if not os.path.exists(self.log_path):
             os.makedirs(self.log_path)
@@ -198,6 +206,7 @@ class weighted_trader:
         # trading environment setting
         self.base_path = args.base_path
         self.dataset_name = args.dataset_name
+        self.label_type = args.label_type
         self.valid_data_path = os.path.join(self.base_path, self.dataset_name, "valid")
         self.tech_indicator_list = np.load(
             os.path.join(self.base_path, self.dataset_name, ArtifactNames.RL_STATE_FEATURES_NPY)
@@ -209,6 +218,7 @@ class weighted_trader:
             allow_pickle=True,
         ).item()
         self.max_holding_number = args.max_holding_number
+        self.order_book_depth = args.order_book_depth
         self.position_choices = args.position_choices
         self.single_side_action_num = int((self.position_choices - 1) / 2)
         self.position_list = (
@@ -256,11 +266,7 @@ class weighted_trader:
 
         self.epoch_num = args.epoch_num
         self.epoch_path = os.path.join(
-            "result",
-            "DiHFT",
-            "low_level",
-            self.dataset_name,
-            'weights_advantage',
+            self.model_path,
             "epoch_" + str(self.epoch_num),
         )
         self.eval_net.load_state_dict(
@@ -316,9 +322,22 @@ class weighted_trader:
     def test(self):
         overall_result = []
         self.eval_net.eval()
-        label_list = os.listdir(self.valid_data_path)
-        for label in label_list:
-            df_list = os.listdir(os.path.join(self.valid_data_path, label))
+        labeled_dir = os.path.join(self.valid_data_path, self.label_type)
+        entries_by_label = {}
+        if os.path.isdir(labeled_dir):
+            from RL.DiHFT.low_level.test_agent_index import _iter_valid_feather_files
+            for entry in _iter_valid_feather_files(labeled_dir):
+                entries_by_label.setdefault(entry["label"], []).append(
+                    os.path.join(self.label_type, entry["df_path"])
+                )
+        else:
+            for label in sorted(os.listdir(self.valid_data_path)):
+                label_dir = os.path.join(self.valid_data_path, label)
+                if os.path.isdir(label_dir) and label.startswith("label_"):
+                    entries_by_label[label] = [os.path.join(label, name) for name in sorted(os.listdir(label_dir)) if name.endswith(".feather")]
+        if not entries_by_label:
+            raise FileNotFoundError(f"no validation label slices under {self.valid_data_path}")
+        for label, df_list in sorted(entries_by_label.items()):
             for initial_action in self.initial_action_list:
                 single_label_initial_action_bin_index_reward_sum_result = []
                 single_label_initial_action_bin_index_df_length_result = []
@@ -331,7 +350,7 @@ class weighted_trader:
                         )
                     )
                     self.test_df = pd.read_feather(
-                        os.path.join(self.valid_data_path, label, df_path)
+                        os.path.join(self.valid_data_path, df_path)
                     )
                     current_markprice = self.test_df["mark_price"].values[0]
                     self.initial_margin = np.abs(
@@ -345,6 +364,8 @@ class weighted_trader:
                         initial_leverage,
                     )
                     test_env = initiate_base_env(
+                        order_book_depth=self.order_book_depth,
+                        allow_partial_positions=self.stop_loss_return_threshold > 0,
                         df=self.test_df,
                         feature_list=self.tech_indicator_list,
                         max_holding_number=self.max_holding_number,
@@ -364,9 +385,12 @@ class weighted_trader:
                     s, info = test_env.reset()
                     done = False
                     reward_sum = 0
+                    stop_loss = EvaluationStopLoss(self.stop_loss_return_threshold)
+                    flat_action = len(self.leverage_choices) * (len(self.position_list) // 2)
                     while not done:
-                        a = self.act_test(s, info)
+                        a = flat_action if stop_loss.before_action(test_env) else self.act_test(s, info)
                         s_, r, done, info = test_env.step(a)
+                        stop_loss.after_execution(executed_position(test_env))
                         s = s_
                         reward_sum += r
                     single_label_initial_action_bin_index_reward_sum_result.append(

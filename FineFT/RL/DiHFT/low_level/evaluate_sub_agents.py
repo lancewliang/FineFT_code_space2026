@@ -27,6 +27,9 @@ from model.low_level import ensemble_Qnet
 # env
 from env.env_initiate.base_initiate import initiate_base_env
 from env.env_class.futures_util import map_action_to_position_leverage
+from RL.DiHFT.low_level.evaluation_stop_loss import (
+    EvaluationStopLoss, executed_position, validate_threshold,
+)
 
 
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -91,7 +94,9 @@ class weighted_trader:
         limit_reverse_penalty: float =1.5,
         near_limit_threshold: float =0.05,
         device: str = "cpu",
+        stop_loss_return_threshold: float = 0.03,
     ):
+        self.stop_loss_return_threshold = validate_threshold(stop_loss_return_threshold)
 
         # logger
         self.logg_file_path = logg_file_path
@@ -156,6 +161,7 @@ class weighted_trader:
         self.time_info_dim = time_info_dim
         self.hidden_nodes = hidden_nodes        
         self.N_ACTIONS = (self.position_choices - 1) * len(self.leverage_choices) + 1
+        self.flat_action = len(self.leverage_choices) * (len(self.position_list) // 2)
         state_dict = torch.load(self.model_file, map_location=self.device)
         self.N = N
         self.eval_net = ensemble_Qnet(
@@ -241,6 +247,7 @@ class weighted_trader:
             and "limit_up_single_sided_ratio" in test_df.columns
         )
         test_env = initiate_base_env(
+            allow_partial_positions=self.stop_loss_return_threshold > 0,
             df=test_df,
             feature_list=self.tech_indicator_list,
             max_holding_number=self.max_holding_number,
@@ -263,9 +270,11 @@ class weighted_trader:
         s, info = test_env.reset()
         done = False
         reward_sum = 0
+        stop_loss = EvaluationStopLoss(self.stop_loss_return_threshold)
         while not done:
-            a = self.act_test(s, info, bin_index)
+            a = self.flat_action if stop_loss.before_action(test_env) else self.act_test(s, info, bin_index)
             s_, r, done, info = test_env.step(a)
+            stop_loss.after_execution(executed_position(test_env))
             s = s_
             reward_sum += r
         final_balance = (
@@ -355,8 +364,10 @@ def evaluates(
         limit_reverse_penalty: float =1.5,
         near_limit_threshold: float =0.05,
         device: str = "cpu",
+        stop_loss_return_threshold: float = 0.03,
         **kwargs):
     """Evaluate the sub-agent across multiple data files using one subprocess per file."""
+    stop_loss_return_threshold = validate_threshold(stop_loss_return_threshold)
     if logg_file_path:
         configure_logger(logg_file_path)
 
@@ -392,6 +403,7 @@ def evaluates(
         "limit_reverse_penalty": limit_reverse_penalty,
         "near_limit_threshold": near_limit_threshold,
         "device": device,
+        "stop_loss_return_threshold": stop_loss_return_threshold,
         **kwargs,
     }
 

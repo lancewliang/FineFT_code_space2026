@@ -40,6 +40,7 @@ def initiate_base_env(
     turnover_penalty_rate=0.0,
     turnover_base_rate=0.0,
     turnover_adverse_ratio=1.0,
+    allow_partial_positions=False,
 ):
 
     # 对应钱包余额，起始保证金，未实现盈亏，持仓量，对应的杠杆):
@@ -95,6 +96,7 @@ def initiate_base_env(
         timestamp_array,
         funding_rate_array,
         funding_timestamp_array,
+        allow_partial_positions=allow_partial_positions,
         max_holding_number=max_holding_number,
         position_choices=position_choices,  # (must be an odd number, the minum of trading equals to (max_holder_number)/((action_dim-1)/2)s))
         leverage_choice=leverage_choice,  # recommend only use one leverage choice, because the leverage does not influence the return directly, the position

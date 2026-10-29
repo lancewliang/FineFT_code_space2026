@@ -1341,6 +1341,7 @@ def test_df_rollout_worker_runner_tracks_episodes_per_df(monkeypatch):
             self.step_calls = 0
             self.unrealized_pnl = 0.0
             self.wallet_balance = 100.0
+            self.position = 0.0
 
         def reset(self, initial_state=None):
             return (np.zeros(2), {"avaiable_action_list": [0, 1]})
@@ -1537,6 +1538,20 @@ def test_parallel_training_update_uses_four_field_trading_info():
 
     assert len(losses) == 3
     assert trainer.update_counter == 1
+
+
+def test_parallel_training_update_accepts_blocked_stop_request():
+    import math
+    from RL.DiHFT.low_level import parallel_weight_advantage_pretrain as pwap
+    from RL.DiHFT.low_level import parallel_diverse_train as pdt
+
+    trainer = _make_parallel_update_trainer(pwap)
+    trainer.ada = 1.0
+    batch = list(_sample_parallel_update_batch())
+    batch[1]["avaliable_action"][0, 0] = 0
+    batch[2][0] = 0
+    losses = pdt.update(trainer, *batch)
+    assert all(math.isfinite(value) and abs(value) < 100 for value in losses)
 
 
 def test_parallel_training_pretrain_update_uses_four_field_trading_info():
@@ -2610,6 +2625,7 @@ def test_action_persistence_in_worker_runner(monkeypatch):
             self.step_count = 0
             self.unrealized_pnl = 0.0
             self.wallet_balance = 10000.0
+            self.position = 0.0
 
         def reset(self, initial_state=None):
             return np.zeros(2), {"avaiable_action_list": [0, 1, 2], "q_value": [0.0, 0.0, 0.0]}

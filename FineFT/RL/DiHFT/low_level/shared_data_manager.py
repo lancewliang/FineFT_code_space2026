@@ -466,5 +466,6 @@ def create_demo_env_from_pack(
         turnover_penalty_rate=env_kwargs.get("turnover_penalty_rate", 0.0),
         turnover_base_rate=env_kwargs.get("turnover_base_rate", 0.0),
         turnover_adverse_ratio=env_kwargs.get("turnover_adverse_ratio", 1.0),
+        allow_partial_positions=env_kwargs.get("allow_partial_positions", False),
         q_table=arrays["q_table_array"],
     )

@@ -34,7 +34,7 @@ function run_test_agent_index {
                 --dataset_name "${dataset_name}" --experiment_name "${experiment_name}" \
                 --result_path "${result_path}" \
                 --max_holding_number "${max_holding_number}" --initial_wallet_balance 10000 --order_book_depth 5 \
-                --epoch_num "${epoch}" --position_choices "${POSITION_CHOICES:-3}" \
+                --epoch_num "${epoch}" --stop_loss_return_threshold "${STOP_LOSS_RETURN_THRESHOLD:-0.03}" --position_choices "${POSITION_CHOICES:-3}" \
                 --leverage_choices "${LEVERAGE_CHOICES:-1}" \
                 --initial_leverage "${INITIAL_LEVERAGE:-1}" \
                 --N "${ensemble_number}" --transcation_cost 0.0004 --short_estimated_rate 0 --long_estimated_rate 0 \
@@ -94,7 +94,7 @@ function run_ddqn_average {
         nohup python RL/DiHFT/low_level/test_agent_average.py \
             --dataset_name "${dataset_name}" \
             --max_holding_number "${max_holding_number}" \
-            --epoch_num "${epoch}" \
+            --epoch_num "${epoch}" --stop_loss_return_threshold "${STOP_LOSS_RETURN_THRESHOLD:-0.03}" \
             >"${log_dir}/bin_${bin_size}_epoch_${epoch}.log" 2>&1 &
         pids+=($!) # 将每个后台进程的PID添加到数组中
     done

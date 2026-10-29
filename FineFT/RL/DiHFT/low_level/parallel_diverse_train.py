@@ -34,12 +34,19 @@ import pickle
 import queue
 import tempfile
 import threading
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 import torch
+
+from RL.DiHFT.low_level.evaluation_stop_loss import (
+    EvaluationStopLoss,
+    executed_position,
+    validate_threshold,
+)
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -49,7 +56,7 @@ if TYPE_CHECKING:
     from RL.util.replay_buffer_DQN import Multi_step_ReplayBuffer_multi_info
 
 
-from model.low_level import ensemble_Qnet
+from model.low_level import MAX_PUNISHMENT, ensemble_Qnet
 from env.env_class.futures_util import map_action_to_position_leverage
 from RL.DiHFT.low_level.pretrain_qtable_diagnostics import (
     build_initial_state,
@@ -1021,8 +1028,11 @@ class DfRolloutWorkerRunner:
             if "action_persistence" in worker_config
             else 3
         )
+        self.stop_loss_return_threshold = validate_threshold(
+            worker_config.get("stop_loss_return_threshold", 0.03)
+        )
         self.flat_action = (
-            self.position_list.index(0)
+            self.position_list.index(0) * len(self.leverage_choices)
             if 0 in self.position_list
             else (len(self.position_list) - 1) // 2
         )
@@ -1043,6 +1053,10 @@ class DfRolloutWorkerRunner:
         self.episodes = {}
 
     def _get_initial_state_and_env(self, df_index: int, initial_action: int):
+        env_kwargs = {
+            **self.env_kwargs,
+            "allow_partial_positions": self.stop_loss_return_threshold > 0,
+        }
         if self.shared_market_data is not None:
             pack = self.shared_market_data[df_index]
             current_markprice = float(pack.markprice_tensor[0].item())
@@ -1061,7 +1075,7 @@ class DfRolloutWorkerRunner:
             )
             if df_index not in self.cached_envs:
                 self.cached_envs[df_index] = create_demo_env_from_pack(
-                    pack, self.env_kwargs, initial_state=initial_state
+                    pack, env_kwargs, initial_state=initial_state
                 )
             env = self.cached_envs[df_index]
         else:
@@ -1076,10 +1090,78 @@ class DfRolloutWorkerRunner:
             )
             if df_index not in self.cached_envs:
                 self.cached_envs[df_index] = create_demo_env(
-                    train_df, self.env_kwargs, initial_state
+                    train_df, env_kwargs, initial_state
                 )
             env = self.cached_envs[df_index]
         return env, initial_state
+
+    def _rollout_episode(
+        self, episode: _WorkerEpisode, context_index: int, epsilon: float
+    ) -> Iterator[WorkerTransitionRecord]:
+        """统一执行策略、动作保持和止损，逐步产出转移并推进回合状态。"""
+        remaining_persist = 0
+        current_action = self.flat_action
+        current_q = 0.0
+        stop_loss = EvaluationStopLoss(getattr(self, "stop_loss_return_threshold", 0.03))
+        while not episode.done:
+            stop_requested = stop_loss.before_action(episode.env)
+            if stop_requested:
+                action = current_action = self.flat_action
+                chosen_q = current_q = 0.0
+                remaining_persist = 0
+            elif remaining_persist > 0 and current_action in episode.info["avaiable_action_list"]:
+                action = current_action
+                chosen_q = current_q
+                remaining_persist -= 1
+            else:
+                action, chosen_q = self._act(
+                    episode.state,
+                    episode.info,
+                    context_index,
+                    epsilon,
+                )
+                current_action = action
+                current_q = chosen_q
+                if self.action_persistence > 1 and action != self.flat_action:
+                    remaining_persist = self.action_persistence - 1
+                else:
+                    remaining_persist = 0
+
+            next_state, reward, done, next_info = episode.env.step(action)
+            stop_loss.after_execution(executed_position(episode.env))
+            if not done and stop_loss.before_action(episode.env):
+                # Replay describes the rule-constrained next intent; the
+                # environment still checks real liquidity and price limits.
+                next_info = dict(next_info)
+                next_mask = np.zeros(self.action_dim, dtype=np.float32)
+                next_mask[self.flat_action] = 1.0
+                next_info["avaliable_action"] = next_mask
+                next_info["avaiable_action_list"] = [self.flat_action]
+            if stop_requested:
+                td_error = abs(float(reward))
+            elif "q_value" in episode.info and len(episode.info["q_value"]) > action:
+                teacher_q = float(episode.info["q_value"][action])
+                td_error = abs(teacher_q - chosen_q)
+            else:
+                td_error = abs(float(reward) - chosen_q)
+
+            record = WorkerTransitionRecord(
+                step_index=episode.transition_count,
+                transition=(
+                    episode.state,
+                    episode.info,
+                    action,
+                    reward,
+                    next_state,
+                    next_info,
+                    done,
+                ),
+                td_error=float(td_error),
+            )
+            episode.reward_sum += reward
+            episode.transition_count += 1
+            episode.state, episode.info, episode.done = next_state, next_info, done
+            yield record
 
     def run_task(self, task: ExploreTask) -> WorkerRoundResult:
         env, initial_state = self._get_initial_state_and_env(
@@ -1089,9 +1171,6 @@ class DfRolloutWorkerRunner:
         episode = _WorkerEpisode(env=env, state=state, info=info, done=False)
 
         self.model.eval()
-        remaining_persist = 0
-        current_action = self.flat_action
-        current_q = 0.0
 
         step_indices = []
         actions = []
@@ -1116,48 +1195,24 @@ class DfRolloutWorkerRunner:
         raw_states = [] if self.shared_market_data is None else None
         raw_next_states = [] if self.shared_market_data is None else None
 
-        while not episode.done:
-            if remaining_persist > 0 and current_action in episode.info["avaiable_action_list"]:
-                action = current_action
-                chosen_q = current_q
-                remaining_persist -= 1
-            else:
-                action, chosen_q = self._act(
-                    episode.state,
-                    episode.info,
-                    task.context_index,
-                    task.epsilon,
-                )
-                current_action = action
-                current_q = chosen_q
-                if self.action_persistence > 1 and action != self.flat_action:
-                    remaining_persist = self.action_persistence - 1
-                else:
-                    remaining_persist = 0
-
-            next_state, reward, done, next_info = episode.env.step(action)
-            if "q_value" in episode.info and len(episode.info["q_value"]) > action:
-                teacher_q = float(episode.info["q_value"][action])
-                td_error = abs(teacher_q - chosen_q)
-            else:
-                td_error = abs(float(reward) - chosen_q)
-
-            step_indices.append(episode.transition_count)
+        for record in self._rollout_episode(episode, task.context_index, task.epsilon):
+            state, info, action, reward, next_state, next_info, done = record.transition
+            step_indices.append(record.step_index)
             actions.append(action)
             rewards.append(reward)
             dones.append(done)
-            td_errors.append(float(td_error))
+            td_errors.append(record.td_error)
 
-            previous_actions.append(float(episode.info.get("previous_action", 0)))
-            trading_infos.append(np.asarray(episode.info.get("trading_info", np.zeros(4, dtype=np.float32)), dtype=np.float32))
-            avaliable_actions.append(np.asarray(episode.info.get("avaliable_action", np.ones(getattr(self, "action_dim", 9), dtype=np.float32)), dtype=np.float32))
-            hours.append(float(episode.info.get("funding_count_down_hour", 0.0)))
-            minutes.append(float(episode.info.get("funding_count_down_minute", 0.0)))
-            if "q_value" in episode.info:
-                q_values.append(np.asarray(episode.info["q_value"], dtype=np.float32))
+            previous_actions.append(float(info.get("previous_action", 0)))
+            trading_infos.append(np.asarray(info.get("trading_info", np.zeros(4, dtype=np.float32)), dtype=np.float32))
+            avaliable_actions.append(np.asarray(info.get("avaliable_action", np.ones(getattr(self, "action_dim", 9), dtype=np.float32)), dtype=np.float32))
+            hours.append(float(info.get("funding_count_down_hour", 0.0)))
+            minutes.append(float(info.get("funding_count_down_minute", 0.0)))
+            if "q_value" in info:
+                q_values.append(np.asarray(info["q_value"], dtype=np.float32))
             else:
                 q_values.append(np.zeros(getattr(self, "action_dim", 9), dtype=np.float32))
-            regime_grid_ids.append(int(episode.info.get("regime_grid_id", 0)))
+            regime_grid_ids.append(int(info.get("regime_grid_id", 0)))
 
             next_previous_actions.append(float(next_info.get("previous_action", 0)))
             next_trading_infos.append(np.asarray(next_info.get("trading_info", np.zeros(4, dtype=np.float32)), dtype=np.float32))
@@ -1166,12 +1221,8 @@ class DfRolloutWorkerRunner:
             next_minutes.append(float(next_info.get("funding_count_down_minute", 0.0)))
 
             if raw_states is not None:
-                raw_states.append(episode.state)
+                raw_states.append(state)
                 raw_next_states.append(next_state)
-
-            episode.reward_sum += reward
-            episode.transition_count += 1
-            episode.state, episode.info, episode.done = next_state, next_info, done
 
         final_balance = episode.env.unrealized_pnl + episode.env.wallet_balance
         compact_trajectory = accumulate_compact_trajectory_n_step(
@@ -1283,54 +1334,9 @@ class DfRolloutWorkerRunner:
         if message.state_dict:
             load_worker_state_dict(self.model, message.state_dict)
         self.model.eval()
-        transitions = []
-        remaining_persist = 0
-        current_action = self.flat_action
-        current_q = 0.0
-        while not episode.done:
-            if remaining_persist > 0 and current_action in episode.info["avaiable_action_list"]:
-                action = current_action
-                chosen_q = current_q
-                remaining_persist -= 1
-            else:
-                action, chosen_q = self._act(
-                    episode.state,
-                    episode.info,
-                    message.context_index,
-                    message.epsilon,
-                )
-                current_action = action
-                current_q = chosen_q
-                if self.action_persistence > 1 and action != self.flat_action:
-                    remaining_persist = self.action_persistence - 1
-                else:
-                    remaining_persist = 0
-
-            next_state, reward, done, next_info = episode.env.step(action)
-            if "q_value" in episode.info and len(episode.info["q_value"]) > action:
-                teacher_q = float(episode.info["q_value"][action])
-                td_error = abs(teacher_q - chosen_q)
-            else:
-                td_error = abs(float(reward) - chosen_q)
-
-            transitions.append(
-                WorkerTransitionRecord(
-                    step_index=episode.transition_count,
-                    transition=(
-                        episode.state,
-                        episode.info,
-                        action,
-                        reward,
-                        next_state,
-                        next_info,
-                        done,
-                    ),
-                    td_error=float(td_error),
-                )
-            )
-            episode.reward_sum += reward
-            episode.transition_count += 1
-            episode.state, episode.info, episode.done = next_state, next_info, done
+        transitions = list(
+            self._rollout_episode(episode, message.context_index, message.epsilon)
+        )
         final_balance = episode.env.unrealized_pnl + episode.env.wallet_balance
         raw_tuples = [r.transition for r in transitions]
         acc_tuples = accumulate_trajectory_n_step(
@@ -1425,6 +1431,7 @@ def start_parallel_workers(
             "gamma": trainer.gamma,
             "n_step": trainer.n_step,
             "action_persistence": trainer.action_persistence,
+            "stop_loss_return_threshold": getattr(trainer, "stop_loss_return_threshold", 0.03),
             "log_file_path": log_file_path,
         }
         process = worker_context.Process(
@@ -2096,6 +2103,7 @@ def evaluate_parallel_diverse_model(
         logg_file_path,
     )
     eval_metrics = evaluates(
+        stop_loss_return_threshold=0.0,
         logg_file_path=logg_file_path,
         data_file_paths=data_file_paths,
         model_path=model_path,
@@ -2190,17 +2198,23 @@ def update(
     trading_info_ = info_["trading_info"].float().to(trainer.device, non_blocking=True)
 
     with torch.amp.autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
-        predict_action_distrbution = trainer.eval_net(
+        raw_action_values = trainer.eval_net(
             state=states,
             time=time_input,
             previous_action=previous_action,
-            avaliable_action=avaliable_action,
+            avaliable_action=torch.ones_like(avaliable_action),
             trading_info=trading_info,
         )
         current_sa_quantiles = evaluate_quantile_at_action(
-            predict_action_distrbution,
+            raw_action_values,
             actions,
         )
+        # A protective exit can be requested even when the exchange blocks it.
+        # Train that requested action's Q without the selection mask penalty;
+        # preserve the real mask for the supervisor and next-action selection.
+        predict_action_distrbution = raw_action_values + (
+            avaliable_action.unsqueeze(1) - 1
+        ) * MAX_PUNISHMENT
         assert current_sa_quantiles.shape == (bs, trainer.N, 1)
         with torch.no_grad():
             next_q = trainer.target_net.get_best_q(

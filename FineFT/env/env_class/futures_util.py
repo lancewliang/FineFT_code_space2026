@@ -1019,14 +1019,14 @@ def calculate_avaiable_action(
     position_choices=[-1, 0, 1],
     buy_fee_rate=None,
     sell_fee_rate=None,
+    allow_partial_positions=False,
 ):
     buy_fee_rate = commission_rate if buy_fee_rate is None else buy_fee_rate
     sell_fee_rate = commission_rate if sell_fee_rate is None else sell_fee_rate
     # TODO modify that if the margine balance equals to dilvering the liqudation, then the action is not actually avaiable
     assert leverage in leverage_choices
-    if position not in position_choices:
-        print("position not in position_choices", position)
-    assert position in position_choices
+    if not allow_partial_positions:
+        assert position in position_choices
 
     assert initial_margine == np.abs(markprice * position / leverage)
     # repetition is allowed in the following two list

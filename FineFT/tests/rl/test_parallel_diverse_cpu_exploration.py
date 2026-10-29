@@ -91,6 +91,7 @@ def test_df_rollout_worker_runner_run_task_atomic(monkeypatch):
             self.step_count = 0
             self.unrealized_pnl = 0.0
             self.wallet_balance = 1000.0
+            self.position = 0.0
 
         def reset(self, initial_state=None):
             return np.array([0.1, 0.2]), {
@@ -310,7 +311,7 @@ def test_weighted_contexts_dqn_validates_diverse_num_workers(monkeypatch):
     mock_args.lr_min = 0.0001
     mock_args.lr_step = 1000
     mock_args.num_sample = 15
-    mock_args.num_epoch = 18
+    mock_args.num_epoch = 21
     mock_args.base_path = "dataset/10min"
     mock_args.pretrain_num_workers = 20
     mock_args.diverse_num_workers = 0

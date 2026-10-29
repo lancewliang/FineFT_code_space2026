@@ -23,7 +23,7 @@ function run_ddqn_context {
             CUDA_VISIBLE_DEVICES=${gpu_index} nohup python RL/DiHFT/low_level/test_agent_index.py \
                 --dataset_name "${dataset_name}" \
                 --max_holding_number "${max_holding_number}" \
-                --epoch_num "${epoch}" \
+                --epoch_num "${epoch}" --stop_loss_return_threshold "${STOP_LOSS_RETURN_THRESHOLD:-0.03}" \
                 --label_type "${label_type}" \
                 >"${log_dir}/epoch_${epoch}.log" 2>&1 &
             pids+=($!) # 将每个后台进程的PID添加到数组中
@@ -53,7 +53,7 @@ function run_ddqn_average {
         CUDA_VISIBLE_DEVICES=${gpu_index} nohup python RL/DiHFT/low_level/test_agent_average.py \
             --dataset_name "${dataset_name}" \
             --max_holding_number "${max_holding_number}" \
-            --epoch_num "${epoch}" \
+            --epoch_num "${epoch}" --stop_loss_return_threshold "${STOP_LOSS_RETURN_THRESHOLD:-0.03}" \
             >"${log_dir}/bin_${bin_size}_epoch_${epoch}.log" 2>&1 &
         pids+=($!) # 将每个后台进程的PID添加到数组中
     done

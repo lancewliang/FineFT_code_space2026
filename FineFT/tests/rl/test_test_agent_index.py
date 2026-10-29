@@ -688,7 +688,8 @@ def test_weighted_trader_device_gpu(monkeypatch):
 def test_test_util_fu_10_script_configuration():
     script_path = FINEFT_ROOT / "script" / "test" / "DiHFT" / "low_level" / "test_util_fu_10.sh"
     content = script_path.read_text(encoding="utf-8")
-    assert "numactl --cpunodebind=1 --preferred=1" in content
+    assert "python FineFT/RL/DiHFT/low_level/test_agent_index.py" in content
+    assert '--stop_loss_return_threshold "${STOP_LOSS_RETURN_THRESHOLD:-0.03}"' in content
     assert '--device "${device}"' in content
     assert "DEVICE=${DEVICE:-cpu}" in content
 

@@ -21,6 +21,7 @@ from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 
 from RL.DiHFT.low_level.evaluate_sub_agents import evaluates
+from RL.DiHFT.low_level.evaluation_stop_loss import add_argument
 
 sys.path.append(".")
 
@@ -162,6 +163,7 @@ os.environ["F_ENABLE_ONEDNN_OPTS"] = "0"
 
 
 parser = argparse.ArgumentParser()
+add_argument(parser)
 
 # replay buffer coffient
 parser.add_argument(
@@ -925,6 +927,7 @@ class Weighted_Contexts_DQN:
             self.turnover_adverse_ratio = float(args.turnover_adverse_ratio)
         self.turnover_penalty_rate = self.turnover_base_rate
         self.action_persistence = int(args.action_persistence)
+        self.stop_loss_return_threshold = args.stop_loss_return_threshold
         if self.action_persistence <= 0:
             raise ValueError("action_persistence must be positive")
         self.smooth_curriculum_decay = bool(args.smooth_curriculum_decay)

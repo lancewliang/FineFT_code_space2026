@@ -62,6 +62,7 @@ class Demo_Env(Base_Env):
         turnover_base_rate=0.0,
         turnover_adverse_ratio=1.0,
         q_table=None,
+        allow_partial_positions=False,
     ):
 
         super(Demo_Env, self).__init__(
@@ -103,6 +104,7 @@ class Demo_Env(Base_Env):
             turnover_penalty_rate=turnover_penalty_rate,
             turnover_base_rate=turnover_base_rate,
             turnover_adverse_ratio=turnover_adverse_ratio,
+            allow_partial_positions=allow_partial_positions,
         )
         if q_table is not None:
             self.q_table = q_table

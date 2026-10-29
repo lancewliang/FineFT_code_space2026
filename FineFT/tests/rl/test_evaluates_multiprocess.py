@@ -84,6 +84,9 @@ def test_evaluates_multiprocess_multiple_files(tmp_path: Path):
     assert paths_in_results == {data_file1, data_file2}
 
     assert os.path.exists(log_file)
+    assert not (tmp_path / "evaluations").exists()
+    assert not list(tmp_path.rglob("evaluation_config.json"))
+    assert not list(tmp_path.rglob("*.sub_agent_results.json"))
     with open(log_file, "r", encoding="utf-8") as f:
         log_content = f.read()
 

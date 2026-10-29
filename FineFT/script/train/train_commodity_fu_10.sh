@@ -29,6 +29,7 @@ python -u FineFT/RL/DiHFT/low_level/parallel_weight_advantage_pretrain.py \
     --ada_min 0.1 --neighbor_size 2 \
     --load_pretrain_model False \
     --action_persistence 2 \
+    --stop_loss_return_threshold "${STOP_LOSS_RETURN_THRESHOLD:-0.03}" \
     --eval_dfs "0,6,12" \
     --turnover_base_rate "${TURNOVER_BASE_RATE:-0.002}" \
     --turnover_adverse_ratio "${TURNOVER_ADVERSE_RATIO:-5.0}" \

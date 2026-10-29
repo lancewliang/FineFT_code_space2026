@@ -40,6 +40,7 @@ def initiate_demo_env(
     turnover_penalty_rate=0.0,
     turnover_base_rate=0.0,
     turnover_adverse_ratio=1.0,
+    allow_partial_positions=False,
 ):
 
     # 对应钱包余额，起始保证金，未实现盈亏，持仓量，对应的杠杆):
@@ -119,6 +120,7 @@ def initiate_demo_env(
         turnover_penalty_rate=turnover_penalty_rate,
         turnover_base_rate=turnover_base_rate,
         turnover_adverse_ratio=turnover_adverse_ratio,
+        allow_partial_positions=allow_partial_positions,
     )
     return env
 

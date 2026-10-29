@@ -111,8 +111,10 @@ class Base_Env(gym.Env):
         turnover_penalty_rate=0.0,
         turnover_base_rate=0.0,
         turnover_adverse_ratio=1.0,
+        allow_partial_positions=False,
     ):
         # trading setting
+        self.allow_partial_positions = allow_partial_positions
         self.max_holding_number = max_holding_number
         self.position_choices = position_choices
         self.leverage_choices = leverage_choice
@@ -437,6 +439,8 @@ class Base_Env(gym.Env):
         )
 
     def env_map_position_leverage_to_action(self, position, leverage):
+        if self.allow_partial_positions and position not in self.position_list:
+            position = min(self.position_list, key=lambda candidate: abs(candidate - position))
         return map_position_leverage_to_action(
             position, leverage, self.leverage_choices, self.position_list
         )
@@ -506,6 +510,7 @@ class Base_Env(gym.Env):
                 # action space setting
                 leverage_choices=self.leverage_choices,
                 position_choices=self.position_list,
+                allow_partial_positions=self.allow_partial_positions,
             )
         )
         avaiable_position_choices, avaiable_leverage_choices = (
@@ -1016,6 +1021,7 @@ class Base_Env(gym.Env):
                         # action space setting
                         leverage_choices=self.leverage_choices,
                         position_choices=self.position_list,
+                        allow_partial_positions=self.allow_partial_positions,
                     )
                 )
                 avaiable_position_choices, avaiable_leverage_choices = (

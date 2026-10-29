@@ -132,4 +132,4 @@ def test_default_workers_and_fu10_explicit_override():
 
     with open("FineFT/script/train/train_commodity_fu_10.sh", "r", encoding="utf-8") as f:
         sh_content = f.read()
-    assert "--diverse_num_workers 32" in sh_content
+    assert "--diverse_num_workers 48" in sh_content

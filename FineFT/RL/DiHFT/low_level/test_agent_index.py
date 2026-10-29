@@ -46,6 +46,9 @@ from RL.DiHFT.low_level.policy_diagnostics import (
     ZERO_POLICY_DIRECTION_METRICS,
     calculate_policy_direction_metrics,
 )
+from RL.DiHFT.low_level.evaluation_stop_loss import (
+    EvaluationStopLoss, add_argument, executed_position,
+)
 
 
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -68,6 +71,7 @@ parser = argparse.ArgumentParser()
 parser = argparse.ArgumentParser()
 
 # * Env setting
+add_argument(parser)
 parser.add_argument(
     "--base_path",
     type=str,
@@ -732,6 +736,7 @@ class weighted_trader:
             self.model_path,
             "epoch_" + str(self.epoch_num),
         )
+        self.stop_loss_return_threshold = args.stop_loss_return_threshold
         self.eval_net.load_state_dict(
             torch.load(
                 os.path.join(self.epoch_path, ArtifactNames.TRAINED_MODEL_PKL),
@@ -786,6 +791,7 @@ class weighted_trader:
         overall_result = []
         trading_detail_rows = []
         self.eval_net.eval()
+        threshold = getattr(self, "stop_loss_return_threshold", 0.0)
         detail_csv_path = None
         if self.save_trading_detail_csv:
             detail_csv_path = trading_detail_csv_path(
@@ -855,6 +861,7 @@ class weighted_trader:
                             and "limit_up_single_sided_ratio" in self.test_df.columns
                         )
                         test_env = initiate_base_env(
+                            allow_partial_positions=threshold > 0,
                             df=self.test_df,
                             feature_list=self.tech_indicator_list,
                             max_holding_number=self.max_holding_number,
@@ -891,11 +898,15 @@ class weighted_trader:
                         cumulative_trade_count = 0
                         remaining_persist = 0
                         current_action = initial_action
+                        stop_loss = EvaluationStopLoss(threshold)
                         while not done:
                             timestep = len(action_list)
                             position_before = test_env.position
                             leverage_before = test_env.leverage
-                            if (
+                            if stop_loss.before_action(test_env):
+                                a = current_action = self.flat_action
+                                remaining_persist = 0
+                            elif (
                                 remaining_persist > 0
                                 and bool(info["avaliable_action"][current_action])
                             ):
@@ -918,8 +929,10 @@ class weighted_trader:
                             action_change_step = int(a != previous_action)
                             turn_over += np.abs(a - previous_action) / 4
                             s_, r, done, info = test_env.step(a)
-                            position_after = test_env.position
-                            leverage_after = test_env.leverage
+                            stop_loss.after_execution(executed_position(test_env))
+                            execution = getattr(test_env, "last_wallet_change", None)
+                            position_after = executed_position(test_env)
+                            leverage_after = execution.leverage if execution is not None else test_env.leverage
                             trade_count_step = int(
                                 position_after != position_before
                                 or leverage_after != leverage_before
@@ -948,6 +961,15 @@ class weighted_trader:
                                         cumulative_trade_count=cumulative_trade_count,
                                     )
                                 )
+                                if execution is not None and position_after != test_env.position:
+                                    row = trading_detail_rows[-1]
+                                    row.update(position_after=position_after, leverage_after=leverage_after,
+                                               wallet_balance=execution.wallet_balance,
+                                               unrealized_pnl=execution.unrealized_pnl,
+                                               cash_balance=execution.wallet_balance,
+                                               margin_balance=execution.wallet_balance + execution.unrealized_pnl,
+                                               total_value=execution.wallet_balance + execution.unrealized_pnl,
+                                               notional_asset_value=row["mark_price"] * position_after)
                                 if len(trading_detail_rows) >= 5000 and detail_csv_path:
                                     append_trading_detail_rows_to_csv(
                                         trading_detail_rows, detail_csv_path
