@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 — 接通模型与串行训练闭环
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Implementation:** 未实施。此前代码改动已全部回退；本轮只重切任务，不启动代码修改。ready-for-agent 表示规格可实施，不表示依赖已完成。
 
@@ -38,3 +38,7 @@ parallel_pretrain.py、parallel_weight_advantage_pretrain.py、parallel_diverse_
 - 2026-11-01：并行预训练、完整多样化采集、compact IPC、微批量导入和 CPU/GPU replay 均复用共享 11 维校验；缺少交易观测或旧宽度会在 worker/replay 边界立即失败。
 - 2026-11-01：并行产物保存 `trading_observation.json`，并行预训练加载和周期评估检查 tick 配置与交易编码层宽度；worker 不再以零向量补齐漏传字段。
 - 验证：`python -m pytest tests/rl/test_parallel_diverse_cpu_exploration.py tests/rl/test_compact_trajectory_and_micro_batched_ingestion.py tests/rl/test_gpu_resident_buffer_and_pipeline.py -q`（conda 环境 `finetf`）通过，`26 passed`；CUDA 可用，GPU 路径按测试选择器执行。
+
+- 2026-11-01：完成 compact trajectory、legacy bulk、CPU/GPU regime replay、worker IPC 与共享行情包的 `trading_info.v2` 接入。compact 当前/next n-step 终点严格保留完整 11 维；空批次、预分配、批量导入导出和 sampler 均拒绝旧宽度/非有限值，删除并行采集的零向量回退。
+- 2026-11-01：并行环境通过 `SharedMarketDataPack` 透传因果价格尺度、有效位与源行坐标；并行 epoch 模型和 diverse buffer 保存复用 03 的 `trading_observation.json` sidecar。退出记忆仍由连续环境维护，不由共享行情重建。
+- 验证：在 `conda activate finetf` 环境执行 `python -m pytest tests/rl/test_compact_trajectory_and_micro_batched_ingestion.py tests/rl/test_gpu_resident_buffer_and_pipeline.py tests/rl/test_parallel_diverse_cpu_exploration.py tests/rl/test_regime_stratified_replay_buffer.py tests/rl/test_parallel_weight_advantage_pretrain.py tests/rl/test_shared_data_manager.py tests/rl/test_shared_qtable_injection.py -q`，结果 `102 passed`；CUDA 可用时 GPU 设备路径随同测试执行。

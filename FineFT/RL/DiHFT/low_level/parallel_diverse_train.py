@@ -77,6 +77,11 @@ from RL.util.update import (
     update_params,
     soft_copy_params,
 )
+from common.trading_observation import (
+    TradingObservationConfig,
+    require_trading_info_in_info,
+    save_trading_observation_metadata,
+)
 from RL.DiHFT.low_level.weight_advantage_pretrain import (
     calculate_paper_partial_loss,
     calculate_paper_supervisor_kl_loss,
@@ -971,6 +976,10 @@ def save_diverse_buffer(buffer_diverse: RegimeStratifiedReplayBuffer, model_path
     buffer_path = build_diverse_buffer_path(model_path)
     payload = buffer_diverse.extract_stacked_tensor_dicts()
     torch.save(payload, buffer_path)
+    save_trading_observation_metadata(
+        os.path.join(model_path, "trading_observation.json"),
+        buffer_diverse.trading_observation_config,
+    )
     logger.info(
         "diverse buffer snapshot saved | path=%s | memory_size=%d",
         buffer_path,
@@ -1204,7 +1213,7 @@ class DfRolloutWorkerRunner:
             td_errors.append(record.td_error)
 
             previous_actions.append(float(info.get("previous_action", 0)))
-            trading_infos.append(np.asarray(info.get("trading_info", np.zeros(4, dtype=np.float32)), dtype=np.float32))
+            trading_infos.append(require_trading_info_in_info(info))
             avaliable_actions.append(np.asarray(info.get("avaliable_action", np.ones(getattr(self, "action_dim", 9), dtype=np.float32)), dtype=np.float32))
             hours.append(float(info.get("funding_count_down_hour", 0.0)))
             minutes.append(float(info.get("funding_count_down_minute", 0.0)))
@@ -1215,7 +1224,9 @@ class DfRolloutWorkerRunner:
             regime_grid_ids.append(int(info.get("regime_grid_id", 0)))
 
             next_previous_actions.append(float(next_info.get("previous_action", 0)))
-            next_trading_infos.append(np.asarray(next_info.get("trading_info", np.zeros(4, dtype=np.float32)), dtype=np.float32))
+            next_trading_infos.append(
+                require_trading_info_in_info(next_info, name="next_info['trading_info']")
+            )
             next_avaliable_actions.append(np.asarray(next_info.get("avaliable_action", np.ones(getattr(self, "action_dim", 9), dtype=np.float32)), dtype=np.float32))
             next_hours.append(float(next_info.get("funding_count_down_hour", 0.0)))
             next_minutes.append(float(next_info.get("funding_count_down_minute", 0.0)))
@@ -1677,6 +1688,10 @@ def save_parallel_epoch_model(trainer: Weighted_Contexts_DQN, epoch_index: int):
     torch.save(
         trainer.eval_net.state_dict(),
         os.path.join(epoch_path, "trained_model.pkl"),
+    )
+    save_trading_observation_metadata(
+        os.path.join(epoch_path, "trading_observation.json"),
+        getattr(trainer, "trading_observation_config", TradingObservationConfig()),
     )
     logger.info(
         "第 %d 轮 epoch 训练完成 | 模型已保存至=%s",

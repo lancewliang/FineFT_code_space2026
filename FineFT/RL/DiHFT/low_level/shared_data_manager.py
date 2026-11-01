@@ -8,6 +8,12 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.multiprocessing as mp
+from common.trading_observation import (
+    CAUSAL_PRICE_SCALE_COLUMN,
+    CAUSAL_PRICE_SCALE_ROW_COLUMN,
+    CAUSAL_PRICE_SCALE_VALID_COLUMN,
+    TradingObservationError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +36,9 @@ class EnvTensorPack:
     timestamp_tensor: torch.Tensor
     funding_rate_tensor: torch.Tensor
     funding_timestamp_tensor: torch.Tensor
+    causal_price_scale_tensor: torch.Tensor | None = None
+    causal_price_scale_valid_tensor: torch.Tensor | None = None
+    source_row_index_tensor: torch.Tensor | None = None
     timestamp_dtype: str = "datetime64[ns]"
     funding_timestamp_dtype: str = "datetime64[ns]"
     is_limit_up_tensor: torch.Tensor | None = None
@@ -80,6 +89,24 @@ class EnvTensorPack:
         if "datetime64" in self.funding_timestamp_dtype:
             return self.funding_timestamp_tensor.numpy().view(self.funding_timestamp_dtype)
         return self.funding_timestamp_tensor.numpy()
+
+    @property
+    def causal_price_scale_array(self) -> np.ndarray | None:
+        if self.causal_price_scale_tensor is None:
+            return None
+        return self.causal_price_scale_tensor.numpy()
+
+    @property
+    def causal_price_scale_valid_array(self) -> np.ndarray | None:
+        if self.causal_price_scale_valid_tensor is None:
+            return None
+        return self.causal_price_scale_valid_tensor.numpy()
+
+    @property
+    def source_row_index_array(self) -> np.ndarray | None:
+        if self.source_row_index_tensor is None:
+            return None
+        return self.source_row_index_tensor.numpy()
 
     @property
     def is_limit_up_array(self) -> np.ndarray | None:
@@ -141,6 +168,9 @@ class EnvTensorPack:
             "timestamp_array": self.timestamp_array,
             "funding_rate_array": self.funding_rate_array,
             "funding_timestamp_array": self.funding_timestamp_array,
+            "causal_price_scale_array": self.causal_price_scale_array,
+            "causal_price_scale_valid_array": self.causal_price_scale_valid_array,
+            "source_row_index_array": self.source_row_index_array,
             "is_limit_up_array": self.is_limit_up_array,
             "is_limit_down_array": self.is_limit_down_array,
             "limit_up_ask_depth_ratio_5_array": self.limit_up_ask_depth_ratio_5_array,
@@ -208,6 +238,40 @@ class SharedMarketDataPack:
         packs: dict[int, EnvTensorPack] = {}
 
         for df_index, df in train_df_cache.items():
+            causal_columns = [
+                CAUSAL_PRICE_SCALE_COLUMN,
+                CAUSAL_PRICE_SCALE_VALID_COLUMN,
+                CAUSAL_PRICE_SCALE_ROW_COLUMN,
+            ]
+            require_causal_columns = (
+                "exit_price_scale_floor" in env_kwargs or "start_index" in env_kwargs
+            )
+            present_causal_columns = [column for column in causal_columns if column in df.columns]
+            if (require_causal_columns or present_causal_columns) and present_causal_columns != causal_columns:
+                missing = [column for column in causal_columns if column not in df.columns]
+                raise TradingObservationError(
+                    f"df_index={df_index} is missing causal auxiliary columns: {missing}"
+                )
+            causal_price_scale_tensor = None
+            causal_price_scale_valid_tensor = None
+            source_row_index_tensor = None
+            if present_causal_columns == causal_columns:
+                scale = np.asarray(df[CAUSAL_PRICE_SCALE_COLUMN].values, dtype=np.float32)
+                valid = np.asarray(df[CAUSAL_PRICE_SCALE_VALID_COLUMN].values, dtype=bool)
+                source_rows = np.asarray(df[CAUSAL_PRICE_SCALE_ROW_COLUMN].values, dtype=np.int64)
+                if (
+                    not np.isfinite(scale).all()
+                    or (scale < 0).any()
+                    or not np.array_equal(source_rows, np.arange(len(df), dtype=np.int64))
+                    or np.any(~valid & (scale != 0))
+                ):
+                    raise TradingObservationError(
+                        f"df_index={df_index} has invalid causal auxiliary values or coordinates"
+                    )
+                causal_price_scale_tensor = torch.from_numpy(np.ascontiguousarray(scale)).share_memory_()
+                causal_price_scale_valid_tensor = torch.from_numpy(np.ascontiguousarray(valid)).share_memory_()
+                source_row_index_tensor = torch.from_numpy(np.ascontiguousarray(source_rows)).share_memory_()
+
             if enable_limit_reward:
                 missing_limit_cols = [
                     col
@@ -390,6 +454,9 @@ class SharedMarketDataPack:
                 timestamp_tensor=timestamp_tensor,
                 funding_rate_tensor=funding_rate_tensor,
                 funding_timestamp_tensor=funding_timestamp_tensor,
+                causal_price_scale_tensor=causal_price_scale_tensor,
+                causal_price_scale_valid_tensor=causal_price_scale_valid_tensor,
+                source_row_index_tensor=source_row_index_tensor,
                 timestamp_dtype=ts_dtype_str,
                 funding_timestamp_dtype=fts_dtype_str,
                 is_limit_up_tensor=is_limit_up_tensor,
@@ -439,6 +506,10 @@ def create_demo_env_from_pack(
         timestamp_array=arrays["timestamp_array"],
         funding_rate_array=arrays["funding_rate_array"],
         funding_timestamp_array=arrays["funding_timestamp_array"],
+        exit_price_scale_floor=env_kwargs.get("exit_price_scale_floor", 5.0),
+        causal_price_scale_array=arrays["causal_price_scale_array"],
+        causal_price_scale_valid_array=arrays["causal_price_scale_valid_array"],
+        start_index=env_kwargs.get("start_index", 0),
         max_holding_number=env_kwargs["max_holding_number"],
         position_choices=env_kwargs["position_choices"],
         leverage_choice=leverage_choices,

@@ -17,7 +17,7 @@ def _make_dummy_transition(step_idx: int, grid_id: int, reward: float = 1.0, don
     info = {
         "previous_action": 0,
         "regime_grid_id": grid_id,
-        "trading_info": np.array([1.0, 0.0, 0.0, 0.1], dtype=np.float32),
+        "trading_info": np.array([1.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
         "avaliable_action": np.array([1, 1, 1], dtype=np.int64),
         "funding_count_down_hour": 0.0,
         "funding_count_down_minute": 0.0,
@@ -278,11 +278,11 @@ def test_regime_stratified_buffer_fifo_eviction_and_tensor_shapes():
     assert infos["avaliable_action"].shape == (9, 3)
     assert infos["funding_count_down_hour"].shape == (9,)
     assert infos["funding_count_down_minute"].shape == (9,)
-    assert infos["trading_info"].shape == (9, 4)
+    assert infos["trading_info"].shape == (9, 11)
     assert infos["q_value"].shape == (9, 3)
 
     assert next_infos["previous_action"].shape == (9,)
     assert next_infos["avaliable_action"].shape == (9, 3)
     assert next_infos["funding_count_down_hour"].shape == (9,)
     assert next_infos["funding_count_down_minute"].shape == (9,)
-    assert next_infos["trading_info"].shape == (9, 4)
+    assert next_infos["trading_info"].shape == (9, 11)

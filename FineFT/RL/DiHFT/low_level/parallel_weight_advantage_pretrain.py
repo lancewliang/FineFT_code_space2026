@@ -140,6 +140,7 @@ from RL.util.episode_selector import get_transformation_even_risk
 
 # model
 from model.low_level import ensemble_Qnet
+from common.trading_observation import TradingObservationConfig
 
 # env
 from RL.DiHFT.low_level.pretrain_qtable_diagnostics import (
@@ -1016,6 +1017,11 @@ class Weighted_Contexts_DQN:
             device=self.device,
             seed=self.seed,
             num_grids=9,
+            trading_observation_config=getattr(
+                self,
+                "trading_observation_config",
+                TradingObservationConfig(),
+            ),
         )
         step_counter_pretrain = 0
         step_counter_diverse = 0

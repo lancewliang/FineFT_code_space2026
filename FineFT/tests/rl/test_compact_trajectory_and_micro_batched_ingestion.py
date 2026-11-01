@@ -68,12 +68,12 @@ def test_compact_trajectory_n_step_accumulation_matches_legacy():
     raw_dones = [i == total_steps - 1 for i in range(total_steps)]
     raw_td_errors = [0.1 * i for i in range(total_steps)]
     raw_previous_actions = [0.0] * total_steps
-    raw_trading_infos = [np.array([1.0, 0.01, 0.0, 0.1], dtype=np.float32) for _ in range(total_steps)]
+    raw_trading_infos = [np.array([1.0, 0.01, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32) for _ in range(total_steps)]
     raw_avaliable_actions = [np.ones(3, dtype=np.float32) for _ in range(total_steps)]
     raw_hours = [0.0] * total_steps
     raw_minutes = [0.0] * total_steps
     raw_next_previous_actions = [float(a) for a in raw_actions]
-    raw_next_trading_infos = [np.array([1.0, 0.02, 0.0, 0.2], dtype=np.float32) for _ in range(total_steps)]
+    raw_next_trading_infos = [np.array([1.0, 0.02, 0.0, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32) for _ in range(total_steps)]
     raw_next_avaliable_actions = [np.ones(3, dtype=np.float32) for _ in range(total_steps)]
     raw_next_hours = [0.0] * total_steps
     raw_next_minutes = [0.0] * total_steps
@@ -142,7 +142,7 @@ def test_ipc_serialization_compression():
                 np.ones(state_dim, dtype=np.float32),
                 {
                     "previous_action": 0,
-                    "trading_info": np.zeros(4, dtype=np.float32),
+                    "trading_info": np.zeros(11, dtype=np.float32),
                     "avaliable_action": np.ones(9, dtype=np.float32),
                     "funding_count_down_hour": 0.0,
                     "funding_count_down_minute": 0.0,
@@ -156,7 +156,7 @@ def test_ipc_serialization_compression():
                 np.ones(state_dim, dtype=np.float32),
                 {
                     "previous_action": 1,
-                    "trading_info": np.zeros(4, dtype=np.float32),
+                    "trading_info": np.zeros(11, dtype=np.float32),
                     "avaliable_action": np.ones(9, dtype=np.float32),
                     "funding_count_down_hour": 0.0,
                     "funding_count_down_minute": 0.0,
@@ -193,8 +193,8 @@ def test_ipc_serialization_compression():
         td_errors=np.ones(num_steps, dtype=np.float32) * 1.5,
         previous_actions=np.zeros(num_steps, dtype=np.float32),
         next_previous_actions=np.ones(num_steps, dtype=np.float32),
-        trading_infos=np.zeros((num_steps, 4), dtype=np.float32),
-        next_trading_infos=np.zeros((num_steps, 4), dtype=np.float32),
+        trading_infos=np.zeros((num_steps, 11), dtype=np.float32),
+        next_trading_infos=np.zeros((num_steps, 11), dtype=np.float32),
         avaliable_actions=np.ones((num_steps, 9), dtype=np.float32),
         next_avaliable_actions=np.ones((num_steps, 9), dtype=np.float32),
         hours=np.zeros(num_steps, dtype=np.float32),
@@ -219,7 +219,10 @@ def test_ipc_serialization_compression():
 
     # 验证压缩比率
     compression_ratio = 1.0 - (len(compact_dump) / len(legacy_dump))
-    assert compression_ratio > 0.90, f"Expected >90% compression, got {compression_ratio:.2%}"
+    # The eleven-dimensional trading context is intentionally retained in the
+    # compact IPC record, so the ratio is slightly lower than the old 4-D
+    # baseline while remaining strongly compressed.
+    assert compression_ratio > 0.88, f"Expected >88% compression, got {compression_ratio:.2%}"
 
     # 验证反序列化后 _transitions 被清理，但访问 .transitions 仍然能够懒加载还原
     loaded_result = pickle.loads(compact_dump)
@@ -230,7 +233,7 @@ def test_ipc_serialization_compression():
 
 def test_spatio_temporal_semantic_key_properties():
     info = {
-        "previous_action": 0, "trading_info": np.array([1.0, 0.01, 0.02, 0.05]),
+        "previous_action": 0, "trading_info": np.array([1.0, 0.01, 0.02, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
         "avaliable_action": np.ones(3),
         "funding_count_down_hour": 0.0, "funding_count_down_minute": 0.0,
     }
@@ -268,8 +271,8 @@ def test_buffer_add_compact_records_bulk_with_shared_pack():
             td_errors=np.array([td_error], dtype=np.float32),
             previous_actions=np.array([0.0], dtype=np.float32),
             next_previous_actions=np.array([action], dtype=np.float32),
-            trading_infos=np.array([[1.0, 0.001, 0.0, 0.05]], dtype=np.float32),
-            next_trading_infos=np.array([[1.0, 0.002, 0.0, 0.1]], dtype=np.float32),
+            trading_infos=np.array([[1.0, 0.001, 0.0, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], dtype=np.float32),
+            next_trading_infos=np.array([[1.0, 0.002, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], dtype=np.float32),
             avaliable_actions=np.ones((1, 9), dtype=np.float32),
             next_avaliable_actions=np.ones((1, 9), dtype=np.float32),
             hours=np.array([0.0], dtype=np.float32),
@@ -362,8 +365,8 @@ def test_run_epoch_exploration_micro_batched_ingestion(monkeypatch):
             td_errors=np.array([0.5], dtype=np.float32),
             previous_actions=np.array([0.0], dtype=np.float32),
             next_previous_actions=np.array([0.0], dtype=np.float32),
-            trading_infos=np.zeros((1, 4), dtype=np.float32),
-            next_trading_infos=np.zeros((1, 4), dtype=np.float32),
+            trading_infos=np.zeros((1, 11), dtype=np.float32),
+            next_trading_infos=np.zeros((1, 11), dtype=np.float32),
             avaliable_actions=np.ones((1, 9), dtype=np.float32),
             next_avaliable_actions=np.ones((1, 9), dtype=np.float32),
             hours=np.array([0.0], dtype=np.float32),
@@ -429,7 +432,7 @@ def test_update_supports_amp_mixed_precision_and_grad_step():
         'avaliable_action': torch.ones(bs, trainer.N_ACTIONS, device=device),
         'funding_count_down_hour': torch.zeros(bs, device=device),
         'funding_count_down_minute': torch.zeros(bs, device=device),
-        'trading_info': torch.zeros(bs, 4, device=device),
+        'trading_info': torch.zeros(bs, 11, device=device),
         'q_value': torch.zeros(bs, trainer.N_ACTIONS, device=device),
     }
     next_info = {
@@ -437,7 +440,7 @@ def test_update_supports_amp_mixed_precision_and_grad_step():
         'avaliable_action': torch.ones(bs, trainer.N_ACTIONS, device=device),
         'funding_count_down_hour': torch.zeros(bs, device=device),
         'funding_count_down_minute': torch.zeros(bs, device=device),
-        'trading_info': torch.zeros(bs, 4, device=device),
+        'trading_info': torch.zeros(bs, 11, device=device),
     }
 
     losses = pdt.update(trainer, states, info, actions, rewards, next_states, next_info, dones)

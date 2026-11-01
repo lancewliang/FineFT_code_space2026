@@ -45,6 +45,7 @@ from analysis.calculate_metric.calculate_metric import (
 from common.trading_observation import (
     CAUSAL_PRICE_SCALE_COLUMN,
     CAUSAL_PRICE_SCALE_VALID_COLUMN,
+    EXIT_MEMORY_SCALE_WINDOW,
     TRADING_INFO_DIM,
     TRADING_INFO_KEYS,
     ExitMemoryRecord,
@@ -330,9 +331,12 @@ class Base_Env(gym.Env):
             # Direct legacy callers do not carry the Scale Save columns.  New
             # dataset-driven paths always pass them and never enter this branch.
             from common.trading_observation import calculate_causal_price_scale
-            scale = calculate_causal_price_scale(
-                self.markprice_array, self.day, self.exit_price_scale_floor
-            )
+            if self.day < EXIT_MEMORY_SCALE_WINDOW:
+                scale = self.exit_price_scale_floor
+            else:
+                scale = calculate_causal_price_scale(
+                    self.markprice_array, self.day, self.exit_price_scale_floor
+                )
         else:
             if not self.causal_price_scale_valid_array[self.day]:
                 raise TradingObservationError(

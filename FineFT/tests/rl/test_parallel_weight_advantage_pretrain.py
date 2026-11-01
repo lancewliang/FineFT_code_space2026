@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 import pytest
+import numpy as np
 
 
 FINEFT_ROOT = Path(__file__).resolve().parents[2]
@@ -477,7 +478,7 @@ def test_buffer_writes_use_sorted_transition_payloads():
         num_grids=9,
     )
     info_base_a = {
-        "previous_action": 0, "regime_grid_id": 0, "trading_info": np.zeros(4),
+        "previous_action": 0, "regime_grid_id": 0, "trading_info": np.zeros(11),
         "avaliable_action": np.array([1, 1, 1]), "funding_count_down_hour": 0.0,
         "funding_count_down_minute": 0.0, "q_value": np.array([1.0, 0.0, 0.0]),
     }
@@ -486,7 +487,7 @@ def test_buffer_writes_use_sorted_transition_payloads():
     transition_a = (np.array([1.0, 2.0]), info_base_a, 1, 1.0, np.array([1.5, 2.5]), info_next_a, False)
 
     info_base_b = {
-        "previous_action": 1, "regime_grid_id": 1, "trading_info": np.zeros(4),
+        "previous_action": 1, "regime_grid_id": 1, "trading_info": np.zeros(11),
         "avaliable_action": np.array([1, 1, 1]), "funding_count_down_hour": 0.0,
         "funding_count_down_minute": 0.0, "q_value": np.array([1.0, 0.0, 0.0]),
     }
@@ -550,7 +551,7 @@ def test_buffer_writes_skip_duplicate_experiences():
         num_grids=9,
     )
     info_base = {
-        "previous_action": 0, "regime_grid_id": 0, "trading_info": np.zeros(4),
+        "previous_action": 0, "regime_grid_id": 0, "trading_info": np.zeros(11),
         "avaliable_action": np.array([1, 1, 1]), "funding_count_down_hour": 0.0,
         "funding_count_down_minute": 0.0, "q_value": np.array([1.0, 0.0, 0.0]),
     }
@@ -711,7 +712,7 @@ def test_save_diverse_buffer_writes_tensor_snapshot(tmp_path):
     info1 = {
         "previous_action": 0,
         "regime_grid_id": 0,
-        "trading_info": np.zeros(4),
+        "trading_info": np.zeros(11),
         "avaliable_action": np.array([1, 1, 1]),
         "funding_count_down_hour": 0.0,
         "funding_count_down_minute": 0.0,
@@ -759,7 +760,7 @@ def test_run_parallel_rollout_task_completes_in_single_round_without_updates(
                 return
             self.explore_count += 1
             info_base = {
-                "previous_action": 0, "regime_grid_id": 0, "trading_info": np.zeros(4),
+                "previous_action": 0, "regime_grid_id": 0, "trading_info": np.zeros(11),
                 "avaliable_action": np.array([1, 1, 1]), "funding_count_down_hour": 0.0,
                 "funding_count_down_minute": 0.0, "q_value": np.array([1.0, 0.0, 0.0]),
             }
@@ -871,7 +872,7 @@ def test_run_parallel_diverse_training_completes_exploration_before_training(
             info2 = {
                 "previous_action": 0,
                 "regime_grid_id": 8,
-                "trading_info": np.zeros(4),
+                "trading_info": np.zeros(11),
                 "avaliable_action": np.array([1, 1, 1]),
                 "funding_count_down_hour": 0.0,
                 "funding_count_down_minute": 0.0,
@@ -1031,7 +1032,7 @@ def test_is_buffer_full_detects_capacity_from_buffer_or_trainer():
     assert pdt.is_buffer_full(buffer, trainer) is False
 
     info_base = {
-        "previous_action": 0, "regime_grid_id": 8, "trading_info": np.zeros(4),
+        "previous_action": 0, "regime_grid_id": 8, "trading_info": np.zeros(11),
         "avaliable_action": np.array([1, 1, 1]), "funding_count_down_hour": 0.0,
         "funding_count_down_minute": 0.0, "q_value": np.array([1.0, 0.0, 0.0]),
     }
@@ -1124,7 +1125,7 @@ def test_run_epoch_exploration_collects_all_tasks_when_buffer_becomes_full(monke
                 {
                     "previous_action": message.initial_action,
                     "regime_grid_id": 0,
-                    "trading_info": np.zeros(4),
+                    "trading_info": np.zeros(11),
                     "avaliable_action": np.array([1, 1, 1]),
                     "funding_count_down_hour": 0.0,
                     "funding_count_down_minute": 0.0,
@@ -1142,7 +1143,7 @@ def test_run_epoch_exploration_collects_all_tasks_when_buffer_becomes_full(monke
                 {
                     "previous_action": 1,
                     "regime_grid_id": 0,
-                    "trading_info": np.zeros(4),
+                    "trading_info": np.zeros(11),
                     "avaliable_action": np.array([1, 1, 1]),
                     "funding_count_down_hour": 0.0,
                     "funding_count_down_minute": 0.0,
@@ -1507,7 +1508,8 @@ def _sample_parallel_update_batch():
         "funding_count_down_hour": torch.zeros(2),
         "funding_count_down_minute": torch.ones(2),
         "trading_info": torch.tensor(
-            [[0.5, 0.02, -0.01, 0.1], [0.0, 0.0, 0.0, 0.0]],
+            [[0.5, 0.02, -0.01, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+             [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]],
             dtype=torch.float32,
         ),
         "q_value": torch.zeros(2, 3),
@@ -1518,7 +1520,8 @@ def _sample_parallel_update_batch():
         "funding_count_down_hour": torch.ones(2),
         "funding_count_down_minute": torch.zeros(2),
         "trading_info": torch.tensor(
-            [[0.5, 0.03, -0.01, 0.2], [0.5, 0.01, -0.02, 0.1]],
+            [[0.5, 0.03, -0.01, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+             [0.5, 0.01, -0.02, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]],
             dtype=torch.float32,
         ),
     }
@@ -1651,6 +1654,7 @@ def test_run_exhaustive_warmup_collects_all_episodes_before_training_and_updates
     import queue
     from unittest.mock import MagicMock
     from RL.DiHFT.low_level import parallel_pretrain as pp
+    from model.low_level import ensemble_Qnet
 
     events = []
 
@@ -1671,8 +1675,8 @@ def test_run_exhaustive_warmup_collects_all_episodes_before_training_and_updates
                 )
             )
             transitions = [
-                ("s1", {}, 0, 1.0, "s2", {}, False),
-                ("s2", {}, 0, 0.5, "s3", {}, True),
+                ("s1", {"trading_info": np.zeros(11, dtype=np.float32)}, 0, 1.0, "s2", {"trading_info": np.zeros(11, dtype=np.float32)}, False),
+                ("s2", {"trading_info": np.zeros(11, dtype=np.float32)}, 0, 0.5, "s3", {"trading_info": np.zeros(11, dtype=np.float32)}, True),
             ]
             self.result_queue.put(
                 pp.PretrainCollectResult(
@@ -1695,7 +1699,7 @@ def test_run_exhaustive_warmup_collects_all_episodes_before_training_and_updates
     trainer.batch_size = 2
     trainer.update_counter = 0
     trainer.model_path = str(tmp_path)
-    trainer.eval_net.state_dict.return_value = {"dummy": "weights"}
+    trainer.eval_net = ensemble_Qnet(2, 2, 8, 2, 1)
 
     def fake_shutdown():
         events.append("shutdown_workers")
@@ -1797,7 +1801,7 @@ def test_run_exhaustive_warmup_skips_training_when_pretrain_epoch_zero(monkeypat
                     df_index=self.df_index,
                     initial_action=message.initial_action,
                     rollout_index=message.rollout_index,
-                    transitions=[("s", {}, 0, 1.0, "s_", {}, True)],
+                    transitions=[("s", {"trading_info": np.zeros(11, dtype=np.float32)}, 0, 1.0, "s_", {"trading_info": np.zeros(11, dtype=np.float32)}, True)],
                     reward_sum=1.0,
                     final_balance=10000.0,
                     transition_count=1,
@@ -1899,7 +1903,7 @@ def test_run_exhaustive_warmup_rejects_non_positive_update_times_when_pretrain_e
                     df_index=0,
                     initial_action=message.initial_action,
                     rollout_index=message.rollout_index,
-                    transitions=[("s", {}, 0, 1.0, "s_", {}, True)],
+                    transitions=[("s", {"trading_info": np.zeros(11, dtype=np.float32)}, 0, 1.0, "s_", {"trading_info": np.zeros(11, dtype=np.float32)}, True)],
                     reward_sum=1.0,
                     final_balance=10000.0,
                     transition_count=1,
@@ -1966,7 +1970,7 @@ def test_run_exhaustive_warmup_calls_evaluation_and_returns_eval_metrics(monkeyp
                     df_index=0,
                     initial_action=message.initial_action,
                     rollout_index=message.rollout_index,
-                    transitions=[("s", {}, 0, 1.0, "s_", {}, True)],
+                    transitions=[("s", {"trading_info": np.zeros(11, dtype=np.float32)}, 0, 1.0, "s_", {"trading_info": np.zeros(11, dtype=np.float32)}, True)],
                     reward_sum=1.0,
                     final_balance=10000.0,
                     transition_count=1,
@@ -2301,7 +2305,7 @@ def test_run_exhaustive_warmup_saves_buffer_and_loads_to_skip_exploration(tmp_pa
                     df_index=0,
                     initial_action=message.initial_action,
                     rollout_index=message.rollout_index,
-                    transitions=[("s", {"trading_info": [0]}, 0, 1.0, "s_", {"trading_info": [0]}, True)],
+                    transitions=[("s", {"trading_info": np.zeros(11, dtype=np.float32)}, 0, 1.0, "s_", {"trading_info": np.zeros(11, dtype=np.float32)}, True)],
                     reward_sum=1.0,
                     final_balance=10000.0,
                     transition_count=1,
@@ -2373,16 +2377,18 @@ def test_run_exhaustive_warmup_saves_model_after_learning(tmp_path, monkeypatch)
     from unittest.mock import MagicMock
     import torch
     from RL.DiHFT.low_level import parallel_pretrain as pp
+    from model.low_level import ensemble_Qnet
 
     model_path = str(tmp_path)
     expected_model_file = str(tmp_path / "pretrain_model.pkl")
 
-    class SimpleLinear(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.fc = torch.nn.Linear(2, 2)
-
-    net = SimpleLinear()
+    net = ensemble_Qnet(
+        N_STATES=2,
+        N_ACTIONS=2,
+        hidden_nodes=8,
+        TIME_INFO_DIM=2,
+        ensemble_number=1,
+    )
     trainer = MagicMock()
     trainer.model_path = model_path
     trainer.eval_net = net
@@ -2419,7 +2425,28 @@ def test_run_exhaustive_warmup_saves_model_after_learning(tmp_path, monkeypatch)
 
     # Fake pretrain buffer already existing to skip collect
     buffer_file = str(tmp_path / "pretrain_buffer.pt")
-    torch.save({"transitions": [("s", {}, 0, 1.0, "s_", {}, True)] * 2, "step_counter": 2}, buffer_file)
+    config = pp.TradingObservationConfig()
+    trainer.trading_observation_config = config
+    torch.save(
+        {
+            "schema": pp.PRETRAIN_REPLAY_SNAPSHOT_SCHEMA,
+            "trading_observation": config.to_metadata(),
+            "transitions": [
+                (
+                    "s",
+                    {"trading_info": np.zeros(11, dtype=np.float32)},
+                    0,
+                    1.0,
+                    "s_",
+                    {"trading_info": np.zeros(11, dtype=np.float32)},
+                    True,
+                )
+            ]
+            * 2,
+            "step_counter": 2,
+        },
+        buffer_file,
+    )
     trainer.pretrain_buffer_path = buffer_file
 
     assert not os.path.exists(expected_model_file)
@@ -2442,17 +2469,23 @@ def test_run_exhaustive_warmup_skips_pretrain_when_load_pretrain_model_is_true(t
     from unittest.mock import MagicMock
     import torch
     from RL.DiHFT.low_level import parallel_pretrain as pp
+    from model.low_level import ensemble_Qnet
 
     model_file = str(tmp_path / "pretrain_model.pkl")
-    linear = torch.nn.Linear(2, 2)
+    linear = ensemble_Qnet(2, 2, 8, 2, 1)
     torch.save(linear.state_dict(), model_file)
+    pp.save_trading_observation_metadata(
+        tmp_path / "trading_observation.json",
+        pp.TradingObservationConfig(),
+    )
 
     trainer = MagicMock()
     trainer.model_path = str(tmp_path)
     trainer.pretrain_model_path = model_file
     trainer.load_pretrain_model = True
-    trainer.eval_net = torch.nn.Linear(2, 2)
+    trainer.eval_net = ensemble_Qnet(2, 2, 8, 2, 1)
     trainer.device = "cpu"
+    trainer.trading_observation_config = pp.TradingObservationConfig()
 
     
     summary, steps = pp.run_exhaustive_warmup(
@@ -2628,12 +2661,20 @@ def test_action_persistence_in_worker_runner(monkeypatch):
             self.position = 0.0
 
         def reset(self, initial_state=None):
-            return np.zeros(2), {"avaiable_action_list": [0, 1, 2], "q_value": [0.0, 0.0, 0.0]}
+            return np.zeros(2), {
+                "avaiable_action_list": [0, 1, 2],
+                "q_value": [0.0, 0.0, 0.0],
+                "trading_info": np.zeros(11, dtype=np.float32),
+            }
 
         def step(self, action):
             self.step_count += 1
             done = self.step_count >= 5
-            return np.zeros(2), 1.0, done, {"avaiable_action_list": [0, 1, 2], "q_value": [0.0, 0.0, 0.0]}
+            return np.zeros(2), 1.0, done, {
+                "avaiable_action_list": [0, 1, 2],
+                "q_value": [0.0, 0.0, 0.0],
+                "trading_info": np.zeros(11, dtype=np.float32),
+            }
 
     def fake_get_initial_state_and_env(self, df_index, initial_action):
         return FakeEnv(), (10000.0, 0.0, 0.0, 0.0, 1)
@@ -2734,7 +2775,7 @@ def test_run_periodic_greedy_evaluation_logs_and_records(monkeypatch):
                 "avaliable_action": [1, 1, 1],
                 "funding_count_down_hour": 0.0,
                 "funding_count_down_minute": 0.0,
-                "trading_info": np.zeros(4),
+                "trading_info": np.zeros(11),
             }
 
         def step(self, action):
@@ -2745,7 +2786,7 @@ def test_run_periodic_greedy_evaluation_logs_and_records(monkeypatch):
                 "avaliable_action": [1, 1, 1],
                 "funding_count_down_hour": 0.0,
                 "funding_count_down_minute": 0.0,
-                "trading_info": np.zeros(4),
+                "trading_info": np.zeros(11),
             }
 
     monkeypatch.setattr(pdt, "create_demo_env", lambda *a, **k: FakeEnv())

@@ -7,6 +7,13 @@ import torch
 
 from dataclasses import dataclass, field
 from RL.DiHFT.low_level.parallel_pretrain import extract_stacked_tensor_dict
+from common.trading_observation import (
+    TRADING_INFO_DIM,
+    TradingObservationConfig,
+    require_trading_info_in_info,
+    validate_trading_info,
+    validate_trading_info_batch,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -93,8 +100,8 @@ class CompactTrajectoryRecord:
     td_errors: np.ndarray             # (T,) float32
     previous_actions: np.ndarray      # (T,) float32
     next_previous_actions: np.ndarray # (T,) float32
-    trading_infos: np.ndarray         # (T, 4) float32
-    next_trading_infos: np.ndarray    # (T, 4) float32
+    trading_infos: np.ndarray         # (T, 11) float32
+    next_trading_infos: np.ndarray    # (T, 11) float32
     avaliable_actions: np.ndarray     # (T, action_dim) float32
     next_avaliable_actions: np.ndarray# (T, action_dim) float32
     hours: np.ndarray                 # (T,) float32
@@ -105,6 +112,26 @@ class CompactTrajectoryRecord:
     regime_grid_ids: np.ndarray | None = None   # (T,) int32
     states: np.ndarray | None = None            # (T, state_dim) float32, optional fallback
     next_states: np.ndarray | None = None       # (T, state_dim) float32, optional fallback
+
+    def __post_init__(self) -> None:
+        """Reject malformed compact records before they cross the IPC seam."""
+        trading_info = validate_trading_info_batch(
+            self.trading_infos, name="compact.trading_infos"
+        )
+        next_trading_info = validate_trading_info_batch(
+            self.next_trading_infos, name="compact.next_trading_infos"
+        )
+        lengths = {
+            len(self.step_indices), len(self.actions), len(self.rewards),
+            len(self.next_step_indices), len(self.dones), len(self.td_errors),
+            len(self.previous_actions), len(self.next_previous_actions),
+            len(trading_info), len(next_trading_info),
+            len(self.avaliable_actions), len(self.next_avaliable_actions),
+            len(self.hours), len(self.minutes), len(self.next_hours),
+            len(self.next_minutes),
+        }
+        if len(lengths) != 1:
+            raise ValueError("compact trajectory arrays must have the same number of steps")
 
     def to_worker_transitions(
         self,
@@ -222,8 +249,8 @@ def accumulate_compact_trajectory_n_step(
             td_errors=np.empty(0, dtype=np.float32),
             previous_actions=np.empty(0, dtype=np.float32),
             next_previous_actions=np.empty(0, dtype=np.float32),
-            trading_infos=np.empty((0, 4), dtype=np.float32),
-            next_trading_infos=np.empty((0, 4), dtype=np.float32),
+            trading_infos=np.empty((0, TRADING_INFO_DIM), dtype=np.float32),
+            next_trading_infos=np.empty((0, TRADING_INFO_DIM), dtype=np.float32),
             avaliable_actions=np.empty((0, 0), dtype=np.float32),
             next_avaliable_actions=np.empty((0, 0), dtype=np.float32),
             hours=np.empty(0, dtype=np.float32),
@@ -231,6 +258,15 @@ def accumulate_compact_trajectory_n_step(
             next_hours=np.empty(0, dtype=np.float32),
             next_minutes=np.empty(0, dtype=np.float32),
         )
+
+    raw_trading_infos_array = validate_trading_info_batch(
+        np.asarray(raw_trading_infos), name="raw_trading_infos"
+    )
+    raw_next_trading_infos_array = validate_trading_info_batch(
+        np.asarray(raw_next_trading_infos), name="raw_next_trading_infos"
+    )
+    if len(raw_trading_infos_array) != total_steps or len(raw_next_trading_infos_array) != total_steps:
+        raise ValueError("raw trading observations must match raw action length")
 
     gammas = np.array([gamma ** i for i in range(n_step)], dtype=np.float32)
     acc_rewards = np.zeros(total_steps, dtype=np.float32)
@@ -261,7 +297,7 @@ def accumulate_compact_trajectory_n_step(
             next_step_indices[t] = raw_step_indices[terminal_idx]
             acc_dones[t] = True
             acc_next_prev_actions[t] = raw_next_previous_actions[terminal_idx]
-            acc_next_trading_infos.append(raw_next_trading_infos[terminal_idx])
+            acc_next_trading_infos.append(raw_next_trading_infos_array[terminal_idx])
             acc_next_avail_actions.append(raw_next_avaliable_actions[terminal_idx])
             acc_next_hours[t] = raw_next_hours[terminal_idx]
             acc_next_minutes[t] = raw_next_minutes[terminal_idx]
@@ -272,7 +308,7 @@ def accumulate_compact_trajectory_n_step(
             next_step_indices[t] = raw_step_indices[target_step]
             acc_dones[t] = False
             acc_next_prev_actions[t] = raw_previous_actions[target_step]
-            acc_next_trading_infos.append(raw_trading_infos[target_step])
+            acc_next_trading_infos.append(raw_trading_infos_array[target_step])
             acc_next_avail_actions.append(raw_avaliable_actions[target_step])
             acc_next_hours[t] = raw_hours[target_step]
             acc_next_minutes[t] = raw_minutes[target_step]
@@ -282,7 +318,7 @@ def accumulate_compact_trajectory_n_step(
             next_step_indices[t] = raw_step_indices[-1]
             acc_dones[t] = True
             acc_next_prev_actions[t] = raw_next_previous_actions[-1]
-            acc_next_trading_infos.append(raw_next_trading_infos[-1])
+            acc_next_trading_infos.append(raw_next_trading_infos_array[-1])
             acc_next_avail_actions.append(raw_next_avaliable_actions[-1])
             acc_next_hours[t] = raw_next_hours[-1]
             acc_next_minutes[t] = raw_next_minutes[-1]
@@ -320,7 +356,7 @@ def accumulate_compact_trajectory_n_step(
         td_errors=np.ascontiguousarray(raw_td_errors, dtype=np.float32),
         previous_actions=np.ascontiguousarray(raw_previous_actions, dtype=np.float32),
         next_previous_actions=acc_next_prev_actions,
-        trading_infos=np.ascontiguousarray(np.stack(raw_trading_infos), dtype=np.float32),
+        trading_infos=np.ascontiguousarray(raw_trading_infos_array, dtype=np.float32),
         next_trading_infos=np.ascontiguousarray(np.stack(acc_next_trading_infos), dtype=np.float32),
         avaliable_actions=np.ascontiguousarray(np.stack(raw_avaliable_actions), dtype=np.float32),
         next_avaliable_actions=np.ascontiguousarray(np.stack(acc_next_avail_actions), dtype=np.float32),
@@ -351,9 +387,10 @@ def _observable_context_key(
     hour: float,
     minute: float,
 ) -> bytes:
+    trading_info = validate_trading_info(trading_info)
     return _float32_key(np.concatenate((
         np.asarray([previous_action, hour, minute], dtype=np.float32),
-        np.asarray(trading_info, dtype=np.float32).reshape(-1),
+        trading_info,
         np.asarray(avaliable_action, dtype=np.float32).reshape(-1),
     )))
 
@@ -452,6 +489,7 @@ class RegimeStratifiedReplayBuffer:
         action_dim: int | None = None,
         shared_market_data: Any | None = None,
         max_outcomes_per_decision: int = 4,
+        trading_observation_config: TradingObservationConfig | None = None,
     ) -> None:
         if num_grids <= 0 or total_buffer_size < num_grids:
             raise ValueError("replay capacity must provide at least one slot per grid")
@@ -464,6 +502,9 @@ class RegimeStratifiedReplayBuffer:
         self.device = torch.device(device) if isinstance(device, str) else device
         self.seed = seed
         self.max_outcomes_per_decision = int(max_outcomes_per_decision)
+        self.trading_observation_config = (
+            trading_observation_config or TradingObservationConfig()
+        )
         self._retention_rng = np.random.default_rng(seed)
         self.decision_groups: dict[int, dict[Any, dict[Any, int]]] = {
             g: {} for g in range(num_grids)
@@ -523,18 +564,20 @@ class RegimeStratifiedReplayBuffer:
             self.avaliable_actions[g] = torch.zeros((self.grid_capacity, action_dim), dtype=torch.float32, device=self.device)
             self.hours[g] = torch.zeros((self.grid_capacity,), dtype=torch.float32, device=self.device)
             self.minutes[g] = torch.zeros((self.grid_capacity,), dtype=torch.float32, device=self.device)
-            self.trading_infos[g] = torch.zeros((self.grid_capacity, 4), dtype=torch.float32, device=self.device)
+            self.trading_infos[g] = torch.zeros((self.grid_capacity, TRADING_INFO_DIM), dtype=torch.float32, device=self.device)
             self.q_values[g] = torch.zeros((self.grid_capacity, action_dim), dtype=torch.float32, device=self.device)
 
             self.next_previous_actions[g] = torch.zeros((self.grid_capacity,), dtype=torch.float32, device=self.device)
             self.next_avaliable_actions[g] = torch.zeros((self.grid_capacity, action_dim), dtype=torch.float32, device=self.device)
             self.next_hours[g] = torch.zeros((self.grid_capacity,), dtype=torch.float32, device=self.device)
             self.next_minutes[g] = torch.zeros((self.grid_capacity,), dtype=torch.float32, device=self.device)
-            self.next_trading_infos[g] = torch.zeros((self.grid_capacity, 4), dtype=torch.float32, device=self.device)
+            self.next_trading_infos[g] = torch.zeros((self.grid_capacity, TRADING_INFO_DIM), dtype=torch.float32, device=self.device)
         self._initialized = True
 
     def _write_slot(self, grid_id: int, idx: int, transition: tuple[Any, ...]) -> None:
         s, info, a, r, s_, next_info, done = transition
+        require_trading_info_in_info(info)
+        require_trading_info_in_info(next_info, name="next_info['trading_info']")
         device = self.device
 
         self.states[grid_id][idx] = torch.as_tensor(s, dtype=torch.float32, device=device).reshape(-1)
@@ -928,7 +971,7 @@ class RegimeStratifiedReplayBuffer:
                     "avaliable_action": self.avaliable_actions[g][:n].cpu() if self._initialized else torch.empty((0,)),
                     "funding_count_down_hour": self.hours[g][:n].cpu() if self._initialized else torch.empty((0,)),
                     "funding_count_down_minute": self.minutes[g][:n].cpu() if self._initialized else torch.empty((0,)),
-                    "trading_info": self.trading_infos[g][:n].cpu() if self._initialized else torch.empty((0,)),
+                    "trading_info": self.trading_infos[g][:n].cpu() if self._initialized else torch.empty((0, TRADING_INFO_DIM)),
                     "q_value": self.q_values[g][:n].cpu() if self._initialized else torch.empty((0,)),
                 },
                 "next_infos": {
@@ -936,7 +979,7 @@ class RegimeStratifiedReplayBuffer:
                     "avaliable_action": self.next_avaliable_actions[g][:n].cpu() if self._initialized else torch.empty((0,)),
                     "funding_count_down_hour": self.next_hours[g][:n].cpu() if self._initialized else torch.empty((0,)),
                     "funding_count_down_minute": self.next_minutes[g][:n].cpu() if self._initialized else torch.empty((0,)),
-                    "trading_info": self.next_trading_infos[g][:n].cpu() if self._initialized else torch.empty((0,)),
+                    "trading_info": self.next_trading_infos[g][:n].cpu() if self._initialized else torch.empty((0, TRADING_INFO_DIM)),
                 },
                 "buffer_size": n,
                 "replay_semantics_version": 2,
@@ -961,6 +1004,7 @@ class GPURegimeStratifiedReplayBuffer(RegimeStratifiedReplayBuffer):
         num_grids: int = 9,
         state_dim: int | None = None,
         action_dim: int | None = None,
+        trading_observation_config: TradingObservationConfig | None = None,
     ) -> None:
         target_device = device
         if isinstance(target_device, str) and "cuda" in target_device and not torch.cuda.is_available():
@@ -973,6 +1017,7 @@ class GPURegimeStratifiedReplayBuffer(RegimeStratifiedReplayBuffer):
             num_grids=num_grids,
             state_dim=state_dim,
             action_dim=action_dim,
+            trading_observation_config=trading_observation_config,
         )
 
 

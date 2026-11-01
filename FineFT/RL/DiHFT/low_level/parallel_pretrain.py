@@ -479,6 +479,13 @@ def _require_artifact_config(
     return config
 
 
+def _active_trading_observation_config(trainer: Any) -> TradingObservationConfig:
+    config = getattr(trainer, "trading_observation_config", None)
+    if isinstance(config, TradingObservationConfig):
+        return config
+    return TradingObservationConfig()
+
+
 def save_pretrain_buffer_file(
     buffer_pretrain: Multi_step_ReplayBuffer_multi_info | Any,
     buffer_path: str,
@@ -570,7 +577,7 @@ def run_exhaustive_warmup(
     if trainer.load_pretrain_model and pretrain_model_path is not None and os.path.exists(pretrain_model_path):
         metadata_path = os.path.join(trainer.model_path, "trading_observation.json")
         stored_config = load_trading_observation_metadata(metadata_path)
-        active_config = _require_artifact_config(trainer.trading_observation_config)
+        active_config = _active_trading_observation_config(trainer)
         if stored_config.to_metadata() != active_config.to_metadata():
             raise TradingObservationError(
                 "pretrain model observation metadata does not match the active run"
@@ -609,7 +616,7 @@ def run_exhaustive_warmup(
             buffer_pretrain,
             pretrain_buffer_path,
             step_counter_pretrain,
-            trading_observation_config=trainer.trading_observation_config,
+            trading_observation_config=_active_trading_observation_config(trainer),
         )
         logger.info(
             "预训练经验池已存在，直接加载并跳过探索 | 文件=%s | 经验池大小=%d",
@@ -685,7 +692,7 @@ def run_exhaustive_warmup(
                 buffer_pretrain,
                 pretrain_buffer_path,
                 step_counter_pretrain,
-                trading_observation_config=trainer.trading_observation_config,
+                trading_observation_config=_active_trading_observation_config(trainer),
             )
             logger.info(
                 "探索完成，已保存经验池到文件 | 文件=%s | 经验池大小=%d",
@@ -753,7 +760,7 @@ def run_exhaustive_warmup(
         torch.save(trainer.eval_net.state_dict(), pretrain_model_path)
         save_trading_observation_metadata(
             os.path.join(trainer.model_path, "trading_observation.json"),
-            _require_artifact_config(trainer.trading_observation_config),
+            _active_trading_observation_config(trainer),
         )
         logger.info(
             "exhaustive warmup 学习结束 | 模型已保存至=%s",
