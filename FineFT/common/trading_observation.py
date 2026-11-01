@@ -40,6 +40,10 @@ EXIT_MEMORY_SCALE_OBSERVATIONS = EXIT_MEMORY_SCALE_WINDOW + 1
 EXIT_MEMORY_MAX_AGE_STEPS = 256
 EXIT_MEMORY_TANH_DIVISOR = 5.0
 EXIT_PRICE_SCALE_FLOOR_DEFAULT = 5.0
+CAUSAL_PRICE_SCALE_SCHEMA = "causal_price_scale.v1"
+CAUSAL_PRICE_SCALE_COLUMN = "causal_mark_price_mean_abs_change_18"
+CAUSAL_PRICE_SCALE_VALID_COLUMN = "causal_mark_price_scale_valid"
+CAUSAL_PRICE_SCALE_ROW_COLUMN = "source_row_index"
 
 
 class TradingObservationError(ValueError):

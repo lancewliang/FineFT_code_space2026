@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — 在分区行情中预计算因果价格统计量
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Implementation:** 未实施。此前代码改动已全部回退；本轮只重切任务，不启动代码修改。ready-for-agent 表示规格可实施，不表示依赖已完成。
 
@@ -28,5 +28,8 @@ FineFT/datahandler/commodity_contract_dataset.py、实际会重写行情的标�
 共同遵循 [spec](../spec.md) 第 4–6 节与 [实施依赖总览](../implementation-plan.md)。Python/pytest 使用 `conda activate finetf`。不更改已确认范围，不启动正式重训。
 
 ## Comments
+
+- 2026-11-01：扩展 FineFT 数据 manifest 和准备流程，保留 `causal_mark_price_mean_abs_change_18`、有效位及 `source_row_index`；整表复制、regime 标注和 train slice 均保持列与原始坐标。由新 Scale Save manifest 标识的产物在数据入口严格拒绝缺列、重复坐标、非法尺度和错误预热，并复制辅助 manifest 到 dataset 输出。
+- 验证：在 `conda activate finetf` 环境执行 `python -m pytest tests/datahandler/test_causal_price_auxiliary_propagation.py tests/datahandler/test_commodity_contract_dataset.py -q`，结果 `22 passed`。
 
 - 2026-11-01：按确认后的行情统计预计算、Q8 A 与 exit_price_scale_floor 命名重新切分职责；当前验收项全部未完成。

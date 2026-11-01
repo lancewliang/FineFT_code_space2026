@@ -12,6 +12,11 @@ import numpy as np
 import pandas as pd
 
 from common import ArtifactNames, get_df_chunk_filename
+from common.trading_observation import (
+    CAUSAL_PRICE_SCALE_COLUMN,
+    CAUSAL_PRICE_SCALE_ROW_COLUMN,
+    CAUSAL_PRICE_SCALE_VALID_COLUMN,
+)
 
 try:
     from .manifests import (
@@ -110,6 +115,12 @@ def build_dataset_manifest(
     vae_slope_state_features_path: Path | str | None = None,
     vae_volatility_state_features_path: Path | str | None = None,
 ) -> DatasetManifest:
+    causal_source_manifest = Path(input_root) / symbol / target_freq / "causal_price_scale_manifest.json"
+    causal_manifest_destination = (
+        str(Path(output_root) / symbol / "causal_price_scale_manifest.json")
+        if causal_source_manifest.exists()
+        else ""
+    )
     dest_rl = str(Path(output_root) / symbol / ArtifactNames.RL_STATE_FEATURES_NPY)
     dest_vae_slope = (
         str(Path(output_root) / symbol / ArtifactNames.VAE_SLOPE_STATE_FEATURES_NPY)
@@ -131,6 +142,10 @@ def build_dataset_manifest(
         vae_slope_state_features_path=dest_vae_slope,
         vae_volatility_state_features_source_path=str(vae_volatility_state_features_path) if vae_volatility_state_features_path is not None else "",
         vae_volatility_state_features_path=dest_vae_vol,
+        causal_price_scale_manifest_path=causal_manifest_destination,
+        causal_price_scale_column=CAUSAL_PRICE_SCALE_COLUMN,
+        causal_price_scale_valid_column=CAUSAL_PRICE_SCALE_VALID_COLUMN,
+        causal_price_scale_row_coordinate_column=CAUSAL_PRICE_SCALE_ROW_COLUMN,
         sets={},
     )
 
@@ -208,6 +223,18 @@ def write_stage_datasets(manifest: DatasetManifest) -> None:
             raise ValueError(f"VAE volatility state feature list is empty: {vae_vol_src}")
         shutil.copyfile(vae_vol_src, dest_dir / ArtifactNames.VAE_VOLATILITY_STATE_FEATURES_NPY)
 
+    causal_manifest_source = None
+    if manifest.causal_price_scale_manifest_path:
+        train_contracts = manifest.sets.get("train", DatasetSetManifest()).contracts
+        if train_contracts:
+            candidate = Path(train_contracts[0].input_path).parents[1] / "causal_price_scale_manifest.json"
+            if not candidate.exists():
+                raise FileNotFoundError(
+                    "Missing causal price scale manifest; regenerate SCALE_SAVE outputs: "
+                    f"{candidate}"
+                )
+            causal_manifest_source = candidate
+
     for stage, set_info in manifest.sets.items():
         contracts_total_count = 0
         for contract in set_info.contracts:
@@ -226,9 +253,42 @@ def write_stage_datasets(manifest: DatasetManifest) -> None:
                     "copied empty stage dataset: "
                     f"stage={stage} contract={contract.contract} output={output_path}"
                 )
+            if manifest.causal_price_scale_manifest_path:
+                _validate_causal_auxiliary_columns(output_df, output_path, manifest)
             contract.output_row_count = int(len(output_df))
             contracts_total_count += contract.output_row_count
         set_info.contracts_total_count = contracts_total_count
+    if causal_manifest_source is not None:
+        destination = Path(manifest.causal_price_scale_manifest_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(causal_manifest_source, destination)
+
+
+def _validate_causal_auxiliary_columns(
+    frame: pd.DataFrame,
+    path: Path,
+    manifest: DatasetManifest,
+) -> None:
+    required = [
+        manifest.causal_price_scale_column,
+        manifest.causal_price_scale_valid_column,
+        manifest.causal_price_scale_row_coordinate_column,
+    ]
+    missing = [column for column in required if column not in frame.columns]
+    if missing:
+        raise ValueError(
+            f"{path} is missing causal auxiliary columns {missing}; regenerate SCALE_SAVE outputs"
+        )
+    scales = frame[manifest.causal_price_scale_column].to_numpy(dtype=float)
+    valid = frame[manifest.causal_price_scale_valid_column].to_numpy(dtype=bool)
+    coordinates = frame[manifest.causal_price_scale_row_coordinate_column].to_numpy()
+    if not np.isfinite(scales).all() or (scales < 0).any():
+        raise ValueError(f"{path} has invalid causal price scales")
+    if len(np.unique(coordinates)) != len(coordinates):
+        raise ValueError(f"{path} has duplicate source row coordinates")
+    warmup = min(18, len(frame))
+    if valid[:warmup].any() or np.any(scales[:warmup] != 0):
+        raise ValueError(f"{path} has invalid causal warmup rows")
 
 
 def rebuild_train_slice_plan(manifest, chunk_length, early_stop):

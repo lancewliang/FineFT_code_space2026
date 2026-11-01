@@ -299,6 +299,10 @@ class DatasetManifest:
     vae_slope_state_features_path: str = ""
     vae_volatility_state_features_source_path: str = ""
     vae_volatility_state_features_path: str = ""
+    causal_price_scale_manifest_path: str = ""
+    causal_price_scale_column: str = "causal_mark_price_mean_abs_change_18"
+    causal_price_scale_valid_column: str = "causal_mark_price_scale_valid"
+    causal_price_scale_row_coordinate_column: str = "source_row_index"
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "DatasetManifest":
@@ -316,6 +320,16 @@ class DatasetManifest:
             vae_slope_state_features_path=payload["vae_slope_state_features_path"],
             vae_volatility_state_features_source_path=payload["vae_volatility_state_features_source_path"],
             vae_volatility_state_features_path=payload["vae_volatility_state_features_path"],
+            causal_price_scale_manifest_path=payload.get("causal_price_scale_manifest_path", ""),
+            causal_price_scale_column=payload.get(
+                "causal_price_scale_column", "causal_mark_price_mean_abs_change_18"
+            ),
+            causal_price_scale_valid_column=payload.get(
+                "causal_price_scale_valid_column", "causal_mark_price_scale_valid"
+            ),
+            causal_price_scale_row_coordinate_column=payload.get(
+                "causal_price_scale_row_coordinate_column", "source_row_index"
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -329,6 +343,10 @@ class DatasetManifest:
             "vae_slope_state_features_path": self.vae_slope_state_features_path,
             "vae_volatility_state_features_source_path": self.vae_volatility_state_features_source_path,
             "vae_volatility_state_features_path": self.vae_volatility_state_features_path,
+            "causal_price_scale_manifest_path": self.causal_price_scale_manifest_path,
+            "causal_price_scale_column": self.causal_price_scale_column,
+            "causal_price_scale_valid_column": self.causal_price_scale_valid_column,
+            "causal_price_scale_row_coordinate_column": self.causal_price_scale_row_coordinate_column,
             "sets": {
                 stage: set_info.to_dict() for stage, set_info in self.sets.items()
             },
