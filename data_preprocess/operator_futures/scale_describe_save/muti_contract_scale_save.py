@@ -15,6 +15,11 @@ from operator_futures.scale_describe_save.scale_save import (
     configure_logging,
     validate_no_nan,
 )
+from operator_futures.scale_describe_save.causal_price_scale import (
+    CAUSAL_PRICE_SCALE_COLUMN,
+    CAUSAL_PRICE_SCALE_VALID_COLUMN,
+    attach_causal_price_statistics,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -60,6 +65,12 @@ class ScaleManifest:
     rl_feature_list_path: str = ""
     vae_slope_feature_list_path: str = ""
     vae_volatility_feature_list_path: str = ""
+    causal_price_scale_schema: str = "causal_price_scale.v1"
+    causal_price_scale_window: int = 18
+    causal_price_scale_column: str = CAUSAL_PRICE_SCALE_COLUMN
+    causal_price_scale_valid_column: str = CAUSAL_PRICE_SCALE_VALID_COLUMN
+    causal_price_scale_price_source: str = "mark_price"
+    causal_price_scale_price_unit: str = "yuan_per_tonne"
 
     def to_dict(self) -> dict:
         payload = asdict(self)
@@ -337,6 +348,10 @@ def preflight_validate_split_inputs(
         df = pl.read_ipc(input_file)
         validate_no_nan(df, path=input_file, stage="input_preflight")
         validate_state_features_present(df, state_features, input_file)
+        # Validate the raw causal inputs before any feature scaling or output
+        # projection.  This deliberately fails on bad prices/timestamps rather
+        # than encoding them as an invalid warmup row.
+        attach_causal_price_statistics(df)
 
 
 def fit_feature_stats(
@@ -634,6 +649,40 @@ def write_diagnostics(rows: list[dict[str, object]], output_root: Path) -> Path:
     return diagnostics_path
 
 
+def write_causal_price_scale_manifest(
+    rows: list[dict[str, object]],
+    output_root: Path,
+    *,
+    symbol: str,
+    target_freq: str,
+) -> Path:
+    """Publish the auxiliary-column contract and per-partition coverage."""
+    payload = {
+        "schema": "causal_price_scale.v1",
+        "symbol": symbol,
+        "target_freq": target_freq,
+        "window": 18,
+        "observations": 19,
+        "price_source": "mark_price",
+        "price_unit": "yuan_per_tonne",
+        "scale_column": CAUSAL_PRICE_SCALE_COLUMN,
+        "valid_column": CAUSAL_PRICE_SCALE_VALID_COLUMN,
+        "partitions": [
+            {
+                "stage": row["stage"],
+                "contract": row["contract"],
+                "row_count": row["rows"],
+                "valid_start": row["causal_price_scale_valid_start"],
+                "valid_row_count": row["causal_price_scale_valid_rows"],
+            }
+            for row in rows
+        ],
+    }
+    path = output_root / "causal_price_scale_manifest.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
 def scale_one_input(
     *,
     stage: str,
@@ -648,6 +697,7 @@ def scale_one_input(
     df = pl.read_ipc(input_file)
     validate_no_nan(df, path=input_file, stage="input")
     validate_state_features_present(df, state_features, input_file)
+    df_with_auxiliary, causal_statistics = attach_causal_price_statistics(df)
 
     state_set = set(state_features)
     reward_features = [f for f in reward_features_for(df, args) if f not in state_set]
@@ -669,7 +719,10 @@ def scale_one_input(
             state_cols[f] = df_passthrough.get_column(f)
 
     df_state_aligned = pl.DataFrame(state_cols)
-    out = pl.concat([df_reward, df_state_aligned], how="horizontal").with_columns(
+    df_auxiliary = df_with_auxiliary.select(
+        [CAUSAL_PRICE_SCALE_COLUMN, CAUSAL_PRICE_SCALE_VALID_COLUMN]
+    )
+    out = pl.concat([df_reward, df_state_aligned, df_auxiliary], how="horizontal").with_columns(
         pl.lit(args.symbols).alias("symbol")
     )
 
@@ -691,6 +744,11 @@ def scale_one_input(
         "input_file": str(input_file),
         "output_file": str(output_file),
         "rows": out.height,
+        "causal_price_scale_valid_start": causal_statistics.valid_start,
+        "causal_price_scale_valid_rows": causal_statistics.valid_row_count,
+        "causal_price_scale_window": causal_statistics.window,
+        "causal_price_scale_column": CAUSAL_PRICE_SCALE_COLUMN,
+        "causal_price_scale_valid_column": CAUSAL_PRICE_SCALE_VALID_COLUMN,
         **diagnostics,
     }
 
@@ -752,13 +810,20 @@ def main(args) -> None:
             args=args,
         ))
     diagnostics_path = write_diagnostics(diagnostics_rows, output_root)
+    causal_manifest_path = write_causal_price_scale_manifest(
+        diagnostics_rows,
+        output_root,
+        symbol=args.symbols,
+        target_freq=args.target_freq,
+    )
     shutil.copyfile(rl_feature_path, output_root / "rl_state_features.npy")
     shutil.copyfile(vae_slope_feature_path, output_root / "vae_slope_state_features.npy")
     shutil.copyfile(vae_vol_feature_path, output_root / "vae_volatility_state_features.npy")
     logger.info(
-        "Finished multi-contract scale-save: inputs=%d diagnostics_path=%s elapsed_seconds=%.2f",
+        "Finished multi-contract scale-save: inputs=%d diagnostics_path=%s causal_manifest_path=%s elapsed_seconds=%.2f",
         len(inputs),
         diagnostics_path,
+        causal_manifest_path,
         time.monotonic() - started_at,
     )
 

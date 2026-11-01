@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — 集中观测与行情辅助数据契约
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Implementation:** 未实施。此前代码改动已全部回退；本轮只重切任务，不启动代码修改。ready-for-agent 表示规格可实施，不表示依赖已完成。
 
@@ -27,6 +27,9 @@ data_preprocess/operator_futures/scale_describe_save/muti_contract_scale_save.py
 共同遵循 [spec](../spec.md) 第 4–6 节与 [实施依赖总览](../implementation-plan.md)。Python/pytest 使用 `conda activate finetf`。不更改已确认范围，不启动正式重训。
 
 ## Comments
+
+- 2026-11-01：在 split-stage Scale Save 中新增独立辅助列 `causal_mark_price_mean_abs_change_18` 与 `causal_mark_price_scale_valid`。每个合约/分区先按原单位 `mark_price` 和严格递增 `timestamp` 计算，再进入三流特征缩放；前 18 行固定为 `0/false`，恒价完整窗口为 `0/true`。新增 `causal_price_scale_manifest.json` 记录窗口、来源、单位、分区、行数和有效覆盖，非法价格/乱序/重复时点明确失败。
+- 验证：在 `conda activate finetf` 环境执行 `python -m pytest tests/test_causal_price_scale.py tests/test_commodity_scale_save.py -q`，结果 `6 passed`。
 
 - 2026-11-01：按确认后的行情统计预计算、Q8 A 与 exit_price_scale_floor 命名重新切分职责；当前验收项全部未完成。
 
