@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Implementation:** 未实施。此前代码改动已全部回退；本轮只重切任务，不启动代码修改。ready-for-agent 表示规格可实施，不表示依赖已完成。
 
@@ -27,6 +27,9 @@
 共同遵循 [spec](../spec.md) 第 4–6 节与 [实施依赖总览](../implementation-plan.md)。Python/pytest 使用 `conda activate finetf`。不更改已确认范围，不启动正式重训。
 
 ## Comments
+
+- 2026-11-01：完成共享 `trading_info.v2` 契约，集中定义 11 维有序字段、schema、有限值/宽度校验、退出记忆编码、18 步因果尺度计算、元数据 sidecar 和 `fc_trading` 输入宽度校验。运行环境仍保持原四维入口，十一维切换留给 08/03。
+- 验证：在 `conda activate finetf` 环境执行 `python -m pytest tests/common/test_trading_observation.py -q`，结果 `5 passed`。
 
 - 2026-11-01：按确认后的行情统计预计算、Q8 A 与 exit_price_scale_floor 命名重新切分职责；当前验收项全部未完成。
 
