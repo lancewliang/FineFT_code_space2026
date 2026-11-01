@@ -345,7 +345,6 @@ def run_contract_env_rollout(
         "order_book_depth": effective_depth,
         "initial_state": (1e5, 0, 0, 0, leverage_choices[0]),
         "exit_price_scale_floor": validate_exit_price_scale_floor(exit_price_scale_floor),
-        "start_index": 0,
     }
     if maintenance_margin_ratio_dict is not None:
         env_kwargs["maintenance_margin_ratio_dict"] = maintenance_margin_ratio_dict

@@ -245,9 +245,7 @@ class SharedMarketDataPack:
                 CAUSAL_PRICE_SCALE_VALID_COLUMN,
                 CAUSAL_PRICE_SCALE_ROW_COLUMN,
             ]
-            require_causal_columns = (
-                "exit_price_scale_floor" in env_kwargs or "start_index" in env_kwargs
-            )
+            require_causal_columns = "exit_price_scale_floor" in env_kwargs
             present_causal_columns = [column for column in causal_columns if column in df.columns]
             if (require_causal_columns or present_causal_columns) and present_causal_columns != causal_columns:
                 missing = [column for column in causal_columns if column not in df.columns]
@@ -521,7 +519,6 @@ def create_demo_env_from_pack(
         exit_price_scale_floor=env_kwargs.get("exit_price_scale_floor", 5.0),
         causal_price_scale_array=arrays["causal_price_scale_array"],
         causal_price_scale_valid_array=arrays["causal_price_scale_valid_array"],
-        start_index=env_kwargs.get("start_index", 0),
         max_holding_number=env_kwargs["max_holding_number"],
         position_choices=env_kwargs["position_choices"],
         leverage_choice=leverage_choices,

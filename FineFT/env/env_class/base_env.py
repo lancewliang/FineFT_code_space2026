@@ -122,7 +122,6 @@ class Base_Env(gym.Env):
         exit_price_scale_floor=5.0,
         causal_price_scale_array=None,
         causal_price_scale_valid_array=None,
-        start_index=0,
     ):
         # trading setting
         self.allow_partial_positions = allow_partial_positions
@@ -174,26 +173,30 @@ class Base_Env(gym.Env):
             raise TradingObservationError(
                 "causal price scale and valid arrays must be supplied together"
             )
-        if not isinstance(start_index, (int, np.integer)) or start_index < 0:
-            raise ValueError("start_index must be a non-negative integer")
-        requested_start_index = int(start_index)
         if self.causal_price_scale_valid_array is not None:
             valid_indices = np.flatnonzero(self.causal_price_scale_valid_array)
             if valid_indices.size == 0:
                 raise TradingObservationError("partition has no valid causal price scale rows")
-            start_index = max(requested_start_index, int(valid_indices[0]))
             self.causal_valid_start = int(valid_indices[0])
             self.causal_valid_row_count = int(valid_indices.size)
-            self.causal_excluded_rows = int(start_index - requested_start_index)
+            self.causal_excluded_rows = self.causal_valid_start
         else:
             self.causal_valid_start = None
             self.causal_valid_row_count = 0
             self.causal_excluded_rows = 0
-        if start_index >= len(markprice_array):
-            raise ValueError(f"start_index={start_index} must be smaller than data length={len(markprice_array)}")
-        if self.causal_price_scale_valid_array is not None and start_index >= len(markprice_array) - early_stop - 1:
+        self._environment_start_row = (
+            self.causal_valid_start if self.causal_valid_start is not None else 0
+        )
+        if self._environment_start_row >= len(markprice_array):
+            raise ValueError(
+                "first environment row={} must be smaller than data length={}"
+                .format(self._environment_start_row, len(markprice_array))
+            )
+        if (
+            self.causal_price_scale_valid_array is not None
+            and self._environment_start_row >= len(markprice_array) - early_stop - 1
+        ):
             raise TradingObservationError("causal partition has no complete environment transition")
-        self.start_index = int(start_index)
         # RL setting
         self.single_side_action_num = int((position_choices - 1) / 2)
         self.action_space = spaces.Discrete(
@@ -235,7 +238,7 @@ class Base_Env(gym.Env):
 
         # initialization
         self.terminal = False
-        self.day = self.start_index
+        self.day = self._environment_start_row
         (
             self.wallet_balance,
             self.initial_margin,
@@ -616,7 +619,7 @@ class Base_Env(gym.Env):
         )
 
     def reset(self, initial_state: tuple[float, float, float, float, float] | None = None):
-        self.day = self.start_index
+        self.day = self._environment_start_row
         self.terminal = self.day >= len(self.state_array) - self.early_stop - 1
         if initial_state is not None:
             self.initial_state = initial_state

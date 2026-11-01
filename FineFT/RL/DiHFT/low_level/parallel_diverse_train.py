@@ -122,6 +122,16 @@ logger = logging.getLogger(
 )
 
 
+def _first_causal_valid_row_from_pack(pack) -> int:
+    valid_array = pack.causal_price_scale_valid_array
+    if valid_array is None:
+        return 0
+    valid_indices = np.flatnonzero(valid_array)
+    if valid_indices.size == 0:
+        raise ValueError("causal partition has no valid price-scale rows")
+    return int(valid_indices[0])
+
+
 @dataclass(frozen=True)
 class RolloutMetrics:
     epoch_index: int
@@ -480,7 +490,8 @@ def run_periodic_greedy_evaluation(
         for context_index in contexts_to_eval:
             if shared_market_data is not None:
                 pack = shared_market_data[df_index]
-                current_markprice = float(pack.markprice_tensor[0].item())
+                first_valid_row = _first_causal_valid_row_from_pack(pack)
+                current_markprice = float(pack.markprice_tensor[first_valid_row].item())
                 initial_position, initial_leverage = map_action_to_position_leverage(
                     flat_action, trainer.leverage_choices, trainer.position_list
                 )
@@ -1068,7 +1079,8 @@ class DfRolloutWorkerRunner:
         }
         if self.shared_market_data is not None:
             pack = self.shared_market_data[df_index]
-            current_markprice = float(pack.markprice_tensor[0].item())
+            first_valid_row = _first_causal_valid_row_from_pack(pack)
+            current_markprice = float(pack.markprice_tensor[first_valid_row].item())
             initial_position, initial_leverage = map_action_to_position_leverage(
                 initial_action, self.leverage_choices, self.position_list
             )

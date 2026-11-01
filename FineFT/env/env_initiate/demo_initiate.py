@@ -49,7 +49,6 @@ def initiate_demo_env(
     turnover_adverse_ratio=1.0,
     allow_partial_positions=False,
     exit_price_scale_floor=5.0,
-    start_index=0,
 ):
 
     # 对应钱包余额，起始保证金，未实现盈亏，持仓量，对应的杠杆):
@@ -144,7 +143,6 @@ def initiate_demo_env(
         exit_price_scale_floor=exit_price_scale_floor,
         causal_price_scale_array=causal_price_scale_array,
         causal_price_scale_valid_array=causal_price_scale_valid_array,
-        start_index=start_index,
     )
     return env
 

@@ -287,7 +287,6 @@ class weighted_trader:
             limit_reverse_penalty=self.limit_reverse_penalty,
             near_limit_threshold=self.near_limit_threshold,
             exit_price_scale_floor=self.exit_price_scale_floor,
-            start_index=0,
         )
         s, info = test_env.reset()
         done = False

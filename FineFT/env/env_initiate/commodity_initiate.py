@@ -51,7 +51,6 @@ def initiate_commodity_env(
     limit_reverse_penalty=1.5,
     near_limit_threshold=0.003,
     exit_price_scale_floor=5.0,
-    start_index=0,
 ):
     bid_prices_names, ask_prices_names, bid_sizes_names, ask_sizes_names = (
         _depth_columns(depth)
@@ -142,5 +141,4 @@ def initiate_commodity_env(
         exit_price_scale_floor=exit_price_scale_floor,
         causal_price_scale_array=causal_price_scale_array,
         causal_price_scale_valid_array=causal_price_scale_valid_array,
-        start_index=start_index,
     )

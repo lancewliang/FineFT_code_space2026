@@ -181,6 +181,29 @@ def test_in_place_environment_reset_numerical_invariants():
         assert d_in is False
 
 
+def test_shared_environment_initial_margin_uses_first_causal_valid_row():
+    df = _create_sample_df(num_rows=30, order_book_depth=5)
+    df["causal_mark_price_mean_abs_change_18"] = [0.0] * 18 + [1.0] * 12
+    df["causal_mark_price_scale_valid"] = [False] * 18 + [True] * 12
+    df["source_row_index"] = np.arange(30, dtype=np.int64)
+    env_kwargs = _get_test_env_kwargs(order_book_depth=5)
+    shared_pack = SharedMarketDataPack.from_dataframes({0: df}, env_kwargs)
+    pack = shared_pack[0]
+
+    position_list = [-8.0, -4.0, 0.0, 4.0, 8.0]
+    _, _, _, initial_state = build_initial_state(
+        df, 0, [5], position_list, 10000.0, 0.0
+    )
+    env = create_demo_env_from_pack(pack, env_kwargs, initial_state=initial_state)
+
+    env.reset()
+
+    assert env.day == 18
+    assert env.initial_margin == pytest.approx(
+        abs(env.current_markprice * env.position / env.leverage)
+    )
+
+
 def test_90_worker_shared_memory_data_pointer_invariance():
     """Verify that 90 worker runners share identical memory addresses without duplication."""
     df = _create_sample_df(num_rows=20, order_book_depth=5)

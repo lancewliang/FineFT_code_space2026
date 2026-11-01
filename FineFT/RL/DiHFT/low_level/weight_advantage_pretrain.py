@@ -1409,7 +1409,6 @@ class Weighted_Contexts_DQN:
             "turnover_base_rate": self.turnover_base_rate,
             "turnover_adverse_ratio": self.turnover_adverse_ratio,
             "exit_price_scale_floor": self.exit_price_scale_floor,
-            "start_index": 0,
         }
         diagnostics_result = prepare_pretrain_qtable_diagnostics(
             total_df_index_length=self.total_df_index_length,

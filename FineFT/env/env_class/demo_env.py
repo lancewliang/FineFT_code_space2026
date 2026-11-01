@@ -66,7 +66,6 @@ class Demo_Env(Base_Env):
         exit_price_scale_floor=5.0,
         causal_price_scale_array=None,
         causal_price_scale_valid_array=None,
-        start_index=0,
     ):
 
         super(Demo_Env, self).__init__(
@@ -112,7 +111,6 @@ class Demo_Env(Base_Env):
             exit_price_scale_floor=exit_price_scale_floor,
             causal_price_scale_array=causal_price_scale_array,
             causal_price_scale_valid_array=causal_price_scale_valid_array,
-            start_index=start_index,
         )
         if q_table is not None:
             self.q_table = q_table

@@ -18,6 +18,10 @@ from env.env_class.futures_util import (
     map_action_to_position_leverage,
 )
 from env.env_initiate.demo_initiate import initiate_demo_env
+from common.trading_observation import (
+    CAUSAL_PRICE_SCALE_VALID_COLUMN,
+    validate_causal_valid_array,
+)
 
 
 DIAGNOSTIC_CSV_PATTERN = re.compile(
@@ -339,7 +343,8 @@ def build_initial_state(
     initial_position, initial_leverage = map_action_to_position_leverage(
         initial_action, leverage_choices, position_list
     )
-    current_markprice = train_df["mark_price"].values[0]
+    first_valid_row = _first_causal_valid_row(train_df)
+    current_markprice = train_df["mark_price"].values[first_valid_row]
     initial_margin = np.abs(initial_position * current_markprice / initial_leverage)
     initial_state = (
         initial_wallet_balance,
@@ -349,6 +354,27 @@ def build_initial_state(
         initial_leverage,
     )
     return initial_position, initial_leverage, initial_margin, initial_state
+
+
+def _first_causal_valid_row(train_df: pd.DataFrame) -> int:
+    """Return the first row marked valid by the causal scale feature."""
+    first_valid_row = 0
+    if CAUSAL_PRICE_SCALE_VALID_COLUMN in train_df.columns:
+        valid_array = validate_causal_valid_array(
+            train_df[CAUSAL_PRICE_SCALE_VALID_COLUMN].to_numpy(),
+            row_count=len(train_df),
+        )
+        valid_indices = np.flatnonzero(valid_array)
+        if valid_indices.size == 0:
+            raise ValueError("causal partition has no valid price-scale rows")
+        first_valid_row = int(valid_indices[0])
+
+    if first_valid_row >= len(train_df):
+        raise ValueError(
+            "first valid causal row={} must be smaller than data length={}"
+            .format(first_valid_row, len(train_df))
+        )
+    return first_valid_row
 
 
 def create_demo_env(

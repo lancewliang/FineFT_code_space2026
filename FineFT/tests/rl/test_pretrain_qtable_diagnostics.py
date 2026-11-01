@@ -50,6 +50,29 @@ def test_build_sample_plan_traverses_every_df_and_position():
     ]
 
 
+def test_build_initial_state_uses_first_causal_valid_row():
+    from RL.DiHFT.low_level import pretrain_qtable_diagnostics as diag
+
+    df = pd.DataFrame(
+        {
+            "mark_price": [100.0] * 18 + [200.0, 201.0],
+            "causal_mark_price_scale_valid": [False] * 18 + [True, True],
+        }
+    )
+
+    _, _, initial_margin, initial_state = diag.build_initial_state(
+        df,
+        initial_action=0,
+        leverage_choices=[5],
+        position_list=[-8.0, 0.0, 8.0],
+        initial_wallet_balance=100000.0,
+        initial_unrealized_pnl=0.0,
+    )
+
+    assert initial_state[3:] == (-8.0, 5)
+    assert initial_margin == pytest.approx(200.0 * 8.0 / 5.0)
+
+
 def test_optimal_qtable_kwargs_use_training_gamma():
     from RL.DiHFT.low_level.qtable_config import build_optimal_qtable_kwargs
 
@@ -536,7 +559,11 @@ def test_create_demo_env_passes_order_book_depth(monkeypatch):
         "gamma": 1,
     }
 
-    diag.create_demo_env(pd.DataFrame(), env_kwargs, (100000, 0, 0, 0, 1))
+    diag.create_demo_env(
+        pd.DataFrame({"mark_price": [1.0]}),
+        env_kwargs,
+        (100000, 0, 0, 0, 1),
+    )
 
     assert captured_kwargs["order_book_depth"] == 5
 

@@ -50,7 +50,6 @@ class Commodity_Env(Base_Env):
         exit_price_scale_floor=5.0,
         causal_price_scale_array=None,
         causal_price_scale_valid_array=None,
-        start_index=0,
     ):
         funding_rate_array = np.zeros(len(timestamp_array), dtype=float)
         funding_timestamp_array = timestamp_array
@@ -91,7 +90,6 @@ class Commodity_Env(Base_Env):
             exit_price_scale_floor=exit_price_scale_floor,
             causal_price_scale_array=causal_price_scale_array,
             causal_price_scale_valid_array=causal_price_scale_valid_array,
-            start_index=start_index,
         )
 
     @staticmethod
