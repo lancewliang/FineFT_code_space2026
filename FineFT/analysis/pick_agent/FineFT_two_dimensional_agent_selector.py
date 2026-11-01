@@ -38,6 +38,7 @@ if str(FINEFT_ROOT) not in sys.path:
 
 from common import ArtifactNames, get_trading_detail_csv_filename
 from model.low_level import ensemble_Qnet
+from common.trading_observation import TRADING_INFO_DIM, validate_trading_state_dict
 
 
 LABEL_TYPES = ("volatility", "slope")
@@ -2081,7 +2082,7 @@ def assemble_and_save_ensemble(
     n_actions: int,
     hidden_nodes: int,
     time_info_dim: int,
-    trading_info_dim: int = 4,
+    trading_info_dim: int = TRADING_INFO_DIM,
 ) -> Path:
     """Assemble selected agents and flat placeholders in logical slot order."""
 
@@ -2098,6 +2099,8 @@ def assemble_and_save_ensemble(
             f"n_actions must be a positive odd number, got {n_actions}"
         )
 
+    if trading_info_dim != TRADING_INFO_DIM:
+        raise ValueError(f"trading_info_dim must be {TRADING_INFO_DIM}, got {trading_info_dim}")
     ensemble = ensemble_Qnet(
         n_states,
         n_actions,
@@ -2119,6 +2122,7 @@ def assemble_and_save_ensemble(
                 map_location="cpu",
                 weights_only=True,
             )
+            validate_trading_state_dict(state_dict)
             prefix = f"qnet_list.{bin_index}."
             qnet_state_dict = {
                 key.removeprefix(prefix): value
@@ -2215,7 +2219,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--position_choices", type=int, default=5)
     parser.add_argument("--hidden_nodes", type=int, default=128)
     parser.add_argument("--time_info_dim", type=int, default=2)
-    parser.add_argument("--trading_info_dim", type=int, default=4)
+    parser.add_argument("--trading_info_dim", type=int, default=TRADING_INFO_DIM)
     parser.add_argument(
         "--missing_joint_policy",
         choices=["empty_model", "slope_marginal_best"],

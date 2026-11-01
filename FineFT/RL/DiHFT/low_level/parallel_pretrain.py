@@ -40,6 +40,17 @@ from RL.util.update import (
     soft_copy_params,
     update_params,
 )
+from common.trading_observation import (
+    TradingObservationConfig,
+    TradingObservationError,
+    load_trading_observation_metadata,
+    require_trading_info_in_info,
+    save_trading_observation_metadata,
+    validate_trading_state_dict,
+)
+
+
+PRETRAIN_REPLAY_SNAPSHOT_SCHEMA = "pretrain_replay.v2"
 
 # Reuse the orchestrator's configured logger so all log output flows through
 # the same file handler set up by configure_logger() in
@@ -434,9 +445,53 @@ class StackedTransitionSampler:
         )
 
 
-def save_pretrain_buffer_file(buffer_pretrain: Multi_step_ReplayBuffer_multi_info | Any, buffer_path: str, step_counter: int):
+def _validate_pretrain_transition_observations(transitions: list[Any]) -> None:
+    """Validate both observation endpoints in a serialized transition.
+
+    ``Multi_step_ReplayBuffer_multi_info`` stores ``Experience`` as
+    ``(state, info, action, reward, next_state, done, next_info)`` while
+    workers exchange the historical seven-item ``(..., next_info, done)``
+    tuple.  Accept both representations here, but never infer or synthesize
+    a trading observation.
+    """
+    for index, transition in enumerate(transitions):
+        if len(transition) != 7:
+            raise TradingObservationError(
+                f"pretrain replay transition {index} must contain 7 fields"
+            )
+        if isinstance(transition[5], dict) and not isinstance(transition[6], dict):
+            info, next_info = transition[1], transition[5]
+        else:
+            info, next_info = transition[1], transition[6]
+        require_trading_info_in_info(info, name=f"transition[{index}].info['trading_info']")
+        require_trading_info_in_info(
+            next_info, name=f"transition[{index}].next_info['trading_info']"
+        )
+
+
+def _require_artifact_config(
+    config: TradingObservationConfig | None,
+) -> TradingObservationConfig:
+    if not isinstance(config, TradingObservationConfig):
+        raise TradingObservationError(
+            "pretrain replay artifacts require a TradingObservationConfig"
+        )
+    return config
+
+
+def save_pretrain_buffer_file(
+    buffer_pretrain: Multi_step_ReplayBuffer_multi_info | Any,
+    buffer_path: str,
+    step_counter: int,
+    *,
+    trading_observation_config: TradingObservationConfig | None,
+):
+    config = _require_artifact_config(trading_observation_config)
     transitions = extract_buffer_transitions(buffer_pretrain)
+    _validate_pretrain_transition_observations(transitions)
     payload = {
+        "schema": PRETRAIN_REPLAY_SNAPSHOT_SCHEMA,
+        "trading_observation": config.to_metadata(),
         "transitions": transitions,
         "step_counter": step_counter,
         "buffer_size": len(buffer_pretrain),
@@ -451,21 +506,41 @@ def load_pretrain_buffer_file(
     buffer_pretrain: Multi_step_ReplayBuffer_multi_info | Any,
     buffer_path: str,
     current_step_counter: int = 0,
+    *,
+    trading_observation_config: TradingObservationConfig | None,
 ):
+    config = _require_artifact_config(trading_observation_config)
     payload = torch.load(buffer_path, map_location="cpu", weights_only=False)
-    if isinstance(payload, dict) and "transitions" in payload:
-        transitions = payload["transitions"]
-        step_counter = payload.get(
-            "step_counter", current_step_counter + len(transitions)
+    if not isinstance(payload, dict) or payload.get("schema") != PRETRAIN_REPLAY_SNAPSHOT_SCHEMA:
+        raise TradingObservationError(
+            "pretrain replay snapshot is unversioned or uses an unsupported schema"
         )
-    elif isinstance(payload, list):
-        transitions = payload
-        step_counter = current_step_counter + len(transitions)
-    else:
-        transitions = []
-        step_counter = current_step_counter
+    stored_config = load_trading_observation_metadata_from_payload(payload)
+    if stored_config.to_metadata() != config.to_metadata():
+        raise TradingObservationError(
+            "pretrain replay observation metadata does not match the active run"
+        )
+    transitions = payload.get("transitions")
+    if not isinstance(transitions, list):
+        raise TradingObservationError("pretrain replay snapshot transitions must be a list")
+    _validate_pretrain_transition_observations(transitions)
+    step_counter = payload.get("step_counter", current_step_counter + len(transitions))
     populate_buffer_transitions(buffer_pretrain, transitions)
     return step_counter
+
+
+def load_trading_observation_metadata_from_payload(
+    payload: dict[str, Any],
+) -> TradingObservationConfig:
+    """Validate metadata embedded in a replay snapshot without a temp file."""
+    metadata = payload.get("trading_observation")
+    if not isinstance(metadata, dict):
+        raise TradingObservationError(
+            "pretrain replay snapshot is missing trading observation metadata"
+        )
+    from common.trading_observation import validate_trading_metadata
+
+    return validate_trading_metadata(metadata)
 
 
 def resolve_pretrain_paths(trainer: Weighted_Contexts_DQN):
@@ -493,10 +568,19 @@ def run_exhaustive_warmup(
     pretrain_buffer_path, pretrain_model_path = resolve_pretrain_paths(trainer)
 
     if trainer.load_pretrain_model and pretrain_model_path is not None and os.path.exists(pretrain_model_path):
+        metadata_path = os.path.join(trainer.model_path, "trading_observation.json")
+        stored_config = load_trading_observation_metadata(metadata_path)
+        active_config = _require_artifact_config(trainer.trading_observation_config)
+        if stored_config.to_metadata() != active_config.to_metadata():
+            raise TradingObservationError(
+                "pretrain model observation metadata does not match the active run"
+            )
         state_dict = torch.load(
             pretrain_model_path,
             map_location=trainer.device,
+            weights_only=True,
         )
+        validate_trading_state_dict(state_dict)
         trainer.eval_net.load_state_dict(state_dict)
         if trainer.target_net is not None:
             trainer.target_net.load_state_dict(state_dict)
@@ -522,7 +606,10 @@ def run_exhaustive_warmup(
     # Check if pretrain buffer already exists
     if pretrain_buffer_path is not None and os.path.exists(pretrain_buffer_path):
         step_counter_pretrain = load_pretrain_buffer_file(
-            buffer_pretrain, pretrain_buffer_path, step_counter_pretrain
+            buffer_pretrain,
+            pretrain_buffer_path,
+            step_counter_pretrain,
+            trading_observation_config=trainer.trading_observation_config,
         )
         logger.info(
             "预训练经验池已存在，直接加载并跳过探索 | 文件=%s | 经验池大小=%d",
@@ -595,7 +682,10 @@ def run_exhaustive_warmup(
         )
         if pretrain_buffer_path is not None:
             save_pretrain_buffer_file(
-                buffer_pretrain, pretrain_buffer_path, step_counter_pretrain
+                buffer_pretrain,
+                pretrain_buffer_path,
+                step_counter_pretrain,
+                trading_observation_config=trainer.trading_observation_config,
             )
             logger.info(
                 "探索完成，已保存经验池到文件 | 文件=%s | 经验池大小=%d",
@@ -659,7 +749,12 @@ def run_exhaustive_warmup(
         if dir_name:
             os.makedirs(dir_name, exist_ok=True)
        
+        validate_trading_state_dict(trainer.eval_net.state_dict())
         torch.save(trainer.eval_net.state_dict(), pretrain_model_path)
+        save_trading_observation_metadata(
+            os.path.join(trainer.model_path, "trading_observation.json"),
+            _require_artifact_config(trainer.trading_observation_config),
+        )
         logger.info(
             "exhaustive warmup 学习结束 | 模型已保存至=%s",
             pretrain_model_path,

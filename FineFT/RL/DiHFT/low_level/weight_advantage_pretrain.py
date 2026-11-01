@@ -179,6 +179,12 @@ from RL.util.episode_selector import get_transformation_even_risk
 
 # model
 from model.low_level import ensemble_Qnet
+from common.trading_observation import (
+    TradingObservationConfig,
+    prepare_trading_observation_artifact,
+    save_trading_observation_metadata,
+    validate_exit_price_scale_floor,
+)
 
 # env
 from env.env_class.futures_util import (
@@ -372,6 +378,12 @@ parser.add_argument(
     type=float,
     default=None,
     help="比例换手惩罚率（旧版兼容别名；设置后将覆盖 turnover_base_rate 并将 adverse_ratio 固定为 1.0）",
+)
+parser.add_argument(
+    "--exit_price_scale_floor",
+    type=validate_exit_price_scale_floor,
+    default=5.0,
+    help="实验退出价格尺度下限（元/吨）；fu 实验显式使用 5，与交易所最小变动价位分开记录",
 )
 
 # network setting
@@ -631,6 +643,11 @@ class Weighted_Contexts_DQN:
             args.dataset_name,
             args.experiment_name,
         )
+        self.exit_price_scale_floor = validate_exit_price_scale_floor(args.exit_price_scale_floor)
+        self.trading_observation_config = TradingObservationConfig(
+            exit_price_scale_floor=self.exit_price_scale_floor,
+        )
+        prepare_trading_observation_artifact(self.model_path, self.trading_observation_config)
         self.log_path = os.path.join(self.model_path, "log")
         if not os.path.exists(self.log_path):
             os.makedirs(self.log_path)
@@ -1391,6 +1408,8 @@ class Weighted_Contexts_DQN:
             "turnover_penalty_rate": self.turnover_penalty_rate,
             "turnover_base_rate": self.turnover_base_rate,
             "turnover_adverse_ratio": self.turnover_adverse_ratio,
+            "exit_price_scale_floor": self.exit_price_scale_floor,
+            "start_index": 18,
         }
         diagnostics_result = prepare_pretrain_qtable_diagnostics(
             total_df_index_length=self.total_df_index_length,
@@ -1697,6 +1716,10 @@ class Weighted_Contexts_DQN:
                 torch.save(
                     self.eval_net.state_dict(),
                     os.path.join(epoch_path, ArtifactNames.TRAINED_MODEL_PKL),
+                )
+                save_trading_observation_metadata(
+                    os.path.join(epoch_path, "trading_observation.json"),
+                    self.trading_observation_config,
                 )
                 log_diverse_rollout_latest_metrics(
                     epoch_index,

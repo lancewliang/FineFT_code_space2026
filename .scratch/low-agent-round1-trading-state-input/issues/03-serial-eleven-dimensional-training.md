@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — 集中观测与行情辅助数据契约；08 — 实现环境十一维观测与退出生命周期
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Implementation:** 未实施。此前代码改动已全部回退；本轮只重切任务，不启动代码修改。ready-for-agent 表示规格可实施，不表示依赖已完成。
 
@@ -40,3 +40,9 @@ FineFT/model/low_level.py、串行预训练/多样化训练实际入口、replay
 - 2026-11-01：完整退出只在实际仓位方向从非零变为零时登记，并使用当次真实关闭金额/数量计算成交均价；终止路径改为保留真实观测，不再无条件清零。
 - 2026-11-01：模型前向、replay 入池和产物加载均拒绝旧宽度或非有限输入；模型层输入宽度变化测试证明第 11 维可影响输出并可完成参数更新。
 - 验证：`python -m pytest tests/model/test_low_level_trading_observation.py tests/rl/test_trading_info_replay_contract.py tests/env/test_causal_price_scale_preparation.py tests/env/test_trading_observation_lifecycle_v2.py -q`（conda 环境 `finetf`）通过。
+
+## Comments
+
+- 2026-11-01：完成 Qnet/ensemble、串行预训练入口、CPU replay 与真实 learner 更新的 `trading_info.v2` 接入。模型前向严格要求 `(B, 11)` 且拒绝非有限值；replay 当前/下一观测均要求显式 11 维，不再补零。串行 CLI 使用 `--exit_price_scale_floor`，环境工厂透传有效行情辅助列、尺度下限和 18 行 warm-up 起点。
+- 2026-11-01：模型保存与加载校验 `fc_trading` 输入宽度和 `trading_observation.json`；预训练 replay 快照升级为 `pretrain_replay.v2`，嵌入完整观测元数据并拒绝无版本/旧宽度快照。
+- 验证：在 `conda activate finetf` 环境执行 `python -m pytest tests/model/test_low_level_trading_observation.py tests/rl/test_trading_info_replay_contract.py tests/rl/test_qnet_trading_info.py tests/rl/test_replay_buffer_trading_info.py tests/rl/test_weight_advantage_pretrain_paper.py -q`，结果 `18 passed`。

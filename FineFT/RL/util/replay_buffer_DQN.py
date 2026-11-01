@@ -6,6 +6,7 @@ import torch
 import numpy as np
 from collections import deque, namedtuple
 import random
+from common.trading_observation import require_trading_info_in_info
 
 NETWORK_INFO_KEYS = (
     "avaliable_action",
@@ -343,6 +344,8 @@ class Multi_step_ReplayBuffer_multi_info:
         done,
     ):
         """Add a new experience to memory."""
+        require_trading_info_in_info(info)
+        require_trading_info_in_info(next_info, name="next_info['trading_info']")
         # if we want to have multi core
         if self.iter_ == self.parallel_env:
             self.iter_ = 0
@@ -383,6 +386,8 @@ class Multi_step_ReplayBuffer_multi_info:
     ):
         (state, info, action, reward, next_state, next_info, done) = transition
         """Add a new experience to memory."""
+        require_trading_info_in_info(info)
+        require_trading_info_in_info(next_info, name="next_info['trading_info']")
         # if we want to have multi core
         if self.iter_ == self.parallel_env:
             self.iter_ = 0

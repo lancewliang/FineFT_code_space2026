@@ -290,6 +290,18 @@ def load_trading_observation_metadata(path: str | Path) -> TradingObservationCon
     return validate_trading_metadata(metadata)
 
 
+def prepare_trading_observation_artifact(
+    artifact_directory: str | Path,
+    config: TradingObservationConfig,
+) -> Path:
+    """Create or validate the metadata sidecar for a model/replay directory."""
+    directory = Path(artifact_directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    destination = directory / "trading_observation.json"
+    save_trading_observation_metadata(destination, config)
+    return destination
+
+
 def require_trading_info_in_info(info: Mapping[str, Any], *, name: str = "info['trading_info']") -> np.ndarray:
     """Require an explicitly supplied observation; never silently fill zeros."""
     if "trading_info" not in info:

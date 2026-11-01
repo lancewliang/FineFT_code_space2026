@@ -12,6 +12,7 @@ import polars as pl
 
 CAUSAL_PRICE_SCALE_COLUMN = "causal_mark_price_mean_abs_change_18"
 CAUSAL_PRICE_SCALE_VALID_COLUMN = "causal_mark_price_scale_valid"
+CAUSAL_PRICE_SCALE_ROW_COLUMN = "source_row_index"
 CAUSAL_PRICE_SCALE_WINDOW = 18
 CAUSAL_PRICE_SCALE_PRICE_SOURCE = "mark_price"
 CAUSAL_PRICE_SCALE_PRICE_UNIT = "yuan_per_tonne"
@@ -53,6 +54,7 @@ class CausalPriceStatistics:
             "row_coordinate_last": int(coordinates[-1]) if coordinates.size else None,
             "scale_column": CAUSAL_PRICE_SCALE_COLUMN,
             "valid_column": CAUSAL_PRICE_SCALE_VALID_COLUMN,
+            "row_coordinate_column": CAUSAL_PRICE_SCALE_ROW_COLUMN,
         }
 
 
@@ -143,5 +145,6 @@ def attach_causal_price_statistics(
     result = frame.with_columns(
         pl.Series(CAUSAL_PRICE_SCALE_COLUMN, statistics.scale),
         pl.Series(CAUSAL_PRICE_SCALE_VALID_COLUMN, statistics.valid),
+        pl.Series(CAUSAL_PRICE_SCALE_ROW_COLUMN, np.arange(frame.height, dtype=np.int64)),
     )
     return result, statistics

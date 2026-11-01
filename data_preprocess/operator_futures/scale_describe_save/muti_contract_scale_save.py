@@ -17,6 +17,7 @@ from operator_futures.scale_describe_save.scale_save import (
 )
 from operator_futures.scale_describe_save.causal_price_scale import (
     CAUSAL_PRICE_SCALE_COLUMN,
+    CAUSAL_PRICE_SCALE_ROW_COLUMN,
     CAUSAL_PRICE_SCALE_VALID_COLUMN,
     attach_causal_price_statistics,
 )
@@ -69,6 +70,7 @@ class ScaleManifest:
     causal_price_scale_window: int = 18
     causal_price_scale_column: str = CAUSAL_PRICE_SCALE_COLUMN
     causal_price_scale_valid_column: str = CAUSAL_PRICE_SCALE_VALID_COLUMN
+    causal_price_scale_row_coordinate_column: str = CAUSAL_PRICE_SCALE_ROW_COLUMN
     causal_price_scale_price_source: str = "mark_price"
     causal_price_scale_price_unit: str = "yuan_per_tonne"
 
@@ -720,7 +722,11 @@ def scale_one_input(
 
     df_state_aligned = pl.DataFrame(state_cols)
     df_auxiliary = df_with_auxiliary.select(
-        [CAUSAL_PRICE_SCALE_COLUMN, CAUSAL_PRICE_SCALE_VALID_COLUMN]
+        [
+            CAUSAL_PRICE_SCALE_COLUMN,
+            CAUSAL_PRICE_SCALE_VALID_COLUMN,
+            CAUSAL_PRICE_SCALE_ROW_COLUMN,
+        ]
     )
     out = pl.concat([df_reward, df_state_aligned, df_auxiliary], how="horizontal").with_columns(
         pl.lit(args.symbols).alias("symbol")
