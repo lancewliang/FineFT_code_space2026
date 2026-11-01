@@ -29,3 +29,7 @@ date: 2026-10-28
 - 单次测试中的合成优化器更新仅验证函数，不等同于策略重训。真实收益、交易摩擦和回撤改进均待用户重训后评估。
 
 本ADR修订 [ADR-0052](0052-compact-spatio-temporal-trajectory-ipc-and-micro-batched-ingestion.md) 的去重等价关系，保留其紧凑回传和微批次目的，并保留 ADR-0012 的轨迹内多步累加及体制隔离。
+
+## 2026-11-01 实现状态校正
+
+交易 state 输入扩维代码已由用户全部回退；本 ADR 当前继续描述四维 `trading_info` 基线。十一维输入与加载拒绝策略仍是 [待实施规格](../../.scratch/low-agent-round1-trading-state-input/spec.md) 中的扩展提议，不能作为当前实现或验收通过的声明。
