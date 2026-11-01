@@ -42,12 +42,17 @@ from analysis.calculate_metric.calculate_metric import (
     calculate_required_money,
     calculate_single_holsing_max_draw_down,
 )
-
-TRADING_INFO_KEYS = (
-    "position_exposure",
-    "single_holding_return_rate",
-    "single_holding_max_drawdown",
-    "current_holding_duration_norm",
+from common.trading_observation import (
+    CAUSAL_PRICE_SCALE_COLUMN,
+    CAUSAL_PRICE_SCALE_VALID_COLUMN,
+    TRADING_INFO_DIM,
+    TRADING_INFO_KEYS,
+    ExitMemoryRecord,
+    TradingObservationConfig,
+    TradingObservationError,
+    encode_exit_memory,
+    validate_exit_price_scale_floor,
+    validate_trading_info,
 )
 
 # 已从 step/reset 返回 info 中移除、仅供按需显式查询的字段（见 get_info_field）。
@@ -112,6 +117,10 @@ class Base_Env(gym.Env):
         turnover_base_rate=0.0,
         turnover_adverse_ratio=1.0,
         allow_partial_positions=False,
+        exit_price_scale_floor=5.0,
+        causal_price_scale_array=None,
+        causal_price_scale_valid_array=None,
+        start_index=0,
     ):
         # trading setting
         self.allow_partial_positions = allow_partial_positions
@@ -152,6 +161,37 @@ class Base_Env(gym.Env):
         self.turnover_base_rate = effective_base
         self.turnover_adverse_ratio = float(turnover_adverse_ratio)
         self.turnover_penalty_rate = self.turnover_base_rate
+        self.exit_price_scale_floor = validate_exit_price_scale_floor(exit_price_scale_floor)
+        self.causal_price_scale_array = self._validate_causal_scale_array(
+            causal_price_scale_array, len(markprice_array), CAUSAL_PRICE_SCALE_COLUMN
+        )
+        self.causal_price_scale_valid_array = self._validate_causal_valid_array(
+            causal_price_scale_valid_array, len(markprice_array), CAUSAL_PRICE_SCALE_VALID_COLUMN
+        )
+        if (self.causal_price_scale_array is None) != (self.causal_price_scale_valid_array is None):
+            raise TradingObservationError(
+                "causal price scale and valid arrays must be supplied together"
+            )
+        if not isinstance(start_index, (int, np.integer)) or start_index < 0:
+            raise ValueError("start_index must be a non-negative integer")
+        requested_start_index = int(start_index)
+        if self.causal_price_scale_valid_array is not None:
+            valid_indices = np.flatnonzero(self.causal_price_scale_valid_array)
+            if valid_indices.size == 0:
+                raise TradingObservationError("partition has no valid causal price scale rows")
+            start_index = max(requested_start_index, int(valid_indices[0]))
+            self.causal_valid_start = int(valid_indices[0])
+            self.causal_valid_row_count = int(valid_indices.size)
+            self.causal_excluded_rows = int(start_index - requested_start_index)
+        else:
+            self.causal_valid_start = None
+            self.causal_valid_row_count = 0
+            self.causal_excluded_rows = 0
+        if start_index >= len(markprice_array):
+            raise ValueError(f"start_index={start_index} must be smaller than data length={len(markprice_array)}")
+        if self.causal_price_scale_valid_array is not None and start_index >= len(markprice_array) - early_stop - 1:
+            raise TradingObservationError("causal partition has no complete environment transition")
+        self.start_index = int(start_index)
         # RL setting
         self.single_side_action_num = int((position_choices - 1) / 2)
         self.action_space = spaces.Discrete(
@@ -193,7 +233,7 @@ class Base_Env(gym.Env):
 
         # initialization
         self.terminal = False
-        self.day = 0
+        self.day = self.start_index
         (
             self.wallet_balance,
             self.initial_margin,
@@ -228,25 +268,122 @@ class Base_Env(gym.Env):
             self.current_holding_duration = 0
         else:
             self.current_holding_duration = 1
+        self._reset_exit_memory()
+
+    @staticmethod
+    def _validate_causal_scale_array(value, row_count: int, name: str):
+        if value is None:
+            return None
+        array = np.asarray(value, dtype=np.float64).reshape(-1)
+        if array.size != row_count or not np.isfinite(array).all() or (array < 0).any():
+            raise TradingObservationError(f"{name} must be finite, non-negative and row-aligned")
+        return array
+
+    @staticmethod
+    def _validate_causal_valid_array(value, row_count: int, name: str):
+        if value is None:
+            return None
+        array = np.asarray(value, dtype=bool).reshape(-1)
+        if array.size != row_count:
+            raise TradingObservationError(f"{name} must be row-aligned")
+        warmup = min(18, row_count)
+        if array[:warmup].any():
+            raise TradingObservationError("causal warmup rows must be invalid")
+        return array
 
 
     def _zero_trading_info(self):
-        return np.zeros(len(TRADING_INFO_KEYS), dtype=np.float32)
+        return np.zeros(TRADING_INFO_DIM, dtype=np.float32)
+
+    def trading_observation_metadata(self):
+        metadata = TradingObservationConfig(
+            exit_price_scale_floor=self.exit_price_scale_floor,
+            holding_duration_norm_steps=self.holding_duration_norm_steps,
+        ).to_metadata()
+        metadata.update(
+            {
+                "causal_price_scale_column": CAUSAL_PRICE_SCALE_COLUMN,
+                "causal_price_scale_valid_column": CAUSAL_PRICE_SCALE_VALID_COLUMN,
+                "causal_valid_start": self.causal_valid_start,
+                "causal_valid_row_count": self.causal_valid_row_count,
+                "causal_excluded_rows": self.causal_excluded_rows,
+            }
+        )
+        return metadata
+
+    def _reset_exit_memory(self):
+        self.last_long_exit_record = ExitMemoryRecord.empty()
+        self.last_short_exit_record = ExitMemoryRecord.empty()
+
+    def _record_completed_exit(self, old_position, wallet_change):
+        """Record only a real direction-specific complete exit."""
+        new_position = float(wallet_change.position)
+        if old_position == 0 or new_position != 0 or wallet_change.closed_quantity <= 0:
+            return
+        closed_quantity = float(wallet_change.closed_quantity)
+        closed_value = float(wallet_change.closed_value)
+        if not np.isfinite(closed_quantity) or not np.isfinite(closed_value):
+            raise TradingObservationError("complete exit requires finite closed quantity and value")
+        if closed_quantity <= 0 or closed_value <= 0:
+            raise TradingObservationError("complete exit requires positive closed quantity and value")
+        if self.causal_price_scale_array is None:
+            # Direct legacy callers do not carry the Scale Save columns.  New
+            # dataset-driven paths always pass them and never enter this branch.
+            from common.trading_observation import calculate_causal_price_scale
+            scale = calculate_causal_price_scale(
+                self.markprice_array, self.day, self.exit_price_scale_floor
+            )
+        else:
+            if not self.causal_price_scale_valid_array[self.day]:
+                raise TradingObservationError(
+                    f"cannot record exit at invalid causal scale row {self.day}"
+                )
+            scale = max(self.exit_price_scale_floor, float(self.causal_price_scale_array[self.day]))
+        record = ExitMemoryRecord.create(
+            observation_step=self.day + 1,
+            execution_price=closed_value / closed_quantity,
+            price_scale=scale,
+        )
+        if old_position > 0:
+            self.last_long_exit_record = record
+        else:
+            self.last_short_exit_record = record
 
     def _calculate_trading_info(self):
         max_abs_position = max(abs(p) for p in self.position_list)
         position_exposure = 0.0 if max_abs_position == 0 else float(self.position / max_abs_position)
-        if self.position == 0:
-            return self._zero_trading_info()
         duration_norm = min(float(self.current_holding_duration) / float(self.holding_duration_norm_steps), 1.0)
-        return np.array(
-            [
-                position_exposure,
-                float(self.single_holding_return_rate),
-                float(self.single_holding_max_drawdown),
-                duration_norm,
-            ],
-            dtype=np.float32,
+        current_price = float(self.current_markprice)
+        if not np.isfinite(current_price) or current_price <= 0:
+            raise TradingObservationError("current_markprice must be finite and positive")
+        loss_ratio = 0.0 if self.position == 0 else max(0.0, -float(self.unrealized_pnl)) / (
+            abs(float(self.position)) * current_price
+        )
+        long_memory = encode_exit_memory(
+            self.last_long_exit_record,
+            current_step=self.day,
+            current_price=current_price,
+            direction="long",
+        )
+        short_memory = encode_exit_memory(
+            self.last_short_exit_record,
+            current_step=self.day,
+            current_price=current_price,
+            direction="short",
+        )
+        return validate_trading_info(
+            np.asarray(
+                [
+                    position_exposure,
+                    float(self.single_holding_return_rate) if self.position != 0 else 0.0,
+                    float(self.single_holding_max_drawdown) if self.position != 0 else 0.0,
+                    duration_norm if self.position != 0 else 0.0,
+                    loss_ratio,
+                    *long_memory,
+                    *short_memory,
+                ],
+                dtype=np.float32,
+            )
         )
 
     def _compute_step_limit_reward(self, old_position):
@@ -470,7 +607,7 @@ class Base_Env(gym.Env):
         )
 
     def reset(self, initial_state: tuple[float, float, float, float, float] | None = None):
-        self.day = 0
+        self.day = self.start_index
         self.terminal = self.day >= len(self.state_array) - self.early_stop - 1
         if initial_state is not None:
             self.initial_state = initial_state
@@ -483,6 +620,7 @@ class Base_Env(gym.Env):
         ) = self.initial_state
         self.current_markprice = self.markprice_array[self.day]
         self._initialize_position_cost()
+        self._reset_exit_memory()
         state = self.state_array[self.day]
         self.ask_prices = self.ask_prices_array[self.day]
         self.bid_prices = self.bid_prices_array[self.day]
@@ -690,6 +828,7 @@ class Base_Env(gym.Env):
                 )
 
         self._update_execution_metrics(wallet_change)
+        self._record_completed_exit(old_position, wallet_change)
         self.executed_position_history.append(float(position))
         self.commission_fee_history.append(float(wallet_change.commission_fee_step))
         self._update_position_cost(old_position, wallet_change)
@@ -805,7 +944,7 @@ class Base_Env(gym.Env):
                     "ask_qyts": self.ask_qtys,
                     "bid_qyts": self.bid_qtys,
                     "single_holding_max_drawdown": self.single_holding_max_drawdown,
-                    "trading_info": self._zero_trading_info(),
+                    "trading_info": self._calculate_trading_info(),
                     "previous_action": self.env_map_position_leverage_to_action(
                         self.position, self.leverage
                     ),
@@ -869,7 +1008,7 @@ class Base_Env(gym.Env):
                         "ask_qyts": self.ask_qtys,
                         "bid_qyts": self.bid_qtys,
                         "single_holding_max_drawdown": self.single_holding_max_drawdown,
-                        "trading_info": self._zero_trading_info(),
+                        "trading_info": self._calculate_trading_info(),
                         "previous_action": self.env_map_position_leverage_to_action(
                             self.position, self.leverage
                         ),
@@ -985,7 +1124,7 @@ class Base_Env(gym.Env):
                         "ask_qyts": self.ask_qtys,
                         "bid_qyts": self.bid_qtys,
                         "single_holding_max_drawdown": self.single_holding_max_drawdown,
-                        "trading_info": self._zero_trading_info(),
+                        "trading_info": self._calculate_trading_info(),
                         "previous_action": self.env_map_position_leverage_to_action(
                             self.position, self.leverage
                         ),

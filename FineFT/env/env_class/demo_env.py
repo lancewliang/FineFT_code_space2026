@@ -63,6 +63,10 @@ class Demo_Env(Base_Env):
         turnover_adverse_ratio=1.0,
         q_table=None,
         allow_partial_positions=False,
+        exit_price_scale_floor=5.0,
+        causal_price_scale_array=None,
+        causal_price_scale_valid_array=None,
+        start_index=0,
     ):
 
         super(Demo_Env, self).__init__(
@@ -105,6 +109,10 @@ class Demo_Env(Base_Env):
             turnover_base_rate=turnover_base_rate,
             turnover_adverse_ratio=turnover_adverse_ratio,
             allow_partial_positions=allow_partial_positions,
+            exit_price_scale_floor=exit_price_scale_floor,
+            causal_price_scale_array=causal_price_scale_array,
+            causal_price_scale_valid_array=causal_price_scale_valid_array,
+            start_index=start_index,
         )
         if q_table is not None:
             self.q_table = q_table

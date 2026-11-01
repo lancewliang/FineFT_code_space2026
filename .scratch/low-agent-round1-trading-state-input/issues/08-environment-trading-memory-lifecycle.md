@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — 集中观测与行情辅助数据契约；07 — 贯通辅助列与切片坐标
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Implementation:** 未实施。此前代码改动已全部回退；本轮只重切任务，不启动代码修改。ready-for-agent 表示规格可实施，不表示依赖已完成。
 
@@ -30,5 +30,8 @@ FineFT/env/env_class/base_env.py、commodity_env.py、demo_env.py、futures_util
 共同遵循 [spec](../spec.md) 第 4–6 节与 [实施依赖总览](../implementation-plan.md)。Python/pytest 使用 `conda activate finetf`。不更改已确认范围，不启动正式重训。
 
 ## Comments
+
+- 2026-11-01：完成 Base_Env/Commodity_Env/Demo_Env 11 维观测生命周期接入。环境验证辅助尺度与有效位，自动定位首个有效交易行并记录排除/有效计数；浮亏率、双方向完整退出记忆、实际成交均价、决策行锁存尺度、256 步饱和和全部终止路径均已接入。数据工厂严格透传辅助列、`source_row_index`、`exit_price_scale_floor` 与 `start_index`。
+- 验证：在 `conda activate finetf` 环境执行 `python -m pytest tests/env/test_trading_observation_lifecycle_v2.py tests/env/test_base_initiate.py tests/env/test_commodity_env.py -q`，结果 `12 passed`。
 
 - 2026-11-01：按确认后的行情统计预计算、Q8 A 与 exit_price_scale_floor 命名重新切分职责；当前验收项全部未完成。

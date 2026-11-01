@@ -1,9 +1,15 @@
 import sys
 
 import pandas as pd
+import numpy as np
 
 sys.path.append(".")
 from env.env_class.commodity_env import Commodity_Env
+from common.trading_observation import (
+    CAUSAL_PRICE_SCALE_COLUMN,
+    CAUSAL_PRICE_SCALE_VALID_COLUMN,
+    CAUSAL_PRICE_SCALE_ROW_COLUMN,
+)
 
 
 def _depth_columns(depth):
@@ -42,6 +48,8 @@ def initiate_commodity_env(
     limit_stay_bonus=0.5,
     limit_reverse_penalty=1.5,
     near_limit_threshold=0.003,
+    exit_price_scale_floor=5.0,
+    start_index=0,
 ):
     bid_prices_names, ask_prices_names, bid_sizes_names, ask_sizes_names = (
         _depth_columns(depth)
@@ -86,6 +94,14 @@ def initiate_commodity_env(
     upper_limit_prices_array = df["UpperLimitPrice"].values if "UpperLimitPrice" in df.columns else None
     lower_limit_prices_array = df["LowerLimitPrice"].values if "LowerLimitPrice" in df.columns else None
     regime_grid_ids_array = df["regime_grid_id"].values.astype(np.int64) if "regime_grid_id" in df.columns else None
+    causal_price_scale_array = df[CAUSAL_PRICE_SCALE_COLUMN].to_numpy() if CAUSAL_PRICE_SCALE_COLUMN in df.columns else None
+    causal_price_scale_valid_array = df[CAUSAL_PRICE_SCALE_VALID_COLUMN].to_numpy(dtype=bool) if CAUSAL_PRICE_SCALE_VALID_COLUMN in df.columns else None
+    if (causal_price_scale_array is None) != (causal_price_scale_valid_array is None):
+        raise ValueError("causal price scale columns must include both scale and valid columns; regenerate data")
+    if causal_price_scale_array is not None and not np.array_equal(
+        df[CAUSAL_PRICE_SCALE_ROW_COLUMN].to_numpy(), np.arange(len(df))
+    ):
+        raise ValueError("source_row_index must align with the contract DataFrame")
 
     return Commodity_Env(
         state_array,
@@ -118,4 +134,8 @@ def initiate_commodity_env(
         limit_reverse_penalty=limit_reverse_penalty,
         near_limit_threshold=near_limit_threshold,
         regime_grid_ids_array=regime_grid_ids_array,
+        exit_price_scale_floor=exit_price_scale_floor,
+        causal_price_scale_array=causal_price_scale_array,
+        causal_price_scale_valid_array=causal_price_scale_valid_array,
+        start_index=start_index,
     )

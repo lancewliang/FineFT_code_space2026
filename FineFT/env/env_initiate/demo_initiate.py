@@ -4,6 +4,11 @@ import sys
 
 sys.path.append(".")
 from env.env_class.demo_env import Demo_Env
+from common.trading_observation import (
+    CAUSAL_PRICE_SCALE_COLUMN,
+    CAUSAL_PRICE_SCALE_VALID_COLUMN,
+    CAUSAL_PRICE_SCALE_ROW_COLUMN,
+)
 
 
 def initiate_demo_env(
@@ -41,6 +46,8 @@ def initiate_demo_env(
     turnover_base_rate=0.0,
     turnover_adverse_ratio=1.0,
     allow_partial_positions=False,
+    exit_price_scale_floor=5.0,
+    start_index=0,
 ):
 
     # 对应钱包余额，起始保证金，未实现盈亏，持仓量，对应的杠杆):
@@ -78,6 +85,14 @@ def initiate_demo_env(
     upper_limit_prices_array = df["UpperLimitPrice"].values if "UpperLimitPrice" in df.columns else None
     lower_limit_prices_array = df["LowerLimitPrice"].values if "LowerLimitPrice" in df.columns else None
     regime_grid_ids_array = df["regime_grid_id"].values.astype(np.int64) if "regime_grid_id" in df.columns else None
+    causal_price_scale_array = df[CAUSAL_PRICE_SCALE_COLUMN].to_numpy() if CAUSAL_PRICE_SCALE_COLUMN in df.columns else None
+    causal_price_scale_valid_array = df[CAUSAL_PRICE_SCALE_VALID_COLUMN].to_numpy(dtype=bool) if CAUSAL_PRICE_SCALE_VALID_COLUMN in df.columns else None
+    if (causal_price_scale_array is None) != (causal_price_scale_valid_array is None):
+        raise ValueError("causal price scale columns must include both scale and valid columns; regenerate data")
+    if causal_price_scale_array is not None and not np.array_equal(
+        df[CAUSAL_PRICE_SCALE_ROW_COLUMN].to_numpy(), np.arange(len(df))
+    ):
+        raise ValueError("source_row_index must align with the contract DataFrame")
 
     env = Demo_Env(
         state_array,
@@ -121,6 +136,10 @@ def initiate_demo_env(
         turnover_base_rate=turnover_base_rate,
         turnover_adverse_ratio=turnover_adverse_ratio,
         allow_partial_positions=allow_partial_positions,
+        exit_price_scale_floor=exit_price_scale_floor,
+        causal_price_scale_array=causal_price_scale_array,
+        causal_price_scale_valid_array=causal_price_scale_valid_array,
+        start_index=start_index,
     )
     return env
 

@@ -47,6 +47,10 @@ class Commodity_Env(Base_Env):
         limit_reverse_penalty=1.5,
         near_limit_threshold=0.003,
         regime_grid_ids_array=None,
+        exit_price_scale_floor=5.0,
+        causal_price_scale_array=None,
+        causal_price_scale_valid_array=None,
+        start_index=0,
     ):
         funding_rate_array = np.zeros(len(timestamp_array), dtype=float)
         funding_timestamp_array = timestamp_array
@@ -84,6 +88,10 @@ class Commodity_Env(Base_Env):
             limit_reverse_penalty=limit_reverse_penalty,
             near_limit_threshold=near_limit_threshold,
             regime_grid_ids_array=regime_grid_ids_array,
+            exit_price_scale_floor=exit_price_scale_floor,
+            causal_price_scale_array=causal_price_scale_array,
+            causal_price_scale_valid_array=causal_price_scale_valid_array,
+            start_index=start_index,
         )
 
     @staticmethod
