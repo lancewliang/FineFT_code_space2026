@@ -16,6 +16,11 @@ if str(FINEFT_ROOT) not in sys.path:
     sys.path.insert(0, str(FINEFT_ROOT))
 
 from common import ArtifactNames
+from common.trading_observation import (
+    TRADING_INFO_DIM,
+    TradingObservationConfig,
+    save_trading_observation_metadata,
+)
 from model.low_level import ensemble_Qnet
 from analysis.feature.low_level_agent_ood_analysis import (
     BaselineStats,
@@ -98,14 +103,14 @@ def test_forward_ensemble_with_latents_shapes():
         hidden_nodes=hidden_nodes,
         TIME_INFO_DIM=time_info_dim,
         ensemble_number=ensemble_size,
-        TRADING_INFO_DIM=4,
+        TRADING_INFO_DIM=TRADING_INFO_DIM,
     )
 
     state = torch.randn(batch_size, n_states)
     time_input = torch.randn(batch_size, time_info_dim)
     prev_act = torch.zeros(batch_size, 1)
     avail_act = torch.ones(batch_size, n_actions)
-    trading_info = torch.zeros(batch_size, 4)
+    trading_info = torch.zeros(batch_size, TRADING_INFO_DIM)
 
     q_vals, latents = forward_ensemble_with_latents(
         model, state, time_input, prev_act, avail_act, trading_info
@@ -128,7 +133,7 @@ def test_load_ensemble_model_from_checkpoint(tmp_path: Path):
         hidden_nodes=hidden_nodes,
         TIME_INFO_DIM=time_info_dim,
         ensemble_number=ensemble_size,
-        TRADING_INFO_DIM=4,
+        TRADING_INFO_DIM=TRADING_INFO_DIM,
     )
 
     ckpt_path = tmp_path / "trained_model.pkl"
@@ -162,12 +167,13 @@ def test_low_level_agent_ood_analysis_end_to_end(tmp_path: Path, monkeypatch):
         hidden_nodes=hidden_nodes,
         TIME_INFO_DIM=2,
         ensemble_number=ensemble_size,
-        TRADING_INFO_DIM=4,
+        TRADING_INFO_DIM=TRADING_INFO_DIM,
     )
     model_dir = tmp_path / "model_epoch"
     model_dir.mkdir(parents=True, exist_ok=True)
     model_path = model_dir / "trained_model.pkl"
     torch.save(model.state_dict(), model_path)
+    save_trading_observation_metadata(model_dir / "trading_observation.json", TradingObservationConfig())
 
     # 3. Save dummy buffer_diverse.pkl with 9 grids
     buffer_payload = {}
@@ -184,7 +190,7 @@ def test_low_level_agent_ood_analysis_end_to_end(tmp_path: Path, monkeypatch):
                 "previous_action": torch.zeros(n_samples),
                 "funding_count_down_hour": torch.zeros(n_samples),
                 "funding_count_down_minute": torch.zeros(n_samples),
-                "trading_info": torch.zeros(n_samples, 4),
+                "trading_info": torch.zeros(n_samples, TRADING_INFO_DIM),
                 "q_value": torch.zeros(n_samples, n_actions),
             },
         }
@@ -293,12 +299,13 @@ def test_low_level_agent_ood_analysis_default_feature_path(tmp_path: Path, monke
         hidden_nodes=hidden_nodes,
         TIME_INFO_DIM=2,
         ensemble_number=ensemble_size,
-        TRADING_INFO_DIM=4,
+        TRADING_INFO_DIM=TRADING_INFO_DIM,
     )
     model_dir = tmp_path / "model_epoch"
     model_dir.mkdir(parents=True, exist_ok=True)
     model_path = model_dir / "trained_model.pkl"
     torch.save(model.state_dict(), model_path)
+    save_trading_observation_metadata(model_dir / "trading_observation.json", TradingObservationConfig())
 
     buffer_payload = {}
     for g in range(9):
@@ -314,7 +321,7 @@ def test_low_level_agent_ood_analysis_default_feature_path(tmp_path: Path, monke
                 "previous_action": torch.zeros(n_samples),
                 "funding_count_down_hour": torch.zeros(n_samples),
                 "funding_count_down_minute": torch.zeros(n_samples),
-                "trading_info": torch.zeros(n_samples, 4),
+                "trading_info": torch.zeros(n_samples, TRADING_INFO_DIM),
                 "q_value": torch.zeros(n_samples, n_actions),
             },
         }
@@ -374,6 +381,7 @@ def test_low_level_agent_ood_analysis_missing_feature_fails_fast(tmp_path: Path,
     model_dir.mkdir(parents=True, exist_ok=True)
     model_path = model_dir / "trained_model.pkl"
     torch.save({}, model_path)
+    save_trading_observation_metadata(model_dir / "trading_observation.json", TradingObservationConfig())
 
     test_args = [
         "low_level_agent_ood_analysis.py",

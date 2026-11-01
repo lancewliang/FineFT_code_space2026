@@ -30,6 +30,11 @@ from env.env_class.futures_util import map_action_to_position_leverage
 from RL.DiHFT.low_level.evaluation_stop_loss import (
     EvaluationStopLoss, executed_position, validate_threshold,
 )
+from common.trading_observation import (
+    load_trading_observation_metadata,
+    validate_exit_price_scale_floor,
+    validate_trading_state_dict,
+)
 
 
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -95,8 +100,10 @@ class weighted_trader:
         near_limit_threshold: float =0.05,
         device: str = "cpu",
         stop_loss_return_threshold: float = 0.03,
+        exit_price_scale_floor: float = 5.0,
     ):
         self.stop_loss_return_threshold = validate_threshold(stop_loss_return_threshold)
+        self.exit_price_scale_floor = validate_exit_price_scale_floor(exit_price_scale_floor)
 
         # logger
         self.logg_file_path = logg_file_path
@@ -163,6 +170,11 @@ class weighted_trader:
         self.N_ACTIONS = (self.position_choices - 1) * len(self.leverage_choices) + 1
         self.flat_action = len(self.leverage_choices) * (len(self.position_list) // 2)
         state_dict = torch.load(self.model_file, map_location=self.device)
+        metadata_path = os.path.join(os.path.dirname(self.model_file), "trading_observation.json")
+        observation_config = load_trading_observation_metadata(metadata_path)
+        if observation_config.exit_price_scale_floor != self.exit_price_scale_floor:
+            raise ValueError("model exit_price_scale_floor does not match the run")
+        validate_trading_state_dict(state_dict)
         self.N = N
         self.eval_net = ensemble_Qnet(
             N_STATES=len(self.tech_indicator_list),
@@ -171,7 +183,7 @@ class weighted_trader:
             TIME_INFO_DIM=self.time_info_dim,
             ensemble_number=self.N,
         ).to(self.device)
-        self.eval_net.load_state_dict(state_dict)
+        self.eval_net.load_state_dict(state_dict, strict=True)
         self.eval_net.eval()
         self.initial_action_list = range(self.N_ACTIONS)
 
@@ -230,7 +242,7 @@ class weighted_trader:
             self.leverage_choices,
             self.position_list,
         )
-        current_markprice = test_df["mark_price"].values[0]
+        current_markprice = test_df["mark_price"].values[18]
         initial_margin = np.abs(
             initial_position * current_markprice / initial_leverage
         )
@@ -266,6 +278,8 @@ class weighted_trader:
             limit_stay_bonus=self.limit_stay_bonus,
             limit_reverse_penalty=self.limit_reverse_penalty,
             near_limit_threshold=self.near_limit_threshold,
+            exit_price_scale_floor=self.exit_price_scale_floor,
+            start_index=18,
         )
         s, info = test_env.reset()
         done = False
@@ -365,6 +379,7 @@ def evaluates(
         near_limit_threshold: float =0.05,
         device: str = "cpu",
         stop_loss_return_threshold: float = 0.03,
+        exit_price_scale_floor: float = 5.0,
         **kwargs):
     """Evaluate the sub-agent across multiple data files using one subprocess per file."""
     stop_loss_return_threshold = validate_threshold(stop_loss_return_threshold)
@@ -404,6 +419,7 @@ def evaluates(
         "near_limit_threshold": near_limit_threshold,
         "device": device,
         "stop_loss_return_threshold": stop_loss_return_threshold,
+        "exit_price_scale_floor": exit_price_scale_floor,
         **kwargs,
     }
 

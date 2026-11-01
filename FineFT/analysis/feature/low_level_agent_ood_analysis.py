@@ -29,6 +29,12 @@ if str(FINEFT_ROOT) not in sys.path:
 from env.env_initiate.base_initiate import initiate_base_env
 from model.low_level import Qnet, ensemble_Qnet
 from common import ArtifactNames
+from common.trading_observation import (
+    TRADING_INFO_DIM,
+    load_trading_observation_metadata,
+    validate_exit_price_scale_floor,
+    validate_trading_state_dict,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,6 +63,7 @@ def load_ensemble_model_from_checkpoint(
     """Inspect state_dict and instantiate matching ensemble_Qnet without manual hyperparameter guesswork."""
     logger.info("Loading model weights from: %s", model_path)
     state_dict = torch.load(model_path, map_location=device)
+    validate_trading_state_dict(state_dict)
 
     # Deduce ensemble size and layer shapes
     qnet_indices = set()
@@ -69,7 +76,7 @@ def load_ensemble_model_from_checkpoint(
     n_states = state_dict["qnet_list.0.fc1.weight"].shape[1]
     n_actions = state_dict["qnet_list.0.out.weight"].shape[0]
     time_info_dim = state_dict["qnet_list.0.fc_time.weight"].shape[1]
-    trading_info_dim = state_dict["qnet_list.0.fc_trading.weight"].shape[1]
+    trading_info_dim = TRADING_INFO_DIM
 
     config = {
         "ensemble_number": ensemble_number,
@@ -314,6 +321,7 @@ def run_contract_env_rollout(
     holding_duration_norm_steps: int = 180,
     order_book_depth: int = 0,
     maintenance_margin_ratio_dict: dict[str, list[float]] | None = None,
+    exit_price_scale_floor: float = 5.0,
 ) -> pd.DataFrame:
     """Run interactive step-by-step evaluation rollout in Base_Env, capturing sequential OOD dynamics."""
     if leverage_choices is None:
@@ -336,6 +344,8 @@ def run_contract_env_rollout(
         "holding_duration_norm_steps": holding_duration_norm_steps,
         "order_book_depth": effective_depth,
         "initial_state": (1e5, 0, 0, 0, leverage_choices[0]),
+        "exit_price_scale_floor": validate_exit_price_scale_floor(exit_price_scale_floor),
+        "start_index": 18,
     }
     if maintenance_margin_ratio_dict is not None:
         env_kwargs["maintenance_margin_ratio_dict"] = maintenance_margin_ratio_dict
@@ -423,7 +433,7 @@ def run_contract_static_scan(
             t = torch.tensor(np.stack([h_down[start_idx:end_idx], m_down[start_idx:end_idx]], axis=1), dtype=torch.float32, device=device)
             pa = torch.zeros((b, 1), dtype=torch.float32, device=device)
             aa = torch.ones((b, n_actions), dtype=torch.float32, device=device)
-            ti = torch.zeros((b, 4), dtype=torch.float32, device=device)
+            ti = torch.zeros((b, TRADING_INFO_DIM), dtype=torch.float32, device=device)
 
             q_vals, latents = forward_ensemble_with_latents(ensemble, s, t, pa, aa, ti)
             metrics = compute_step_ood_metrics(q_vals, latents, baseline)
@@ -563,6 +573,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--position_choices", type=int, default=3, help="Number of discrete position choices (e.g. 3 for short/flat/long)")
     parser.add_argument("--max_holding_number", type=int, default=1, help="Max holding units")
     parser.add_argument("--order_book_depth", type=int, default=0, help="Order book depth (0 to auto-detect from dataframe columns)")
+    parser.add_argument(
+        "--exit_price_scale_floor",
+        type=validate_exit_price_scale_floor,
+        default=5.0,
+        help="实验退出价格尺度下限（元/吨），与交易所 tick size 分开",
+    )
     return parser.parse_args()
 
 
@@ -579,6 +595,13 @@ def main():
 
     if not model_file.is_file():
         raise FileNotFoundError(f"Model file not found: {model_file}")
+
+    metadata_path = model_file.parent / "trading_observation.json"
+    if not metadata_path.is_file():
+        metadata_path = model_file.parent.parent / "trading_observation.json"
+    observation_config = load_trading_observation_metadata(metadata_path)
+    if observation_config.exit_price_scale_floor != args.exit_price_scale_floor:
+        raise ValueError("model exit_price_scale_floor does not match the run")
 
     # Resolve buffer_path
     if args.buffer_path:
@@ -657,6 +680,7 @@ def main():
                 max_holding_number=args.max_holding_number,
                 order_book_depth=args.order_book_depth,
                 maintenance_margin_ratio_dict=margin_dict,
+                exit_price_scale_floor=args.exit_price_scale_floor,
             )
         else:
             res_df = run_contract_static_scan(

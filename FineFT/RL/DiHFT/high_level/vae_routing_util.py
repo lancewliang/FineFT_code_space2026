@@ -65,6 +65,11 @@ from common.audit_records import (
     calculate_action_value_margin,
 )
 from common.routing_audit import ROUTING_AUDIT_SCHEMA_VERSION, RoutingRecord
+from common.trading_observation import (
+    load_trading_observation_metadata,
+    validate_exit_price_scale_floor,
+    validate_trading_state_dict,
+)
 from model.low_level import ensemble_Qnet
 from model.high_level import RankBasedQNetwork
 from RL.util.update import disable_gradients, get_rank
@@ -78,6 +83,12 @@ os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["F_ENABLE_ONEDNN_OPTS"] = "0"
 parser = FrozenRoutingArgumentParser()
+parser.add_argument(
+    "--exit_price_scale_floor",
+    type=validate_exit_price_scale_floor,
+    default=5.0,
+    help="实验退出价格尺度下限（元/吨），与交易所 tick size 分开",
+)
 # * Env setting
 parser.add_argument(
     "--base_path",
@@ -1163,6 +1174,9 @@ class vae_risk_aware_routing:
         self.circuit_breaker_suspension_count = 0
         self.previous_step_position = 0.0
         self.active_trade_stopped = False
+        self.exit_price_scale_floor = validate_exit_price_scale_floor(
+            getattr(args, "exit_price_scale_floor", 5.0)
+        )
 
         # low-level network
         self.time_info_dim = args.time_info_dim
@@ -1179,9 +1193,17 @@ class vae_risk_aware_routing:
         low_level_model_path = self.selection_manifest.artifacts.model_assembly
         if not low_level_model_path:
             raise ValueError("manifest has no model_assembly artifact")
-        self.low_level_network.load_state_dict(
-            torch.load(low_level_model_path, map_location=torch.device(self.device))
+        metadata_path = os.path.join(
+            os.path.dirname(low_level_model_path), "trading_observation.json"
         )
+        observation_config = load_trading_observation_metadata(metadata_path)
+        if observation_config.exit_price_scale_floor != self.exit_price_scale_floor:
+            raise ValueError("model exit_price_scale_floor does not match the run")
+        state_dict = torch.load(
+            low_level_model_path, map_location=torch.device(self.device)
+        )
+        validate_trading_state_dict(state_dict)
+        self.low_level_network.load_state_dict(state_dict, strict=True)
         self.low_level_network.to(self.device)
         self.low_level_network.eval()
         disable_gradients(self.low_level_network)
@@ -2298,6 +2320,9 @@ class vae_risk_aware_routing:
     def run_single_valid_df(self, df, save_path, contract_name: str | None = None):
         if isinstance(getattr(self, "gating_strategy", None), ExpertHysteresisGating):
             self.reset_routing_state()
+        exit_price_scale_floor = validate_exit_price_scale_floor(
+            getattr(self, "exit_price_scale_floor", 5.0)
+        )
         self.df = df
         self.current_contract_name = contract_name or "default_contract"
         self.audit_routing = []
@@ -2337,6 +2362,8 @@ class vae_risk_aware_routing:
             # initial_personal_state
             initial_state=self.initial_state,
             order_book_depth=self.order_book_depth,
+            exit_price_scale_floor=exit_price_scale_floor,
+            start_index=18,
         )
         logger.info(
             "Environment initialized. Resetting environment with %d rows of data...",

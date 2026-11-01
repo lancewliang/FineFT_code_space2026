@@ -12,6 +12,8 @@ FINEFT_ROOT = Path(__file__).resolve().parents[2]
 if str(FINEFT_ROOT) not in sys.path:
     sys.path.insert(0, str(FINEFT_ROOT))
 
+from common.trading_observation import TRADING_INFO_DIM, TradingObservationConfig
+
 
 class FakeNet:
     def eval(self):
@@ -42,10 +44,22 @@ class FakeEnv:
         }
 
     def reset(self):
-        return [0.0], {"previous_action": 0}
+        return [0.0], {
+            "previous_action": 0,
+            "avaliable_action": [1, 1, 1],
+            "funding_count_down_hour": 0,
+            "funding_count_down_minute": 0,
+            "trading_info": [0.0] * TRADING_INFO_DIM,
+        }
 
     def step(self, action):
-        return [0.0], 1.0, True, {"previous_action": action}
+        return [0.0], 1.0, True, {
+            "previous_action": action,
+            "avaliable_action": [1, 1, 1],
+            "funding_count_down_hour": 0,
+            "funding_count_down_minute": 0,
+            "trading_info": [0.0] * TRADING_INFO_DIM,
+        }
 
 
 class DetailFakeEnv:
@@ -87,6 +101,7 @@ class DetailFakeEnv:
             "avaliable_action": [1, 1, 1],
             "funding_count_down_hour": 0,
             "funding_count_down_minute": 0,
+            "trading_info": [0.0] * TRADING_INFO_DIM,
         }
 
     def step(self, action):
@@ -97,6 +112,7 @@ class DetailFakeEnv:
                 "avaliable_action": [1, 1, 1],
                 "funding_count_down_hour": 0,
                 "funding_count_down_minute": 0,
+                "trading_info": [0.0] * TRADING_INFO_DIM,
             }
         self.position = 1
         self.wallet_balance = 1001.0
@@ -107,6 +123,7 @@ class DetailFakeEnv:
             "avaliable_action": [1, 1, 1],
             "funding_count_down_hour": 0,
             "funding_count_down_minute": 0,
+            "trading_info": [0.0] * TRADING_INFO_DIM,
         }
 
 
@@ -195,7 +212,7 @@ def test_act_test_only_evaluates_selected_context_qnet():
             "avaliable_action": [1, 1, 1],
             "funding_count_down_hour": 1,
             "funding_count_down_minute": 30,
-            "trading_info": [0.0, 0.0, 0.0, 0.0],
+            "trading_info": [0.0] * TRADING_INFO_DIM,
         },
         context_index=1,
     )
@@ -226,7 +243,7 @@ def test_act_test_selected_context_accepts_real_four_field_ensemble():
             "avaliable_action": [1, 1, 1],
             "funding_count_down_hour": 1,
             "funding_count_down_minute": 30,
-            "trading_info": [0.0, 0.0, 0.0, 0.0],
+            "trading_info": [0.0] * TRADING_INFO_DIM,
         },
         context_index=1,
     )
@@ -255,7 +272,7 @@ def test_average_act_test_accepts_real_four_field_ensemble():
             "avaliable_action": [1, 1, 1],
             "funding_count_down_hour": 1,
             "funding_count_down_minute": 30,
-            "trading_info": np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            "trading_info": np.zeros(TRADING_INFO_DIM, dtype=np.float32),
         },
     )
 
@@ -475,8 +492,10 @@ def test_weighted_trader_init_constructs_valid_data_path_with_label_type(monkeyp
         else np.array([])
     ))
     monkeypatch.setattr(torch, "load", lambda *args, **kwargs: {})
-    monkeypatch.setattr(tai.ensemble_Qnet, "load_state_dict", lambda self, sd: None)
+    monkeypatch.setattr(tai.ensemble_Qnet, "load_state_dict", lambda self, sd, **kwargs: None)
     monkeypatch.setattr(tai.ensemble_Qnet, "eval", lambda self: None)
+    monkeypatch.setattr(tai, "load_trading_observation_metadata", lambda *args: TradingObservationConfig())
+    monkeypatch.setattr(tai, "validate_trading_state_dict", lambda *args: TRADING_INFO_DIM)
 
     args_slope = tai.parser.parse_args([
         "--base_path", "dataset/10min",
@@ -564,8 +583,10 @@ def test_weighted_trader_init_enables_matmul_precision_and_allow_tf32(monkeypatc
         else np.array([])
     ))
     monkeypatch.setattr(torch, "load", lambda *args, **kwargs: {})
-    monkeypatch.setattr(tai.ensemble_Qnet, "load_state_dict", lambda self, sd: None)
+    monkeypatch.setattr(tai.ensemble_Qnet, "load_state_dict", lambda self, sd, **kwargs: None)
     monkeypatch.setattr(tai.ensemble_Qnet, "eval", lambda self: None)
+    monkeypatch.setattr(tai, "load_trading_observation_metadata", lambda *args: TradingObservationConfig())
+    monkeypatch.setattr(tai, "validate_trading_state_dict", lambda *args: TRADING_INFO_DIM)
 
     args = tai.parser.parse_args([
         "--base_path", "dataset/10min",
@@ -623,8 +644,10 @@ def test_weighted_trader_device_cpu(monkeypatch):
         ),
     )
     monkeypatch.setattr(torch, "load", lambda *args, **kwargs: {})
-    monkeypatch.setattr(tai.ensemble_Qnet, "load_state_dict", lambda self, sd: None)
+    monkeypatch.setattr(tai.ensemble_Qnet, "load_state_dict", lambda self, sd, **kwargs: None)
     monkeypatch.setattr(tai.ensemble_Qnet, "eval", lambda self: None)
+    monkeypatch.setattr(tai, "load_trading_observation_metadata", lambda *args: TradingObservationConfig())
+    monkeypatch.setattr(tai, "validate_trading_state_dict", lambda *args: TRADING_INFO_DIM)
 
     args = tai.parser.parse_args([
         "--base_path", "dataset/10min",
@@ -644,7 +667,7 @@ def test_weighted_trader_device_cpu(monkeypatch):
             "avaliable_action": [1, 1, 1],
             "funding_count_down_hour": 0,
             "funding_count_down_minute": 0,
-            "trading_info": [0.0, 0.0, 0.0, 0.0],
+            "trading_info": [0.0] * TRADING_INFO_DIM,
         },
         context_index=0,
     )
@@ -657,7 +680,7 @@ def test_weighted_trader_device_gpu(monkeypatch):
     class MockEnsembleNet:
         def to(self, device):
             return self
-        def load_state_dict(self, sd):
+        def load_state_dict(self, sd, **kwargs):
             pass
         def eval(self):
             pass
@@ -674,6 +697,8 @@ def test_weighted_trader_device_gpu(monkeypatch):
     )
     monkeypatch.setattr(torch, "load", lambda *args, **kwargs: {})
     monkeypatch.setattr(tai, "ensemble_Qnet", lambda **kwargs: MockEnsembleNet())
+    monkeypatch.setattr(tai, "load_trading_observation_metadata", lambda *args: TradingObservationConfig())
+    monkeypatch.setattr(tai, "validate_trading_state_dict", lambda *args: TRADING_INFO_DIM)
 
     args = tai.parser.parse_args([
         "--base_path", "dataset/10min",

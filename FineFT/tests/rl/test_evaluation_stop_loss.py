@@ -15,11 +15,15 @@ from RL.DiHFT.low_level.evaluation_stop_loss import (
     EvaluationStopLoss,
     executed_position,
 )
+from common.trading_observation import TradingObservationConfig, save_trading_observation_metadata
 
 
 def market(direction=1):
     prices = [100.0, 100.0 - 4 * direction] + [100.0 - 2 * direction] * 6
     times = pd.date_range("2026-01-01", periods=8, freq="10min")
+    bid_sizes = [10, 10, 0.4, 0.4, 10, 10, 10, 10]
+    limit_down = [0, int(direction > 0), 0, 0, 0, 0, 0, 0]
+    limit_up = [0, int(direction < 0), 0, 0, 0, 0, 0, 0]
     return pd.DataFrame(
         {
             "timestamp": times,
@@ -28,10 +32,35 @@ def market(direction=1):
             "mark_price": prices,
             "bid1_price": np.array(prices) - 0.01,
             "ask1_price": np.array(prices) + 0.01,
-            "bid1_size": [10, 10, 0.4, 0.4, 10, 10, 10, 10],
-            "ask1_size": [10, 10, 0.4, 0.4, 10, 10, 10, 10],
-            "limit_down_single_sided_ratio": [0, int(direction > 0), 0, 0, 0, 0, 0, 0],
-            "limit_up_single_sided_ratio": [0, int(direction < 0), 0, 0, 0, 0, 0, 0],
+            "bid1_size": bid_sizes,
+            "ask1_size": bid_sizes,
+            "limit_down_single_sided_ratio": limit_down,
+            "limit_up_single_sided_ratio": limit_up,
+            "feature1": 0.0,
+        }
+    )
+
+
+def evaluation_market(direction=1):
+    prices = [100.0] * 18 + [100.0, 100.0 - 4 * direction] + [100.0 - 2 * direction] * 6
+    times = pd.date_range("2026-01-01", periods=len(prices), freq="10min")
+    bid_sizes = [10.0] * 18 + [10, 10, 0.4, 0.4, 10, 10, 10, 10]
+    limit_down = [0] * len(prices)
+    limit_up = [0] * len(prices)
+    limit_down[19] = int(direction > 0)
+    limit_up[19] = int(direction < 0)
+    return pd.DataFrame(
+        {
+            "timestamp": times,
+            "funding_rate": 0.0,
+            "funding_timestamp": times + pd.Timedelta(hours=1),
+            "mark_price": prices,
+            "bid1_price": np.array(prices) - 0.01,
+            "ask1_price": np.array(prices) + 0.01,
+            "bid1_size": bid_sizes,
+            "ask1_size": bid_sizes,
+            "limit_down_single_sided_ratio": limit_down,
+            "limit_up_single_sided_ratio": limit_up,
             "feature1": 0.0,
         }
     )
@@ -173,12 +202,13 @@ def test_entry_uses_stop_without_extra_records(
         data = dataset / "valid/label_0/df_0.feather"
         epoch = tmp_path / "result/fu/weights_advantage/epoch_1"
     data.parent.mkdir(parents=True)
-    frame = market()
-    (frame.iloc[:3] if end_before_exit else frame).reset_index(drop=True).to_feather(
+    frame = evaluation_market()
+    (frame.iloc[:21] if end_before_exit else frame).reset_index(drop=True).to_feather(
         data
     )
     epoch.mkdir(parents=True)
     torch.save(ensemble_Qnet(1, 3, 8, 2, 1).state_dict(), epoch / "trained_model.pkl")
+    save_trading_observation_metadata(epoch / "trading_observation.json", TradingObservationConfig())
     if entry == "batch":
         trader = batch.weighted_trader(
             logg_file_path="",

@@ -7,9 +7,10 @@ import torch
 
 from model.low_level import ensemble_Qnet
 from RL.DiHFT.low_level.evaluate_sub_agents import evaluates
+from common.trading_observation import TradingObservationConfig, save_trading_observation_metadata
 
 
-def _make_sample_df(base_price: float, length: int = 5) -> pd.DataFrame:
+def _make_sample_df(base_price: float, length: int = 25) -> pd.DataFrame:
     times = pd.date_range("2026-01-01", periods=length, freq="1s")
     return pd.DataFrame({
         "timestamp": times,
@@ -62,6 +63,10 @@ def test_evaluates_multiprocess_multiple_files(tmp_path: Path):
         ensemble_number=1,
     )
     torch.save(net.state_dict(), model_file)
+    save_trading_observation_metadata(
+        Path(model_file).with_name("trading_observation.json"),
+        TradingObservationConfig(),
+    )
 
     results = evaluates(
         logg_file_path=log_file,
@@ -114,6 +119,10 @@ def test_weighted_trader_and_evaluates_support_device(tmp_path: Path):
         ensemble_number=1,
     )
     torch.save(net.state_dict(), model_file)
+    save_trading_observation_metadata(
+        Path(model_file).with_name("trading_observation.json"),
+        TradingObservationConfig(),
+    )
 
     trader_cpu = weighted_trader(
         logg_file_path="",

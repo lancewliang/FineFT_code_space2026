@@ -8,6 +8,7 @@ import pytest
 import torch
 
 from model.low_level import ensemble_Qnet
+from common.trading_observation import TRADING_INFO_DIM
 from RL.DiHFT.low_level.parallel_diverse_train import (
     AsyncGreedyEvaluator,
     EvaluationTask,
@@ -60,7 +61,7 @@ def test_async_evaluator_lifecycle_and_non_blocking():
         hidden_nodes=16,
         TIME_INFO_DIM=2,
         ensemble_number=2,
-        TRADING_INFO_DIM=4,
+        TRADING_INFO_DIM=TRADING_INFO_DIM,
     )
 
     trainer = MagicMock()
@@ -112,7 +113,7 @@ def test_async_evaluator_thread_safe_early_stopping():
         hidden_nodes=16,
         TIME_INFO_DIM=2,
         ensemble_number=2,
-        TRADING_INFO_DIM=4,
+        TRADING_INFO_DIM=TRADING_INFO_DIM,
     )
 
     trainer = MagicMock()

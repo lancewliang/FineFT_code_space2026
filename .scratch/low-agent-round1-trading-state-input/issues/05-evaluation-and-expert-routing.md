@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 — 接通模型与串行训练闭环
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Implementation:** 未实施。此前代码改动已全部回退；本轮只重切任务，不启动代码修改。ready-for-agent 表示规格可实施，不表示依赖已完成。
 
@@ -32,6 +32,10 @@ test_agent_index.py、test_agent_average.py、evaluate_sub_agents.py、vae_routi
 - 2026-11-01：按确认后的行情统计预计算、Q8 A 与 exit_price_scale_floor 命名重新切分职责；当前验收项全部未完成。
 
 - 2026-11-01（回退后状态校正）：用户确认本功能所有代码改动已回退；重新打开本票，全部验收项恢复未完成。下方记录只描述回退前工作，不能证明当前源码已实现或验证通过。
+
+- 2026-11-01：完成独立索引评估、模型平均、子 Agent 多进程评估、VAE 高层路由和 OOD 调用方迁移。所有入口接收并透传 `exit_price_scale_floor`，环境从同合约因果有效起点开始；模型加载统一读取 `trading_observation.json`、校验 floor 与 `fc_trading` 宽度并使用 strict load，前向保持完整 11 维 `trading_info`。评估子 Agent 的初始保证金也改按有效起点价格计算，避免 warmup 后环境重置不一致。
+- 2026-11-01：同步更新评估/OOD/止损回归夹具，合成模型和 buffer 使用 11 维交易状态并带 sidecar。验证：`python -m pytest FineFT/tests/rl/test_test_agent_index.py FineFT/tests/rl/test_vae_routing_action_persistence.py FineFT/tests/rl/test_expert_hysteresis_routing.py FineFT/tests/rl/test_async_greedy_evaluation.py FineFT/tests/analysis/test_low_level_agent_ood_analysis.py -q`（76 passed）；`python -m pytest FineFT/tests/rl/test_evaluates_multiprocess.py FineFT/tests/rl/test_evaluation_stop_loss.py -q`（41 passed）。
+- 2026-11-01：额外执行 VAE 路由全套回归，发现 4 个既有路由行为/组合收益断言与当前分支基线不一致（非本票 diff 引入）；本票新增的契约加载、环境起点和专家记忆路径已由上述定向回归覆盖。
 
 ### 回退前历史记录（不作为当前验收证据）
 

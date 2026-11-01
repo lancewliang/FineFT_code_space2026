@@ -49,6 +49,11 @@ from RL.DiHFT.low_level.policy_diagnostics import (
 from RL.DiHFT.low_level.evaluation_stop_loss import (
     EvaluationStopLoss, add_argument, executed_position,
 )
+from common.trading_observation import (
+    load_trading_observation_metadata,
+    validate_exit_price_scale_floor,
+    validate_trading_state_dict,
+)
 
 
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -72,6 +77,12 @@ parser = argparse.ArgumentParser()
 
 # * Env setting
 add_argument(parser)
+parser.add_argument(
+    "--exit_price_scale_floor",
+    type=validate_exit_price_scale_floor,
+    default=5.0,
+    help="实验退出价格尺度下限（元/吨），与交易所 tick size 分开",
+)
 parser.add_argument(
     "--base_path",
     type=str,
@@ -737,12 +748,21 @@ class weighted_trader:
             "epoch_" + str(self.epoch_num),
         )
         self.stop_loss_return_threshold = args.stop_loss_return_threshold
-        self.eval_net.load_state_dict(
-            torch.load(
-                os.path.join(self.epoch_path, ArtifactNames.TRAINED_MODEL_PKL),
-                map_location=self.device,
-            )
+        self.exit_price_scale_floor = validate_exit_price_scale_floor(
+            args.exit_price_scale_floor
         )
+        metadata_path = os.path.join(self.epoch_path, "trading_observation.json")
+        if not os.path.exists(metadata_path):
+            metadata_path = os.path.join(self.model_path, "trading_observation.json")
+        observation_config = load_trading_observation_metadata(metadata_path)
+        if observation_config.exit_price_scale_floor != self.exit_price_scale_floor:
+            raise ValueError("model exit_price_scale_floor does not match the run")
+        state_dict = torch.load(
+            os.path.join(self.epoch_path, ArtifactNames.TRAINED_MODEL_PKL),
+            map_location=self.device,
+        )
+        validate_trading_state_dict(state_dict)
+        self.eval_net.load_state_dict(state_dict, strict=True)
         self.eval_net.eval()
         self.initial_action_list = range(
             (self.position_choices - 1) * len(self.leverage_choices) + 1
@@ -791,6 +811,9 @@ class weighted_trader:
         overall_result = []
         trading_detail_rows = []
         self.eval_net.eval()
+        exit_price_scale_floor = validate_exit_price_scale_floor(
+            getattr(self, "exit_price_scale_floor", 5.0)
+        )
         threshold = getattr(self, "stop_loss_return_threshold", 0.0)
         detail_csv_path = None
         if self.save_trading_detail_csv:
@@ -883,6 +906,8 @@ class weighted_trader:
                             limit_stay_bonus=self.limit_stay_bonus,
                             limit_reverse_penalty=self.limit_reverse_penalty,
                             near_limit_threshold=self.near_limit_threshold,
+                            exit_price_scale_floor=exit_price_scale_floor,
+                            start_index=18,
                         )
                         position_after_list = []
                         limit_up_list = []
