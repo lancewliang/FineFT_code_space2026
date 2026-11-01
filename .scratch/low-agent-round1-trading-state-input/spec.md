@@ -1,9 +1,9 @@
 # 第一批次实施规格：交易 state 输入
 
 日期：2026-10-31
-更新：2026-11-01（尺度预计算、下限命名与 Q8 A 已确认；实施票重新切分）
-状态：未实施。用户确认此前全部代码改动已回退；Q1–Q7 作为既有设计记录保留，已确认由特征工程预计算行情变化统计量，环境应用配置下限并维护交易轨迹；本轮仅同步文档。
-源码基线：回退后工作区 `HEAD=ada8aae`；当前环境及模型仍为四维交易观测，以实际 `.py` 源文件为准。历史测试结果不作为当前验收证据，见 [verification.md](verification.md)。
+更新：2026-11-01（十一维链路实施、定向验证与全量回归完成）
+状态：已实施。01–08 及本票的代码与测试已完成；短程训练闭环和加载契约已验证，正式历史数据重训未启动。当前分支以 `trading_observation.v2` 为唯一交易观测契约，旧四维模型/replay 不兼容且必须明确拒绝。当前证据见 [verification.md](verification.md)。
+源码基线：本轮实施从回退基线 `ada8aae` 开始，当前工作区已接入十一维交易观测、因果价格辅助列和跨入口校验；以实际 `.py` 源文件为准。
 范围解释：本批补充交易观测及其传输、消费链路；不实施完整交易执行状态机。
 
 参考文档：[2026-10-29 第一轮交易状态、老师与去重契约](../../docs/research/2026-10-29-AST-FineFT-round1-state-teacher-replay-contract.zh_cn.md)。参考文档中的历史确认与后续实施指令是背景材料；本规格依据本次“只做交易 state 输入”重新划定范围，不直接继承其中的全部实施任务。
@@ -128,11 +128,11 @@ replay 仍必须传输完整 11 维向量，既有“模型可见上下文”键
 scale(t) = max(exit_price_scale_floor, mean(abs(P[i] - P[i-1]), i=t-17..t))
 ```
 
-命名约定：`exit_price_scale_floor` 专指退出记忆的价格尺度下限，属于实验配置；`tick_size` 保留用于交易所最小变动价位，二者不共用配置字段。本功能未实施，无须提供旧参数别名。
+命名约定：`exit_price_scale_floor` 专指退出记忆的价格尺度下限，属于实验配置；`tick_size` 保留用于交易所最小变动价位，二者不共用配置字段。当前实现通过 `--exit_price_scale_floor` 接收该实验配置，不提供旧参数别名。
 
 它需要截至 t 的 19 个同合约参考价，不是 ATR。`exit_price_scale_floor` 通过命令行参数 `--exit_price_scale_floor` 显式配置，作为本公式的价格尺度下限，由环境初始化、采集 worker、评估和路由入口透传。缺失、非正数或非有限值明确失败；同一次运行的配置须一致，不从标准化 RL 特征反推。
 
-用户已确认本次 fu 实验使用 `--exit_price_scale_floor 5`，单位为元/吨。这是实验尺度下限覆盖值，不得将其写成交易所规定的最小变动价位。[上期所燃料油期货业务细则第五条](https://www.shfe.cn/regulation/exchangerules/productrules/202512/t20251231_829966.html)规定的最小变动价位为 1 元/吨；实验覆盖值、配置来源与交易所规格应分别标明。当前 Base_Env 未提供该参数，接入它是本批新增工作。
+用户已确认本次 fu 实验使用 `--exit_price_scale_floor 5`，单位为元/吨。这是实验尺度下限覆盖值，不得将其写成交易所规定的最小变动价位。[上期所燃料油期货业务细则第五条](https://www.shfe.cn/regulation/exchangerules/productrules/202512/t20251231_829966.html)规定的最小变动价位为 1 元/吨；实验覆盖值、配置来源与交易所规格应分别标明。训练、采集、评估和路由入口的主路径均透传并校验该参数与因果辅助列；直接低层 legacy fixture 仍允许无辅助列构造，不能作为训练数据入口或验收证据。
 
 在 `s_t -> s_(t+1)` 中，环境使用决策时可用盘口执行动作：
 
@@ -158,14 +158,14 @@ scale(t) = max(exit_price_scale_floor, mean(abs(P[i] - P[i-1]), i=t-17..t))
 
 环境仍需在实际完整退出时锁存决策行的 `scale(t)`、实际成交均价及退出首次可见坐标；不能用返回观测行的 `scale(t+1)`，也不能随之后行情更新分母。浮亏率、退出时间和价格移动依赖策略轨迹，不能整体预计算到行情文件。十一维模型、replay/IPC 和加载契约的接入工作仍然需要完成。
 
-初始化时可缓存固定配置和仓位归一化常量；完整退出时保存成交均价、首次可见步号和锁存尺度，之后只做差值、归一化和 tanh。实际仓位、持仓收益/回撤、浮亏、持仓时长、退出存在位与退出后变化仍动态维护；不新增全时点开平仓组合预计算表。本轮只同步文档，不实施代码。
+初始化时可缓存固定配置和仓位归一化常量；完整退出时保存成交均价、首次可见步号和锁存尺度，之后只做差值、归一化和 tanh。实际仓位、持仓收益/回撤、浮亏、持仓时长、退出存在位与退出后变化仍动态维护；不新增全时点开平仓组合预计算表。当前实现已按此边界接入环境和数据流水线。
 
 ### 5.2 流水线衔接与窗口有效性契约
 
 - 计算位置固定在 Train/Valid/Test 分区已确定、同合约分区行序列已形成之后，训练 slice 切分之前；落点为 split-stage 的 scale-save 数据准备路径。不在跨分区完整行情上先计算再切分，也不在环境或每个训练 slice 中重新滚动。
 - 价格输入固定使用环境 `current_markprice` 对应的原单位 `mark_price`，与第 4、5 节的 `P_t` 一致；不改用 `index_price`、成交价或标准化价格。
 - scale-save 当前仅输出 reward/execution schema 与所选模型特征，新增行情辅助列必须有独立保留通道，继续贯穿 FineFT 合约数据、训练切片、标注切片及 worker 共享行情。不加入 RL/VAE 特征清单或 scaler，不改变三流市场输入维度。
-- 窗口有效性应只由当前行及之前 18 行的合格价格决定；有效参考价须正且有限，缺列或异常价格明确失败，不能借窗口无效标记掩盖数据损坏。物理行不因本次预热被删除；环境依据完整窗口有效性选择可交易起点，老师表和 compact 索引保留原行情坐标。
+- 窗口有效性应只由当前行及之前 18 行的合格价格决定；生产数据入口中有效参考价须正且有限，缺列或异常价格明确失败，不能借窗口无效标记掩盖数据损坏。物理行不因本次预热被删除；环境依据完整窗口有效性选择可交易起点，老师表和 compact 索引保留原行情坐标。直接低层 legacy 单测可省略辅助列，但不属于生产数据入口，不能用于训练或验收。
 - Q8 已确认采用 A：完整分区前 18 行的辅助统计值存为 0、布尔有效标记为 false，仅作不可消费的占位；有效恒价窗口存为 0、有效标记为 true。环境必须先验证有效标记，仅对有效行应用 `max(exit_price_scale_floor, statistic)`；禁止将无效占位通过尺度下限转为合格尺度。该约定是对“不用零填补完整窗口”的澄清，不以零伪造有效历史。不使用 NaN/空值表示预热不足，不为此放宽现有 NaN 检查；价格损坏或其他异常仍明确失败。
 
 ## 6. 最小状态与生命周期
@@ -193,7 +193,7 @@ scale(t) = max(exit_price_scale_floor, mean(abs(P[i] - P[i-1]), i=t-17..t))
 
 ## 7. 实施顺序与文件落点
 
-任务拆分见 [实施依赖总览](implementation-plan.md)。保留 01–06 并新增 07（辅助列与坐标贯通）、08（环境观测与退出生命周期）；顺序为 `01 → 02 → 07 → 08 → 03 → (04、05) → 06`。01 保持四维运行基线；08 与 03 在同一集成变更中完成十一维运行切换，不将环境局部验收视为训练已可用。
+任务拆分见 [实施依赖总览](implementation-plan.md)。保留 01–06 并新增 07（辅助列与坐标贯通）、08（环境观测与退出生命周期）；顺序为 `01 → 02 → 07 → 08 → 03 → (04、05) → 06`。01 提供契约基线；08 与 03 在同一集成变更中完成十一维运行切换，04/05 和 06 已完成全入口接入与验收。
 
 ### 7.1 字段契约与环境
 
@@ -225,7 +225,7 @@ scale(t) = max(exit_price_scale_floor, mean(abs(P[i] - P[i-1]), i=t-17..t))
 
 本批也不宣称完整消除了账户依赖：原收益/回撤、保证金约束和账户终止语义仍保留。若后续目标是资金充足、固定本金损益或统一执行约束，另立实施规格并对齐老师及训练语义。
 
-与 [ADR-0002](../../docs/adr/0002-require-trading-info-qnet-input.md) 一致，交易输入必须显式传递，漏传不得静默补零。本文拟扩展 [ADR-0065](../../docs/adr/0065-n-step-discount-and-bounded-holding-context-replay.md) 中“四维上下文”的宽度为十一维，保留其去重与保留策略；代码实施时需同步修订该维度描述。本次不修改已接受 ADR。
+与 [ADR-0002](../../docs/adr/0002-require-trading-info-qnet-input.md) 一致，交易输入必须显式传递，漏传不得静默补零。本文已将 [ADR-0065](../../docs/adr/0065-n-step-discount-and-bounded-holding-context-replay.md) 中“四维上下文”的宽度落实为十一维，保留其去重与保留策略；旧模型和旧 replay 在加载时拒绝。
 
 [ADR-0045](../../docs/adr/0045-high-level-vae-routing-action-persistence-with-defensive-preemption.md) 与 [ADR-0047](../../docs/adr/0047-contract-level-hard-stop-loss-cooldown-and-circuit-breaker.md) 的现有高层控制行为不因本批输入升级而被删除或重定义。11 维未呈现这些全部外层控制状态，这是本批范围限制。
 
@@ -250,7 +250,7 @@ scale(t) = max(exit_price_scale_floor, mean(abs(P[i] - P[i-1]), i=t-17..t))
 
 优先扩展现有测试：`FineFT/tests/env/test_trading_process_features.py`、`test_position_cost_state.py`；`FineFT/tests/rl/test_qnet_trading_info.py`、`test_replay_buffer_trading_info.py`、`test_compact_trajectory_and_micro_batched_ingestion.py`、`test_learning_targets_and_bounded_replay.py`、`test_test_agent_index.py`。涉及止损和路由的测试用于证明原执行行为未被输入改造改变。
 
-实施验证使用项目要求的 `conda activate finetf` 环境执行 Python/pytest。以上为实现完成后的验收要求；当前仍处于设计讨论阶段，尚未运行训练或声称测试通过。
+实施验证使用项目要求的 `conda activate finetf` 环境执行 Python/pytest。以上验收要求已在本轮短程集成中执行；通过项、全量回归限制和未启动正式重训的边界记录在 [verification.md](verification.md) 中。本文件不据此声称收益提升、完整 Markov 性或老师最优性。
 
 ## 10. 完成定义
 

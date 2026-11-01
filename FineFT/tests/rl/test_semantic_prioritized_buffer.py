@@ -17,7 +17,7 @@ def test_build_semantic_transition_key_ignores_qvalue_but_preserves_holding_stat
         "funding_count_down_hour": 0.0,
         "funding_count_down_minute": 0.0,
         "q_value": np.array([100.0, 50.0, 10.0]),
-        "trading_info": np.array([1.0, 0.001234, 0.00045, 0.05]),  # 1.0=多头, 收益0.0012, 回撤0.0004, 时间0.05
+        "trading_info": np.array([1.0, 0.001234, 0.00045, 0.05] + [0.0] * 7),  # 1.0=多头, 收益0.0012, 回撤0.0004, 时间0.05
     }
 
     state = np.array([1.0, 2.0])
@@ -34,7 +34,7 @@ def test_build_semantic_transition_key_ignores_qvalue_but_preserves_holding_stat
         "funding_count_down_hour": 0.0,
         "funding_count_down_minute": 0.0,
         "q_value": np.array([999.0, -10.0, 0.0]),
-        "trading_info": np.array([1.0, 0.001234, 0.00045, 0.05]),
+        "trading_info": np.array([1.0, 0.001234, 0.00045, 0.05] + [0.0] * 7),
     }
     key_q = build_semantic_transition_key(
         state=state,
@@ -50,7 +50,7 @@ def test_build_semantic_transition_key_ignores_qvalue_but_preserves_holding_stat
         "funding_count_down_hour": 0.0,
         "funding_count_down_minute": 0.0,
         "q_value": np.array([100.0, 50.0, 10.0]),
-        "trading_info": np.array([1.0, 0.008888, 0.00199, 0.05]),
+        "trading_info": np.array([1.0, 0.008888, 0.00199, 0.05] + [0.0] * 7),
     }
     key_floats = build_semantic_transition_key(
         state=state,
@@ -68,7 +68,7 @@ def test_build_semantic_transition_key_distinguishes_discrete_decisions():
         "avaliable_action": np.ones(3),
         "funding_count_down_hour": 0.0,
         "funding_count_down_minute": 0.0,
-        "trading_info": np.array([1.0, 0.001, 0.0, 0.05]),
+        "trading_info": np.array([1.0, 0.001, 0.0, 0.05] + [0.0] * 7),
     }
     base = build_semantic_transition_key(state=state, action=2, info=info)
 
@@ -77,10 +77,10 @@ def test_build_semantic_transition_key_distinguishes_discrete_decisions():
     # 不同的 action
     assert base != build_semantic_transition_key(state=state, action=0, info=info)
     # 不同的 previous_action
-    info_prev_act = {**info, "previous_action": 1, "trading_info": np.array([1.0, 0.001, 0.0, 0.05])}
+    info_prev_act = {**info, "previous_action": 1, "trading_info": np.array([1.0, 0.001, 0.0, 0.05] + [0.0] * 7)}
     assert base != build_semantic_transition_key(state=state, action=2, info=info_prev_act)
     # 不同的持仓方向 (空头 -1.0 vs 多头 1.0)
-    info_short = {**info, "previous_action": 0, "trading_info": np.array([-1.0, 0.001, 0.0, 0.05])}
+    info_short = {**info, "previous_action": 0, "trading_info": np.array([-1.0, 0.001, 0.0, 0.05] + [0.0] * 7)}
     assert base != build_semantic_transition_key(state=state, action=2, info=info_short)
 
 
@@ -110,7 +110,7 @@ def test_write_round_transitions_semantic_dedup_and_td_error_replacement():
             "previous_action": 0,
             "regime_grid_id": 0,
             "q_value": np.array([q_val, 0.0, 0.0]),
-            "trading_info": np.array([1.0, pnl_float, 0.0, 0.05]),
+            "trading_info": np.array([1.0, pnl_float, 0.0, 0.05] + [0.0] * 7),
             "avaliable_action": np.array([1.0, 1.0, 1.0]),
             "funding_count_down_hour": 0.0,
             "funding_count_down_minute": 0.0,
@@ -186,8 +186,8 @@ def test_multi_step_replay_buffer_multi_info_replace_in_place():
         n_step=1,
     )
 
-    t1 = (np.array([1.0]), {"tag": "old"}, 0, 1.0, np.array([2.0]), {"tag": "old"}, False)
-    t2 = (np.array([1.0]), {"tag": "new"}, 0, 2.0, np.array([2.0]), {"tag": "new"}, False)
+    t1 = (np.array([1.0]), {"tag": "old", "trading_info": np.zeros(11)}, 0, 1.0, np.array([2.0]), {"tag": "old", "trading_info": np.zeros(11)}, False)
+    t2 = (np.array([1.0]), {"tag": "new", "trading_info": np.zeros(11)}, 0, 2.0, np.array([2.0]), {"tag": "new", "trading_info": np.zeros(11)}, False)
 
     buf.add(*t1)
     assert len(buf) == 1
@@ -209,6 +209,7 @@ def test_explore_round_computes_td_error_on_transitions(monkeypatch):
             self.step_calls = 0
             self.unrealized_pnl = 0.0
             self.wallet_balance = 100.0
+            self.position = 0.0
 
         def reset(self, initial_state=None):
             return (
@@ -219,7 +220,7 @@ def test_explore_round_computes_td_error_on_transitions(monkeypatch):
                     "avaiable_action_list": [0, 1, 2],
                     "funding_count_down_hour": 0,
                     "funding_count_down_minute": 0,
-                    "trading_info": np.zeros(4),
+                    "trading_info": np.zeros(11),
                     "q_value": np.array([10.0, 5.0, 0.0]),
                 },
             )
@@ -237,7 +238,7 @@ def test_explore_round_computes_td_error_on_transitions(monkeypatch):
                     "avaiable_action_list": [0, 1, 2],
                     "funding_count_down_hour": 0,
                     "funding_count_down_minute": 0,
-                    "trading_info": np.zeros(4),
+                    "trading_info": np.zeros(11),
                     "q_value": np.array([8.0, 4.0, 1.0]),
                 },
             )

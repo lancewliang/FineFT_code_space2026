@@ -23,7 +23,7 @@ def payload(n=37):
         "avaliable_action": torch.ones(n, 3),
         "funding_count_down_hour": rows + 1,
         "funding_count_down_minute": rows + 2,
-        "trading_info": rows[:, None].repeat(1, 4),
+        "trading_info": rows[:, None].repeat(1, 11),
         "q_value": rows[:, None].repeat(1, 3),
     }
     return {

@@ -90,7 +90,7 @@ def _replay(tmp_path: Path):
     }
     router.get_quantiles = lambda *args, **kwargs: None
     router.initial_rollout_window_length = 1
-    data = _market_frame(5)
+    data = _market_frame(23)
     result_dir = tmp_path / "result"
     contract_dir = result_dir / "contracts" / "fu2508"
     router.run_single_valid_df(data, str(contract_dir), "fu2508")
@@ -115,7 +115,7 @@ def test_completed_candidate_and_intercepted_inference_remain_observable():
     unavailable = {
         "previous_action": 1,
         "avaliable_action": [1, 1, 0],
-        "trading_info": [0.0],
+        "trading_info": [0.0] * 11,
     }
 
     assert act(router, info=unavailable) == 1
@@ -210,11 +210,11 @@ def test_full_route_artifact_publishes_with_decision_and_prediction_joins(tmp_pa
         (contract_dir / AuditArtifactNames.AUDIT_TRADES_JSON).read_text()
     )
 
-    assert [record["step_index"] for record in routes] == list(range(5))
+    assert [record["step_index"] for record in routes] == list(range(len(data) - 1))
     assert routes[0]["routing_reason"] == "warm_up"
     assert routes[0]["prediction_id"] == ""
     assert all(record["queried_slot"] == 5 for record in routes[1:])
-    assert [prediction["step_index"] for prediction in predictions] == [1, 2, 3, 4]
+    assert [prediction["step_index"] for prediction in predictions] == list(range(1, len(data) - 1))
     for record in routes:
         assert record["decision_id"] == build_decision_id(
             router.run_id,
@@ -227,7 +227,7 @@ def test_full_route_artifact_publishes_with_decision_and_prediction_joins(tmp_pa
 
     manifest, output_dir = _publish(tmp_path, data, result_dir)
     assert manifest["schema_version"] == "1.1.0"
-    assert manifest["total_row_counts"]["routing_records"] == 5
+    assert manifest["total_row_counts"]["routing_records"] == len(data) - 1
     published = pd.read_csv(
         output_dir / "2025-01-02" / AuditArtifactNames.ROUTING_RECORDS_CSV
     )

@@ -13,6 +13,8 @@ from common.trading_observation import (
     CAUSAL_PRICE_SCALE_ROW_COLUMN,
     CAUSAL_PRICE_SCALE_VALID_COLUMN,
     TradingObservationError,
+    validate_causal_valid_array,
+    validate_source_row_coordinates,
 )
 
 logger = logging.getLogger(__name__)
@@ -257,16 +259,26 @@ class SharedMarketDataPack:
             source_row_index_tensor = None
             if present_causal_columns == causal_columns:
                 scale = np.asarray(df[CAUSAL_PRICE_SCALE_COLUMN].values, dtype=np.float32)
-                valid = np.asarray(df[CAUSAL_PRICE_SCALE_VALID_COLUMN].values, dtype=bool)
-                source_rows = np.asarray(df[CAUSAL_PRICE_SCALE_ROW_COLUMN].values, dtype=np.int64)
+                valid = validate_causal_valid_array(
+                    df[CAUSAL_PRICE_SCALE_VALID_COLUMN].values,
+                    row_count=len(df),
+                )
+                source_rows = validate_source_row_coordinates(
+                    df[CAUSAL_PRICE_SCALE_ROW_COLUMN].values,
+                    row_count=len(df),
+                )
                 if (
                     not np.isfinite(scale).all()
                     or (scale < 0).any()
-                    or not np.array_equal(source_rows, np.arange(len(df), dtype=np.int64))
                     or np.any(~valid & (scale != 0))
                 ):
                     raise TradingObservationError(
                         f"df_index={df_index} has invalid causal auxiliary values or coordinates"
+                    )
+                first_valid = np.flatnonzero(valid)
+                if first_valid.size and not valid[first_valid[0] :].all():
+                    raise TradingObservationError(
+                        f"df_index={df_index} has invalid causal rows after the first valid row"
                     )
                 causal_price_scale_tensor = torch.from_numpy(np.ascontiguousarray(scale)).share_memory_()
                 causal_price_scale_valid_tensor = torch.from_numpy(np.ascontiguousarray(valid)).share_memory_()

@@ -242,7 +242,15 @@ class weighted_trader:
             self.leverage_choices,
             self.position_list,
         )
-        current_markprice = test_df["mark_price"].values[18]
+        valid_column = "causal_mark_price_scale_valid"
+        if valid_column in test_df.columns:
+            valid_rows = np.flatnonzero(test_df[valid_column].to_numpy(dtype=bool))
+            if valid_rows.size == 0:
+                raise ValueError("data file has no valid causal price scale row")
+            first_trade_row = int(valid_rows[0])
+        else:
+            first_trade_row = 0
+        current_markprice = test_df["mark_price"].values[first_trade_row]
         initial_margin = np.abs(
             initial_position * current_markprice / initial_leverage
         )
@@ -279,7 +287,7 @@ class weighted_trader:
             limit_reverse_penalty=self.limit_reverse_penalty,
             near_limit_threshold=self.near_limit_threshold,
             exit_price_scale_floor=self.exit_price_scale_floor,
-            start_index=18,
+            start_index=0,
         )
         s, info = test_env.reset()
         done = False

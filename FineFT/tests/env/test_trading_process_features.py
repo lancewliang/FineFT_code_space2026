@@ -36,6 +36,13 @@ def test_trading_info_keys_constant():
         "single_holding_return_rate",
         "single_holding_max_drawdown",
         "current_holding_duration_norm",
+        "unrealized_loss_to_notional_ratio",
+        "last_long_exit_record_valid",
+        "steps_since_last_long_exit_norm",
+        "price_rise_since_last_long_exit_tanh",
+        "last_short_exit_record_valid",
+        "steps_since_last_short_exit_norm",
+        "price_drop_since_last_short_exit_tanh",
     )
 
 
@@ -53,8 +60,8 @@ def test_reset_returns_trading_info_zeros():
     state, info = env.reset()
     assert "trading_info" in info
     assert isinstance(info["trading_info"], np.ndarray)
-    assert info["trading_info"].shape == (4,)
-    np.testing.assert_array_almost_equal(info["trading_info"], np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32))
+    assert info["trading_info"].shape == (11,)
+    np.testing.assert_array_almost_equal(info["trading_info"], np.zeros(11, dtype=np.float32))
 
 
 def test_nonzero_reset_starts_duration_at_one_step():
@@ -62,7 +69,7 @@ def test_nonzero_reset_starts_duration_at_one_step():
     initial_state = (10000.0, 160.0, 0.0, 8.0, 5)
     env = initiate_base_env(df, features, initial_state=initial_state, holding_duration_norm_steps=180)
     state, info = env.reset()
-    assert info["trading_info"].shape == (4,)
+    assert info["trading_info"].shape == (11,)
     assert abs(info["trading_info"][3] - (1.0 / 180.0)) < 1e-6
 
 

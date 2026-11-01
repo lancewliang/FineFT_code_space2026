@@ -447,7 +447,7 @@ def test_frozen_identical_scores_via_cache_or_protocol_have_identical_public_rou
         outputs.append(
             [
                 router.get_action(
-                    {"previous_action": 1, "avaliable_action": [1, 1, 1], "trading_info": [0.0]},
+                    {"previous_action": 1, "avaliable_action": [1, 1, 1], "trading_info": [0.0] * 11},
                     np.array([step]),
                     0.0,
                     1,
@@ -470,7 +470,7 @@ def test_frozen_identical_scores_via_cache_or_protocol_have_identical_public_rou
         third.get_quantiles(np.array([0.0]), np.array([0.0]))
     assert (
         third.get_action(
-            {"previous_action": 1, "avaliable_action": [1, 1, 1], "trading_info": [0.0]},
+                    {"previous_action": 1, "avaliable_action": [1, 1, 1], "trading_info": [0.0] * 11},
             np.array([0.0]),
             0.0,
             1,

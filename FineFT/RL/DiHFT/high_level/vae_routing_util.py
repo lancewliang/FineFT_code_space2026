@@ -2363,7 +2363,7 @@ class vae_risk_aware_routing:
             initial_state=self.initial_state,
             order_book_depth=self.order_book_depth,
             exit_price_scale_floor=exit_price_scale_floor,
-            start_index=18,
+            start_index=0,
         )
         logger.info(
             "Environment initialized. Resetting environment with %d rows of data...",

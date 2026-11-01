@@ -403,7 +403,7 @@ class weighted_trader:
                         # initial_personal_state
                         initial_state=self.initial_state,
                         exit_price_scale_floor=exit_price_scale_floor,
-                        start_index=18,
+                        start_index=0,
                     )
                     s, info = test_env.reset()
                     done = False

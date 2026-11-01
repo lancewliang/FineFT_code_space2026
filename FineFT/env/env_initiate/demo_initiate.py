@@ -8,6 +8,8 @@ from common.trading_observation import (
     CAUSAL_PRICE_SCALE_COLUMN,
     CAUSAL_PRICE_SCALE_VALID_COLUMN,
     CAUSAL_PRICE_SCALE_ROW_COLUMN,
+    validate_causal_valid_array,
+    validate_source_row_coordinates,
 )
 
 
@@ -86,13 +88,16 @@ def initiate_demo_env(
     lower_limit_prices_array = df["LowerLimitPrice"].values if "LowerLimitPrice" in df.columns else None
     regime_grid_ids_array = df["regime_grid_id"].values.astype(np.int64) if "regime_grid_id" in df.columns else None
     causal_price_scale_array = df[CAUSAL_PRICE_SCALE_COLUMN].to_numpy() if CAUSAL_PRICE_SCALE_COLUMN in df.columns else None
-    causal_price_scale_valid_array = df[CAUSAL_PRICE_SCALE_VALID_COLUMN].to_numpy(dtype=bool) if CAUSAL_PRICE_SCALE_VALID_COLUMN in df.columns else None
+    causal_price_scale_valid_array = (
+        validate_causal_valid_array(df[CAUSAL_PRICE_SCALE_VALID_COLUMN].to_numpy(), row_count=len(df))
+        if CAUSAL_PRICE_SCALE_VALID_COLUMN in df.columns else None
+    )
     if (causal_price_scale_array is None) != (causal_price_scale_valid_array is None):
         raise ValueError("causal price scale columns must include both scale and valid columns; regenerate data")
-    if causal_price_scale_array is not None and not np.array_equal(
-        df[CAUSAL_PRICE_SCALE_ROW_COLUMN].to_numpy(), np.arange(len(df))
-    ):
-        raise ValueError("source_row_index must align with the contract DataFrame")
+    if causal_price_scale_array is not None:
+        validate_source_row_coordinates(
+            df[CAUSAL_PRICE_SCALE_ROW_COLUMN].to_numpy(), row_count=len(df)
+        )
 
     env = Demo_Env(
         state_array,

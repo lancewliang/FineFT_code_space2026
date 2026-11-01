@@ -59,7 +59,7 @@ def test_real_update_bootstraps_at_n_step_horizon(monkeypatch, stage, n_step, ne
         "avaliable_action": torch.ones(2, 3),
         "funding_count_down_hour": torch.zeros(2),
         "funding_count_down_minute": torch.zeros(2),
-        "trading_info": torch.zeros(2, 4),
+        "trading_info": torch.zeros(2, 11),
         "q_value": torch.zeros(2, 3),
     }
     update = pretrain.update_pretrain if stage == "pretrain" else diverse.update
@@ -75,7 +75,7 @@ def test_real_update_bootstraps_at_n_step_horizon(monkeypatch, stage, n_step, ne
 def transition(step=0, reward=1.0, grid=0):
     info = {
         "previous_action": 2, "regime_grid_id": grid,
-        "trading_info": np.array([1.0, 0.01, 0.02, 9 / 180], dtype=np.float32),
+        "trading_info": np.array([1.0, 0.01, 0.02, 9 / 180] + [0.0] * 7, dtype=np.float32),
         "avaliable_action": np.ones(3, dtype=np.float32),
         "funding_count_down_hour": 1.0, "funding_count_down_minute": 2.0,
         "q_value": np.zeros(3, dtype=np.float32),
@@ -113,7 +113,8 @@ def test_identity_uses_float32_model_precision_and_ignores_teacher_opinion():
     first = transition()
     second = deepcopy(first)
     second[1]["q_value"][:] = 999
-    second[1]["trading_info"] = second[1]["trading_info"].astype(np.float64) + 1e-12
+    second[1]["trading_info"] = second[1]["trading_info"].astype(np.float64)
+    second[1]["trading_info"][:4] += 1e-12
     assert build_semantic_transition_key(first[0], first[2], first[1]) == build_semantic_transition_key(second[0], second[2], second[1])
 
 
@@ -176,8 +177,8 @@ def _compact_record(reward, holding_return=0.01):
         rewards=np.array([reward], dtype=np.float32), next_step_indices=np.array([1]),
         dones=np.array([False]), td_errors=np.array([0.0]),
         previous_actions=np.array([2.0]), next_previous_actions=np.array([2.0]),
-        trading_infos=np.array([[1.0, holding_return, 0.02, 9 / 180]], dtype=np.float32),
-        next_trading_infos=np.array([[1.0, 0.03, 0.02, 10 / 180]], dtype=np.float32),
+        trading_infos=np.array([[1.0, holding_return, 0.02, 9 / 180] + [0.0] * 7], dtype=np.float32),
+        next_trading_infos=np.array([[1.0, 0.03, 0.02, 10 / 180] + [0.0] * 7], dtype=np.float32),
         avaliable_actions=np.ones((1, 3)), next_avaliable_actions=np.ones((1, 3)),
         hours=np.ones(1), minutes=np.ones(1) * 2,
         next_hours=np.ones(1), next_minutes=np.ones(1) * 2,

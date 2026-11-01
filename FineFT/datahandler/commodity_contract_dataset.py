@@ -16,6 +16,8 @@ from common.trading_observation import (
     CAUSAL_PRICE_SCALE_COLUMN,
     CAUSAL_PRICE_SCALE_ROW_COLUMN,
     CAUSAL_PRICE_SCALE_VALID_COLUMN,
+    validate_causal_valid_array,
+    validate_source_row_coordinates,
 )
 
 try:
@@ -116,10 +118,12 @@ def build_dataset_manifest(
     vae_volatility_state_features_path: Path | str | None = None,
 ) -> DatasetManifest:
     causal_source_manifest = Path(input_root) / symbol / target_freq / "causal_price_scale_manifest.json"
-    causal_manifest_destination = (
-        str(Path(output_root) / symbol / "causal_price_scale_manifest.json")
-        if causal_source_manifest.exists()
-        else ""
+    if not causal_source_manifest.exists():
+        raise FileNotFoundError(
+            f"Missing causal price scale manifest: {causal_source_manifest}; regenerate SCALE_SAVE outputs"
+        )
+    causal_manifest_destination = str(
+        Path(output_root) / symbol / "causal_price_scale_manifest.json"
     )
     dest_rl = str(Path(output_root) / symbol / ArtifactNames.RL_STATE_FEATURES_NPY)
     dest_vae_slope = (
@@ -280,8 +284,14 @@ def _validate_causal_auxiliary_columns(
             f"{path} is missing causal auxiliary columns {missing}; regenerate SCALE_SAVE outputs"
         )
     scales = frame[manifest.causal_price_scale_column].to_numpy(dtype=float)
-    valid = frame[manifest.causal_price_scale_valid_column].to_numpy(dtype=bool)
-    coordinates = frame[manifest.causal_price_scale_row_coordinate_column].to_numpy()
+    valid = validate_causal_valid_array(
+        frame[manifest.causal_price_scale_valid_column].to_numpy(),
+        row_count=len(frame),
+    )
+    coordinates = validate_source_row_coordinates(
+        frame[manifest.causal_price_scale_row_coordinate_column].to_numpy(),
+        row_count=len(frame),
+    )
     if not np.isfinite(scales).all() or (scales < 0).any():
         raise ValueError(f"{path} has invalid causal price scales")
     if len(np.unique(coordinates)) != len(coordinates):
@@ -289,6 +299,9 @@ def _validate_causal_auxiliary_columns(
     warmup = min(18, len(frame))
     if valid[:warmup].any() or np.any(scales[:warmup] != 0):
         raise ValueError(f"{path} has invalid causal warmup rows")
+    first_valid = np.flatnonzero(valid)
+    if first_valid.size and not valid[first_valid[0] :].all():
+        raise ValueError(f"{path} has invalid causal rows after the first valid row")
 
 
 def rebuild_train_slice_plan(manifest, chunk_length, early_stop):

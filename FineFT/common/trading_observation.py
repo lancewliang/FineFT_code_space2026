@@ -65,6 +65,42 @@ def validate_exit_price_scale_floor(value: Any) -> float:
     return normalized
 
 
+def validate_causal_valid_array(value: Any, *, row_count: int | None = None) -> np.ndarray:
+    """Validate persisted 0/1 validity flags without coercing bad values to True."""
+    raw = np.asarray(value)
+    if raw.ndim != 1:
+        raw = raw.reshape(-1)
+    if row_count is not None and raw.size != row_count:
+        raise TradingObservationError("causal validity flags must be row-aligned")
+    if raw.dtype.kind == "b":
+        return raw.astype(bool, copy=False)
+    try:
+        numeric = raw.astype(np.float64)
+    except (TypeError, ValueError) as exc:
+        raise TradingObservationError("causal validity flags must contain only 0 or 1") from exc
+    if not np.isfinite(numeric).all() or not np.isin(numeric, (0.0, 1.0)).all():
+        raise TradingObservationError("causal validity flags must contain only finite 0 or 1")
+    return numeric.astype(bool)
+
+
+def validate_source_row_coordinates(value: Any, *, row_count: int | None = None) -> np.ndarray:
+    """Validate preserved source coordinates without requiring slice-local numbering."""
+    raw = np.asarray(value)
+    if raw.ndim != 1:
+        raw = raw.reshape(-1)
+    if row_count is not None and raw.size != row_count:
+        raise TradingObservationError("source row coordinates must be row-aligned")
+    try:
+        numeric = raw.astype(np.int64)
+    except (TypeError, ValueError) as exc:
+        raise TradingObservationError("source row coordinates must be integers") from exc
+    if raw.size and not np.equal(raw.astype(np.float64), numeric).all():
+        raise TradingObservationError("source row coordinates must be exact integers")
+    if (numeric < 0).any() or (numeric.size > 1 and not np.all(np.diff(numeric) > 0)):
+        raise TradingObservationError("source row coordinates must be strictly increasing")
+    return numeric
+
+
 @dataclass(frozen=True, slots=True)
 class TradingObservationConfig:
     """Versioned values that give a trading observation its meaning."""
@@ -95,6 +131,8 @@ class TradingObservationConfig:
             raise TradingObservationError("tanh_divisor must be 5")
         if not np.isfinite(self.holding_duration_norm_steps) or self.holding_duration_norm_steps <= 0:
             raise TradingObservationError("holding_duration_norm_steps must be finite and positive")
+        if self.price_source != "mark_price" or self.price_unit != "yuan_per_tonne":
+            raise TradingObservationError("price_source must be mark_price and price_unit yuan_per_tonne")
 
     def to_metadata(self) -> dict[str, Any]:
         return {

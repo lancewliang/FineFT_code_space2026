@@ -85,6 +85,9 @@ def _write_dataset_split_manifest(path, manifest=None):
 def _write_scale_save_file(root, stage, contract, rows=2):
     output = root / "SCALE_SAVE" / "fu" / "10min" / stage / f"{contract}.feather"
     output.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path = output.parent.parent / "causal_price_scale_manifest.json"
+    if not manifest_path.exists():
+        manifest_path.write_text(json.dumps({"schema": "causal_price_scale.v1"}), encoding="utf-8")
     pd.DataFrame(
         {
             "timestamp": pd.date_range("2026-01-01", periods=rows, freq="10min"),
@@ -92,6 +95,9 @@ def _write_scale_save_file(root, stage, contract, rows=2):
             "feature_a": list(range(rows)),
             "bid1_price": list(range(100, 100 + rows)),
             "mark_price": list(range(200, 200 + rows)),
+            "causal_mark_price_mean_abs_change_18": [0.0] * rows,
+            "causal_mark_price_scale_valid": [False] * rows,
+            "source_row_index": list(range(rows)),
         }
     ).to_feather(output)
     return output
@@ -209,6 +215,9 @@ def test_build_dataset_manifest_uses_split_manifest_and_stage_scale_save_paths(t
         symbol="fu",
         target_freq="10min",
     )
+    causal_manifest = tmp_path / "SCALE_SAVE" / "fu" / "10min" / "causal_price_scale_manifest.json"
+    causal_manifest.parent.mkdir(parents=True, exist_ok=True)
+    causal_manifest.write_text(json.dumps({"schema": "causal_price_scale.v1"}), encoding="utf-8")
 
     manifest = build_dataset_manifest(
         split_manifest=split_manifest,

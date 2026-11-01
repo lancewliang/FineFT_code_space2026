@@ -61,6 +61,9 @@ def evaluation_market(direction=1):
             "ask1_size": bid_sizes,
             "limit_down_single_sided_ratio": limit_down,
             "limit_up_single_sided_ratio": limit_up,
+            "causal_mark_price_mean_abs_change_18": [0.0] * len(prices),
+            "causal_mark_price_scale_valid": [False] * 18 + [True] * (len(prices) - 18),
+            "source_row_index": list(range(len(prices))),
             "feature1": 0.0,
         }
     )

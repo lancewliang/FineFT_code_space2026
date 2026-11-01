@@ -105,7 +105,17 @@ def validate_causal_price_statistics(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Validate the persisted auxiliary arrays without treating invalid rows as usable."""
     scale_array = np.asarray(scale, dtype=np.float64).reshape(-1)
-    valid_array = np.asarray(valid, dtype=bool).reshape(-1)
+    raw_valid = np.asarray(valid).reshape(-1)
+    if raw_valid.dtype.kind == "b":
+        valid_array = raw_valid.astype(bool, copy=False)
+    else:
+        try:
+            numeric_valid = raw_valid.astype(np.float64)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("causal validity flags must contain only 0 or 1") from exc
+        if not np.isfinite(numeric_valid).all() or not np.isin(numeric_valid, (0.0, 1.0)).all():
+            raise ValueError("causal validity flags must contain only finite 0 or 1")
+        valid_array = numeric_valid.astype(bool)
     if scale_array.size != valid_array.size:
         raise ValueError("causal scale and valid arrays must have equal length")
     if row_count is not None and scale_array.size != row_count:
@@ -137,14 +147,22 @@ def attach_causal_price_statistics(
         if row_coordinate_column not in frame.columns:
             raise ValueError(f"missing row coordinate column: {row_coordinate_column}")
         coordinates = frame.get_column(row_coordinate_column).to_numpy()
-        if len(np.unique(coordinates)) != len(coordinates):
-            raise ValueError("row coordinates must be unique")
+        try:
+            coordinates = coordinates.astype(np.int64, copy=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("row coordinates must be integer-valued") from exc
+        if (
+            len(np.unique(coordinates)) != len(coordinates)
+            or (coordinates.size and coordinates[0] < 0)
+            or (coordinates.size > 1 and not np.all(np.diff(coordinates) > 0))
+        ):
+            raise ValueError("row coordinates must be non-negative and strictly increasing")
     else:
         coordinates = np.arange(frame.height, dtype=np.int64)
     validate_causal_price_statistics(statistics.scale, statistics.valid, row_count=frame.height)
     result = frame.with_columns(
         pl.Series(CAUSAL_PRICE_SCALE_COLUMN, statistics.scale),
         pl.Series(CAUSAL_PRICE_SCALE_VALID_COLUMN, statistics.valid),
-        pl.Series(CAUSAL_PRICE_SCALE_ROW_COLUMN, np.arange(frame.height, dtype=np.int64)),
+        pl.Series(CAUSAL_PRICE_SCALE_ROW_COLUMN, coordinates.astype(np.int64, copy=False)),
     )
     return result, statistics

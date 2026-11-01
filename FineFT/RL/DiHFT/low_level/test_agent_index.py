@@ -651,6 +651,9 @@ class weighted_trader:
         self.label_type = args.label_type
         if not self.label_type:
             raise ValueError("label_type must be specified")
+        self.action_persistence = int(args.action_persistence)
+        if self.action_persistence <= 0:
+            raise ValueError("action_persistence must be positive")
         self.valid_data_path = os.path.join(
             self.base_path, self.dataset_name, "valid", self.label_type
         )
@@ -736,9 +739,6 @@ class weighted_trader:
             ensemble_number=self.N,
         ).to(self.device)
 
-        self.action_persistence = int(args.action_persistence)
-        if self.action_persistence <= 0:
-            raise ValueError("action_persistence must be positive")
         self.flat_action = len(self.leverage_choices) * (len(self.position_list) // 2)
 
         self.epoch_num = args.epoch_num
@@ -907,7 +907,7 @@ class weighted_trader:
                             limit_reverse_penalty=self.limit_reverse_penalty,
                             near_limit_threshold=self.near_limit_threshold,
                             exit_price_scale_floor=exit_price_scale_floor,
-                            start_index=18,
+                            start_index=0,
                         )
                         position_after_list = []
                         limit_up_list = []

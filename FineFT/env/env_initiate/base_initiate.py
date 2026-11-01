@@ -8,6 +8,8 @@ from common.trading_observation import (
     CAUSAL_PRICE_SCALE_COLUMN,
     CAUSAL_PRICE_SCALE_VALID_COLUMN,
     CAUSAL_PRICE_SCALE_ROW_COLUMN,
+    validate_causal_valid_array,
+    validate_source_row_coordinates,
 )
 
 
@@ -98,7 +100,7 @@ def initiate_base_env(
         if CAUSAL_PRICE_SCALE_COLUMN in df.columns else None
     )
     causal_price_scale_valid_array = (
-        df[CAUSAL_PRICE_SCALE_VALID_COLUMN].to_numpy(dtype=bool)
+        validate_causal_valid_array(df[CAUSAL_PRICE_SCALE_VALID_COLUMN].to_numpy(), row_count=len(df))
         if CAUSAL_PRICE_SCALE_VALID_COLUMN in df.columns else None
     )
     if (causal_price_scale_array is None) != (causal_price_scale_valid_array is None):
@@ -106,9 +108,9 @@ def initiate_base_env(
             "causal price scale columns must include both scale and valid columns; regenerate data"
         )
     if causal_price_scale_array is not None:
-        row_coordinates = df[CAUSAL_PRICE_SCALE_ROW_COLUMN].to_numpy()
-        if not np.array_equal(row_coordinates, np.arange(len(df))):
-            raise ValueError("source_row_index must align with the contract DataFrame")
+        validate_source_row_coordinates(
+            df[CAUSAL_PRICE_SCALE_ROW_COLUMN].to_numpy(), row_count=len(df)
+        )
     env = Base_Env(
         state_array,
         ask_prices_array,

@@ -52,6 +52,7 @@ from common.trading_observation import (
     TradingObservationConfig,
     TradingObservationError,
     encode_exit_memory,
+    validate_causal_valid_array,
     validate_exit_price_scale_floor,
     validate_trading_info,
 )
@@ -284,12 +285,13 @@ class Base_Env(gym.Env):
     def _validate_causal_valid_array(value, row_count: int, name: str):
         if value is None:
             return None
-        array = np.asarray(value, dtype=bool).reshape(-1)
-        if array.size != row_count:
-            raise TradingObservationError(f"{name} must be row-aligned")
+        array = validate_causal_valid_array(value, row_count=row_count)
         warmup = min(18, row_count)
         if array[:warmup].any():
             raise TradingObservationError("causal warmup rows must be invalid")
+        first_valid = np.flatnonzero(array)
+        if first_valid.size and not array[first_valid[0] :].all():
+            raise TradingObservationError("causal validity rows must remain valid after warmup")
         return array
 
 
@@ -328,15 +330,18 @@ class Base_Env(gym.Env):
         if closed_quantity <= 0 or closed_value <= 0:
             raise TradingObservationError("complete exit requires positive closed quantity and value")
         if self.causal_price_scale_array is None:
-            # Direct legacy callers do not carry the Scale Save columns.  New
-            # dataset-driven paths always pass them and never enter this branch.
+            # Direct unit-test callers may construct Base_Env without the
+            # dataset manifest; production dataset/worker boundaries reject
+            # that omission before constructing the environment.
             from common.trading_observation import calculate_causal_price_scale
-            if self.day < EXIT_MEMORY_SCALE_WINDOW:
-                scale = self.exit_price_scale_floor
-            else:
-                scale = calculate_causal_price_scale(
+
+            scale = (
+                self.exit_price_scale_floor
+                if self.day < EXIT_MEMORY_SCALE_WINDOW
+                else calculate_causal_price_scale(
                     self.markprice_array, self.day, self.exit_price_scale_floor
                 )
+            )
         else:
             if not self.causal_price_scale_valid_array[self.day]:
                 raise TradingObservationError(

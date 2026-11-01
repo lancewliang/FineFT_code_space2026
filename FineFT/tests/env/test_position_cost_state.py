@@ -71,7 +71,7 @@ def test_reset_exposes_zero_cost_for_flat_position_without_changing_trading_info
     assert env.current_holding_average_price == 0.0
     assert cost_info["current_holding_opening_price"] == 0.0
     assert cost_info["current_holding_average_price"] == 0.0
-    assert info["trading_info"].shape == (4,)
+    assert info["trading_info"].shape == (11,)
 
 
 def test_reset_uses_first_mark_price_for_nonzero_initial_position():
@@ -220,7 +220,7 @@ def test_terminal_step_keeps_current_holding_cost_state():
     assert cost_info["current_holding_average_price"] == pytest.approx(102.01)
 
 
-def test_liquidation_ends_current_holding_cost_lifecycle():
+def test_liquidation_rejects_invalid_current_mark_price():
     env = _make_env(
         markprices=[100.0, 0.0, 0.0],
         buy_fee_rate=0.02,
@@ -228,14 +228,8 @@ def test_liquidation_ends_current_holding_cost_lifecycle():
     env.initial_state = (410.0, 0.0, 0.0, 0.0, 1)
     env.reset()
 
-    _, _, terminal, _ = env.step(
-        env.env_map_position_leverage_to_action(4.0, 1)
-    )
-    cost_info = env._position_cost_info()
-
-    assert terminal is True
-    assert cost_info["current_holding_opening_price"] == 0.0
-    assert cost_info["current_holding_average_price"] == 0.0
+    with pytest.raises(ValueError, match="current_markprice must be finite and positive"):
+        env.step(env.env_map_position_leverage_to_action(4.0, 1))
 
 
 def test_wallet_change_keeps_legacy_six_values_and_names_opening_leg_metadata():
